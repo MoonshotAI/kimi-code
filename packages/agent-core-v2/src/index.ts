@@ -97,12 +97,12 @@ export * from '#/kosong/protocol/protocol';
 export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
+import '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
 export * from '#/kosong/model/model.types';
 export * from '#/kosong/model/modelService';
-export * from '#/kosong/model/secondaryModel';
 export * from '#/kosong/model/thinking';
 export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
@@ -116,6 +116,15 @@ export {
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
+export type { SecondaryModelConfig } from '#/app/kosongConfig/configSection';
+// The secondary-model derived-entry overlay: the edge (kap-server's
+// `GET /models` route) hides the reserved id from pickers, and tests drive
+// the overlay directly — re-export from the package root.
+export {
+  SECONDARY_DERIVED_MODEL_ID,
+  secondaryModelOverlay,
+  secondaryModelPatch,
+} from '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';

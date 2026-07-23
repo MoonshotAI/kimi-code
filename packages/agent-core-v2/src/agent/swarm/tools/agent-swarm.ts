@@ -183,7 +183,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    let binding: { model: string; thinking: string } | undefined;
+    let binding: { model: string; thinking?: string } | undefined;
     if ((args.items?.length ?? 0) > 0) {
       await this.catalog.ready;
       const own = this.profile.data();

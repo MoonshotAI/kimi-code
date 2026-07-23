@@ -12,6 +12,7 @@ import { createHooks } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -721,7 +722,9 @@ describe('Agent tool execution contract', () => {
       sessionService(IAgentLifecycleService, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
-      modelProviderServices(modelCatalogResolving('mock-model', 'provider/secondary')),
+      modelProviderServices(
+        modelCatalogResolving('mock-model', 'provider/secondary', SECONDARY_DERIVED_MODEL_ID),
+      ),
       ...extra,
     );
     lifecycle.addHandle('main', 'agent');
@@ -907,7 +910,28 @@ describe('Agent tool execution contract', () => {
   it('spawns the subagent on the configured secondary model by default', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle, {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
+    });
+
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          model: SECONDARY_DERIVED_MODEL_ID,
+          thinking: 'low',
+        }),
+      }),
+    );
+  });
+
+  it('binds the pointed entry directly with natural thinking when the recipe has no patch', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
     });
 
     await executeAgentTool(context, {
@@ -919,7 +943,7 @@ describe('Agent tool execution contract', () => {
       expect.objectContaining({
         binding: expect.objectContaining({
           model: 'provider/secondary',
-          thinking: 'low',
+          thinking: undefined,
         }),
       }),
     );
@@ -928,7 +952,7 @@ describe('Agent tool execution contract', () => {
   it('spawns on the caller model when the tool call opts into "primary"', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle, {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
     });
 
     await executeAgentTool(context, {
@@ -956,7 +980,7 @@ describe('Agent tool execution contract', () => {
         profileCatalogWithPreference('coder', 'primary'),
       ),
       {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
     );
 
@@ -984,7 +1008,7 @@ describe('Agent tool execution contract', () => {
         profileCatalogWithPreference('coder', 'primary'),
       ),
       {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
     );
 
@@ -997,7 +1021,7 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
-          model: 'provider/secondary',
+          model: SECONDARY_DERIVED_MODEL_ID,
           thinking: 'low',
         }),
       }),
@@ -2061,7 +2085,7 @@ describe('AgentSwarm tool execution contract', () => {
       cancel: () => {},
     };
     ctx = createTestAgent(swarmServices(swarmService), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
     });
 
     await executeTool(agentSwarmTool(ctx), {
@@ -2081,11 +2105,11 @@ describe('AgentSwarm tool execution contract', () => {
         tasks: [
           expect.objectContaining({
             kind: 'spawn',
-            binding: { model: 'provider/secondary', thinking: 'low' },
+            binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' },
           }),
           expect.objectContaining({
             kind: 'spawn',
-            binding: { model: 'provider/secondary', thinking: 'low' },
+            binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' },
           }),
         ],
       }),
@@ -2115,7 +2139,7 @@ describe('AgentSwarm tool execution contract', () => {
         profileCatalogWithPreference('explore', 'primary'),
       ),
       {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
     );
 
@@ -2161,7 +2185,7 @@ describe('AgentSwarm tool execution contract', () => {
       cancel: () => {},
     };
     ctx = createTestAgent(swarmServices(swarmService), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', effort: 'low' } },
+      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
     });
 
     await executeTool(agentSwarmTool(ctx), {

@@ -11,14 +11,18 @@
  * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
  * and render the timeout message with `formatSubagentTimeoutDescription`.
  *
- * The model half of the spawn binding is the secondary model (the type in
- * `kosong/model/secondaryModel`, the section in `app/kosongConfig` —
- * `[secondary_model]` on disk): when set, newly spawned subagents bind to it
+ * The model half of the spawn binding is the secondary model (the section
+ * and type in `app/kosongConfig` — `[secondary_model]` on disk): when set, newly spawned subagents bind to it
  * by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
  * `model` parameter. When unset, spawning behavior is unchanged (subagents
- * inherit the caller's model). Both tools resolve spawn bindings through
- * `resolveSubagentBinding`, advertise the pair via
+ * inherit the caller's model). A recipe with patch fields binds the
+ * synthesized derived entry (`SECONDARY_DERIVED_MODEL_ID`); a pointer-only
+ * recipe binds the pointed entry directly. `default_effort` is passed as the
+ * explicit subagent thinking; without it the subagent resolves thinking
+ * naturally (global thinking config → the bound model's default effort)
+ * rather than inheriting the caller's level. Both tools resolve spawn
+ * bindings through `resolveSubagentBinding`, advertise the pair via
  * `buildSubagentModelDescriptions`, and wrap spawn failures with
  * `wrapSubagentModelError`. Self-registered at module load via
  * `registerConfigSection`, so the `config` domain never imports this
@@ -33,7 +37,11 @@ import {
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { type SecondaryModelConfig } from '#/kosong/model/secondaryModel';
+import {
+  SECONDARY_DERIVED_MODEL_ID,
+  secondaryModelPatch,
+} from '#/app/kosongConfig/secondaryModelOverlay';
+import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
 import {
   type EnvBindings,
   envBindings,
@@ -100,10 +108,16 @@ export function resolveSubagentBinding(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: SubagentModelChoice,
-): { model: string; thinking: string } {
+): { model: string; thinking?: string } {
   const secondary = resolveSecondaryModel(config);
   if (requested !== 'primary' && secondary?.model !== undefined) {
-    return { model: secondary.model, thinking: secondary.effort ?? own.thinkingLevel };
+    return {
+      model:
+        secondaryModelPatch(secondary) === undefined
+          ? secondary.model
+          : SECONDARY_DERIVED_MODEL_ID,
+      thinking: secondary.defaultEffort,
+    };
   }
   return { model: own.modelAlias, thinking: own.thinkingLevel };
 }
@@ -129,9 +143,13 @@ export function wrapSubagentModelError(
   if (boundModel === callerModelAlias) return error;
   if (!isError2(error) || error.code !== ErrorCodes.CONFIG_INVALID) return error;
   if (error.details?.['model'] !== boundModel) return error;
+  const displayModel =
+    boundModel === SECONDARY_DERIVED_MODEL_ID
+      ? `the derived entry "${SECONDARY_DERIVED_MODEL_ID}"`
+      : `"${boundModel}"`;
   return new Error2(
     error.code,
-    `${error.message} (secondary model "${boundModel}" comes from [secondary_model].model / ${SECONDARY_MODEL_ENV} — check that it is a valid model alias)`,
+    `${error.message} (secondary model ${displayModel} comes from [secondary_model].model / ${SECONDARY_MODEL_ENV} — check that it names a valid [models] entry)`,
     {
       cause: error,
       name: error.name,

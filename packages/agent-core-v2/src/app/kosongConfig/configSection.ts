@@ -5,12 +5,12 @@
  * thinking / model-catalog / secondary-model preferences: declares every
  * kosong-owned section constant and its zod schema, plus the env bindings /
  * write-path strips and the snake_case ↔ camelCase TOML transforms. Where
- * kosong owns a pure type (`providers` / `models` / `thinking` /
- * `secondaryModel`), the schema is re-derived from it and pinned by an
- * `AssertExact` assertion (schema ≡ type at compile time); `modelCatalog` has
- * no kosong-side type and keeps its own local schema. Self-registered at module
- * load via `registerConfigSection`, so the `config` domain never imports kosong
- * types.
+ * kosong owns a pure type (`providers` / `models` / `thinking`), the schema
+ * is re-derived from it and pinned by an `AssertExact` assertion (schema ≡
+ * type at compile time); `modelCatalog` and `secondaryModel` have no
+ * kosong-side type — theirs derive from the local schemas. Self-registered
+ * at module load via `registerConfigSection`, so the `config` domain never
+ * imports kosong types.
  *
  * `ProviderTypeSchema` is deliberately free-form text: vendor identity is
  * NOT enumerated at parse time. Validation happens at resolve time against
@@ -40,7 +40,6 @@ import {
 } from '#/app/config/toml';
 import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
 import type { ModelOverride, ModelRecord, ModelsSection } from '#/kosong/model/model';
-import type { SecondaryModelConfig } from '#/kosong/model/secondaryModel';
 import type { ThinkingConfig } from '#/kosong/model/thinking';
 import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
 import { ProtocolSchema } from '#/kosong/protocol/protocol';
@@ -343,19 +342,21 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
   stripEnv: stripThinkingEnv,
 });
 
+// `secondaryModel` — the secondary-model recipe: `model` points at a
+// `[models]` entry and every `ModelOverride` field is a subagent-only patch
+// (materialized as a synthesized derived entry by `secondaryModelOverlay`).
+// On disk `[secondary_model]`; `default_effort` doubles as the subagent
+// thinking effort. No kosong-side type — derived from the schema.
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
 
 export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
 export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
 
-export const SecondaryModelConfigSchema = z.object({
+export const SecondaryModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
-  effort: z.string().min(1).optional(),
 });
 
-type _AssertSecondaryModelConfig = AssertExact<
-  Equal<z.infer<typeof SecondaryModelConfigSchema>, SecondaryModelConfig>
->;
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
 function parseNonEmptyEnv(raw: string): string | undefined {
   const trimmed = raw.trim();
@@ -364,14 +365,13 @@ function parseNonEmptyEnv(raw: string): string | undefined {
 
 export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema, {
   model: { env: SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
-  effort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
 });
 
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
   env: secondaryModelEnvBindings,
   stripEnv: stripEnvBoundFields(secondaryModelEnvBindings),
 });
-
 
 // ---------------------------------------------------------------------------
 // `modelCatalog` — provider-model catalog auto-refresh cadence (no kosong type)

@@ -3,12 +3,15 @@
  *
  * Runs the secondary-model check once per session when the main agent appears
  * (`agentLifecycle` onDidCreate, or an already-present main at construction):
- * resolves the configured pair through the kosong `modelCatalog` — the same
- * resolution spawn-time binding serves — and, on failure, caches a warning
- * and publishes it as a `warning` event on the main agent's `eventBus`. Never
- * throws: a broken secondary model demotes to a notice here, with spawn-time
- * resolution (`resolveSubagentBinding` + `wrapSubagentModelError`) staying as
- * the backstop. Bound at Session scope.
+ * resolves the pointed entry through the kosong `modelCatalog` and, when the
+ * recipe carries patch fields, checks `default_effort` against the patched
+ * `supportEfforts` (what the derived entry will carry) — on failure, caches a
+ * warning and publishes it as a `warning` event on the main agent's
+ * `eventBus`, and stays cached for the edge to pull
+ * (`GET /sessions/{id}/warnings`). Never throws: a broken secondary model
+ * demotes to a notice here, with spawn-time resolution
+ * (`resolveSubagentBinding` + `wrapSubagentModelError`) staying as the
+ * backstop. Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -25,6 +28,7 @@ import {
   SECONDARY_MODEL_ENV,
 } from '#/app/kosongConfig/configSection';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { secondaryModelPatch } from '#/app/kosongConfig/secondaryModelOverlay';
 import { normalizeRequestedThinkingEffort } from '#/kosong/model/thinking';
 import {
   IAgentLifecycleService,
@@ -95,25 +99,33 @@ export class SessionSecondaryModelWarningService
           'Subagent spawning will fail until this is fixed.',
       };
     }
-    return effortWarning(secondary.model, secondary.effort, model);
+    // The effort check targets what subagents actually bind: with patch
+    // fields the derived entry carries the patched `supportEfforts`, without
+    // them the pointed entry's own list applies.
+    const patch = secondaryModelPatch(secondary);
+    return effortWarning(
+      secondary.model,
+      secondary.defaultEffort,
+      patch?.supportEfforts ?? model.supportEfforts,
+    );
   }
 }
 
 function effortWarning(
   alias: string,
   effort: string | undefined,
-  model: Model,
+  supportEfforts: readonly string[] | undefined,
 ): SecondaryModelWarning | undefined {
   const requested = normalizeRequestedThinkingEffort(effort);
   if (requested === undefined || requested === 'off' || requested === 'on') return undefined;
-  const known = (model.supportEfforts ?? [])
+  const known = (supportEfforts ?? [])
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
   if (known.length === 0 || known.includes(requested)) return undefined;
   return {
     code: SECONDARY_MODEL_EFFORT_WARNING_CODE,
     message:
-      `Secondary model effort "${requested}" (from [secondary_model].effort / ${SECONDARY_MODEL_EFFORT_ENV}) ` +
+      `Secondary model default effort "${requested}" (from [secondary_model].default_effort / ${SECONDARY_MODEL_EFFORT_ENV}) ` +
       `is not listed for model "${alias}" (known: ${known.join(', ')}). ` +
       'Subagents may clamp or reject it.',
   };

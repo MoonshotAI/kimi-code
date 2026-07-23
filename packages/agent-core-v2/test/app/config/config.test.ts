@@ -78,6 +78,8 @@ import {
   WEB_SEARCH_BASE_URL_ENV,
   type ServicesConfig,
 } from '#/app/auth/configSection';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
+import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
 import '#/agent/mcp/configSection';
 import {
   MCP_SECTION,
@@ -86,7 +88,6 @@ import {
   McpSectionSchema,
   type McpSection,
 } from '#/agent/mcp/configSection';
-import { type SecondaryModelConfig } from '#/kosong/model/secondaryModel';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1430,9 +1431,11 @@ describe('subagent config section', () => {
     noModel.disposables.dispose();
 
     const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
+    // Pointer-only recipe: bind the pointed entry directly; thinking resolves
+    // naturally (no inheriting the caller's level).
     expect(resolveSubagentBinding(withModel.config, own)).toEqual({
       model: 'provider/secondary',
-      thinking: 'medium',
+      thinking: undefined,
     });
     expect(resolveSubagentBinding(withModel.config, own, 'primary')).toEqual({
       model: 'provider/main',
@@ -1442,18 +1445,30 @@ describe('subagent config section', () => {
 
     const withEffort = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/secondary"\neffort = "low"\n',
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
+    // Patch fields bind the synthesized derived entry; default_effort is the
+    // explicit subagent thinking.
     expect(resolveSubagentBinding(withEffort.config, own)).toEqual({
-      model: 'provider/secondary',
+      model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
     });
-    // effort only applies together with the secondary model.
+    // default_effort only applies together with the secondary model.
     expect(resolveSubagentBinding(withEffort.config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
     withEffort.disposables.dispose();
+
+    const withFactPatch = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
+    );
+    expect(resolveSubagentBinding(withFactPatch.config, own)).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      thinking: undefined,
+    });
+    withFactPatch.disposables.dispose();
   });
 
   it('preserves the coded error contract when adding secondary-model guidance', () => {
@@ -1520,19 +1535,19 @@ describe('secondaryModel config section', () => {
     return { config, disposables };
   }
 
-  it('reads model/effort from config.toml and lets the env vars win', async () => {
+  it('reads model/default_effort from config.toml and lets the env vars win', async () => {
     const env: Record<string, string> = {};
     const { config, disposables } = await createConfig(
       env,
-      '[secondary_model]\nmodel = "provider/secondary"\neffort = "low"\n',
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
     expect(resolveSecondaryModel(config)?.model).toBe('provider/secondary');
-    expect(resolveSecondaryModel(config)?.effort).toBe('low');
+    expect(resolveSecondaryModel(config)?.defaultEffort).toBe('low');
 
     env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
     env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
     expect(resolveSecondaryModel(config)?.model).toBe('provider/env-secondary');
-    expect(resolveSecondaryModel(config)?.effort).toBe('high');
+    expect(resolveSecondaryModel(config)?.defaultEffort).toBe('high');
 
     // Blank env values are ignored.
     env[SECONDARY_MODEL_ENV] = '  ';

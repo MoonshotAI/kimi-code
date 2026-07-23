@@ -13,6 +13,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
 import { SwarmModel } from '#/agent/swarm/swarmOps';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/agent-swarm';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -89,7 +90,7 @@ function mockSwarmMode() {
 function stubConfig(section?: {
   timeoutMs?: number;
   model?: string;
-  effort?: string;
+  defaultEffort?: string;
 }): IConfigService {
   return {
     _serviceBrand: undefined,
@@ -800,7 +801,7 @@ describe('AgentSwarmTool', () => {
 
   it('resolves spawn task bindings from the configured secondary model', async () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', effort: 'low' }), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
 
     await executeTool(
       tool,
@@ -814,8 +815,8 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [
-          expect.objectContaining({ binding: { model: 'provider/secondary', thinking: 'low' } }),
-          expect.objectContaining({ binding: { model: 'provider/secondary', thinking: 'low' } }),
+          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
+          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
         ],
       }),
     );
@@ -829,7 +830,7 @@ describe('AgentSwarmTool', () => {
       modelPreference: 'secondary',
       systemPrompt: () => 'coder',
     };
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', effort: 'low' }), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
 
     await executeTool(
       tool,

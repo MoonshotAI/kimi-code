@@ -97,9 +97,9 @@ describe('SessionSecondaryModelWarningService', () => {
     ]);
   });
 
-  it('warns when the configured effort is not listed by the resolved model', () => {
+  it('warns when the configured default effort is not listed by the resolved model', () => {
     modelIds['provider/secondary'] = modelStub({ supportEfforts: ['low', 'high'] });
-    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/secondary', effort: 'hihg' } });
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/secondary', defaultEffort: 'hihg' } });
     const svc = ix.get(ISessionSecondaryModelWarningService);
     createMain();
     const warning = svc.getSecondaryModelWarning();
@@ -110,9 +110,9 @@ describe('SessionSecondaryModelWarningService', () => {
   });
 
   it.each([
-    { secondary: { model: 'provider/secondary', effort: 'high' }, label: 'a listed effort' },
-    { secondary: { model: 'provider/secondary', effort: 'off' }, label: '"off"' },
-    { secondary: { model: 'provider/secondary', effort: 'on' }, label: '"on"' },
+    { secondary: { model: 'provider/secondary', defaultEffort: 'high' }, label: 'a listed effort' },
+    { secondary: { model: 'provider/secondary', defaultEffort: 'off' }, label: '"off"' },
+    { secondary: { model: 'provider/secondary', defaultEffort: 'on' }, label: '"on"' },
     { secondary: { model: 'provider/secondary' }, label: 'no effort' },
   ])('stays silent for $label', ({ secondary }) => {
     modelIds['provider/secondary'] = modelStub({ supportEfforts: ['low', 'high'] });
@@ -123,9 +123,41 @@ describe('SessionSecondaryModelWarningService', () => {
     expect(published).toHaveLength(0);
   });
 
+  it('checks the effort against the patched supportEfforts of the derived entry', () => {
+    modelIds['provider/secondary'] = modelStub({ supportEfforts: ['low', 'high'] });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        model: 'provider/secondary',
+        supportEfforts: ['low'],
+        defaultEffort: 'high',
+      },
+    });
+    const svc = ix.get(ISessionSecondaryModelWarningService);
+    createMain();
+    const warning = svc.getSecondaryModelWarning();
+    expect(warning?.code).toBe(SECONDARY_MODEL_EFFORT_WARNING_CODE);
+    expect(warning?.message).toContain('"high"');
+    expect(warning?.message).toContain('known: low');
+  });
+
+  it('stays silent when the patched supportEfforts lists the default effort', () => {
+    modelIds['provider/secondary'] = modelStub({ supportEfforts: ['high'] });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        model: 'provider/secondary',
+        supportEfforts: ['low'],
+        defaultEffort: 'low',
+      },
+    });
+    const svc = ix.get(ISessionSecondaryModelWarningService);
+    createMain();
+    expect(svc.getSecondaryModelWarning()).toBeUndefined();
+    expect(published).toHaveLength(0);
+  });
+
   it('stays silent for any effort when the model lists none', () => {
     modelIds['provider/freeform'] = modelStub({});
-    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/freeform', effort: 'whatever' } });
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/freeform', defaultEffort: 'whatever' } });
     const svc = ix.get(ISessionSecondaryModelWarningService);
     createMain();
     expect(svc.getSecondaryModelWarning()).toBeUndefined();

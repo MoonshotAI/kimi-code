@@ -194,18 +194,22 @@ The secondary model is a second model pointer next to the primary `default_model
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | — | A model alias from your configured `[models]` (any provider, not limited to Kimi models) |
-| `effort` | `string` | — | Thinking effort applied when a feature binds to the secondary `model`; has no effect on its own. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
+| `model` | `string` | — | A model id from your configured `[models]` (any provider, not limited to Kimi models) |
+| `default_effort` | `string` | — | Thinking effort applied when subagents bind to the secondary model. Unset, the effort resolves naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the main agent's effort. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
+| Other fields | — | — | Accepts every field of [`[models."<alias>".overrides]`](#models) (`max_context_size`, `max_output_size`, `support_efforts`, …) as a model patch applied only to subagents |
+
+Every field besides `model` forms a patch: when at least one patch field is set, the runtime synthesizes a derived model entry in memory (a copy of the pointed entry with the patch merged into its overrides, patch winning conflicts) and subagents bind that derived entry; with no patch fields, subagents bind the pointed entry directly. The derived entry lives only in memory (never written back to `config.toml`) and is hidden from model-selection lists.
 
 ```toml
 [secondary_model]
 model = "kimi-code/kimi-k2.5"
-effort = "low"
+default_effort = "low"
+max_output_size = 8192
 ```
 
-`model` / `effort` can be overridden by the `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` environment variables, which take higher priority than `config.toml`.
+`model` / `default_effort` can be overridden by the `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` environment variables, which take higher priority than `config.toml`.
 
-The configured pair is validated when a session starts: an unresolvable `model`, or an `effort` the model does not list, produces a startup warning (also returned by the session-warnings API). The check is advisory — a broken secondary model still fails at spawn time, with the same source hint attached to the spawn error.
+The configuration is validated when a session starts: an unresolvable `model`, or a `default_effort` not listed by the (patched) model, produces a startup warning (also returned by the session-warnings API). The check is advisory — a broken secondary model still fails at spawn time, with the same source hint attached to the spawn error.
 
 ## `thinking`
 

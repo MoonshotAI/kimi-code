@@ -194,18 +194,22 @@ display_name = "Kimi for Coding (custom)"
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `model` | `string` | — | 已配置 `[models]` 中的模型别名（不限 kimi 模型，可用任意供应商） |
-| `effort` | `string` | — | 功能绑定次主力 `model` 时使用的 thinking effort；单独设置无效。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| `model` | `string` | — | 已配置 `[models]` 中的模型 id（不限 kimi 模型，可用任意供应商） |
+| `default_effort` | `string` | — | 子代理绑定次主力模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对子代理生效的模型补丁 |
+
+`model` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），子代理实际绑定该派生条目；没有补丁字段时，子代理直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
 
 ```toml
 [secondary_model]
 model = "kimi-code/kimi-k2.5"
-effort = "low"
+default_effort = "low"
+max_output_size = 8192
 ```
 
-`model` / `effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
+`model` / `default_effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
 
-会话启动时会校验该配置：`model` 无法解析，或 `effort` 不在模型声明的 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子代理时失败，派生错误中同样附带配置来源提示。
+会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子代理时失败，派生错误中同样附带配置来源提示。
 
 ## `thinking`
 
