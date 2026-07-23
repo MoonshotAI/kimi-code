@@ -32,9 +32,11 @@
  * to the timeline); `agent_id` is optional and narrows the read to one agent.
  *
  * `GET /sessions/{session_id}/transcript/plan` answers the plan information
- * of one ExitPlanMode tool call (`agent_id` + `tool_call_id` required): the
- * reviewed plan content, the plan file path, the offered options, and the
- * review outcome. The content is projected from the first available fact —
+ * of an agent's ExitPlanMode tool calls (`agent_id` required; `tool_call_id`
+ * optional — present narrows the read to that one call, absent lists every
+ * call with recoverable content, in timeline order): the reviewed plan
+ * content, the plan file path, the offered options, and the review outcome.
+ * The content is projected from the first available fact —
  * the linked approval interaction's persisted `request` display (every
  * interactive review, live or cold), the live tool frame's display (auto
  * permission mode), or the tool result output text (cold rebuilds where the
@@ -157,12 +159,14 @@ const userMessagesQueryCoercion = z
 
 /**
  * `GET .../transcript/plan` query: both `agent_id` and `tool_call_id` are
- * required — a tool call only exists inside one agent's transcript.
+ * `GET .../transcript/plan` query: `agent_id` is required (a tool call only
+ * exists inside one agent's transcript); `tool_call_id` is optional — present
+ * narrows the read to that one ExitPlanMode call, absent lists every one.
  */
 const planQueryCoercion = z
   .object({
     agent_id: z.string().min(1),
-    tool_call_id: z.string().min(1),
+    tool_call_id: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (!isPlainAgentId(value.agent_id)) {
@@ -420,7 +424,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         [ErrorCode.TOOL_CALL_NOT_FOUND]: {},
       },
       description:
-        'Plan information of one ExitPlanMode tool call (agent_id + tool_call_id required): the reviewed plan content, plan file path, offered options, and the review outcome. Content is projected from the linked approval interaction (interactive reviews, live or cold), the live tool frame display (auto mode), or the tool result output text (cold rebuilds without an interaction). Live sessions read the in-memory store (history backfill awaited), cold sessions rebuild the agent from the persisted wire records',
+        'Plan information of an agent\'s ExitPlanMode tool calls: the reviewed plan content, plan file path, offered options, and the review outcome, in timeline order. agent_id required; tool_call_id optional — present narrows the read to that one call (unknown id or non-ExitPlanMode call → 40416), absent lists every call with recoverable plan content. Content is projected from the linked approval interaction (interactive reviews, live or cold), the live tool frame display (auto mode), or the tool result output text (cold rebuilds without an interaction). Live sessions read the in-memory store (history backfill awaited), cold sessions rebuild the agent from the persisted wire records',
       tags: ['transcript'],
     },
     async (req, reply) => {
@@ -433,16 +437,16 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         await transcriptService.whenReady(session_id);
         await transcriptService.ensureAgentHistory(session_id, agent_id);
         const transcript = store.ensureAgent(agent_id);
-        const info = projectPlanInfo(
+        const plans = projectPlans(
           transcript.getItems(),
           [...transcript.getInteractions().values()],
           tool_call_id,
         );
-        if (info === undefined) {
+        if (tool_call_id !== undefined && plans.length === 0) {
           sendToolCallNotFound(reply, req.id, tool_call_id);
           return;
         }
-        reply.send(okEnvelope({ agent_id, tool_call_id, ...info }, req.id));
+        reply.send(okEnvelope({ agent_id, plans }, req.id));
         return;
       }
 
@@ -454,12 +458,12 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         sendSessionNotFound(reply, req.id, session_id);
         return;
       }
-      const info = projectPlanInfo(snapshot.items, snapshot.interactions, tool_call_id);
-      if (info === undefined) {
+      const plans = projectPlans(snapshot.items, snapshot.interactions, tool_call_id);
+      if (tool_call_id !== undefined && plans.length === 0) {
         sendToolCallNotFound(reply, req.id, tool_call_id);
         return;
       }
-      reply.send(okEnvelope({ agent_id, tool_call_id, ...info }, req.id));
+      reply.send(okEnvelope({ agent_id, plans }, req.id));
     },
   );
   app.get(planRoute.path, planRoute.options, planRoute.handler as Parameters<TranscriptRouteHost['get']>[2]);
@@ -546,6 +550,7 @@ interface PlanReviewInfo {
 
 /** One ExitPlanMode call's projected plan information. */
 interface PlanInfo {
+  tool_call_id: string;
   turn_id: string;
   source: 'interaction' | 'display' | 'output';
   plan: string;
@@ -562,8 +567,10 @@ interface PlanReviewDisplayInfo {
 }
 
 /**
- * Project the plan information of one ExitPlanMode tool call out of one
- * agent's transcript. Content comes from the first available fact:
+ * Project the plan information of an agent's ExitPlanMode tool calls, in
+ * timeline order. `toolCallId` narrows the read to that one call. A call
+ * whose content is not recoverable (e.g. it errored before the review
+ * display existed) is skipped. Content comes from the first available fact:
  *
  *  1. the linked approval interaction's persisted `request` display — every
  *     interactive review (approve / Revise / Reject / dismiss), live or cold;
@@ -572,33 +579,34 @@ interface PlanReviewDisplayInfo {
  *  3. the tool frame's `output` text — the approved/auto-approved tool
  *     result embeds the plan body (see `parsePlanFromOutput`), the only
  *     source for cold rebuilds without an interaction.
- *
- * `undefined` means the tool call does not exist or is not an ExitPlanMode
- * call (or, defensively, carries no recoverable plan content).
  */
-function projectPlanInfo(
+function projectPlans(
   items: readonly TranscriptItem[],
   interactions: readonly TranscriptInteraction[],
-  toolCallId: string,
-): PlanInfo | undefined {
-  let turnId: string | undefined;
-  let frame: ToolCallFrame | undefined;
+  toolCallId?: string,
+): PlanInfo[] {
+  const plans: PlanInfo[] = [];
   for (const item of items) {
     if (item.kind !== 'turn') continue;
     for (const step of item.steps) {
-      for (const f of step.frames) {
-        if (f.kind === 'tool' && f.toolCallId === toolCallId) {
-          turnId = item.turnId;
-          frame = f;
-          break;
-        }
+      for (const frame of step.frames) {
+        if (frame.kind !== 'tool' || frame.name !== 'ExitPlanMode') continue;
+        if (toolCallId !== undefined && frame.toolCallId !== toolCallId) continue;
+        const info = projectPlanFrame(item.turnId, frame, interactions);
+        if (info !== undefined) plans.push(info);
       }
     }
   }
-  if (turnId === undefined || frame === undefined || frame.name !== 'ExitPlanMode') {
-    return undefined;
-  }
+  return plans;
+}
 
+/** Project one ExitPlanMode tool frame; `undefined` when no content is recoverable. */
+function projectPlanFrame(
+  turnId: string,
+  frame: ToolCallFrame,
+  interactions: readonly TranscriptInteraction[],
+): PlanInfo | undefined {
+  const toolCallId = frame.toolCallId;
   const interaction = interactions.find(
     (i) => i.interactionKind === 'approval' && i.toolCallId === toolCallId,
   );
@@ -610,15 +618,15 @@ function projectPlanInfo(
       : undefined;
   const fromInteraction = readPlanReviewDisplay(requestDisplay);
   if (fromInteraction !== undefined) {
-    return { turn_id: turnId, source: 'interaction', ...fromInteraction, review };
+    return { tool_call_id: toolCallId, turn_id: turnId, source: 'interaction', ...fromInteraction, review };
   }
   const fromDisplay = readPlanReviewDisplay(frame.display);
   if (fromDisplay !== undefined) {
-    return { turn_id: turnId, source: 'display', ...fromDisplay, review };
+    return { tool_call_id: toolCallId, turn_id: turnId, source: 'display', ...fromDisplay, review };
   }
   const fromOutput = parsePlanFromOutput(frame.output);
   if (fromOutput !== undefined) {
-    return { turn_id: turnId, source: 'output', ...fromOutput, review };
+    return { tool_call_id: toolCallId, turn_id: turnId, source: 'output', ...fromOutput, review };
   }
   return undefined;
 }

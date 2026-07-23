@@ -474,26 +474,25 @@ export const transcriptSeqSchema = z.number().int().nonnegative();
 export const transcriptGradeSpecSchema = z.record(z.string(), transcriptGradeSchema);
 
 /**
- * Per-session transcript subscriptions, carried as the `transcript` field of
- * the v1 WS `client_hello` / `subscribe` control payloads:
- * `Record<sessionId, TranscriptGradeSpec>`. This contract is owned by THIS
- * package (transcript types never live in `@moonshot-ai/protocol`); the v1
- * connection layer passes the raw field through and validates it with this
- * schema, so legacy servers/clients ignore it safely (absent = all off).
+ * Wire payload of the v1 WS `subscribe_v2` control frame — the ONLY carrier of
+ * transcript subscriptions: one session, its grade map, and the optional
+ * per-agent op-batch seq cursor. This contract is owned by THIS package
+ * (transcript types never live in `@moonshot-ai/protocol`); the v1 connection
+ * layer validates the payload with this schema and answers malformed frames
+ * with an ack error.
+ *
+ * `transcript_since`: `Record<agentId|'*', seq>` — the caller's last applied
+ * op-batch seq per agent. When present and the server's journal still covers
+ * it, the server replays the missing batches instead of sending a baseline
+ * `transcript.reset`; otherwise it falls back to the reset.
  */
-export const transcriptSubscriptionSchema = z.record(z.string(), transcriptGradeSpecSchema);
+export const transcriptSubscribeV2PayloadSchema = z.object({
+  session_id: z.string().min(1),
+  transcript: transcriptGradeSpecSchema,
+  transcript_since: z.record(z.string(), transcriptSeqSchema).optional(),
+});
 
-/**
- * Optional sibling of `transcript` in the `client_hello` / `subscribe`
- * payloads: `Record<sessionId, Record<agentId|'*', seq>>` — the caller's
- * last applied op-batch seq per agent. When present and the server's journal
- * still covers it, the server replays the missing batches instead of sending
- * a baseline `transcript.reset`; otherwise it falls back to the reset.
- */
-export const transcriptSinceSchema = z.record(
-  z.string(),
-  z.record(z.string(), transcriptSeqSchema),
-);
+export type TranscriptSubscribeV2Payload = z.infer<typeof transcriptSubscribeV2PayloadSchema>;
 
 // ---------------------------------------------------------------- REST
 
@@ -617,14 +616,12 @@ export const transcriptPlanReviewSchema = z.object({
 });
 
 /**
- * `GET /v1/sessions/{session_id}/transcript/plan` contract shape: the plan
- * information of one ExitPlanMode tool call. `source` records which fact the
+ * One ExitPlanMode call's plan information. `source` records which fact the
  * content was projected from — the linked approval interaction's `request`
  * display (interactive review), the live tool frame's display (auto mode),
  * or the tool result output text (cold rebuilds without an interaction).
  */
-export const transcriptPlanResponseSchema = z.object({
-  agent_id: agentIdSchema,
+export const transcriptPlanEntrySchema = z.object({
   tool_call_id: z.string(),
   turn_id: turnIdSchema,
   source: z.enum(['interaction', 'display', 'output']),
@@ -636,6 +633,17 @@ export const transcriptPlanResponseSchema = z.object({
     .array(z.object({ label: z.string(), description: z.string().optional() }))
     .optional(),
   review: transcriptPlanReviewSchema.optional(),
+});
+
+/**
+ * `GET /v1/sessions/{session_id}/transcript/plan` contract shape: the plans
+ * of one agent's ExitPlanMode calls, in timeline order. `tool_call_id`
+ * optional on the query: present narrows the read to that one call (unknown
+ * id → 40416), absent lists every call with recoverable plan content.
+ */
+export const transcriptPlanResponseSchema = z.object({
+  agent_id: agentIdSchema,
+  plans: z.array(transcriptPlanEntrySchema),
 });
 
 // ---------------------------------------------------------------- WS payloads

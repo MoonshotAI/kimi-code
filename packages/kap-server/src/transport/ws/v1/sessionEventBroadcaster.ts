@@ -78,6 +78,7 @@ import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
 import {
+  detachGrades,
   filterOpsForGrade,
   gradeFor,
   needsResetOnTransition,
@@ -366,6 +367,37 @@ export class SessionEventBroadcaster {
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
     state.deferredTranscriptSeeds.delete(target);
+  }
+
+  /**
+   * Detach one connection's transcript grade stream — agent-grained. With
+   * `agentIds`, only the listed agents drop to an explicit 'off' (a listed
+   * '*' removes the wildcard default); without it, the whole stream goes.
+   * Non-activating and idempotent: unknown sessions/targets are no-ops. A
+   * detached agent stops streaming on the next ops batch and its legacy
+   * session_events resume automatically (both paths re-read the per-agent
+   * grade); when no non-'off' grade remains the spec collapses to
+   * `undefined`, the seeded/deferred baselines are dropped, and any in-flight
+   * `subscribeTranscript` aborts on its grade re-read.
+   */
+  unsubscribeTranscript(
+    sessionId: string,
+    target: BroadcastTarget,
+    agentIds?: readonly string[],
+  ): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    const sub = state.targets.get(target);
+    if (sub === undefined) return;
+    const next =
+      agentIds === undefined ? undefined : detachGrades(sub.transcriptGrades, agentIds);
+    if (next === undefined) {
+      state.targets.set(target, { agentFilter: sub.agentFilter, transcriptGrades: undefined });
+      state.transcriptSeeded.delete(target);
+      state.deferredTranscriptSeeds.delete(target);
+    } else {
+      state.targets.set(target, { agentFilter: sub.agentFilter, transcriptGrades: next });
+    }
   }
 
   // ---------------------------------------------------------------------------

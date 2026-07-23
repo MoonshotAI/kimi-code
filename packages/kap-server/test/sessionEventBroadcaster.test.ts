@@ -2358,5 +2358,96 @@ describe('SessionEventBroadcaster', () => {
         unfiltered.events.map((e) => e.envelope.type),
       );
     });
+
+    it('unsubscribeTranscript detaches per agent: ops stop and legacy events resume for that agent only', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const sub = lc.addAgent('agent-0');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await bc.getCursor('s1');
+      // Both agents stream via transcript; their projected session_events are suppressed.
+      expect(view.envelopes.map((e) => e.type)).not.toContain('turn.started');
+      const opsBefore = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.ops');
+      expect(new Set(opsBefore.map((e) => (e.payload as OpsPayload).agent_id))).toEqual(
+        new Set(['main', 'agent-0']),
+      );
+
+      bc.unsubscribeTranscript('s1', view.target, ['main']);
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 2, origin: { kind: 'user' } }));
+      sub.bus.emit(agentEvent('turn.started', { turnId: 2, origin: { kind: 'user' } }));
+      await bc.getCursor('s1');
+
+      // The detached agent's legacy events flow again; the other agent's stay suppressed.
+      const turns = view.envelopes.filter((e) => e.type === 'turn.started');
+      expect(turns.map((e) => (e.payload as { agentId: string }).agentId)).toEqual(['main']);
+      // And the ops stream keeps serving only the still-graded agent.
+      const opsAfter = transcriptEnvelopes(view.envelopes)
+        .filter((e) => e.type === 'transcript.ops')
+        .slice(opsBefore.length);
+      expect(opsAfter.length).toBeGreaterThan(0);
+      expect(new Set(opsAfter.map((e) => (e.payload as OpsPayload).agent_id))).toEqual(
+        new Set(['agent-0']),
+      );
+    });
+
+    it('unsubscribeTranscript without agent ids detaches the whole stream; a re-subscribe re-seeds', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // baseline
+
+      bc.unsubscribeTranscript('s1', view.target);
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await bc.getCursor('s1');
+      // No new transcript frames, and the legacy events are back in full.
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+      expect(view.envelopes.map((e) => e.type)).toContain('turn.started');
+
+      // Re-subscribing is an upgrade over 'off' again: a fresh baseline lands.
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.reset');
+    });
+
+    it('unsubscribeTranscript is idempotent and never activates a session', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      // Unknown session, unknown target, grade-less target — all no-ops.
+      expect(() => bc.unsubscribeTranscript('nope', view.target)).not.toThrow();
+      expect(() => bc.unsubscribeTranscript('s1', view.target)).not.toThrow();
+      await bc.subscribe('s1', view.target);
+      expect(() => bc.unsubscribeTranscript('s1', view.target, ['main'])).not.toThrow();
+    });
+
+    it('unsubscribeTranscript cancels a pending deferred baseline', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' }, { deferTranscriptReset: true });
+      bc.unsubscribeTranscript('s1', view.target);
+      await bc.flushTranscriptSeed('s1', view.target);
+
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
+    });
   });
 });

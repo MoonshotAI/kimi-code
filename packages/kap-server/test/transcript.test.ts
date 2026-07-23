@@ -97,8 +97,7 @@ interface UserMessagesContract {
   }[];
 }
 
-interface PlanContract {
-  agent_id: string;
+interface PlanEntryContract {
   tool_call_id: string;
   turn_id: string;
   source: 'interaction' | 'display' | 'output';
@@ -106,6 +105,11 @@ interface PlanContract {
   path?: string;
   options?: { label: string; description?: string }[];
   review?: { state: string; selected_option?: string; feedback?: string };
+}
+
+interface PlanContract {
+  agent_id: string;
+  plans: PlanEntryContract[];
 }
 
 function serverEvent(payload: Record<string, unknown>): DomainEvent {
@@ -1133,8 +1137,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
     );
     expect(body.code).toBe(0);
-    expect(body.data).toMatchObject({
-      agent_id: 'main',
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
       tool_call_id: 'call_plan',
       turn_id: 't1',
       source: 'interaction',
@@ -1177,12 +1182,13 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
     );
     expect(body.code).toBe(0);
-    expect(body.data).toMatchObject({
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
       source: 'display',
       plan: '# Auto Plan',
       path: '/tmp/plans/auto.md',
     });
-    expect(body.data.review).toBeUndefined();
+    expect(body.data.plans[0]!.review).toBeUndefined();
   });
 
   it('rebuilds plan info from the tool result output for a cold session', async () => {
@@ -1214,14 +1220,15 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
     );
     expect(body.code).toBe(0);
-    expect(body.data).toMatchObject({
-      agent_id: 'main',
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
       tool_call_id: 'call_plan',
       source: 'output',
       plan: '# The Plan\n\nDo the thing.',
       path: '/tmp/plans/foo.md',
     });
-    expect(body.data.review).toBeUndefined();
+    expect(body.data.plans[0]!.review).toBeUndefined();
   });
 
   it('rebuilds plan info from the persisted interaction for a cold session (revise)', async () => {
@@ -1274,7 +1281,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
     );
     expect(body.code).toBe(0);
-    expect(body.data).toMatchObject({
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
       source: 'interaction',
       plan: '# Draft Plan',
       path: '/tmp/plans/foo.md',
@@ -1312,12 +1320,76 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
     expect(notPlan.body.code).toBe(40416);
 
-    // Hostile agent id / missing tool_call_id fail validation.
+    // Hostile agent id fails validation.
     const hostile = await getJson<null>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=${encodeURIComponent('../main')}&tool_call_id=call_plan`,
     );
     expect(hostile.body.code).toBe(40001);
-    const noToolCall = await getJson<null>(`/api/v1/sessions/${id}/transcript/plan?agent_id=main`);
-    expect(noToolCall.body.code).toBe(40001);
+  });
+
+  it('lists every ExitPlanMode plan of the agent when tool_call_id is omitted', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    // Two separate ExitPlanMode calls (a Revise → resubmit pair), plus an
+    // unrelated tool call that must not appear.
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_draft',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Draft' },
+      }),
+    );
+    bus.publish(
+      serverEvent({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_bash', name: 'Bash', args: {} }),
+    );
+    bus.publish(serverEvent({ type: 'tool.result', turnId: 1, toolCallId: 'call_bash', output: 'ok' }));
+    bus.publish(serverEvent({ type: 'turn.step.completed', turnId: 1, step: 1 }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_final',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
+      }),
+    );
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'apr-final',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'call_final',
+        toolName: 'ExitPlanMode',
+        action: 'Presenting plan and exiting plan mode',
+        display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
+      },
+      origin: { agentId: 'main', turnId: 1 },
+    });
+    interactions.respond('apr-final', { decision: 'approved' });
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans.map((p) => [p.tool_call_id, p.plan])).toEqual([
+      ['call_draft', '# Draft'],
+      ['call_final', '# Final'],
+    ]);
+    // The draft has no interaction; the final carries its review outcome.
+    expect(body.data.plans[0]!.review).toBeUndefined();
+    expect(body.data.plans[1]!.review).toMatchObject({ state: 'approved' });
   });
 });

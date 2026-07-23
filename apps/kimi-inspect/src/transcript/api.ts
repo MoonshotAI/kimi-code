@@ -15,6 +15,7 @@
 
 import {
   transcriptOpsCatchupResponseSchema,
+  transcriptPlanResponseSchema,
   transcriptResponseSchema,
   type TranscriptAttachment,
   type TranscriptInteraction,
@@ -159,4 +160,84 @@ export async function fetchTranscriptOps(
     latestSeq: parsed.data.latest_seq,
     complete: parsed.data.complete,
   };
+}
+
+// ------------------------------------------------------------------ plan lookup
+
+/** The review round-trip of one ExitPlanMode call, from the plan endpoint. */
+export interface TranscriptPlanReview {
+  readonly state: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  readonly selectedOption?: string | undefined;
+  readonly feedback?: string | undefined;
+}
+
+/** Plan information of one ExitPlanMode tool call (`GET .../transcript/plan`). */
+export interface TranscriptPlanInfo {
+  readonly toolCallId: string;
+  readonly turnId: string;
+  /** Which fact the content was projected from server-side. */
+  readonly source: 'interaction' | 'display' | 'output';
+  readonly plan: string;
+  readonly path?: string | undefined;
+  readonly options?: readonly { label: string; description?: string | undefined }[] | undefined;
+  readonly review?: TranscriptPlanReview | undefined;
+}
+
+export interface FetchTranscriptPlanOptions {
+  readonly baseUrl: string;
+  readonly token?: string | undefined;
+  readonly sessionId: string;
+  readonly agentId: string;
+  /** Narrow the read to one ExitPlanMode call; omitted lists every plan of the agent. */
+  readonly toolCallId?: string | undefined;
+  /** Injectable for tests. */
+  readonly fetchImpl?: typeof fetch;
+}
+
+/**
+ * Plan lookup: `GET .../transcript/plan?agent_id=[&tool_call_id=]`, in
+ * timeline order. With `toolCallId` set, a 40416 envelope means the tool
+ * call does not exist or is not an ExitPlanMode call (the message says
+ * which).
+ */
+export async function fetchTranscriptPlan(
+  opts: FetchTranscriptPlanOptions,
+): Promise<TranscriptPlanInfo[]> {
+  const params = new URLSearchParams({ agent_id: opts.agentId });
+  if (opts.toolCallId !== undefined && opts.toolCallId !== '') {
+    params.set('tool_call_id', opts.toolCallId);
+  }
+  const headers: Record<string, string> = {};
+  if (opts.token !== undefined && opts.token !== '') {
+    headers['authorization'] = `Bearer ${opts.token}`;
+  }
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(
+    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/transcript/plan?${params.toString()}`,
+    { headers },
+  );
+  const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
+  if (envelope.code !== 0) {
+    throw new Error(`transcript plan failed (${envelope.code}): ${envelope.msg}`);
+  }
+  const parsed = transcriptPlanResponseSchema.safeParse(envelope.data);
+  if (!parsed.success) {
+    throw new Error('transcript plan: unexpected response shape');
+  }
+  return parsed.data.plans.map((entry) => ({
+    toolCallId: entry.tool_call_id,
+    turnId: entry.turn_id,
+    source: entry.source,
+    plan: entry.plan,
+    path: entry.path,
+    options: entry.options,
+    review:
+      entry.review === undefined
+        ? undefined
+        : {
+            state: entry.review.state,
+            selectedOption: entry.review.selected_option,
+            feedback: entry.review.feedback,
+          },
+  }));
 }
