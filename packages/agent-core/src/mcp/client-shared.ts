@@ -32,17 +32,17 @@ export interface McpRequestOptions {
 }
 
 /**
- * Build the `RequestOptions` object accepted by the MCP SDK's `callTool`,
- * including either the configured tool-call timeout, an in-flight abort
- * signal, both, or neither. Returns `undefined` when nothing needs to be
- * passed so the SDK falls back to its defaults.
+ * Build the `RequestOptions` object accepted by MCP SDK requests, including
+ * either a configured timeout, an in-flight abort signal, both, or neither.
+ * Returns `undefined` when nothing needs to be passed so the SDK falls back
+ * to its defaults.
  */
 export function buildRequestOptions(
-  toolCallTimeoutMs: number | undefined,
+  timeoutMs: number | undefined,
   signal: AbortSignal | undefined,
 ): McpRequestOptions | undefined {
-  if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
-  return { timeout: toolCallTimeoutMs, signal };
+  if (timeoutMs === undefined && signal === undefined) return undefined;
+  return { timeout: timeoutMs, signal };
 }
 
 interface SdkListedTool {

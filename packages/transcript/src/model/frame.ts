@@ -9,14 +9,12 @@
  * task entity (`taskId`), an interaction (`approvalId`), or a sibling agent
  * (`agentRefs`) whose own AgentTranscript can be subscribed separately.
  *
- * Interactions appear twice by design: inline as `InteractionFrame` (legacy
- * surface, kept for wire compatibility) and as global entities beside tasks
- * (`model/interaction.ts`, the authoritative channel). Both mirror the same
- * underlying interaction by `interactionId`.
+ * Interactions are global entities beside tasks (`model/interaction.ts`),
+ * never step frames: they resolve asynchronously, possibly long after the
+ * originating step flushed, so they do not live inside the paginated timeline.
  */
 
 import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
-import type { InteractionKind, InteractionState } from './interaction';
 
 export type { InteractionKind, InteractionState } from './interaction';
 
@@ -51,6 +49,18 @@ export interface ThinkingFrame {
 
 export type ToolFrameState = 'running' | 'done' | 'error';
 
+/**
+ * The latest progress update of a running tool call (`tool.progress`),
+ * overwrite semantics — only the newest rides the frame.
+ */
+export interface ToolFrameProgress {
+  readonly kind: 'stdout' | 'stderr' | 'progress' | 'status' | 'custom';
+  readonly text?: string;
+  readonly percent?: number;
+  readonly customKind?: string;
+  readonly customData?: unknown;
+}
+
 export interface AgentRef {
   readonly agentId: AgentId;
   /** 'member' marks one child of an agent group (swarm); default is 'child'. */
@@ -74,6 +84,14 @@ export interface ToolCallFrame {
   readonly output?: unknown;
   readonly display?: unknown;
   readonly error?: string;
+  /**
+   * Raw argument text accumulated from `tool.call.delta`. `input` is the
+   * parsed object; this is the verbatim source text, kept after
+   * `tool.call.started` lands.
+   */
+  readonly inputText?: string;
+  /** Newest `tool.progress` update. */
+  readonly progress?: ToolFrameProgress;
   /** Execution entity (backgroundable shell / subagent run) behind this call. */
   readonly taskId?: TaskId;
   /** Interaction (approval/question) that gated this call, if any. */
@@ -82,30 +100,6 @@ export interface ToolCallFrame {
   readonly todoId?: TodoId;
   /** Agents spawned by this call (Agent tool / AgentSwarm members). */
   readonly agentRefs?: readonly AgentRef[];
-}
-
-/**
- * An approval or AskUserQuestion surfaced inline — the **legacy inline
- * surface**, kept verbatim for wire compatibility: existing consumers read
- * interactions from step frames at this position with these fields.
- *
- * The authoritative channel is the global entity (`model/interaction.ts` +
- * `interaction.upsert`): producers emit BOTH (this frame mirrors the entity
- * by `interactionId`). Consumers should prefer the entity — it is addressed
- * by id, pagination-proof, and visible at 'turn' grade — and treat this
- * frame as the fallback when no entity with the same id is present.
- */
-export interface InteractionFrame {
-  readonly kind: 'interaction';
-  readonly frameId: FrameId;
-  readonly interactionId: InteractionId;
-  readonly interactionKind: InteractionKind;
-  readonly toolCallId?: string;
-  readonly state: InteractionState;
-  /** Open content: engine ApprovalRequest / QuestionRequest payload. */
-  readonly request?: unknown;
-  /** Open content: engine ApprovalResponse / QuestionResult payload. */
-  readonly response?: unknown;
 }
 
 /** Errors / warnings / informational notices attached to a step. */
@@ -123,5 +117,4 @@ export type TranscriptFrame =
   | TextFrame
   | ThinkingFrame
   | ToolCallFrame
-  | InteractionFrame
   | NoticeFrame;

@@ -2,7 +2,7 @@
  * `workspaceCommand` domain (L6) — `ISessionWorkspaceCommandService` implementation.
  *
  * Coordinates session-level workspace mutations: resolves and persists
- * workspace-local config through `workspaceLocalConfig`, updates
+ * project-local config through `projectLocalConfig`, updates
  * `workspaceContext`, and mirrors command output into the main agent through
  * `agentLifecycle` and `contextMemory`. Bound at Session scope.
  */
@@ -12,7 +12,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -31,8 +31,8 @@ export class SessionWorkspaceCommandService
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
-    @IWorkspaceLocalConfigService
-    private readonly localConfig: IWorkspaceLocalConfigService,
+    @IProjectLocalConfigService
+    private readonly localConfig: IProjectLocalConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
   ) {

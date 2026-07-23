@@ -18,7 +18,7 @@ import {
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
-  IWorkspaceRegistry,
+  IWorkspaceService,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -80,7 +80,7 @@ describe('server-v2 snapshot route enrichment', () => {
           ISessionLifecycleService,
           { resume: async () => session, get: () => undefined },
         ],
-        [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
+        [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
       ]),
     };
     const broadcaster = {

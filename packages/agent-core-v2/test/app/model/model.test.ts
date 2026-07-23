@@ -1,25 +1,26 @@
 /**
- * `model` domain tests — covers `ModelService` CRUD over the `models` config
- * section, schema registration, and the delete-via-replace semantics.
+ * `model` domain tests — covers `effectiveModelConfig`, the `models` config
+ * section registration + TOML transforms (now owned by the app/kosongConfig
+ * persistence wrapper), and the `KIMI_MODEL_*` env overlay.
+ *
+ * The registry itself (`ModelService`) is a pure in-memory store covered by
+ * `test/kosong/model/modelService.test.ts`; persistence through the config
+ * bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { ErrorCodes, Error2 } from '#/errors';
-import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/kosong/model/envOverlay';
+import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/app/kosongConfig/envOverlay';
 import {
-  IModelService,
-  type ModelRecord,
+  ENV_MODEL_PROVIDER_KEY,
   MODELS_SECTION,
   ModelsSectionSchema,
-} from '#/kosong/model/model';
-import { modelsFromToml, modelsToToml } from '#/kosong/model/configSection';
-import { ModelService } from '#/kosong/model/modelService';
-import { ENV_MODEL_PROVIDER_KEY } from '#/kosong/provider/provider';
+  modelsFromToml,
+  modelsToToml,
+} from '#/app/kosongConfig/configSection';
+import { type ModelRecord } from '#/kosong/model/model';
 import { effectiveModelConfig } from '#/kosong/model/modelAuth';
 
 // Side-effect registrations: endpoint defaults and the trait-driven-thinking
@@ -192,79 +193,9 @@ describe('effectiveModelConfig', () => {
   });
 });
 
-describe('ModelService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
-  let registry: ConfigRegistry;
-  let models: Record<string, ModelRecord>;
-  let configSet: ReturnType<typeof vi.fn>;
-  let configReplace: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    registry = new ConfigRegistry();
-    models = {};
-    configSet = vi.fn().mockResolvedValue(undefined);
-    configReplace = vi.fn().mockResolvedValue(undefined);
-    ix = createServices(disposables, {
-      additionalServices: (reg) => {
-        reg.defineInstance(IConfigRegistry, registry);
-        reg.definePartialInstance(IConfigService, {
-          get: ((domain: string) =>
-            domain === MODELS_SECTION ? models : undefined) as IConfigService['get'],
-          set: configSet as unknown as IConfigService['set'],
-          replace: configReplace as unknown as IConfigService['replace'],
-          onDidChangeConfiguration: (() => ({ dispose: () => { } })) as IConfigService['onDidChangeConfiguration'],
-        });
-        reg.define(IModelService, ModelService);
-      },
-    });
-  });
-  afterEach(() => disposables.dispose());
-
-  it('registers the models section schema from configSection import', () => {
-    expect(registry.getSection(MODELS_SECTION)).toBeDefined();
-  });
-
-  it('set delegates to config.set with a single-alias patch', async () => {
-    const svc = ix.get(IModelService);
-    await svc.set('m1', { provider: 'p', model: 'x', maxContextSize: 1000 });
-    expect(configSet).toHaveBeenCalledWith(MODELS_SECTION, {
-      m1: { provider: 'p', model: 'x', maxContextSize: 1000 },
-    });
-  });
-
-  it('get reads a single alias from config', () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    const svc = ix.get(IModelService);
-    expect(svc.get('m1')).toEqual({ provider: 'p', model: 'x', maxContextSize: 1000 });
-    expect(svc.get('missing')).toBeUndefined();
-  });
-
-  it('list returns all aliases', () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    models['m2'] = { provider: 'p', model: 'y', maxContextSize: 2000 };
-    const svc = ix.get(IModelService);
-    expect(svc.list()).toEqual({
-      m1: { provider: 'p', model: 'x', maxContextSize: 1000 },
-      m2: { provider: 'p', model: 'y', maxContextSize: 2000 },
-    });
-  });
-
-  it('delete removes the alias and replaces the whole section', async () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    models['m2'] = { provider: 'p', model: 'y', maxContextSize: 2000 };
-    const svc = ix.get(IModelService);
-    await svc.delete('m1');
-    expect(configReplace).toHaveBeenCalledWith(MODELS_SECTION, {
-      m2: { provider: 'p', model: 'y', maxContextSize: 2000 },
-    });
-  });
-
-  it('delete is a no-op when the alias is absent', async () => {
-    const svc = ix.get(IModelService);
-    await svc.delete('missing');
-    expect(configReplace).not.toHaveBeenCalled();
+describe('models config section', () => {
+  it('self-registers the models section schema', () => {
+    expect(new ConfigRegistry().getSection(MODELS_SECTION)).toBeDefined();
   });
 });
 

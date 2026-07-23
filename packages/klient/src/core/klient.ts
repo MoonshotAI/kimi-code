@@ -6,16 +6,16 @@
  */
 
 import type { KlientChannel, ScopeRef } from './channel.js';
-import { globalContract } from '#/contract/index';
+import { globalContract, isStreamingContract } from '#/contract/index';
 import { globalEvents, type KlientEventPayloads } from '#/contract/global/events';
 import { sessionEvents, type SessionEventPayloads } from '#/contract/session/events';
 import { agentEvents, type AgentEventPayloads } from '#/contract/agent/events';
-import type { EventRegistration } from '#/contract/types';
+import type { EventRegistration, StreamingProcedureContract } from '#/contract/types';
 import { EventHub, type KlientEvents } from './events/hub.js';
-import { createGlobalFacade, type GlobalFacade, type ScopedCaller } from './facade/global.js';
+import { createGlobalFacade, type GlobalFacade, type ScopedCaller, type ScopedStreamCaller } from './facade/global.js';
 import { createSessionFacade, type SessionFacade } from './facade/session.js';
 import { createAgentFacade, type AgentFacade } from './facade/agent.js';
-import { parseInput, parseOutput } from './validation.js';
+import { parseChunk, parseInput, parseOutput } from './validation.js';
 
 export interface KlientOptions {
   /**
@@ -54,10 +54,46 @@ export function createKlientFromChannel(
       // A facade method without a contract entry is a klient bug, not a wire error.
       throw new Error(`no contract registered for ${service}.${method}`);
     }
+    if (isStreamingContract(procedure)) {
+      throw new Error(`${service}.${method} is a streaming procedure — use callStream instead`);
+    }
     const name = `${service}.${method}`;
     const wireArgs = validate ? parseInput(name, procedure, args) : args;
     const data = await channel.call(scope, service, method, wireArgs);
     return validate ? parseOutput(name, procedure, data) : data;
+  };
+
+  const callStream: ScopedStreamCaller = (scope, service, method, args) => {
+    const procedure = globalContract[service]?.[method];
+    if (procedure === undefined) {
+      throw new Error(`no contract registered for ${service}.${method}`);
+    }
+    if (!isStreamingContract(procedure)) {
+      throw new Error(`${service}.${method} is not a streaming procedure — use call instead`);
+    }
+    const name = `${service}.${method}`;
+    const wireArgs = validate ? parseInput(name, procedure, args) : args;
+    const source = channel.stream(scope, service, method, wireArgs);
+    if (!validate) return source;
+
+    // Wrap the iterable to validate each chunk.
+    const contract = procedure as StreamingProcedureContract;
+    return {
+      [Symbol.asyncIterator]() {
+        const iter = source[Symbol.asyncIterator]();
+        return {
+          async next() {
+            const result = await iter.next();
+            if (result.done) return { done: true as const, value: undefined };
+            return { done: false, value: parseChunk(name, contract, result.value) };
+          },
+          async return(value?: unknown) {
+            await iter.return?.(value);
+            return { done: true as const, value: undefined };
+          },
+        };
+      },
+    };
   };
 
   const hubs = new Set<{ close(): void }>();
@@ -71,7 +107,7 @@ export function createKlientFromChannel(
   };
 
   return {
-    global: createGlobalFacade(call),
+    global: createGlobalFacade(call, callStream),
     events: makeHub<KlientEventPayloads>({}, globalEvents),
     session(sessionId: string): SessionHandle {
       const scope: ScopeRef = { sessionId };

@@ -6,7 +6,7 @@
 
 import type { ReactNode } from 'react';
 
-export type AppView = 'chat' | 'models';
+export type AppView = 'chat' | 'models' | 'services';
 
 interface ViewDef {
   readonly id: AppView;
@@ -43,6 +43,18 @@ const VIEWS: readonly ViewDef[] = [
         <path d="M12 2 2 7l10 5 10-5-10-5z" />
         <path d="m2 17 10 5 10-5" />
         <path d="m2 12 10 5 10-5" />
+      </svg>
+    ),
+  },
+  {
+    id: 'services',
+    title: 'App Services',
+    icon: (
+      <svg {...iconProps}>
+        <rect x="2" y="2" width="20" height="8" rx="2" />
+        <rect x="2" y="14" width="20" height="8" rx="2" />
+        <line x1="6" y1="6" x2="6.01" y2="6" />
+        <line x1="6" y1="18" x2="6.01" y2="18" />
       </svg>
     ),
   },

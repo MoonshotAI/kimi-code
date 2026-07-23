@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-import type { ServiceContract } from '../types.js';
+import type { ServiceContract, StreamingProcedureContract } from '../types.js';
 
 export const modelCatalogItemSchema = z.object({
   provider: z.string(),
@@ -38,9 +38,33 @@ export const setDefaultModelResponseSchema = z.object({
   model: modelCatalogItemSchema,
 });
 
+const generateInputSchema = z.object({
+  systemPrompt: z.string(),
+  messages: z.array(z.unknown()),
+  tools: z.array(z.unknown()).optional(),
+  responseFormat: z.unknown().optional(),
+});
+
+const generateParamsSchema = z.object({
+  cacheKey: z.string().optional(),
+  temperature: z.number().optional(),
+  topP: z.number().optional(),
+  thinkingEffort: z.string().optional(),
+  maxCompletionTokens: z.number().optional(),
+}).optional();
+
+const generateEventSchema = z.object({
+  type: z.string(),
+}).passthrough();
+
 export const catalogContract = {
   listModels: { input: z.tuple([]), output: z.array(modelCatalogItemSchema) },
   listProviders: { input: z.tuple([]), output: z.array(providerCatalogItemSchema) },
   getProvider: { input: z.tuple([z.string()]), output: providerCatalogItemSchema },
   setDefaultModel: { input: z.tuple([z.string()]), output: setDefaultModelResponseSchema },
+  generate: {
+    input: z.tuple([z.string(), generateInputSchema, generateParamsSchema]),
+    chunk: generateEventSchema,
+    streaming: true,
+  } as StreamingProcedureContract,
 } satisfies ServiceContract;

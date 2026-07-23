@@ -1,10 +1,12 @@
 /**
- * `mcp` domain (L5), Session scope — `ISessionMcpService` implementation.
+ * `mcp` domain (L5) — `ISessionMcpService` implementation.
  *
  * Owns the session-wide `McpConnectionManager` (built lazily, shared by every
  * agent), resolves the session + caller-supplied + plugin MCP config, drives
  * the initial connect (`ensureMcpReady`, cached so session creation and first
- * agent creation can both await it), and reports connection telemetry. An
+ * agent creation can both await it), and reports connection telemetry. The
+ * initial connect waits for `config.ready` so global timeout preferences are
+ * deterministic; the manager reads them again at each (re)connect. An
  * outright initial-load failure is logged (per-server failures are status
  * entries). Bound at Session scope.
  */
@@ -14,10 +16,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import { MCP_SECTION, type McpSection } from '#/agent/mcp/configSection';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { createMcpOAuthStore } from '#/agent/mcp/oauth/store';
 import { mergeCallerMcpServers, resolveSessionMcpConfig } from '#/agent/mcp/session-config';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
@@ -39,6 +43,7 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     @IAtomicDocumentStore private readonly atomicDocs: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
   }
@@ -46,7 +51,7 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
   ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void> {
     if (this.mcpInitialLoad !== undefined) return this.mcpInitialLoad;
     const manager = this.connectionManager();
-    const initialLoad = this.connectMcpServers(manager, callerServers).catch((error: unknown) => {
+    const initialLoad = this.initializeMcp(manager, callerServers).catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
     });
     this.mcpInitialLoad = initialLoad;
@@ -62,10 +67,25 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
       log: this.log,
       oauthService,
       stdioCwd: this.workspace.workDir,
+      resolveDefaultTimeouts: () => {
+        const section = this.config.get<McpSection | undefined>(MCP_SECTION);
+        return {
+          startupTimeoutMs: section?.startupTimeoutMs,
+          toolTimeoutMs: section?.toolTimeoutMs,
+        };
+      },
     });
     this.mcpManager = manager;
     this._register({ dispose: () => void manager.shutdown() });
     return manager;
+  }
+
+  private async initializeMcp(
+    manager: McpConnectionManager,
+    callerServers?: Readonly<Record<string, McpServerConfig>>,
+  ): Promise<void> {
+    await this.config.ready;
+    await this.connectMcpServers(manager, callerServers);
   }
 
   private async connectMcpServers(

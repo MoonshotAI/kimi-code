@@ -119,10 +119,12 @@ const DOMAIN_LAYER = new Map([
   ['blob', 2],
   ['file', 2],
   ['config', 2],
-  ['workspaceLocalConfig', 2],
+  ['projectLocalConfig', 2],
   ['sessionFs', 2],
   ['process', 2],
-  ['workspaceRegistry', 2],
+  ['workspace', 2],
+  ['workspaceAliases', 2],
+  ['workspaceSessions', 2],
   ['hostFolderBrowser', 2],
   ['auth', 2],
   ['provider', 2],
@@ -137,6 +139,7 @@ const DOMAIN_LAYER = new Map([
   ['sessionAgentProfileCatalog', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
+  ['toolApproval', 3],
   ['flag', 3],
   ['toolExecutor', 3],
   ['toolResultTruncation', 3],
@@ -220,7 +223,7 @@ const DOMAIN_LAYER = new Map([
   // `workspaceCommand` orchestrates session-level workspace mutations
   // (`addAdditionalDir`): it reaches through `agentLifecycle` (L6) to the
   // `main` agent's `contextMemory` (L4) to mirror the action's stdout, and
-  // delegates project-local config persistence to `workspaceLocalConfig` (L2).
+  // delegates project-local config persistence to `projectLocalConfig` (L2).
   // Its highest real dependency is `agentLifecycle`, so it sits in L6 beside
   // the other coordination domains.
   ['workspaceCommand', 6],
@@ -248,6 +251,14 @@ const DOMAIN_LAYER = new Map([
   ['kosong/protocol', 1],
   ['kosong/provider', 2],
   ['kosong/model', 2],
+  // `kosongConfig` (App, L3) is the persistence wrapper over kosong: it
+  // declares the kosong-owned config sections (constants + zod schemas
+  // re-derived from kosong's pure types, compile-time pinned) and their
+  // env-overlay registrations, the two-way config ↔ kosong sync bridge, the
+  // OAuth token adapter, and the discovery orchestrator. It may import
+  // `config`/`auth`/`event` (L1–L2) and every kosong layer; kosong never
+  // imports it back.
+  ['kosongConfig', 3],
 ]);
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
@@ -278,11 +289,14 @@ const KOSONG_LAYER = new Map([
 ]);
 
 /**
- * Kosong subdomains whose non-kosong imports are restricted to `_base`
- * utilities (`contract` is the pure wire contract; `protocol` is L1 trait
- * interfaces — only `_base` + `contract`).
+ * Kosong is a pure provider/model abstraction layer: NO kosong subdomain may
+ * import another v2 domain outside kosong itself — only `_base` utilities
+ * are allowed. (`protocol` additionally sees `kosong/contract`, handled by
+ * Rule 3b above.) Config persistence, OAuth tokens, events, and discovery
+ * orchestration all live in the upper `app/kosongConfig` wrapper — kosong
+ * must never reach up to them.
  */
-const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol']);
+const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol', 'provider', 'model']);
 
 /**
  * Wire SDK packages the pure kosong layers must never import — not even
@@ -372,13 +386,10 @@ function domainFromRel(rel, { exemptRootFile }) {
  *                              Store to its filesystem backend (same role as
  *                              the storage backend bindings).
  *
- *  - `permissionGate>approval`  : permissionGate(Agent) requests approval(Session broker).
+ *  - `toolApproval>approval`   : toolApproval(Agent) requests approval(Session broker)
+ *                                for permissionGate asks and plan/goal reviews.
  *  - `userTool>interaction`     : userTool(Agent) requests host-side execution
  *                                 through the Session interaction broker.
- *  - `permissionPolicy>plan`     : plan-mode approval policies need the current
- *                                 Agent plan state to approve/deny tool use.
- *  - `permissionPolicy>swarm`    : swarm-mode approval policy needs the current
- *                                 Agent swarm state to approve AgentSwarm.
  *  - `skill>loop`           : skill activate starts a turn through the loop (same Agent scope intent).
  *  - `swarm>agentLifecycle`: swarm spawns/manages sub-agents.
  *  - `cron>agentLifecycle` : cron coordinator steers the main agent.
@@ -389,7 +400,7 @@ function domainFromRel(rel, { exemptRootFile }) {
  * Post-rebase-v2 restructuring introduced cross-domain type sharing between
  * L3 (registries/capabilities) and L4 (agent behaviour). The tool contract
  * (`ExecutableTool` / `ToolExecution` / results) and the tool-execution hook
- * contexts (`ToolExecutionHookContext` / `ToolBeforeExecuteContext` / …) now
+ * contexts (`ToolExecutionHookContext` / `BeforeToolExecuteEvent` / …) now
  * live in `tool` (L3); the only remaining L3→L4 import is a `loop` error /
  * event helper used by `toolExecutor` — surfaced for review rather than a
  * layering violation to fix here.
@@ -398,6 +409,9 @@ const ALLOWED_EXCEPTIONS = new Set([
   'bootstrap>skillCatalog',
   // bootstrap is the composition root — it wires backends by design.
   'bootstrap>persistence/backends',
+  // bootstrap instantiates the kosong persistence bridge eagerly so kosong's
+  // registries are hydrated before any consumer can await their `ready`.
+  'bootstrap>kosongConfig',
   // `auth` (KimiOAuth, L2) owns the OAuth-backed `WebSearch` tool and registers
   // it through the tool contribution API, so it reaches up to the L3 tool
   // contract and registry. Surfaced for review: the tool needs an authenticated
@@ -405,15 +419,20 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
-  'permissionGate>approval',
+  // Transitional: `auth` (L2) reads/writes the kosong-owned config sections
+  // (providers/models/thinking), whose constants and schemas are declared by
+  // the `kosongConfig` persistence wrapper (L3), when provisioning or clearing
+  // OAuth-managed config. Slated for cleanup with the auth layering rework.
+  'auth>kosongConfig',
+  // `toolApproval` (Agent, L3) owns the approval round-trip for permissionGate
+  // asks and plan/goal reviews, driven through the Session approval broker.
+  'toolApproval>approval',
   // `permissionRules` (L3) persists the approval broker's `ApprovalResponse`
   // (Session, L7) verbatim in its wire-logged `PermissionApprovalResultRecord`
   // — a real cross-scope dependency, surfaced here rather than hidden behind a
   // re-declared copy of the shape.
   'permissionRules>approval',
   'userTool>interaction',
-  'permissionPolicy>plan',
-  'permissionPolicy>swarm',
   'skill>loop',
   // `activityView` seeds its background-task slice once from the agent's task
   // registry (a read, never a write) — everything else it folds from events.
@@ -422,6 +441,10 @@ const ALLOWED_EXCEPTIONS = new Set([
   // `swarm` (L4) drives sub-agent runs through the `subagent` domain (L6) —
   // same shape as the `swarm>agentLifecycle` spawn exception above.
   'swarm>subagent',
+  // `agentTask` (L5) owns the print-mode (`kimi -p`) policy; filling its
+  // config defaults reaches the `subagent` section (L6) for the subagent
+  // timeout — same cross-scope config-fill shape as `swarm>subagent`.
+  'agentTask>subagent',
   'cron>agentLifecycle',
   'cron>sessionContext',
   'todo>agentLifecycle',
@@ -613,16 +636,17 @@ export function checkSource(source, absFile) {
       continue;
     }
 
-    // Rule 3c: outside the kosong subtree, the pure layers may only depend
-    // on `_base` utilities (`protocol` additionally sees `kosong/contract`,
-    // handled by Rule 3b above).
+    // Rule 3c: outside the kosong subtree, kosong code may only depend on
+    // `_base` utilities (`protocol` additionally sees `kosong/contract`,
+    // handled by Rule 3b above). This is what keeps kosong a pure
+    // abstraction layer with no upward dependencies.
     if (sourceKosong !== undefined && KOSONG_BASE_ONLY_SUBDOMAINS.has(sourceKosong.sub)) {
       const targetDomain = targetDomainOf(targetAbs);
       if (targetDomain !== '_base') {
         violations.push({
           file: absFile,
           line,
-          message: `'kosong/${sourceKosong.sub}' must not import domain '${targetDomain ?? specifier}' via '${specifier}' — only _base utilities are allowed outside the kosong subtree`,
+          message: `'kosong/${sourceKosong.sub}' must not import domain '${targetDomain ?? specifier}' via '${specifier}' — kosong is a pure abstraction layer: only _base utilities are allowed outside the kosong subtree (persistence/OAuth/discovery live in app/kosongConfig)`,
         });
       }
       continue;

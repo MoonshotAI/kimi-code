@@ -34,6 +34,17 @@ interface PendingCall {
   readonly timer: ReturnType<typeof setTimeout> | undefined;
 }
 
+/**
+ * Async queue for streaming responses. The server pushes chunks via
+ * `stream_data` frames; the client pulls them with `next()`. Back-pressure
+ * is implicit: the queue buffers until the consumer drains.
+ */
+interface PendingStream {
+  push(chunk: unknown): void;
+  end(): void;
+  error(err: Error): void;
+}
+
 function scopeKindOf(scope: ScopeRef): 'core' | 'session' | 'agent' {
   if (scope.agentId !== undefined) return 'agent';
   if (scope.sessionId !== undefined) return 'session';
@@ -45,6 +56,7 @@ export class IpcChannel implements KlientChannel {
   private readonly decoder = new NdjsonDecoder();
   private readonly callTimeoutMs: number;
   private readonly pending = new Map<string, PendingCall>();
+  private readonly streams = new Map<string, PendingStream>();
   private readonly listens = new Map<
     string,
     { handler: (data: unknown) => void; onError?: (error: Error) => void }
@@ -114,6 +126,127 @@ export class IpcChannel implements KlientChannel {
       agentId: scope.agentId,
     });
     return promise;
+  }
+
+  stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown> {
+    return {
+      [Symbol.asyncIterator]: () => {
+        // Simple queue: push/pull with deferred promises. `buffer` holds
+        // already-received chunks waiting for a `next()` call; `waiters`
+        // holds unresolved `next()` calls waiting for a chunk.
+        const buffer: Array<IteratorResult<unknown>> = [];
+        const waiters: Array<{
+          resolve: (result: IteratorResult<unknown>) => void;
+          reject: (err: Error) => void;
+        }> = [];
+        let done = false;
+        let streamId: string | undefined;
+
+        const pending: PendingStream = {
+          push(chunk: unknown) {
+            if (done) return;
+            const result: IteratorResult<unknown> = { done: false, value: chunk };
+            const waiter = waiters.shift();
+            if (waiter !== undefined) {
+              waiter.resolve(result);
+            } else {
+              buffer.push(result);
+            }
+          },
+          end: () => {
+            if (done) return;
+            done = true;
+            if (streamId !== undefined) this.streams.delete(streamId);
+            const terminal: IteratorResult<unknown> = { done: true, value: undefined };
+            const waiter = waiters.shift();
+            if (waiter !== undefined) {
+              waiter.resolve(terminal);
+            } else {
+              buffer.push(terminal);
+            }
+            // Resolve remaining waiters with done
+            for (const w of waiters) {
+              w.resolve({ done: true, value: undefined });
+            }
+            waiters.length = 0;
+          },
+          error: (err: Error) => {
+            if (done) return;
+            done = true;
+            if (streamId !== undefined) this.streams.delete(streamId);
+            const waiter = waiters.shift();
+            if (waiter !== undefined) {
+              waiter.reject(err);
+            } else {
+              // Store as a throwing result
+              buffer.push({ done: true, value: err } as IteratorResult<unknown>);
+            }
+            for (const w of waiters) {
+              w.reject(err);
+            }
+            waiters.length = 0;
+          },
+        };
+
+        // Start the stream after the handshake is done.
+        let started = false;
+        const ensureStarted = (): void => {
+          if (started) return;
+          started = true;
+          void this.ready.then(() => {
+            if (this.closed) {
+              pending.error(new Error('ipc closed'));
+              return;
+            }
+            streamId = this.nextId();
+            this.streams.set(streamId, pending);
+            this.send({
+              type: 'stream',
+              id: streamId,
+              scope: scopeKindOf(scope),
+              service,
+              method,
+              arg: trimTrailingUndefined(args),
+              sessionId: scope.sessionId,
+              agentId: scope.agentId,
+            });
+          });
+        };
+
+        return {
+          next(): Promise<IteratorResult<unknown>> {
+            ensureStarted();
+            const buffered = buffer.shift();
+            if (buffered !== undefined) {
+              // Check if this is an error stored as { done: true, value: Error }
+              if (buffered.done && buffered.value instanceof Error) {
+                return Promise.reject(buffered.value);
+              }
+              return Promise.resolve(buffered);
+            }
+            if (done) return Promise.resolve({ done: true, value: undefined });
+            return new Promise((resolve, reject) => {
+              waiters.push({ resolve, reject });
+            });
+          },
+          return: (): Promise<IteratorResult<unknown>> => {
+            if (!done) {
+              done = true;
+              if (streamId !== undefined) {
+                this.streams.delete(streamId);
+                this.send({ type: 'stream_cancel', id: streamId });
+              }
+              // Resolve any pending waiters
+              for (const w of waiters) {
+                w.resolve({ done: true, value: undefined });
+              }
+              waiters.length = 0;
+            }
+            return Promise.resolve({ done: true, value: undefined });
+          },
+        };
+      },
+    };
   }
 
   listen(
@@ -197,6 +330,26 @@ export class IpcChannel implements KlientChannel {
         this.listens.get(id)?.handler(frame.data);
         return;
       }
+      case 'stream_data': {
+        this.streams.get(id)?.push(frame.data);
+        return;
+      }
+      case 'stream_end': {
+        this.streams.get(id)?.end();
+        return;
+      }
+      case 'stream_error': {
+        const s = this.streams.get(id);
+        if (s !== undefined) {
+          s.error(
+            new RPCError(
+              typeof frame.code === 'number' ? frame.code : 50001,
+              frame.msg ?? 'stream error',
+            ),
+          );
+        }
+        return;
+      }
       default:
         return;
     }
@@ -217,6 +370,10 @@ export class IpcChannel implements KlientChannel {
       p.reject(err);
     }
     this.pending.clear();
+    for (const s of this.streams.values()) {
+      s.error(err);
+    }
+    this.streams.clear();
   }
 
   private send(frame: IpcFrame): void {

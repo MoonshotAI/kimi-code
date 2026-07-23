@@ -68,9 +68,10 @@ import {
   type ModelRequestTiming,
 } from '#/kosong/model/modelRequester';
 import type { ModelOverrides } from '#/kosong/model/model.types';
-import { MODELS_SECTION, type ModelsSection } from '#/kosong/model/model';
+import { IModelService } from '#/kosong/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
-import { resolveThinkingKeep, THINKING_SECTION, type ThinkingConfig } from '#/kosong/model/thinking';
+import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -158,6 +159,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IModelService private readonly modelService: IModelService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -620,9 +622,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const systemPromptHash = fingerprint(input.systemPrompt);
     const overrides = this.config.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const models = this.config.get<ModelsSection>(MODELS_SECTION);
     const modelConfig =
-      input.modelAlias === undefined ? undefined : models?.[input.modelAlias];
+      input.modelAlias === undefined ? undefined : this.modelService.get(input.modelAlias);
     const payload: PayloadOf<typeof llmRequest> = {
       kind: requestKindForRecord(fields),
       provider: input.protocol,

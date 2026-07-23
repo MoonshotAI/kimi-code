@@ -1,13 +1,9 @@
 /**
- * Right sidebar — access point for the Services of the server (app scope),
- * the active session, and the active agent. Hosts the agent switcher, three
- * tabs (app / session / agent), the pending-interaction card, and the
- * Service panels.
- *
- * The panel list is dynamic: `GET /api/v1/debug/channels` describes every
- * wire-exposed Service with its methods, rendered by `DynamicServiceCard`;
- * the handwritten descriptors in `panels.ts` override individual Services
- * with curated cards (`ServiceCard`).
+ * Right sidebar — access point for the Services of the active session and
+ * the active agent. Hosts the agent switcher, two tabs (session / agent),
+ * the pending-interaction card, and the Service panels (`ScopePanels`).
+ * The app-scope (server-level) Services live in their own rail view
+ * (`AppServicesView`), not here.
  *
  * Everything here is fetch-on-demand (Load / Refresh buttons): the v2 event
  * socket (`/api/v2/ws`) that used to push core/session/agent event streams
@@ -23,38 +19,13 @@ import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMeta
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 
-import {
-  fetchChannelDescriptors,
-  serviceByName,
-  type ChannelDescriptor,
-} from '../channel';
+import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
-import {
-  AGENT_PANELS,
-  CORE_PANELS,
-  SESSION_PANELS,
-  call,
-  type AnyService,
-  type ServicePanelDef,
-} from '../panels';
+import { type AnyService } from '../panels';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { ScopePanels } from './ServicePanels';
 
-type Tab = 'app' | 'session' | 'agent';
-type Scope = 'app' | 'session' | 'agent';
-
-const PANEL_OVERRIDES: ReadonlyMap<string, ServicePanelDef> = new Map(
-  [...CORE_PANELS, ...SESSION_PANELS, ...AGENT_PANELS].map((def) => [def.id, def]),
-);
-
-/** Load the full protocol list once per connection (every channel, 1:1). */
-function useChannels() {
-  const { klient } = useConnection();
-  return useQuery({
-    queryKey: ['channels', klient.baseUrl],
-    queryFn: () => fetchChannelDescriptors(klient),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-}
+type Tab = 'session' | 'agent';
 
 export function Inspector({
   sessionId,
@@ -69,7 +40,6 @@ export function Inspector({
 }) {
   const { klient } = useConnection();
   const [tab, setTab] = useState<Tab>('session');
-  const channels = useChannels();
 
   const meta = useQuery({
     queryKey: ['sessionMeta', sessionId],
@@ -104,75 +74,18 @@ export function Inspector({
     }
   };
 
-  // Resolve a Service proxy by channel name + scope, 1:1 with the channel
-  // descriptor from `/api/v1/debug/channels`. Returns null when the scope
-  // needs a session that isn't selected/ready.
-  const serviceProxy = useMemo(() => {
-    return (name: string, scope: Scope): AnyService | null => {
+  // Resolve a Service proxy by channel name, 1:1 with the channel descriptor
+  // from `/api/v1/debug/channels`. Returns null when the scope needs a
+  // session that isn't selected/ready.
+  const proxyFor = useMemo(() => {
+    return (name: string): AnyService | null => {
       return serviceByName<AnyService>(klient, name, {
-        scope,
+        scope: tab,
         sessionId: sessionId !== null && ready ? sessionId : undefined,
         agentId: effectiveAgent,
       }) ?? null;
     };
-  }, [klient, sessionId, effectiveAgent, ready]);
-
-  // Panels for one scope: the dynamic channel list merged with the handwritten
-  // overrides. When the channels endpoint is unavailable, fall back to the
-  // handwritten panels only.
-  const renderPanels = (scope: Scope) => {
-    const byName = new Map<string, ChannelDescriptor | undefined>();
-    if (channels.data !== undefined) {
-      for (const c of channels.data) {
-        if (c.scope === scope) byName.set(c.name, c);
-      }
-      // Keep overrides the introspection missed (e.g. server drift).
-      for (const def of PANEL_OVERRIDES.values()) {
-        if (def.scope === scope && !byName.has(def.id)) byName.set(def.id, undefined);
-      }
-    } else {
-      for (const def of PANEL_OVERRIDES.values()) {
-        if (def.scope === scope) byName.set(def.id, undefined);
-      }
-    }
-    const list = [...byName.entries()];
-    return (
-      <>
-        {channels.isError ? (
-          <div className="mb-2">
-            <ErrorLine error={channels.error} />
-            <div className="mt-1 text-[10px] text-neutral-600">
-              dynamic channel list unavailable — showing handwritten panels only
-            </div>
-          </div>
-        ) : null}
-        {list.map(([name, channel]) => {
-          const def = PANEL_OVERRIDES.get(name);
-          const onError =
-            scope === 'agent' ? (error: unknown) => noteAgentError(effectiveAgent, error) : undefined;
-          if (def !== undefined) {
-            return (
-              <ServiceCard
-                key={name}
-                def={def}
-                svc={serviceProxy(name, scope)}
-                onError={onError}
-              />
-            );
-          }
-          if (channel === undefined) return null;
-          return (
-            <DynamicServiceCard
-              key={name}
-              channel={channel}
-              svc={serviceProxy(name, scope)}
-              onError={onError}
-            />
-          );
-        })}
-      </>
-    );
-  };
+  }, [klient, tab, sessionId, effectiveAgent, ready]);
 
   const sessionBlocked = sessionId === null || !ready;
 
@@ -207,7 +120,7 @@ export function Inspector({
 
       {/* Tabs */}
       <div className="flex border-b border-neutral-800 text-[11px]">
-        {(['app', 'session', 'agent'] as const).map((t) => (
+        {(['session', 'agent'] as const).map((t) => (
           <button
             key={t}
             className={`flex-1 px-2 py-2 font-medium uppercase tracking-wider ${
@@ -215,229 +128,29 @@ export function Inspector({
             }`}
             onClick={() => setTab(t)}
           >
-            {t === 'app' ? 'App' : t === 'session' ? 'Session' : 'Agent'}
+            {t === 'session' ? 'Session' : 'Agent'}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {tab === 'app' ? (
-          renderPanels('app')
-        ) : sessionBlocked ? (
+        {sessionBlocked ? (
           <div className="text-[12px] text-neutral-600">
             {sessionId === null ? 'No session selected.' : 'Loading session…'}
           </div>
         ) : tab === 'session' ? (
           <>
             <InteractionsCard sessionId={sessionId} />
-            {renderPanels('session')}
+            <ScopePanels scope="session" proxyFor={proxyFor} />
           </>
         ) : (
-          renderPanels('agent')
+          <ScopePanels
+            scope="agent"
+            proxyFor={proxyFor}
+            onError={(error) => noteAgentError(effectiveAgent, error)}
+          />
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Generic service card
-// ---------------------------------------------------------------------------
-
-function ServiceCard({
-  def,
-  svc,
-  onError,
-}: {
-  def: ServicePanelDef;
-  svc: AnyService | null;
-  onError?: (error: unknown) => void;
-}) {
-  const [data, setData] = useState<unknown>(undefined);
-  const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-
-  const refresh = async () => {
-    if (svc === null || def.fetch === undefined) return;
-    try {
-      setError(null);
-      const result = await def.fetch(svc);
-      setData(result);
-      setLoaded(true);
-    } catch (error) {
-      setError(error);
-      onError?.(error);
-    }
-  };
-
-  return (
-    <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/60">
-      <div className="flex items-center justify-between border-b border-neutral-800/60 px-3 py-2">
-        <div>
-          <span className="text-[12px] font-medium text-neutral-200">{def.label}</span>
-          <span className="ml-2 font-mono text-[10px] text-neutral-600">{def.id}</span>
-        </div>
-        {def.fetch !== undefined ? (
-          <ActionButton onClick={() => void refresh()} disabled={svc === null}>
-            {loaded ? 'Refresh' : 'Load'}
-          </ActionButton>
-        ) : null}
-      </div>
-      <div className="px-3 py-2">
-        {error !== null ? <div className="mb-2"><ErrorLine error={error} /></div> : null}
-        {def.fetch !== undefined ? (
-          loaded ? (
-            <JsonView data={data} />
-          ) : (
-            <div className="text-[11px] text-neutral-600 italic">click Load to read this Service</div>
-          )
-        ) : null}
-        {def.actions !== undefined && def.actions.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {def.actions.map((action) => (
-              <ActionButton
-                key={action.label}
-                danger={action.danger}
-                disabled={svc === null || busy !== null}
-                onClick={async () => {
-                  if (svc === null) return;
-                  let input: string | undefined;
-                  if (action.input !== undefined) {
-                    const raw = window.prompt(action.input);
-                    if (raw === null) return;
-                    input = raw;
-                  }
-                  setBusy(action.label);
-                  setError(null);
-                  try {
-                    const result = await action.run(svc, input);
-                    if (result !== undefined && def.fetch === undefined) setData(result);
-                    if (def.fetch !== undefined) await refresh();
-                  } catch (error) {
-                    setError(error);
-                    onError?.(error);
-                  } finally {
-                    setBusy(null);
-                  }
-                }}
-              >
-                {busy === action.label ? '…' : action.label}
-              </ActionButton>
-            ))}
-          </div>
-        ) : null}
-        {def.fetch === undefined && data !== undefined ? (
-          <div className="mt-2"><JsonView data={data} /></div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Dynamic service card — generic renderer for channels without a handwritten
-// override. Every method gets a call button labeled with its declared
-// signature (JSON arg input when it takes parameters); getters become read
-// buttons. Results render inline.
-// ---------------------------------------------------------------------------
-
-function DynamicServiceCard({
-  channel,
-  svc,
-  onError,
-}: {
-  channel: ChannelDescriptor;
-  svc: AnyService | null;
-  onError?: (error: unknown) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [args, setArgs] = useState<Record<string, string>>({});
-  const [results, setResults] = useState<Record<string, unknown>>({});
-  const [errors, setErrors] = useState<Record<string, unknown>>({});
-  const [busy, setBusy] = useState<string | null>(null);
-
-  const invoke = async (method: ChannelDescriptor['methods'][number]) => {
-    if (svc === null) return;
-    let arg: unknown;
-    if (method.kind === 'method' && method.params !== '') {
-      const raw = (args[method.name] ?? '').trim();
-      if (raw !== '') {
-        try {
-          arg = JSON.parse(raw);
-        } catch {
-          setErrors((prev) => ({ ...prev, [method.name]: new Error('arg is not valid JSON') }));
-          return;
-        }
-      }
-    }
-    setBusy(method.name);
-    setErrors((prev) => ({ ...prev, [method.name]: null }));
-    try {
-      const result = await call(svc, method.name, arg);
-      setResults((prev) => ({ ...prev, [method.name]: result ?? '(no result)' }));
-    } catch (error) {
-      setErrors((prev) => ({ ...prev, [method.name]: error }));
-      onError?.(error);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/60">
-      <div
-        className="flex cursor-pointer items-center justify-between px-3 py-2 select-none"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <div>
-          <span className="text-[12px] font-medium text-neutral-300">{channel.name}</span>
-          <span className="ml-2 text-[10px] text-neutral-600">
-            {channel.methods.length} methods · {channel.domain}
-          </span>
-        </div>
-        <span className="text-[10px] text-neutral-600">{open ? '▾' : '▸'}</span>
-      </div>
-      {open ? (
-        <div className="border-t border-neutral-800/60 px-3 py-2">
-          {channel.methods.length === 0 ? (
-            <div className="text-[11px] text-neutral-600 italic">no callable members</div>
-          ) : null}
-          {channel.methods.map((m) => (
-            <div key={m.name} className="mb-1.5 last:mb-0">
-              <div className="flex items-center gap-1.5">
-                <ActionButton
-                  disabled={svc === null || busy !== null}
-                  onClick={() => void invoke(m)}
-                >
-                  {busy === m.name ? '…' : `${m.name}(${m.params})`}
-                </ActionButton>
-                {m.kind === 'property' ? <Badge tone="neutral">get</Badge> : null}
-                {m.kind === 'method' && m.params !== '' ? (
-                  <input
-                    className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-[11px] text-neutral-100 outline-none focus:border-sky-600"
-                    placeholder="arg (JSON)"
-                    value={args[m.name] ?? ''}
-                    onChange={(e) =>
-                      setArgs((prev) => ({ ...prev, [m.name]: e.target.value }))
-                    }
-                  />
-                ) : null}
-              </div>
-              {errors[m.name] ? (
-                <div className="mt-1">
-                  <ErrorLine error={errors[m.name]} />
-                </div>
-              ) : null}
-              {results[m.name] !== undefined ? (
-                <div className="mt-1">
-                  <JsonView data={results[m.name]} />
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }

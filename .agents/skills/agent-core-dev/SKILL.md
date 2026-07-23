@@ -43,7 +43,7 @@ End-to-end procedures that span the stages. Reach for these before reading the s
   - Topic: [Config](config.md) — the section-registry model, App vs Session split, owning a config section, the TOML format, and the env overlay.
   - Topic: [Errors](errors.md) — co-located `XxxError`, the central code registry, wire serialization, boundary translation.
   - Topic: [Flags](flags.md) — `registerFlagDefinition`, `IFlagService.enabled(id)`, the `[experimental]` config section, resolution precedence.
-  - Topic: [Permission](permission.md) — composable chain-of-responsibility kernel, policy registry + composer, `modes`/`agentTypes` metadata, `resolveExecution`/`accesses`.
+  - Topic: [Permission](permission.md) — risk-only chain-of-responsibility kernel, harness constraints and product reviews as domain `onBeforeExecuteTool` veto listeners (`veto` / `allow` / `pass` / cold `waitUntil` factories), shared `toolApproval` round-trip, policy registry + composer, `modes`/`agentTypes` metadata, `resolveExecution`/`accesses`.
   - Topic: [Telemetry](telemetry.md) — emitting events via `ITelemetryService`, context propagation, and appender destinations (`ConsoleAppender` / `CloudAppender`).
 - [Stage 4 — Test](test.md): resolve the system under test by interface, pick `TestInstantiationService` vs `createScopedTestHost`, shared stubs, service groups, teardown.
 - [Stage 5 — Verify & submit](verify.md): `lint:domain`, `typecheck`, `test`, and the pre-submit checklist.
