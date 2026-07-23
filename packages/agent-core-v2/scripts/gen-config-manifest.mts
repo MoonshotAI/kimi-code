@@ -25,12 +25,20 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { z } from 'zod';
-
 import { getConfigOverlayContributions } from '#/app/config/configOverlayContributions';
 import type { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { camelToSnake } from '#/app/config/toml';
+
+import {
+  asJsonSchema,
+  describeType,
+  isRecord,
+  resolveRef,
+  toJsonSchema,
+  truncate,
+  type JsonSchema,
+} from './lib/jsonSchema.mts';
 
 const PKG = join(import.meta.dirname, '..');
 const SRC = join(PKG, 'src');
@@ -87,88 +95,8 @@ function scanOverlayOwners(): Map<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Schema helpers
-// ---------------------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Property access shape of a JSON Schema node (avoids index-signature access). */
-interface JsonSchema {
-  readonly $ref?: unknown;
-  readonly $defs?: unknown;
-  readonly const?: unknown;
-  readonly enum?: unknown;
-  readonly anyOf?: unknown;
-  readonly oneOf?: unknown;
-  readonly type?: unknown;
-  readonly items?: unknown;
-  readonly properties?: unknown;
-  readonly required?: unknown;
-  readonly additionalProperties?: unknown;
-  readonly default?: unknown;
-}
-
-function asJsonSchema(value: unknown): JsonSchema | undefined {
-  return isRecord(value) ? (value as JsonSchema) : undefined;
-}
-
-/** Resolve a `#/$defs/<name>` reference against the root schema. */
-function resolveRef(schema: unknown, root: JsonSchema): unknown {
-  const s = asJsonSchema(schema);
-  if (typeof s?.$ref === 'string' && s.$ref.startsWith('#/$defs/')) {
-    const defs = asJsonSchema(root.$defs);
-    const name = s.$ref.slice('#/$defs/'.length);
-    if (defs !== undefined && isRecord(defs) && name in defs) {
-      return (defs as Record<string, unknown>)[name];
-    }
-  }
-  return schema;
-}
-
-function describeType(schema: unknown): string {
-  const s = asJsonSchema(schema);
-  if (s === undefined) return 'any';
-  if (s.$ref !== undefined) {
-    return typeof s.$ref === 'string' ? (s.$ref.split('/').pop() ?? 'any') : 'any';
-  }
-  if (s.const !== undefined) return truncate(JSON.stringify(s.const), 40);
-  if (Array.isArray(s.enum)) return s.enum.map((v) => JSON.stringify(v)).join(' | ');
-  for (const combiner of ['anyOf', 'oneOf'] as const) {
-    const subs = s[combiner];
-    if (Array.isArray(subs)) return subs.map(describeType).join(' | ');
-  }
-  if (s.type === 'array') return `${describeType(s.items)}[]`;
-  if (s.type === 'object') {
-    // Named sub-tables (zod objects emit `additionalProperties: false`) are
-    // rendered by the caller; only a schema-valued additionalProperties marks
-    // a true record.
-    if (isRecord(s.properties)) return 'object';
-    if (isRecord(s.additionalProperties)) {
-      return `record<string, ${describeType(s.additionalProperties)}>`;
-    }
-    return 'object';
-  }
-  if (typeof s.type === 'string') return s.type;
-  return 'any';
-}
-
-function toJsonSchema(schema: unknown): JsonSchema | undefined {
-  try {
-    return z.toJSONSchema(schema as never) as JsonSchema;
-  } catch {
-    return undefined;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // TOML-like rendering helpers
 // ---------------------------------------------------------------------------
-
-function truncate(text: string, max = 100): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
 
 /** Serialize a small JSON value as an inline TOML value. */
 function toTomlValue(value: unknown): string {
