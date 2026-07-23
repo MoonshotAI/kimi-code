@@ -222,6 +222,10 @@ describe('supportsTerminalProgress', () => {
     expect(supportsTerminalProgress({ ConEmuANSI: 'ON' })).toBe(true);
   });
 
+  it('detects the VS Code integrated terminal via TERM_PROGRAM', () => {
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'vscode' })).toBe(true);
+  });
+
   it('detects Ghostty / WezTerm via TERM_PROGRAM and TERM', () => {
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'ghostty' })).toBe(true);
     expect(supportsTerminalProgress({ TERM: 'xterm-ghostty' })).toBe(true);

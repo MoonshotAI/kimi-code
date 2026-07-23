@@ -83,6 +83,14 @@ The input box remains usable while the agent is thinking or calling tools, and s
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 
+VS Code 1.97 or later can show Kimi Code CLI's working-state indicator in integrated terminal tabs. Include `${progress}` in [`terminal.integrated.tabs.title` or `terminal.integrated.tabs.description`](https://code.visualstudio.com/docs/terminal/appearance#_tab-text), for example:
+
+```json
+{
+  "terminal.integrated.tabs.title": "${process}${separator}${progress}"
+}
+```
+
 ## External editor
 
 Press `Ctrl-G` to send the current input content to an external editor. When you save and close, the text is written back into the input box; if you close without saving, the original content is preserved. This is handy when you need to enter large blocks of text or content with complex formatting.
