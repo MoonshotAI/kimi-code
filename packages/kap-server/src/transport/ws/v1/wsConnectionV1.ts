@@ -15,6 +15,7 @@
  * down.
  */
 
+import { ErrorCode } from '../../../protocol/error-codes';
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
 import {
   transcriptSinceSchema,
@@ -28,6 +29,7 @@ import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import {
   type EventEnvelope,
+  JournalStorageError,
   type JournalLogger,
 } from './sessionEventJournal';
 import {
@@ -42,7 +44,9 @@ import {
   type SessionEventBroadcaster,
   type TargetSubscription,
 } from './sessionEventBroadcaster';
+import type { SessionOwnershipDetails } from '@moonshot-ai/agent-core-v2';
 import { FsWatchBridge } from './fsWatchBridge';
+import { SkillCatalogBridge } from './skillCatalogBridge';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
 
@@ -68,6 +72,7 @@ export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
   readonly fsWatchBridge?: FsWatchBridge;
+  readonly skillCatalogBridge?: SkillCatalogBridge;
   readonly connectionRegistry: IConnectionRegistry;
   /**
    * Present-only credential check for the post-connect `client_hello`
@@ -98,6 +103,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionEventBroadcaster;
   private readonly fsWatchBridge?: FsWatchBridge;
+  private readonly skillCatalogBridge?: SkillCatalogBridge;
   private readonly validateCredential?: CredentialValidator;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
@@ -125,6 +131,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket = opts.socket;
     this.broadcaster = opts.broadcaster;
     this.fsWatchBridge = opts.fsWatchBridge;
+    this.skillCatalogBridge = opts.skillCatalogBridge;
     this.validateCredential = opts.validateCredential;
     this.logger = opts.logger;
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
@@ -205,7 +212,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     const transcriptSince = parseTranscriptSince(payload['transcript_since']);
 
     const accepted: string[] = [];
+    const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of subscriptions) {
@@ -216,17 +225,21 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcript?.[sid],
         transcriptSince?.[sid],
         accepted,
+        notFound,
         resyncRequired,
+        ownershipDetails,
         serverCursors,
       );
     }
 
-    this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted_subscriptions: accepted,
-        resync_required: resyncRequired,
-        cursors: serverCursors,
-      }),
+    this.sendSubscribeAck(
+      frame.id,
+      'accepted_subscriptions',
+      accepted,
+      notFound,
+      resyncRequired,
+      ownershipDetails,
+      serverCursors,
     );
   }
 
@@ -241,6 +254,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const accepted: string[] = [];
     const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
@@ -254,10 +268,11 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcriptSince: transcriptSince?.[sid],
       });
       if (!ok) {
-        notFound.push(sid);
+        await this.classifySubscriptionFailure(sid, ownershipDetails, notFound);
         continue;
       }
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
+      this.skillCatalogBridge?.attachSession(this, sid);
       accepted.push(sid);
       if (cursor !== undefined) {
         await this.replay(sid, cursor, filter, grades, resyncRequired, serverCursors);
@@ -268,13 +283,14 @@ export class WsConnectionV1 implements BroadcastTarget {
       }
     }
 
-    this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted,
-        not_found: notFound,
-        resync_required: resyncRequired,
-        cursors: serverCursors,
-      }),
+    this.sendSubscribeAck(
+      frame.id,
+      'accepted',
+      accepted,
+      notFound,
+      resyncRequired,
+      ownershipDetails,
+      serverCursors,
     );
   }
 
@@ -284,6 +300,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     for (const sid of sessionIds) {
       this.broadcaster.unsubscribe(sid, this);
       this.subscriptions.delete(sid);
+      this.skillCatalogBridge?.detachSession(this, sid);
     }
     this.sendFrame(
       buildAck(frame.id ?? '', 0, 'success', {
@@ -331,7 +348,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     transcriptGrades: TranscriptGradeSpec | undefined,
     transcriptSince: Record<string, number> | undefined,
     accepted: string[],
+    notFound: string[],
     resyncRequired: string[],
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
     // Same ordering rule as onSubscribe: baseline after the cursor replay.
@@ -340,10 +359,11 @@ export class WsConnectionV1 implements BroadcastTarget {
       transcriptSince,
     });
     if (!ok) {
-      resyncRequired.push(sid);
+      await this.classifySubscriptionFailure(sid, ownershipDetails, notFound);
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
+    this.skillCatalogBridge?.attachSession(this, sid);
     accepted.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, transcriptGrades, resyncRequired, serverCursors);
@@ -354,6 +374,53 @@ export class WsConnectionV1 implements BroadcastTarget {
     }
   }
 
+  /**
+   * Classify a failed subscribe: an ownership conflict carries the structured
+   * details so the client can redirect to the holder; anything else is a plain
+   * not-found.
+   */
+  private async classifySubscriptionFailure(
+    sid: string,
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
+    notFound: string[],
+  ): Promise<void> {
+    const ownership = await this.broadcaster.getSubscriptionFailure(sid);
+    if (ownership !== undefined) ownershipDetails[sid] = ownership;
+    else notFound.push(sid);
+  }
+
+  /**
+   * Ack for `client_hello` / `subscribe`: an ownership failure on any session
+   * flips the whole ack to SESSION_HELD_BY_PEER (the per-session details ride
+   * `ownership_details`). The accepted-list key differs by entry point —
+   * `accepted_subscriptions` for `client_hello`, `accepted` for `subscribe`.
+   */
+  private sendSubscribeAck(
+    frameId: string | undefined,
+    acceptedKey: 'accepted' | 'accepted_subscriptions',
+    accepted: string[],
+    notFound: string[],
+    resyncRequired: string[],
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
+    serverCursors: Record<string, { seq: number; epoch?: string }>,
+  ): void {
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
+    this.sendFrame(
+      buildAck(
+        frameId ?? '',
+        hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0,
+        hasOwnershipFailure ? 'session held by peer' : 'success',
+        {
+          [acceptedKey]: accepted,
+          not_found: notFound,
+          resync_required: resyncRequired,
+          ownership_details: ownershipDetails,
+          cursors: serverCursors,
+        },
+      ),
+    );
+  }
+
   private async replay(
     sid: string,
     cursor: SessionCursor,
@@ -362,7 +429,24 @@ export class WsConnectionV1 implements BroadcastTarget {
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
+    let result;
+    try {
+      result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
+    } catch (error) {
+      if (error instanceof JournalStorageError) {
+        // The journal cannot serve the gap (sticky storage failure): answering
+        // with an empty page would be a lie — "not served" must stay
+        // distinguishable from "nothing to serve". Force a resync so the
+        // client rebuilds from the snapshot and re-subscribes. The protocol
+        // reason enum has no storage-failure entry, so this rides the
+        // existing `epoch_changed` branch; the client behavior (rebuild from
+        // snapshot) is identical for every reason.
+        this.sendFrame(buildResyncRequired(sid, 'epoch_changed', cursor.seq, cursor.epoch));
+        resyncRequired.push(sid);
+        return;
+      }
+      throw error;
+    }
     if (result.resyncRequired !== false) {
       this.sendFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
@@ -491,6 +575,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.outbound = [];
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
+    this.skillCatalogBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.
   }
 }

@@ -520,7 +520,8 @@ export interface AppInFlightTurn {
  */
 export interface AppSessionSnapshot {
   asOfSeq: number;
-  epoch: string;
+  /** Absent until the journal's first durable event: "no baseline" ≠ "baseline changed". */
+  epoch?: string;
   session: AppSession;
   /** Most recent messages, chronological ascending. */
   messages: AppMessage[];
@@ -535,8 +536,18 @@ export interface AppSessionSnapshot {
 export interface KimiEventHandlers {
   onEvent(event: AppEvent, meta: KimiEventMeta): void;
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
-  onError(code: number, msg: string, fatal: boolean): void;
+  /** Connection-level error frame. `details` carries the structured payload
+   *  newer servers attach (e.g. SessionOwnershipDetails under 40921); absent
+   *  on older servers. */
+  onError(code: number, msg: string, fatal: boolean, details?: unknown): void;
   onConnectionChange(connected: boolean): void;
+  /** Volatile multi-instance hint: the shared session list changed on some
+   *  instance — refresh the sidebar list. No payload; loss is harmless. */
+  onSessionListChanged?(): void;
+  /** Volatile per-session hint: the session's skill catalog changed on the
+   *  daemon — refresh that session's skills (slash menu). Carries only the
+   *  session id; loss is harmless (the next hint or reload converges). */
+  onSkillCatalogChanged?(sessionId: string): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
 }

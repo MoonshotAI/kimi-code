@@ -1,0 +1,26 @@
+{
+  "name": "@moonshot-ai/kernel-file-lock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform kernel-backed advisory file locks for Kimi Code.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "fs-native-extensions": "1.5.0"
+  }
+}

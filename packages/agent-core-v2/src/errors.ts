@@ -22,6 +22,7 @@ import { McpErrors } from '#/agent/mcp/errors';
 import { MessageLegacyErrors } from '#/app/messageLegacy/errors';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
 import { OsFsErrors } from '#/os/interface/hostFsErrors';
+import { OsLockErrors } from '#/os/interface/crossProcessLock';
 import { OsProcessErrors } from '#/os/interface/hostProcess';
 import { PluginErrors } from '#/app/plugin/errors';
 import { ProfileErrors } from '#/agent/profile/errors';
@@ -54,6 +55,7 @@ export { McpErrors } from '#/agent/mcp/errors';
 export { MessageLegacyErrors } from '#/app/messageLegacy/errors';
 export { ModelCatalogErrors } from '#/kosong/model/errors';
 export { OsFsErrors } from '#/os/interface/hostFsErrors';
+export { OsLockErrors } from '#/os/interface/crossProcessLock';
 export { OsProcessErrors } from '#/os/interface/hostProcess';
 export { PluginErrors } from '#/app/plugin/errors';
 export { ProfileErrors } from '#/agent/profile/errors';
@@ -83,6 +85,7 @@ export const ErrorCodes = {
   ...MessageLegacyErrors.codes,
   ...ModelCatalogErrors.codes,
   ...OsFsErrors.codes,
+  ...OsLockErrors.codes,
   ...OsProcessErrors.codes,
   ...PluginErrors.codes,
   ...ProfileErrors.codes,

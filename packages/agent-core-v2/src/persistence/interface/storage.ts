@@ -7,6 +7,9 @@
  *
  *   - `write`  — atomic whole-value replacement (the `Config` access pattern).
  *   - `append` — ordered, durable byte extension   (the `Record` access pattern).
+ *   - `withExclusiveKeyMutation` — keyed read-modify-write exclusion when the
+ *                                  backend can coordinate independent
+ *                                  processes.
  *
  * They are not interchangeable: building `append` on top of `write` is O(n)
  * per append, and building `write` on top of `append` yields awkward "read
@@ -128,6 +131,11 @@ export interface IFileSystemStorageService {
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;
   watch?(scope: string, key: string): Event<void>;
+  withExclusiveKeyMutation?<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T>;
   flush(): Promise<void>;
   close(): Promise<void>;
 }

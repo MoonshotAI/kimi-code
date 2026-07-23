@@ -32,7 +32,7 @@ import {
 import { createTerminalRequestSchema } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope, ownershipRedirectEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -240,6 +240,9 @@ function sendMappedError(
         return;
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        reply.send(ownershipRedirectEnvelope(err, requestId));
         return;
     }
   }

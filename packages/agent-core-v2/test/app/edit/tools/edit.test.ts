@@ -27,7 +27,12 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import {
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -52,13 +57,25 @@ function createSpiedEditFs(
   options: {
     readText?: ReturnType<typeof vi.fn>;
     writeText?: ReturnType<typeof vi.fn>;
+    stat?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   const readText = options.readText ?? vi.fn(async () => '');
   const writeText = options.writeText ?? vi.fn(async () => undefined);
-  const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
-  const fs = { readText, writeText, stat } as unknown as IHostFileSystem;
-  return { fs, readText, writeText };
+  const writeTextWithStat = async (path: string, data: string) => {
+    await (writeText as (path: string, data: string) => Promise<unknown>)(path, data);
+    return {
+      isFile: true,
+      isDirectory: false,
+      size: Buffer.byteLength(data),
+      mtimeMs: 1000,
+      ino: 1,
+    };
+  };
+  const stat =
+    options.stat ?? vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
+  const fs = { readText, writeText: writeTextWithStat, stat } as unknown as IHostFileSystem;
+  return { fs, readText, writeText, stat };
 }
 
 function buildTool(
@@ -211,6 +228,45 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
+    expect(result[toolFileRevision]).toEqual({
+      path: '/tmp/a.txt',
+      size: 11,
+      mtimeMs: 1000,
+      ino: 1,
+    });
+  });
+
+  it('fails closed when the file revision changes between reading and committing the edit', async () => {
+    const originalStat = {
+      isFile: true,
+      isDirectory: false,
+      size: 10,
+      mtimeMs: 1000,
+      ino: 1,
+    };
+    const changedStat = { ...originalStat, size: 11, mtimeMs: 1001 };
+    const stat = vi
+      .fn()
+      .mockResolvedValueOnce(originalStat)
+      .mockResolvedValueOnce(originalStat)
+      .mockResolvedValueOnce(changedStat);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText,
+      stat,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('changed on disk');
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {

@@ -35,7 +35,20 @@ describe('BootstrapService (scoped)', () => {
     const svc = host.app.accessor.get(IBootstrapService);
     expect(svc.homeDir).toBe('/tmp/kimi-home');
     expect(svc.configPath).toBe('/tmp/kimi-home/config.toml');
+    expect(svc.configKey).toBe('config.toml');
     expect(svc.sessionsDir).toBe('/tmp/kimi-home/sessions');
+    host.dispose();
+  });
+
+  it('addresses a custom config path relative to the storage root', () => {
+    const host = createScopedTestHost(
+      bootstrapSeed({
+        homeDir: '/tmp/kimi-home',
+        configPath: '/tmp/custom/config.toml',
+      }),
+    );
+    const svc = host.app.accessor.get(IBootstrapService);
+    expect(svc.configKey).toBe('../custom/config.toml');
     host.dispose();
   });
 

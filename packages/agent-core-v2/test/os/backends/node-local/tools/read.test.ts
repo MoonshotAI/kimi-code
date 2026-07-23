@@ -23,7 +23,7 @@ import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   MAX_BYTES,
   MAX_LINE_LENGTH,
@@ -33,7 +33,12 @@ import {
   ReadTool,
 } from '#/os/backends/node-local/tools/read';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import {
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -220,6 +225,44 @@ describe('ReadTool', () => {
         '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
       ),
     });
+    expect(result[toolFileRevision]).toEqual({
+      path: '/tmp/a.txt',
+      size: 11,
+      mtimeMs: undefined,
+      ino: undefined,
+    });
+  });
+
+  it('rejects a file whose revision changes while it is being read', async () => {
+    const initial: HostFileStat = {
+      isFile: true,
+      isDirectory: false,
+      size: 6,
+      mtimeMs: 1000,
+      ino: 1,
+    };
+    const changed: HostFileStat = { ...initial, size: 7, mtimeMs: 1001 };
+    const readLines = vi.fn().mockImplementation(async function* (
+      _path: string,
+      options?: { onFileStat?: (stat: HostFileStat) => void },
+    ): AsyncGenerator<string> {
+      yield 'alpha\n';
+      options?.onFileStat?.(changed);
+    });
+    const fs = {
+      readBytes: vi.fn(async () => Buffer.from('alpha\n')),
+      readLines,
+      stat: vi.fn(async () => initial),
+    } as unknown as IHostFileSystem;
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/a.txt' });
+
+    expect(result).toEqual({
+      isError: true,
+      output: '"/tmp/a.txt" changed while it was being read. Retry the read.',
+    });
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('stats the resolved target so symlinked files stay readable', async () => {
@@ -258,7 +301,7 @@ describe('ReadTool', () => {
     );
   });
 
-  it('respects one-based line_offset and positive n_lines', async () => {
+  it('returns the requested line range without a complete-file revision', async () => {
     const tool = toolWithContent('a\nb\nc\nd\ne');
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 2, n_lines: 2 });
@@ -267,6 +310,7 @@ describe('ReadTool', () => {
       output: '2\tb\n3\tc',
       note: readNote('2 lines read from file starting from line 2. Total lines in file: 5.'),
     });
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('returns an empty successful output when line_offset is beyond EOF', async () => {
@@ -347,7 +391,10 @@ describe('ReadTool', () => {
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/tmp/external.txt', MEDIA_SNIFF_BYTES);
-    expect(readLines).toHaveBeenCalledWith('/tmp/external.txt', { errors: 'strict' });
+    expect(readLines).toHaveBeenCalledWith('/tmp/external.txt', {
+      errors: 'strict',
+      onFileStat: expect.any(Function),
+    });
   });
 
   it('returns a friendly error for missing files before sniffing bytes', async () => {
@@ -393,7 +440,10 @@ describe('ReadTool', () => {
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/home/test/notes/today.txt', MEDIA_SNIFF_BYTES);
-    expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
+    expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', {
+      errors: 'strict',
+      onFileStat: expect.any(Function),
+    });
   });
 
   it('blocks sensitive files independently from workspace access', async () => {
@@ -548,7 +598,7 @@ describe('ReadTool', () => {
     expect(output).not.toContain('encoded data was not valid');
   });
 
-  it('truncates long lines and surfaces the affected line numbers', async () => {
+  it('returns a revision when a default read truncates long lines', async () => {
     const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
     const tool = toolWithContent([long, 'short', long].join('\n'));
 
@@ -556,9 +606,10 @@ describe('ReadTool', () => {
 
     expect(result.note).toContain('Lines [1, 3] were truncated.');
     expect(result.output).toContain('...');
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
-  it('checks the byte cap before adding the next rendered line', async () => {
+  it('returns a revision when default output reaches the byte cap', async () => {
     const line = 'x'.repeat(MAX_LINE_LENGTH);
     const content = Array.from({ length: 80 }, () => line).join('\n');
     const tool = toolWithContent(content);
@@ -568,6 +619,7 @@ describe('ReadTool', () => {
 
     expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
     expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
@@ -605,7 +657,7 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('caps default reads at MAX_LINES', async () => {
+  it('returns a revision when default output reaches the line cap', async () => {
     const content = Array.from({ length: MAX_LINES + 1 }, (_, i) => `line ${String(i + 1)}`).join(
       '\n',
     );
@@ -616,6 +668,7 @@ describe('ReadTool', () => {
     expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
     expect(result.output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {

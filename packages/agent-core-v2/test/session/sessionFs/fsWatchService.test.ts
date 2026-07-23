@@ -11,16 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  type HostFsChange,
-  type IHostFsWatchHandle,
-  IHostFsWatchService,
-} from '#/os/interface/hostFsWatch';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { FsChangeEvent } from '#/session/sessionFs/fsWatch';
 
-import { ISessionFsWatchService } from '#/session/sessionFs/fsWatch';
+import { ISessionFsWatchService, normalizeFsWatchKey } from '#/session/sessionFs/fsWatch';
 import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
+
+import { fakeHostFsWatch, type FakeWatch } from './stubs';
 
 const WORK_DIR = '/repo';
 
@@ -44,44 +42,6 @@ function stubWorkspace(): ISessionWorkspaceContext {
   };
 }
 
-interface FakeWatch {
-  readonly service: IHostFsWatchService;
-  readonly watchCalls: string[];
-  fire: (rel: string, action: HostFsChange['action'], kind?: HostFsChange['kind']) => void;
-  readonly disposed: () => boolean;
-}
-
-function fakeHostFsWatch(): FakeWatch {
-  const watchCalls: string[] = [];
-  let listener: ((e: HostFsChange) => void) | undefined;
-  let disposed = false;
-  const handle: IHostFsWatchHandle = {
-    onDidChange: (l) => {
-      listener = l;
-      return { dispose: () => (listener = undefined) };
-    },
-    dispose: () => {
-      disposed = true;
-      listener = undefined;
-    },
-  };
-  const service: IHostFsWatchService = {
-    _serviceBrand: undefined,
-    watch: (path) => {
-      watchCalls.push(path);
-      disposed = false;
-      return handle;
-    },
-  };
-  return {
-    service,
-    watchCalls,
-    fire: (rel, action, kind = 'file') =>
-      listener?.({ path: join(WORK_DIR, rel), action, kind }),
-    disposed: () => disposed,
-  };
-}
-
 function fakeHostFs(gitignore?: string): IHostFileSystem {
   return {
     _serviceBrand: undefined,
@@ -100,13 +60,13 @@ interface Harness {
   readonly events: FsChangeEvent[];
 }
 
-function makeSession(gitignore?: string): Harness {
+function makeSession(gitignore?: string, hostFs?: IHostFileSystem): Harness {
   const watch = fakeHostFsWatch();
   const host = createScopedTestHost();
   const session = host.child(LifecycleScope.Session, 's1', [
     stubPair(ISessionWorkspaceContext, stubWorkspace()),
     stubPair(IHostFsWatchService, watch.service),
-    stubPair(IHostFileSystem, fakeHostFs(gitignore)),
+    stubPair(IHostFileSystem, hostFs ?? fakeHostFs(gitignore)),
   ]);
   const svc = session.accessor.get(ISessionFsWatchService);
   const events: FsChangeEvent[] = [];
@@ -186,6 +146,43 @@ describe('SessionFsWatchService', () => {
     expect(events[0]?.changes.map((c) => c.path)).toEqual(['src/keep.ts']);
   });
 
+  it('rebuilds the matcher when the workspace `.gitignore` changes', async () => {
+    let gitignore = 'dist/\n';
+    const hostFs = {
+      _serviceBrand: undefined,
+      readText: async (p: string) => {
+        if (p === join(WORK_DIR, '.gitignore')) return gitignore;
+        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      },
+    } as unknown as IHostFileSystem;
+    const { svc, watch, events } = makeSession(undefined, hostFs);
+    svc.setWatchedPaths(['.']);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    watch.fire('dist/a.js', 'created');
+    vi.advanceTimersByTime(200);
+    expect(events).toHaveLength(0);
+
+    gitignore = 'build/\n';
+    watch.fire('.gitignore', 'modified');
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(200);
+
+    watch.fire('dist/b.js', 'created');
+    watch.fire('build/c.js', 'created');
+    vi.advanceTimersByTime(200);
+
+    // The `.gitignore` change itself is a delivered event; afterwards
+    // `dist/` passes (no longer ignored) and `build/` is filtered.
+    expect(events).toHaveLength(2);
+    expect(events[0]?.changes.map((c) => c.path)).toEqual(['.gitignore']);
+    expect(events[1]?.changes.map((c) => c.path)).toEqual(['dist/b.js']);
+  });
+
   it('rejects paths that escape the workspace', () => {
     const { svc } = makeSession();
     expect(() => svc.setWatchedPaths(['../x'])).toThrowError(/escapes workspace|rejected/);
@@ -207,5 +204,12 @@ describe('SessionFsWatchService', () => {
     (svc as unknown as { dispose: () => void }).dispose();
     vi.advanceTimersByTime(200);
     expect(events).toHaveLength(0);
+  });
+});
+
+describe('fsWatch key helpers', () => {
+  it('normalizes keys lexically and folds case on macOS/Windows', () => {
+    const folded = process.platform === 'darwin' || process.platform === 'win32';
+    expect(normalizeFsWatchKey('/A//B/../C')).toBe(folded ? '/a/c' : '/A/C');
   });
 });

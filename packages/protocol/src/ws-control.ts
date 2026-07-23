@@ -178,6 +178,13 @@ export const unsubscribeAckPayloadSchema = subscribeAckPayloadSchema;
 
 export const unsubscribeAckMessageSchema = wsAckEnvelopeSchema(unsubscribeAckPayloadSchema);
 
+/**
+ * Filesystem watch (per connection): `watch_fs_add` / `watch_fs_remove`
+ * manage this connection's path set for a session; matching changes stream
+ * back as volatile `event.fs.changed` frames with a per-connection monotonic
+ * `seq`. See `fsChangeEventSchema` (`fs.ts`) for the full seq / truncated
+ * contract, including the client's rebuild-baseline obligation.
+ */
 export const watchFsAddPayloadSchema = z.object({
   session_id: z.string(),
   paths: z.array(z.string()),

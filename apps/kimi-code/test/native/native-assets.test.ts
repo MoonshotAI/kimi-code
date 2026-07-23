@@ -12,7 +12,7 @@ import {
   type NativeAssetManifest,
   type NativeAssetSource,
 } from '#/native/native-assets';
-import { loadNativePackage } from '#/native/native-require';
+import { loadNativePackage, loadNativePackageFile } from '#/native/native-require';
 
 function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -121,6 +121,32 @@ describe('native assets', () => {
       });
 
       expect(pkg).toEqual({ value: 'ok' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads a package file from extracted native assets', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-native-file-require-'));
+    try {
+      const { manifest, source } = fakeManifest({
+        'node_modules/fake-native/package.json': '{}',
+        'node_modules/fake-native/prebuilds/test-target/addon.cjs':
+          "module.exports = { value: 'native' };\n",
+      });
+
+      const addon = loadNativePackageFile<{ value: string }>(
+        'fake-native',
+        join('prebuilds', 'test-target', 'addon.cjs'),
+        {
+          cacheBase: dir,
+          manifest,
+          source,
+          version: 'test',
+        },
+      );
+
+      expect(addon).toEqual({ value: 'native' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

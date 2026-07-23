@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { CyclicDependencyError } from '#/_base/di/errors';
-import { IInstantiationService, createDecorator } from '#/_base/di/instantiation';
+import { IInstantiationService, createDecorator, optional } from '#/_base/di/instantiation';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 
@@ -64,6 +64,50 @@ describe('@IFoo auto-injection', () => {
     const bar = ix.createInstance(Bar as new (name: string) => Bar, 'hello');
     expect(bar.name).toBe('hello');
     expect(bar.baz).toBeInstanceOf(Baz);
+  });
+
+  it('injects undefined for an unregistered optional service in strict mode', () => {
+    interface IDependency {
+      tag: 'dependency';
+    }
+    const IDependency = createDecorator<IDependency>('p1.1-IDependency-optional-missing');
+    class Consumer {
+      constructor(@optional(IDependency) readonly dependency?: IDependency) {}
+    }
+    const IConsumer = createDecorator<Consumer>('p1.1-IConsumer-optional-missing');
+    const ix = new InstantiationService(
+      new ServiceCollection([IConsumer, new SyncDescriptor(Consumer)]),
+      true,
+    );
+
+    const consumer = ix.invokeFunction((accessor) => accessor.get(IConsumer));
+
+    expect(consumer.dependency).toBeUndefined();
+  });
+
+  it('resolves a registered optional service normally', () => {
+    interface IDependency {
+      tag: 'dependency';
+    }
+    const IDependency = createDecorator<IDependency>('p1.1-IDependency-optional-present');
+    class Dependency implements IDependency {
+      tag = 'dependency' as const;
+    }
+    class Consumer {
+      constructor(@optional(IDependency) readonly dependency?: IDependency) {}
+    }
+    const IConsumer = createDecorator<Consumer>('p1.1-IConsumer-optional-present');
+    const ix = new InstantiationService(
+      new ServiceCollection(
+        [IDependency, new SyncDescriptor(Dependency)],
+        [IConsumer, new SyncDescriptor(Consumer)],
+      ),
+      true,
+    );
+
+    const consumer = ix.invokeFunction((accessor) => accessor.get(IConsumer));
+
+    expect(consumer.dependency).toBeInstanceOf(Dependency);
   });
 
   it('@IInstantiationService self-injection resolves to the OWNING container', () => {

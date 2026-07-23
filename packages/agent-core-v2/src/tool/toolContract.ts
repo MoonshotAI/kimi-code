@@ -36,22 +36,47 @@ export interface ToolDelivery {
   readonly message: ToolDeliveryMessage;
 }
 
-export interface ExecutableToolSuccessResult {
-  readonly output: ExecutableToolOutput;
-  readonly isError?: false | undefined;
-  readonly stopTurn?: boolean | undefined;
-  readonly truncated?: boolean | undefined;
-  readonly note?: string;
-  readonly delivery?: ToolDelivery | undefined;
+export interface ToolFileRevision {
+  readonly path: string;
+  readonly ino?: number;
+  readonly mtimeMs?: number;
+  readonly size: number;
 }
 
-export interface ExecutableToolErrorResult {
+export const toolFileRevision = Symbol('toolFileRevision');
+
+export function makeToolFileRevision(
+  path: string,
+  stat: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
+): ToolFileRevision {
+  return { path, ino: stat.ino, mtimeMs: stat.mtimeMs, size: stat.size };
+}
+
+export function attachToolFileRevision<T extends object>(
+  result: T,
+  revision: ToolFileRevision,
+): T & { readonly [toolFileRevision]: ToolFileRevision } {
+  return Object.defineProperty(result, toolFileRevision, {
+    value: revision,
+    enumerable: false,
+  }) as T & { readonly [toolFileRevision]: ToolFileRevision };
+}
+
+interface ExecutableToolResultBase {
   readonly output: ExecutableToolOutput;
-  readonly isError: true;
   readonly stopTurn?: boolean | undefined;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly [toolFileRevision]?: ToolFileRevision;
+}
+
+export interface ExecutableToolSuccessResult extends ExecutableToolResultBase {
+  readonly isError?: false | undefined;
+}
+
+export interface ExecutableToolErrorResult extends ExecutableToolResultBase {
+  readonly isError: true;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;

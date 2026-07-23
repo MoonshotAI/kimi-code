@@ -7,9 +7,9 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
  * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Fans session-level
+ * envelope while non-empty unversioned logs are rejected. Removal coordinates
+ * task, turn, and full-compaction teardown before disposing the child scope.
+ * Fans session-level
  * permission-mode switches out to every live agent. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
@@ -64,7 +64,9 @@ import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { IImageConfigBridge } from '#/agent/media/imageConfigBridge';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
+import { IAgentFileFencingService } from '#/agent/fileFencing/fileFencing';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
+import { IAgentSkillListingReminderService } from '#/agent/profile/agentSkillListingReminder';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -240,10 +242,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // force-injections that used to pull it up, so it must be resolved here or
     // tool execution would run without policy adjudication.
     handle.accessor.get(IAgentPermissionGate);
+    // File fencing wraps Read/Write/Edit execution using Agent-local file
+    // revisions. Resolve after externalHooks so permission and external
+    // preflight participants register first.
+    handle.accessor.get(IAgentFileFencingService);
     handle.accessor.get(IAgentMcpService);
     // Agent plugin service: registers main-agent-only plugin session-start
     // guidance before the first turn (self-gates to a no-op for other agents).
     handle.accessor.get(IAgentPluginService);
+    // Skill listing reminder: arms the turn-boundary notification for skill
+    // catalog hot reload before the first turn.
+    handle.accessor.get(IAgentSkillListingReminderService);
     // Tool-select services: precompute tool selection and the announcements
     // derived from it before the first turn.
     handle.accessor.get(IAgentToolSelectService);
@@ -335,7 +344,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
-    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
+    const tasks = handle.accessor.get(IAgentTaskService);
+    tasks.beginClose();
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
@@ -348,6 +358,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled]);
+    await tasks.stopAllOnExit('Session closed');
+    await tasks.flushPersistence();
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

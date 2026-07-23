@@ -187,11 +187,13 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
       'onDidCreateSession',
       'onWillCloseSession',
+      'onWillReleaseSession',
     ]),
     onDidCreateSession: Event.None as ISessionLifecycleService['onDidCreateSession'],
     onDidCloseSession: Event.None as ISessionLifecycleService['onDidCloseSession'],
     onDidArchiveSession: Event.None as ISessionLifecycleService['onDidArchiveSession'],
     onDidForkSession: Event.None as ISessionLifecycleService['onDidForkSession'],
+    beginClose: async () => {},
     create: async () => {
       throw new Error('not implemented');
     },
@@ -199,6 +201,7 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     list: () => [],
     resume: async () => undefined,
     close: async () => {},
+    closeAll: async () => {},
     archive: async () => {},
     restore: async () => undefined,
     fork: async () => {

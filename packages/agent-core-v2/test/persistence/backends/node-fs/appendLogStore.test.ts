@@ -7,6 +7,8 @@
  * test/persistence/backends/node-fs/appendLogStore.test.ts`.
  */
 
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -130,7 +132,7 @@ describe('AppendLogStore', () => {
     );
   });
 
-  it('reacquire after final release waits for retiring storage before fresh I/O', async () => {
+  it('keeps a failed retired generation reachable and blocks replacement I/O', async () => {
     const failure = new Error('retiring append failed');
     let markAppendStarted!: () => void;
     const appendStarted = new Promise<void>((resolve) => {
@@ -140,32 +142,16 @@ describe('AppendLogStore', () => {
     const appendGate = new Promise<void>((resolve) => {
       releaseAppend = resolve;
     });
-    let markReplacementAppendStarted!: () => void;
-    const replacementAppendStarted = new Promise<void>((resolve) => {
-      markReplacementAppendStarted = resolve;
-    });
-    let releaseReplacementAppend!: () => void;
-    const replacementAppendGate = new Promise<void>((resolve) => {
-      releaseReplacementAppend = resolve;
-    });
     let reportFailure!: (error: unknown) => void;
     const reportedFailure = new Promise<unknown>((resolve) => {
       reportFailure = resolve;
     });
     let appendAttempts = 0;
-    let replacementStarted = false;
-    const originalAppend = storage.append.bind(storage);
     storage.append = async (...args) => {
       appendAttempts++;
-      if (appendAttempts === 1) {
-        markAppendStarted();
-        await appendGate;
-        throw failure;
-      }
-      replacementStarted = true;
-      markReplacementAppendStarted();
-      await replacementAppendGate;
-      return originalAppend(...args);
+      markAppendStarted();
+      await appendGate;
+      throw failure;
     };
 
     const retiringOwner = record.acquire(SCOPE, KEY);
@@ -174,27 +160,13 @@ describe('AppendLogStore', () => {
     retiringOwner.dispose();
     const replacementOwner = record.acquire(SCOPE, KEY);
     record.append(SCOPE, KEY, { n: 2 });
-    const orderedFlush = record.flush();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(replacementStarted).toBe(false);
 
     releaseAppend();
     expect(await reportedFailure).toBe(failure);
-    await replacementAppendStarted;
-
-    const currentFlush = record.flush();
-    let flushSettled = false;
-    void currentFlush.then(() => {
-      flushSettled = true;
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(flushSettled).toBe(false);
-
-    releaseReplacementAppend();
-    await Promise.all([orderedFlush, currentFlush]);
-    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    await expect(record.flush(SCOPE)).rejects.toBe(failure);
+    await expect(record.flush(SCOPE)).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
+    expect(await storage.read(SCOPE, KEY)).toBeUndefined();
     replacementOwner.dispose();
   });
 
@@ -223,8 +195,8 @@ describe('AppendLogStore', () => {
     finalOwner.dispose();
     const replacementOwner = record.acquire(SCOPE, KEY);
     record.append(SCOPE, KEY, { n: 2 });
-    await record.flush();
-    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    await expect(record.flush()).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
     replacementOwner.dispose();
   });
 
@@ -680,4 +652,5 @@ describe('AppendLogStore', () => {
       { n: 2, s: '日本語' },
     ]);
   });
+
 });

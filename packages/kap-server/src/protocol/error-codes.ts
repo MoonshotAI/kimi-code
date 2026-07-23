@@ -104,6 +104,8 @@ export const ErrorCode = {
   FS_ALREADY_EXISTS: 40919,
   /** goal 只允许主 agent 使用 */
   GOAL_UNSUPPORTED_AGENT: 40920,
+  /** session 的 lease 被其他实例持有；`details` 为 SessionOwnershipDetails */
+  SESSION_HELD_BY_PEER: 40921,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,

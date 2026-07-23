@@ -64,7 +64,7 @@ import {
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope, ownershipRedirectEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -818,6 +818,9 @@ function sendMappedError(
         return;
       case 'session.busy':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        reply.send(ownershipRedirectEnvelope(err, requestId));
         return;
       case 'prompt.already_completed':
         reply.send({

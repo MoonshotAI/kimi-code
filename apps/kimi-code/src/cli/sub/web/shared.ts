@@ -7,13 +7,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerLogLevel } from '@moonshot-ai/kap-server';
+import { formatServerOrigin, type ServerLogLevel } from '@moonshot-ai/kap-server';
 
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
 export const DEFAULT_SERVER_HOST = LOCAL_SERVER_HOST;
 export const DEFAULT_SERVER_PORT = 58627;
-export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
+export const DEFAULT_SERVER_ORIGIN = formatServerOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
+export { formatServerOrigin as serverOrigin };
 
 /** Filename (under KIMI_CODE_HOME) of the persistent server bearer token. */
 export const SERVER_TOKEN_FILE = 'server.token';
@@ -110,10 +111,6 @@ export function parseLogLevel(raw: string | undefined): ServerLogLevel {
   throw new Error(
     `error: invalid --log-level value: ${raw} (allowed: ${VALID_LOG_LEVELS.join(', ')})`,
   );
-}
-
-export function serverOrigin(host: string, port: number): string {
-  return `http://${host}:${port}`;
 }
 
 /** Strip `/api/v1` and trailing slashes so user-supplied origins are uniform. */

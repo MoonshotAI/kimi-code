@@ -33,7 +33,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope, ownershipRedirectEnvelope } from '../envelope';
 import {
   launchDetached,
   openFileCommandFor,
@@ -530,6 +530,9 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        reply.send(ownershipRedirectEnvelope(err, requestId));
         return;
       // hostFs errors that escaped the sessionFs layer keep their `os.fs.*`
       // code; map them onto the closest v1 wire code (ENOTDIR collapses into

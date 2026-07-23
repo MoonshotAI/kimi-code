@@ -1463,8 +1463,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
         handlers.onConnectionChange(connected);
       },
 
-      onError: (code: number, msg: string, fatal: boolean) => {
-        handlers.onError(code, msg, fatal);
+      onError: (code: number, msg: string, fatal: boolean, details?: unknown) => {
+        handlers.onError(code, msg, fatal, details);
+      },
+
+      onSessionListChanged: () => {
+        handlers.onSessionListChanged?.();
+      },
+
+      onSkillCatalogChanged: (sessionId: string) => {
+        handlers.onSkillCatalogChanged?.(sessionId);
       },
 
       onTerminalOutput: (sessionId, terminalId, data, seq) => {

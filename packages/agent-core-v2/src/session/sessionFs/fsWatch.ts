@@ -7,7 +7,15 @@
  * workspace-relative paths they care about; events outside that subtree are
  * dropped. Session-scoped — the scope itself is the session, so no
  * `sessionId` is threaded through.
+ *
+ * Also owns the lexical key helper `normalizeFsWatchKey` (lexical normalize
+ * only, no `realpath`; case-folded on macOS/Windows). The watch service
+ * itself never keys paths with it — the sole consumer is the Agent-local
+ * optimistic-concurrency gate (`fileFencing`), which keys its baselines with
+ * it.
  */
+
+import { normalize, sep } from 'node:path';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
@@ -29,6 +37,13 @@ export interface FsChangeEvent {
   coalesced_window_ms: number;
   truncated?: boolean | undefined;
   count?: number | undefined;
+}
+
+const FS_WATCH_KEY_CASE_FOLD = process.platform === 'darwin' || process.platform === 'win32';
+
+export function normalizeFsWatchKey(path: string): string {
+  const normalized = normalize(path).split(sep).join('/');
+  return FS_WATCH_KEY_CASE_FOLD ? normalized.toLowerCase() : normalized;
 }
 
 export interface ISessionFsWatchService {

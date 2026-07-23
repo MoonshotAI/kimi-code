@@ -255,8 +255,15 @@ export class InstantiationService implements IInstantiationService {
     const serviceDependencies = _util.getServiceDependencies(ctor).toSorted((a, b) => a.index - b.index);
     const serviceArgs: unknown[] = [];
     for (const dependency of serviceDependencies) {
-        const service = this._getOrCreateServiceInstance(dependency.id, _trace);
-        if (!service) {
+      if (
+        dependency.optional &&
+        this._getServiceInstanceOrDescriptor(dependency.id) === undefined
+      ) {
+        serviceArgs.push(undefined);
+        continue;
+      }
+      const service = this._getOrCreateServiceInstance(dependency.id, _trace);
+      if (!service) {
           this._throwIfStrict(
             `[createInstance] ${ctor.name} depends on UNKNOWN service ${String(dependency.id)}.`,
             false,
@@ -349,6 +356,7 @@ export class InstantiationService implements IInstantiationService {
       for (const dependency of _util.getServiceDependencies(item.desc.ctor)) {
         const instanceOrDesc = this._getServiceInstanceOrDescriptor(dependency.id);
         if (!instanceOrDesc) {
+          if (dependency.optional) continue;
           this._throwIfStrict(
             `[createInstance] ${String(item.id)} depends on ${String(dependency.id)} which is NOT registered.`,
             true,

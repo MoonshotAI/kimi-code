@@ -102,6 +102,10 @@ const DOMAIN_LAYER = new Map([
   // Depends only on `_base`; sits in L1 beside the other program-control
   // layer substrates.
   ['task', 1],
+  // `sessionLease` owns the low-level per-session write-fencing capability.
+  // It depends only on the L1 cross-process lock and write-authority contracts
+  // (plus L0 infrastructure), so consumers must not pull it up to their layer.
+  ['sessionLease', 1],
   // persistence/ and os/ — the two-level scopes. `interface` holds contracts
   // (same layer as the old domains they replace); `backends` holds
   // implementations that may depend on cross-domain services at various layers.
@@ -169,6 +173,10 @@ const DOMAIN_LAYER = new Map([
   ['usage', 4],
   ['runtime', 4],
   ['toolDedupe', 4],
+  // `fileFencing` is the Agent-scope optimistic-concurrency gate: a
+  // tool-executor hook participant (L3) that owns Agent-local file revision
+  // baselines, so it sits at L4 beside `toolDedupe`.
+  ['fileFencing', 4],
   ['toolSelect', 4],
   ['toolPolicy', 4],
   ['contextMemory', 4],

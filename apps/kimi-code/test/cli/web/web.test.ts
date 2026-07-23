@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerWebCommand } from '#/cli/sub/web';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
-import type { ParsedServerOptions } from '#/cli/sub/web/shared';
+import { serverOrigin, type ParsedServerOptions } from '#/cli/sub/web/shared';
 import { darkColors } from '#/tui/theme/colors';
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -949,6 +949,15 @@ describe('formatHostForUrl', () => {
     const { formatHostForUrl } = await import('#/cli/sub/web/networks');
     expect(formatHostForUrl('192.168.1.5', 'IPv4')).toBe('192.168.1.5');
     expect(formatHostForUrl('fe80::1', 'IPv6')).toBe('[fe80::1]');
+  });
+});
+
+describe('serverOrigin', () => {
+  it('bracket-wraps an IPv6 host so the origin remains parseable', () => {
+    const origin = serverOrigin('::1', 58627);
+
+    expect(origin).toBe('http://[::1]:58627');
+    expect(new URL(origin).port).toBe('58627');
   });
 });
 

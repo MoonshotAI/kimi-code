@@ -12,6 +12,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { isSpecialFileStat } from '#/_base/utils/fs';
 
 import {
   type HostFsChange,
@@ -25,13 +26,22 @@ import {
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
 
 class HostFsWatchHandle implements IHostFsWatchHandle {
+  readonly ready: Promise<void>;
   readonly onDidChange: Event<HostFsChange>;
 
   private readonly emitter: Emitter<HostFsChange>;
   private readonly watcher: FSWatcher;
   private disposed = false;
+  private readySettled = false;
+  private resolveReady!: () => void;
+  private rejectReady!: (error: unknown) => void;
 
   constructor(path: string, options: HostFsWatchOptions | undefined) {
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
+    void this.ready.catch(() => undefined);
     this.emitter = new Emitter<HostFsChange>();
     this.onDidChange = this.emitter.event;
     this.watcher = new FSWatcher({
@@ -39,14 +49,25 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       persistent: false,
       followSymlinks: false,
       depth: options?.recursive === false ? 0 : undefined,
-      ignored: options?.ignored ?? DEFAULT_IGNORED,
+      ignored: (path, stats) =>
+        isSpecialFileStat(stats) || (options?.ignored?.(path) ?? DEFAULT_IGNORED(path)),
     });
     this.watcher.on('all', (eventName: string, absPath: string) => {
+      if (this.disposed) return;
       const mapped = mapChokidarEvent(eventName, absPath);
       if (mapped !== undefined) this.emitter.fire(mapped);
     });
     this.watcher.on('error', (error: unknown) => {
+      if (!this.readySettled) {
+        this.readySettled = true;
+        this.rejectReady(error);
+      }
       onUnexpectedError(error);
+    });
+    this.watcher.on('ready', () => {
+      if (this.readySettled) return;
+      this.readySettled = true;
+      this.resolveReady();
     });
     this.watcher.add(path);
   }
@@ -54,6 +75,10 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (!this.readySettled) {
+      this.readySettled = true;
+      this.resolveReady();
+    }
     void this.watcher.close().catch(() => undefined);
     this.emitter.dispose();
   }

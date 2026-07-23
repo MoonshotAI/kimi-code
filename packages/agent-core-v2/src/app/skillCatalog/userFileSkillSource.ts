@@ -3,7 +3,10 @@
  *
  * Discovers user skills from the bootstrap home directories through
  * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
- * builtin, below workspace). Reads home paths from `bootstrap`. Bound at App scope.
+ * builtin, below workspace). Reads home paths from `bootstrap` and hot-reloads
+ * on both its config section and filesystem changes in the user skill roots,
+ * probing them through `hostFs` and watching them through `hostFsWatch` via
+ * `SkillRootWatcher`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -13,6 +16,8 @@ import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -20,7 +25,8 @@ import {
 } from './configSection';
 import { ISkillCatalogRuntimeOptions } from './skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from './skillDiscovery';
-import { userRoots } from './skillRoots';
+import { SkillRootWatcher } from './skillRootWatcher';
+import { userRootCandidates, userRoots } from './skillRoots';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
 
 export interface IUserFileSkillSource extends ISkillSource {
@@ -43,6 +49,8 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @IHostFsWatchService hostFsWatch: IHostFsWatchService,
   ) {
     super();
     this._register(
@@ -50,6 +58,16 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
         if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
+    if ((this.runtimeOptions.explicitDirs?.length ?? 0) === 0) {
+      this._register(
+        new SkillRootWatcher(
+          this.hostFs,
+          hostFsWatch,
+          async () => userRootCandidates(this.bootstrap.homeDir, this.bootstrap.osHomeDir),
+          () => this.onDidChangeEmitter.fire(),
+        ),
+      );
+    }
   }
 
   async load(): Promise<SkillContribution> {
@@ -60,7 +78,9 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return this.discovery.discover(
-      await userRoots(this.bootstrap.homeDir, this.bootstrap.osHomeDir, { mergeAllAvailableSkills }),
+      await userRoots(this.hostFs, this.bootstrap.homeDir, this.bootstrap.osHomeDir, {
+        mergeAllAvailableSkills,
+      }),
     );
   }
 }

@@ -34,6 +34,7 @@ import {
   type ToolExecution,
   type ToolResult,
   type ToolUpdate,
+  toolFileRevision,
 } from '#/tool/toolContract';
 import type {
   BeforeToolExecuteEvent,
@@ -378,6 +379,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const executionMetadata = decision?.executionMetadata;
+    const runnableExecution =
+      decision?.execute === undefined ? execution : { ...execution, execute: decision.execute };
 
     await this.willExecuteEmitter.fireAsync(
       {
@@ -393,9 +396,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     return {
       task: {
-        accesses: execution.accesses ?? ToolAccesses.all(),
+        accesses: runnableExecution.accesses ?? ToolAccesses.all(),
         execute: async (taskSignal) =>
-          this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+          this.runSingleExecution(
+            call,
+            runnableExecution,
+            executionMetadata,
+            options,
+            taskSignal,
+          ),
       },
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };
@@ -839,7 +848,12 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     stopTurn?: boolean;
     truncated?: true;
     note?: string;
-  } = { output, stopTurn: result.stopTurn };
+    [toolFileRevision]?: ToolResult[typeof toolFileRevision];
+  } = {
+    output,
+    stopTurn: result.stopTurn,
+    [toolFileRevision]: result[toolFileRevision],
+  };
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {

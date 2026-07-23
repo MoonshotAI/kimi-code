@@ -4,15 +4,21 @@
  * Process-wide catalog of known workspaces, durable in
  * `<homeDir>/workspaces.json` (the v1-compatible file shared with
  * agent-core). The service keeps NO in-memory write cache: every operation
- * is a fresh read-modify-write against the file, serialized through a
- * promise-chain mutex. This is required, not just tidy — the same file is
- * written concurrently by other processes (the v1 TUI registers session cwds
- * via `touchWorkspaceRegistry`, which also re-reads the file on every call),
- * so a write-through cache would clobber external additions and tombstones
- * with stale state. Atomic renames at the persistence layer plus fresh
- * read-modify-write on both engines shrink the lost-update window to a
- * single read-modify-write, and the next session-index merge heals anything
- * still lost there.
+ * is a fresh read-modify-write against the file. This is required, not just
+ * tidy — the same file is written concurrently by other processes (the v1
+ * TUI registers session cwds via `touchWorkspaceRegistry`, which also
+ * re-reads the file on every call), so a write-through cache would clobber
+ * external additions and tombstones with stale state.
+ *
+ * Two exclusion layers make each read-modify-write safe: the in-process promise
+ * chain serializes ops (entered first, so cross-process waiting stays minimal),
+ * and the persistence store's transaction primitive locks the physical
+ * `workspaces.json` path, making the load → mutate → save burst atomic against
+ * other lock-aware v2 processes.
+ * Unregistered writers (v1) stay best-effort: their lost updates are healed
+ * by the session-index merge. Tombstone logic, format and key names are
+ * unchanged, and unknown document fields round-trip verbatim via
+ * `WorkspaceCatalog.sourceDocument`.
  *
  * Once per process, the first operation triggers the startup sync with the
  * legacy `<homeDir>/session_index.jsonl`:
@@ -162,7 +168,11 @@ export class WorkspaceService implements IWorkspaceService {
       byId.set(ws.id, ws);
       // An explicit add clears any prior deletion tombstone.
       deletedIds.delete(ws.id);
-      await this.store.save({ workspaces: [...byId.values()], deletedIds: [...deletedIds] });
+      await this.store.save({
+        workspaces: [...byId.values()],
+        deletedIds: [...deletedIds],
+        sourceDocument: catalog.sourceDocument,
+      });
       return ws;
     });
   }
@@ -180,6 +190,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated : ws)),
         deletedIds: catalog.deletedIds,
+        sourceDocument: catalog.sourceDocument,
       });
       return updated;
     });
@@ -206,6 +217,7 @@ export class WorkspaceService implements IWorkspaceService {
         await this.store.save({
           workspaces: catalog.workspaces.filter((ws) => ws.id !== id),
           deletedIds: [...new Set([...catalog.deletedIds, id])],
+          sourceDocument: catalog.sourceDocument,
         });
         return;
       }
@@ -218,6 +230,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
         deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
+        sourceDocument: catalog.sourceDocument,
       });
     });
   }
@@ -230,14 +243,22 @@ export class WorkspaceService implements IWorkspaceService {
     const loaded = await this.store.load();
     if (loaded === undefined) {
       const rebuilt = await this.rebuildFromSessionIndex();
-      await this.store.save({ workspaces: [...rebuilt.values()], deletedIds: [] });
+      await this.store.save({
+        workspaces: [...rebuilt.values()],
+        deletedIds: [],
+        sourceDocument: {},
+      });
       this.merged = true;
       return;
     }
     const byId = new Map(loaded.workspaces.map((ws) => [ws.id, ws]));
     const deletedIds = new Set(loaded.deletedIds);
     if (await this.mergeFromSessionIndex(byId, deletedIds)) {
-      await this.store.save({ workspaces: [...byId.values()], deletedIds: [...deletedIds] });
+      await this.store.save({
+        workspaces: [...byId.values()],
+        deletedIds: [...deletedIds],
+        sourceDocument: loaded.sourceDocument,
+      });
     }
     this.merged = true;
   }
@@ -245,7 +266,7 @@ export class WorkspaceService implements IWorkspaceService {
   /** Read the current catalog; a missing or malformed file is an empty
    *  catalog (mirrors v1's tolerant read). */
   private async loadCatalog(): Promise<WorkspaceCatalog> {
-    return (await this.store.load()) ?? { workspaces: [], deletedIds: [] };
+    return (await this.store.load()) ?? { workspaces: [], deletedIds: [], sourceDocument: {} };
   }
 
   /** Add every distinct workDir from the legacy session index that the
@@ -297,7 +318,8 @@ export class WorkspaceService implements IWorkspaceService {
   }
 
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
-    const next = this.opQueue.then(op, op);
+    const locked = (): Promise<T> => this.store.runExclusive(op);
+    const next = this.opQueue.then(locked, locked);
     this.opQueue = next.then(
       () => {},
       () => {},

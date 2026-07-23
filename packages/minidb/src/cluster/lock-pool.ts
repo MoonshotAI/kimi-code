@@ -32,7 +32,6 @@ import { sleep } from './utils.js';
 export interface LockPoolOptions {
   writerOpts: ShardOpenOptions;
   readerOpts: ShardOpenOptions;
-  lockRenewMs: number;
   lockAcquireTimeoutMs: number;
   lockHoldMs: number;
   maxWriters: number;
@@ -212,7 +211,7 @@ export class ShardLockPool {
     let delay = 10;
     for (;;) {
       try {
-        const handle = await ShardHandle.openWriter(shardId, dir, this.opts.writerOpts, this.opts.lockRenewMs);
+        const handle = await ShardHandle.openWriter(shardId, dir, this.opts.writerOpts);
         this.stats.writerOpens++;
         try {
           await this.opts.applyDefs(handle.db);

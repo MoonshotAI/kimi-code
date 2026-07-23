@@ -53,4 +53,14 @@ export default {
     notResumable: 'This goal cannot be resumed (it may be cancelled or completed).',
     objectiveTooLong: 'The objective is too long. Please shorten it and try again.',
   },
+  ownership: {
+    title: 'Session held by another instance',
+    redirecting: 'This session is held by another Kimi instance — redirecting to {origin}…',
+    creating: 'This session is being created on another instance. Retrying shortly…',
+    creatingTimeout: 'This session is still being created on another instance. Try again in a moment.',
+    heldByLocalInstance: 'This session is held by another local instance without a network address (e.g. a CLI/TUI). Continue there, or close it first.',
+    redirectSameHost: 'This session is already held by the current instance. Reload the page and try again.',
+    redirectLoopGuard: 'Too many redirects without reaching the owning instance. Open that instance directly and try again.',
+    redirectUnavailable: 'This session is held by another instance, but that instance did not publish an address to redirect to.',
+  },
 } as const;

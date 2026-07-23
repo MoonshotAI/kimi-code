@@ -247,4 +247,5 @@ describe('SessionMetadata', () => {
     expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
     expect(next.updatedAt).toBeGreaterThan(before);
   });
+
 });

@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import { ErrorCode } from './error-codes';
+
 export const envelopeSchema = <T extends z.ZodTypeAny>(data: T) =>
   z.object({
     code: z.number().int(),
@@ -35,12 +37,36 @@ export function okEnvelope<T>(data: T, requestId: string): Envelope<T> {
  * (or `undefined`) the field is absent and the wire shape stays byte-identical
  * to the original `{ code, msg, data: null, request_id }` — `JSON.stringify`
  * drops `undefined` properties, so callers that have no stack are unaffected.
+ * `details` behaves the same way: when provided it carries a structured,
+ * client-consumable payload (e.g. `SessionOwnershipDetails` under
+ * `SESSION_HELD_BY_PEER`); when omitted the field is absent from the wire.
  */
 export function errEnvelope(
   code: number,
   msg: string,
   requestId: string,
   stack?: string,
+  details?: unknown,
 ): Envelope<null> {
-  return { code, msg, data: null, request_id: requestId, stack };
+  return { code, msg, data: null, request_id: requestId, stack, details };
+}
+
+/**
+ * Build the `40921 session.held_by_peer` ownership-redirect envelope. The
+ * structured `details` payload (`held-by-peer` phase / redirect address) is
+ * the actionable part, so it rides the envelope while the stack stays
+ * server-side. Accepts the `Error2` shape structurally so this module stays
+ * free of the engine dependency.
+ */
+export function ownershipRedirectEnvelope(
+  err: { readonly message: string; readonly details?: unknown },
+  requestId: string,
+): Envelope<null> {
+  return errEnvelope(
+    ErrorCode.SESSION_HELD_BY_PEER,
+    err.message,
+    requestId,
+    undefined,
+    err.details,
+  );
 }

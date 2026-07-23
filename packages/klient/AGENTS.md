@@ -40,9 +40,38 @@ terminal surface are v1-only and live in the legacy suites.
   suites (moved from server-e2e). They skip unless `KIMI_SERVER_URL` points
   at a running server and **must keep running unchanged**; the v1 surface
   has no in-memory equivalent, so these stay live-server-only — do not try
-  to run them against the in-process transports.
+  to run them against the in-process transports. Exception: the
+  dual-instance / session-ownership suite (`legacy/session-ownership.test.ts`)
+  boots its own kap-server instances via the helpers below and runs without
+  `KIMI_SERVER_URL`.
 - The retired `scenarios/` scripts were rewritten as suites: image-upload
   and terminal (v1-only surfaces) live in `test/e2e/legacy/`.
+
+## Dual-instance helpers
+
+Multi-server e2e cases boot two `kap-server` instances on ONE shared home via
+`test/e2e/harness/testing/` (re-exported from `test/e2e/harness/index.js`).
+
+- **`startServerPair()`** — two in-process instances on one shared
+  `mkdtemp` home, each with `port: 0`, `logLevel: 'silent'`, and
+  `disableAuth: true`. Returns
+  `{ a, b, home, cwd, urlA, urlB, connectClient(server), dispose() }`;
+  `connectClient` returns an `HttpClient`. `cwd` is
+  the shared workspace cwd — pass it as `metadata.cwd` in `createSession` on
+  both instances ("same cwd" is session-level, never a server flag).
+  `dispose()` closes both instances (best-effort) and removes the home.
+
+Hard rules:
+
+- Always `port: 0`. A fixed busy port silently walks to `port + 1`, which
+  breaks registry/port assertions and cross-test isolation.
+- One pair per test file/worker; never share a `RunningServer`
+  across files — vitest runs files in parallel workers.
+- Readiness when NOT using these helpers: poll `GET /api/v1/healthz`
+  (auth-exempt) until 200 — not `/api/v1/meta` (token-gated).
+- The helper imports `@moonshot-ai/kap-server` lazily at call time so the
+  harness barrel stays loadable under plain `tsx` without the raw-text
+  loader; keep that pattern when extending it.
 
 ## Observability (inherited from server-e2e)
 
@@ -61,6 +90,9 @@ terminal surface are v1-only and live in the legacy suites.
   conformance + e2e; live cases skip without their env).
 - `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/klient test`
   — include the live legacy cases against a running server.
+- `pnpm --filter @moonshot-ai/klient exec vitest run test/e2e/legacy/session-ownership.test.ts`
+  — multi-server ownership e2e (boots its own in-process servers; no
+  external server needed).
 - `pnpm --filter @moonshot-ai/klient docker:e2e` — docker e2e; the run
   derives its runner name/namespace from the current workspace to avoid
   cross-workspace conflicts.

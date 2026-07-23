@@ -33,12 +33,23 @@ export * from '#/app/telemetry/consoleAppender';
 export * from '#/app/telemetry/cloudAppender';
 export * from '#/app/bootstrap/bootstrap';
 export * from '#/app/bootstrap/bootstrapService';
+export * from '#/os/interface/crossProcessLock';
 export * from '#/os/interface/hostEnvironment';
 export * from '#/os/interface/hostFileSystem';
 export * from '#/os/interface/hostFsWatch';
 export * from '#/os/interface/hostProcess';
 export * from '#/os/interface/terminal';
 export * from '#/os/interface/terminalErrors';
+export * from '#/os/backends/node-local/crossProcessLockService';
+// Host integration point for the kernel file lock: the host app (kimi-code)
+// installs a native binding loader through this hook because its SEA
+// packaging knows where the prebuilt `.node` lives; libraries fall back to
+// requiring `fs-native-extensions` directly. Re-exported from the package
+// root so the host does not need a direct dependency on kernel-file-lock.
+export {
+  setKernelFileLockBindingLoader,
+  type KernelFileLockBinding,
+} from '@moonshot-ai/kernel-file-lock';
 export * from '#/os/backends/node-local/hostEnvironmentService';
 export * from '#/os/backends/node-local/hostFsService';
 export * from '#/os/backends/node-local/hostFsWatchService';
@@ -81,6 +92,8 @@ export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
+export * from '#/session/sessionLease/sessionLease';
+export * from '#/session/sessionLease/sessionLeaseContactProvider';
 export * from '#/app/config/config';
 export * from '#/app/config/configService';
 import '#/app/kosongConfig/configSection';
@@ -171,6 +184,7 @@ export * from '#/app/skillCatalog/skillDiscovery';
 export * from '#/app/skillCatalog/inMemorySkillDiscovery';
 export * from '#/app/skillCatalog/skillSource';
 export * from '#/app/skillCatalog/skillRoots';
+export * from '#/app/skillCatalog/skillRootWatcher';
 export * from '#/app/skillCatalog/builtin/builtin';
 export * from '#/app/skillCatalog/builtinSkillSource';
 export * from '#/app/skillCatalog/userFileSkillSource';
@@ -189,6 +203,8 @@ export * from '#/agent/permissionGate/permissionGate';
 export * from '#/agent/permissionGate/permissionGateService';
 export * from '#/agent/toolApproval/toolApproval';
 export * from '#/agent/toolApproval/toolApprovalService';
+export * from '#/agent/fileFencing/fileFencing';
+export * from '#/agent/fileFencing/fileFencingService';
 import '#/app/flag/flag';
 import '#/app/flag/flagRegistry';
 import '#/app/flag/flagRegistryService';
@@ -334,8 +350,11 @@ export * from '#/persistence/interface/appendLogStore';
 export * from '#/persistence/interface/atomicDocumentStore';
 export * from '#/persistence/interface/queryStore';
 export * from '#/persistence/interface/blobStore';
+export * from '#/persistence/interface/sessionWriteAdmission';
+export * from '#/persistence/interface/storageWriteAdmission';
 export * from '#/persistence/backends/node-fs/fileStorageService';
 export * from '#/persistence/backends/node-fs/appendLogStore';
+export * from '#/persistence/backends/node-fs/storageWriteAdmissionService';
 export * from '#/persistence/backends/node-fs/atomicDocumentStore';
 export * from '#/persistence/backends/node-fs/blobStoreService';
 export * from '#/persistence/backends/node-fs/projectLocalConfigService';
@@ -459,6 +478,8 @@ export * from '#/agent/permissionRules/matchesRule';
 export * from '#/agent/permissionRules/permissionRulesService';
 export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
+export * from '#/agent/profile/agentSkillListingReminder';
+export * from '#/agent/profile/agentSkillListingReminderService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
 export * from '#/agent/prompt/promptService';

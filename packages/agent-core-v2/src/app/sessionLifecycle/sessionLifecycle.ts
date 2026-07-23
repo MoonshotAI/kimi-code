@@ -5,8 +5,10 @@
  * `ForkSessionOptions`, `CreateChildSessionOptions`, and the
  * `ISessionLifecycleService` used to create sessions (`create`), look up the
  * live ones (`get` / `list`), close them (`close`), archive/restore them,
- * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
- * lifecycle transitions through ordered hook slots plus
+ * fork them (`fork`), and fork-then-tag them as direct children (`createChild`).
+ * Close and archive always release their lease; a release failure is
+ * dirty-marked and abandoned internally. Lifecycle transitions run through
+ * ordered hook slots plus
  * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
  * `onDidForkSession`. App-scoped — a single
  * process-wide instance owns the live session scope tree. Persisted
@@ -63,9 +65,17 @@ export interface SessionWillCloseEvent {
   readonly reason: SessionCloseReason;
 }
 
+export type SessionReleaseReason = 'close' | 'archive' | 'dirty-abort';
+
+export interface SessionWillReleaseEvent {
+  readonly sessionId: string;
+  readonly reason: SessionReleaseReason;
+}
+
 export type SessionLifecycleHooks = {
   readonly onDidCreateSession: SessionCreatedEvent;
   readonly onWillCloseSession: SessionWillCloseEvent;
+  readonly onWillReleaseSession: SessionWillReleaseEvent;
 };
 
 export interface SessionArchivedEvent {
@@ -86,11 +96,13 @@ export interface ISessionLifecycleService {
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
   readonly hooks: Hooks<SessionLifecycleHooks>;
+  beginClose(): Promise<void>;
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
+  closeAll(): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;

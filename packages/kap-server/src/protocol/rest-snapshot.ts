@@ -71,8 +71,13 @@ export type SnapshotSubagent = z.infer<typeof snapshotSubagentSchema>;
 export const sessionSnapshotResponseSchema = z.object({
   /** Durable event watermark this snapshot is consistent with. */
   as_of_seq: z.number().int().nonnegative(),
-  /** Journal epoch — pass back via the WS cursor for invalidation detection. */
-  epoch: z.string().min(1),
+  /**
+   * Journal epoch — pass back via the WS cursor for invalidation detection.
+   * Absent when the journal has no baseline yet (no durable event written):
+   * "no baseline" is not "baseline changed" — treat the cursor as fresh,
+   * not as invalidated.
+   */
+  epoch: z.string().min(1).optional(),
   session: sessionSchema,
   /** Most recent messages (chronological ascending), bounded page. */
   messages: z.object({

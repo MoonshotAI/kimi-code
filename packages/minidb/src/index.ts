@@ -375,7 +375,11 @@ export class MiniDb<V = unknown> {
       db.valueReader?.close();
       db.store?.close();
       if (db.lock) {
-        await db.lock.release().catch(() => {});
+        try {
+          db.lock.releaseSync();
+        } catch {
+          // best-effort cleanup
+        }
         db.lock = null;
       }
       throw err;
@@ -1605,13 +1609,6 @@ export class MiniDb<V = unknown> {
 
   // ---- maintenance --------------------------------------------------------
 
-  /** Refresh the write lock's timestamp (see {@link LockFile.renew}). No-op
-   *  for a read-only instance. Exposed for lease-style holders such as the
-   *  cluster shard pool, which renew on a timer to prove liveness. */
-  async renewLock(): Promise<void> {
-    await this.lock?.renew();
-  }
-
   /** Advanced/internal (read-replica owners such as the cluster shard pool):
    *  incrementally apply WAL frames appended to db.wal after `offset` — the
    *  same frames open-time recovery would replay, interpreted identically
@@ -1654,7 +1651,7 @@ export class MiniDb<V = unknown> {
     this.valueReader?.close();
     await this.wal.close();
     if (this.lock) {
-      await this.lock.release();
+      this.lock.releaseSync();
       this.lock = null;
     }
   }
@@ -1664,5 +1661,6 @@ export class MiniDb<V = unknown> {
   }
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
+    this.lock?.assertHeld();
   }
 }

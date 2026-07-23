@@ -852,9 +852,11 @@ function registerSessionExportServices(
     onDidCloseSession: noopEvent,
     onDidArchiveSession: noopEvent,
     onDidForkSession: noopEvent,
+    beginClose: async () => {},
     hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
       'onDidCreateSession',
       'onWillCloseSession',
+      'onWillReleaseSession',
     ]),
     create: async () => {
       throw new Error('create should not be called by session export');
@@ -863,6 +865,7 @@ function registerSessionExportServices(
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     resume: async () => options.lifecycleHandle,
     close: async () => {},
+    closeAll: async () => {},
     archive: async () => {},
     restore: async () => options.lifecycleHandle,
     fork: async () => {

@@ -31,5 +31,6 @@ export function createAgentTaskPersistence(homedir: string): AgentTaskPersistenc
     TASK_TEST_AGENT_SCOPE,
     new JsonAtomicDocumentStore(storage),
     storage,
+    undefined,
   );
 }

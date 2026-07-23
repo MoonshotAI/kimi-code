@@ -38,6 +38,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { toErrorMessage } from '#/_base/errors/errorMessage';
 import {
   abortable,
   userCancellationReason,
@@ -222,6 +223,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private readonly deliveredNotificationKeys = new Set<string>();
   private readonly persistence: AgentTaskPersistence;
   private activeTaskReminderPending = false;
+  private _closing = false;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -296,6 +298,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.tasks.has(taskId)) continue;
       this.ghosts.set(taskId, info);
     }
+  }
+
+  beginClose(): void {
+    this._closing = true;
   }
 
   registerTask(task: AgentTask, options: RegisterAgentTaskOptions = {}): string {
@@ -478,6 +484,38 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return;
     this.startOutputPersist(entry);
+  }
+
+  async flushPersistence(): Promise<void> {
+    let firstFailure: unknown;
+    for (;;) {
+      const entries = [...this.tasks.values()];
+      for (const entry of entries) {
+        if (entry.pendingOutput.length > 0) this.startOutputPersist(entry);
+      }
+      const queues = entries.flatMap((entry) => [
+        { entry, kind: 'state' as const, promise: entry.persistWriteQueue },
+        { entry, kind: 'output' as const, promise: entry.outputWriteQueue },
+      ]);
+      const results = await Promise.allSettled(queues.map(({ promise }) => promise));
+      for (const result of results) {
+        if (result.status === 'rejected' && firstFailure === undefined) {
+          firstFailure = result.reason;
+        }
+      }
+      const changed = queues.some(({ entry, kind, promise }) => {
+        return kind === 'state'
+          ? entry.persistWriteQueue !== promise
+          : entry.outputWriteQueue !== promise;
+      });
+      if (changed) continue;
+      if (firstFailure !== undefined) {
+        throw firstFailure instanceof Error
+          ? firstFailure
+          : new Error(toErrorMessage(firstFailure));
+      }
+      return;
+    }
   }
 
   async loadFromDisk(options: AgentTaskLoadOptions = {}): Promise<void> {
@@ -832,6 +870,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private assertCanRegister(detached: boolean): void {
+    if (this._closing) throw new Error('Agent task service is closing.');
     const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
@@ -876,8 +915,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
-      .then(() => persistence.writeTask(info))
-      .catch(() => { });
+      .then(() => persistence.writeTask(info));
+    void entry.persistWriteQueue.catch(() => {});
     return entry.persistWriteQueue;
   }
 
@@ -911,8 +950,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     entry.outputWriteQueue = entry.outputWriteQueue
-      .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
-      .catch(() => { });
+      .then(() => persistence.appendTaskOutput(entry.taskId, chunk));
+    void entry.outputWriteQueue.catch(() => {});
   }
 
   private startOutputPersist(entry: ManagedTask): void {

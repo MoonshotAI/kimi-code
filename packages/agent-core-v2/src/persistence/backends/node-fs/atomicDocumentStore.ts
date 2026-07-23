@@ -13,6 +13,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
+import { enqueueKeyedOperation } from '#/_base/utils/promise';
 
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import {
@@ -48,6 +49,7 @@ export const tomlDocumentCodec: DocumentCodec = {
 
 class AtomicDocumentStoreBase implements IAtomicDocumentStore {
   declare readonly _serviceBrand: undefined;
+  private readonly operationQueues = new Map<string, Promise<void>>();
 
   constructor(
     private readonly storage: IFileSystemStorageService,
@@ -73,6 +75,29 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
 
   async set<T>(scope: string, key: string, value: T): Promise<void> {
     await this.storage.write(scope, key, this.codec.encode(value), { atomic: true });
+  }
+
+  update<T>(
+    scope: string,
+    key: string,
+    mutate: (current: T | undefined) => T | Promise<T>,
+  ): Promise<T> {
+    return this.withExclusiveKeyMutation(scope, key, async () => {
+      const next = await mutate(await this.get<T>(scope, key));
+      await this.set(scope, key, next);
+      return next;
+    });
+  }
+
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    if (this.storage.withExclusiveKeyMutation !== undefined) {
+      return this.storage.withExclusiveKeyMutation(scope, key, mutation);
+    }
+    return enqueueKeyedOperation(this.operationQueues, `${scope}\0${key}`, mutation);
   }
 
   async delete(scope: string, key: string): Promise<void> {

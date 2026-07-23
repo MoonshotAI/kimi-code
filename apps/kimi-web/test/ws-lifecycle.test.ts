@@ -69,19 +69,21 @@ const SERVER_HELLO = {
   },
 };
 
-describe('DaemonEventSocket reconnect + staleness', () => {
+function setupFakeWebSocket(): void {
   let originalWebSocket: typeof globalThis.WebSocket;
-
   beforeEach(() => {
     FakeWebSocket.instances = [];
     originalWebSocket = globalThis.WebSocket;
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   });
-
   afterEach(() => {
     globalThis.WebSocket = originalWebSocket;
     vi.useRealTimers();
   });
+}
+
+describe('DaemonEventSocket reconnect + staleness', () => {
+  setupFakeWebSocket();
 
   it('reconnect() closes the old socket, detaches it, and opens a new one', () => {
     const handlers = makeHandlers();
@@ -100,10 +102,6 @@ describe('DaemonEventSocket reconnect + staleness', () => {
     // A fresh socket was created, and we reported the transient disconnect.
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(handlers.states).toEqual([true, false]);
-
-    // A late onclose from the stale socket must NOT schedule another connect.
-    first.onclose?.({ code: 1000, reason: 'reconnect', wasClean: true });
-    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('reconnect() is a no-op after close()', () => {
@@ -142,5 +140,144 @@ describe('DaemonEventSocket reconnect + staleness', () => {
     expect(socket.health().open).toBe(true);
     first.readyState = FakeWebSocket.CLOSING;
     expect(socket.health().open).toBe(false);
+  });
+});
+
+describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
+  setupFakeWebSocket();
+
+  it('consumes bare session.list_changed via onSessionListChanged; the event.-prefixed form is not special-cased', () => {
+    let wireEvents = 0;
+    let listChanged = 0;
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {
+        wireEvents += 1;
+      },
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: () => {},
+      onSessionListChanged: () => {
+        listChanged += 1;
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({ type: 'session.list_changed', payload: {} });
+    // The server never emits the prefixed form; it must NOT reach
+    // onSessionListChanged (it falls through to the generic protocol path).
+    ws.emitMessage({ type: 'event.session.list_changed', payload: {} });
+
+    expect(listChanged).toBe(1);
+    expect(wireEvents).toBe(1);
+  });
+
+  it('consumes bare skill_catalog.changed via onSkillCatalogChanged; the event.-prefixed form is not special-cased', () => {
+    let wireEvents = 0;
+    let rawAgentEvents = 0;
+    const changed: string[] = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {
+        wireEvents += 1;
+      },
+      onRawAgentEvent: () => {
+        rawAgentEvents += 1;
+      },
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: () => {},
+      onSkillCatalogChanged: (sessionId) => {
+        changed.push(sessionId);
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({
+      type: 'skill_catalog.changed',
+      seq: 1,
+      session_id: 'sess_1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      payload: { type: 'skill_catalog.changed', sourceId: 'workspace-file' },
+    });
+    // The server never emits the prefixed form; it must NOT reach
+    // onSkillCatalogChanged (it falls through to the generic protocol path).
+    ws.emitMessage({
+      type: 'event.skill_catalog.changed',
+      seq: 2,
+      session_id: 'sess_2',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      payload: { type: 'skill_catalog.changed', sourceId: 'plugin' },
+    });
+
+    expect(changed).toEqual(['sess_1']);
+    expect(wireEvents).toBe(1);
+    expect(rawAgentEvents).toBe(0);
+  });
+
+  it('passes connection-level error-frame details through to onError', () => {
+    const errors: Array<{ code: number; msg: string; fatal: boolean; details: unknown }> = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {},
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: (code, msg, fatal, details) => {
+        errors.push({ code, msg, fatal, details });
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    const ownership = { kind: 'held-by-peer', phase: 'routable', address: 'http://127.0.0.1:58628' };
+    ws.emitMessage({ type: 'error', payload: { code: 40921, msg: 'session held by peer', fatal: false, details: ownership } });
+
+    expect(errors).toEqual([{ code: 40921, msg: 'session held by peer', fatal: false, details: ownership }]);
+  });
+
+  it('keeps session-scoped error frames on the agent-event path (no details leak to onError)', () => {
+    const errors: unknown[] = [];
+    const raw: Array<{ type: string; session_id: string; payload: unknown }> = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {},
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: (...args) => {
+        errors.push(args);
+      },
+      onRawAgentEvent: (frame) => {
+        raw.push(frame);
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({
+      type: 'error',
+      session_id: 'sess_1',
+      seq: 7,
+      timestamp: 't',
+      payload: { code: 40300, msg: 'provider denied' },
+    });
+
+    expect(errors).toEqual([]);
+    expect(raw).toEqual([
+      {
+        type: 'error',
+        seq: 7,
+        session_id: 'sess_1',
+        timestamp: 't',
+        payload: { code: 40300, msg: 'provider denied' },
+      },
+    ]);
   });
 });

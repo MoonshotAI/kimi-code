@@ -4,6 +4,7 @@
  */
 
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -85,5 +86,24 @@ describe('HostFsWatchService', () => {
     await wait(300);
 
     expect(events).toHaveLength(0);
+  });
+
+  it('ignores unix sockets and other special files instead of erroring', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    // A unix socket inside a watched dir makes chokidar's per-entry fs.watch
+    // call throw UNKNOWN — special files must be filtered, never watched.
+    const sockPath = join(root, 'special.sock');
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(sockPath, resolve));
+
+    const events = await start();
+    await writeFile(join(root, 'real.txt'), 'x');
+    await wait(300);
+    server.close();
+
+    expect(events.some((e) => e.path === sockPath)).toBe(false);
+    expect(events.some((e) => e.path === join(root, 'real.txt') && e.action === 'created')).toBe(
+      true,
+    );
   });
 });

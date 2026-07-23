@@ -78,6 +78,21 @@ export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
 export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
+/**
+ * Per-session holder annotation derived from the kernel lock on
+ * `session-leases/<id>.lock` plus its optional `.owner.json` routing metadata.
+ * `self` = this instance holds the lock (the session is materialized here),
+ * `peer` = another instance holds it (`address` is its advertised base URL),
+ * `none` = no process holds the lock. Purely display/redirect metadata: the
+ * live kernel lock is the authority and is re-checked on materialization.
+ */
+export const sessionOwnershipSchema = z.object({
+  held_by: z.enum(['self', 'peer', 'none']),
+  address: z.string().min(1).optional(),
+});
+
+export type SessionOwnership = z.infer<typeof sessionOwnershipSchema>;
+
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
@@ -102,6 +117,7 @@ export const sessionSchema = z.object({
    *  reason is cancelled/failed). */
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
+  ownership: sessionOwnershipSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),
   /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
   last_prompt: z.string().optional(),

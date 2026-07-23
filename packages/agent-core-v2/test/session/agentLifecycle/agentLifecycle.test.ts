@@ -150,7 +150,9 @@ describe('AgentLifecycleService', () => {
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
+  let beginTaskClose: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let flushPersistence: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
@@ -210,6 +212,20 @@ describe('AgentLifecycleService', () => {
       set: async <T>(scope: string, key: string, value: T): Promise<void> => {
         atomicDocs.set(`${scope}/${key}`, value);
       },
+      update: async <T>(
+        scope: string,
+        key: string,
+        mutate: (current: T | undefined) => T | Promise<T>,
+      ): Promise<T> => {
+        const next = await mutate(atomicDocs.get(`${scope}/${key}`) as T | undefined);
+        atomicDocs.set(`${scope}/${key}`, next);
+        return next;
+      },
+      withExclusiveKeyMutation: async <T>(
+        _scope: string,
+        _key: string,
+        mutation: () => Promise<T>,
+      ): Promise<T> => mutation(),
       delete: async (scope: string, key: string): Promise<void> => {
         atomicDocs.delete(`${scope}/${key}`);
       },
@@ -332,10 +348,14 @@ describe('AgentLifecycleService', () => {
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
     ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
+    beginTaskClose = vi.fn();
     stopAllOnExit = vi.fn(async () => []);
+    flushPersistence = vi.fn(async () => {});
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
+      beginClose: beginTaskClose,
       stopAllOnExit,
+      flushPersistence,
     } as unknown as IAgentTaskService);
     ix.stub(IAgentFullCompactionService, {
       _serviceBrand: undefined,

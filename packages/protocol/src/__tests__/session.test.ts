@@ -114,6 +114,22 @@ describe('sessionSchema', () => {
     const parsed = sessionSchema.parse(fullSession);
     expect(parsed.last_prompt).toBeUndefined();
   });
+
+  it('accepts the optional ownership field and rejects unknown held_by', () => {
+    expect(
+      sessionSchema.parse({ ...fullSession, ownership: { held_by: 'self' } }).ownership,
+    ).toEqual({ held_by: 'self' });
+    expect(
+      sessionSchema.parse({
+        ...fullSession,
+        ownership: { held_by: 'peer', address: 'http://127.0.0.1:58627' },
+      }).ownership,
+    ).toEqual({ held_by: 'peer', address: 'http://127.0.0.1:58627' });
+    expect(sessionSchema.parse(fullSession).ownership).toBeUndefined();
+    expect(
+      sessionSchema.safeParse({ ...fullSession, ownership: { held_by: 'unknown' } }).success,
+    ).toBe(false);
+  });
 });
 
 describe('sessionCreateSchema', () => {

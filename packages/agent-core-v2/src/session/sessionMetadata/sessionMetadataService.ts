@@ -13,7 +13,10 @@
  * released v1 builds. Re-registering an agent whose metadata is unchanged is
  * a no-op (no write, no mirror, no event), so resuming a session — which
  * re-registers its agents as they materialize — never bumps `updatedAt` and
- * never reorders session listings. Bound at Session scope.
+ * never reorders session listings. Every durable write is fenced by the
+ * storage backend's per-session write admission, so an instance that lost or
+ * released the session lease fails closed instead of overwriting a live
+ * peer's state. Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`

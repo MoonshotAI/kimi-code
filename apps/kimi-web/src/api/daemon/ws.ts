@@ -6,6 +6,7 @@
 import { traceWsIn, traceWsLifecycle, traceWsOut } from '../../debug/trace';
 import { classifyFrame } from './agentEventProjector';
 import { getCredential } from './serverAuth';
+import { SESSION_HELD_BY_PEER_CODE } from './sessionOwnership';
 import type { WireEvent, WireServerFrame } from './wire';
 
 // Mirrors kap-server's WS_BEARER_PROTOCOL_PREFIX. The browser WebSocket API
@@ -44,8 +45,16 @@ export interface DaemonEventSocketHandlers {
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
   /** Called when the WS connection opens or closes */
   onConnectionState(connected: boolean): void;
-  /** Called on error frames or JSON parse failures */
-  onError(code: number, msg: string, fatal: boolean): void;
+  /** Called on error frames or JSON parse failures. `details` carries the
+   *  structured payload of connection-level error frames when the server
+   *  sends one (e.g. SessionOwnershipDetails under 40921). */
+  onError(code: number, msg: string, fatal: boolean, details?: unknown): void;
+  /** Volatile hint (no payload): the shared session list changed on some
+   *  instance (multi-instance home). The listener re-pulls the list. */
+  onSessionListChanged?(): void;
+  /** Volatile per-session hint: the session's skill catalog changed on the
+   *  daemon. The listener re-pulls that session's skills. */
+  onSkillCatalogChanged?(sessionId: string): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
 }
@@ -373,13 +382,40 @@ export class DaemonEventSocket {
             payload: frame.payload,
           });
         } else {
-          this.handlers.onError(frame.payload.code, frame.payload.msg, frame.payload.fatal);
+          this.handlers.onError(frame.payload.code, frame.payload.msg, frame.payload.fatal, frame.payload?.details);
         }
         break;
       }
 
+      // Multi-instance hint (volatile, no payload): some instance sharing this
+      // home created/archived/deleted a session. Consumed by name here because
+      // classifyFrame would route the unknown unprefixed type to the agent
+      // projector, which no-ops on it. The server (sessionEventBroadcaster)
+      // only ever emits the bare form.
+      case 'session.list_changed':
+        this.handlers.onSessionListChanged?.();
+        break;
+
+      // Volatile per-session hint: the daemon's skill catalog for this session
+      // changed (e.g. a skill file edited on disk). Consumed by name here for
+      // the same reason as session.list_changed above; the frame carries its
+      // own per-connection seq, never the durable watermark. The server
+      // (skillCatalogBridge) only ever emits the bare form.
+      case 'skill_catalog.changed':
+        this.handlers.onSkillCatalogChanged?.(frame.session_id as string);
+        break;
+
       case 'ack':
-        // ack frames are fire-and-forget for now (no request tracking)
+        if (frame.code === SESSION_HELD_BY_PEER_CODE) {
+          const ownershipDetails = frame.payload?.ownership_details;
+          if (ownershipDetails && typeof ownershipDetails === 'object') {
+            for (const details of Object.values(ownershipDetails as Record<string, unknown>)) {
+              this.handlers.onError(frame.code, frame.msg, false, details);
+            }
+          } else {
+            this.handlers.onError(frame.code, frame.msg, false, frame.payload?.details);
+          }
+        }
         break;
 
       case 'terminal_output': {

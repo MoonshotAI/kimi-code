@@ -66,7 +66,7 @@ describe('PlanModeService dynamic injection content', () => {
       hostFs: createFakeHostFs({
         mkdir: vi.fn().mockResolvedValue(undefined),
         readText: (path: string) => readText(path),
-        writeText: vi.fn(async () => undefined),
+        writeText: vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 })),
       }),
     }));
     context = ctx.get(IAgentContextMemoryService);
@@ -148,7 +148,7 @@ describe('PlanModeService dynamic injection cadence', () => {
       hostFs: createFakeHostFs({
         mkdir: vi.fn().mockResolvedValue(undefined),
         readText: async () => '',
-        writeText: vi.fn(async () => undefined),
+        writeText: vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 })),
       }),
     }));
     context = ctx.get(IAgentContextMemoryService);

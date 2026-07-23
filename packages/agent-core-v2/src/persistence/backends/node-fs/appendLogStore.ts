@@ -9,9 +9,11 @@
  * Serializes whole-log rewrites with live appends, preserves queued or
  * in-flight records across the atomic replacement, keeps ambiguous append and
  * rewrite failures sticky, keeps the shared flush pending until the
- * post-rewrite drain is durable, waits every key before a global flush reports
- * an error, and preserves per-key storage ordering while acquired buffers
- * retire and hand off to replacement owners. Bound at App scope.
+ * post-rewrite drain is durable, supports scoped durability barriers, waits
+ * every selected key before a flush reports an error, and preserves failed
+ * retired buffers so their in-memory tail remains observable while replacement
+ * owners wait for the prior generation. Physical writes are admitted and
+ * tracked by the underlying byte-storage backend. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -119,11 +121,14 @@ export class AppendLogStore implements IAppendLogStore {
     await this.ownFlush(scope, key, state, rewrite);
   }
 
-  async flush(): Promise<void> {
-    const inFlight = [...this.logs.entries()].map(([id, state]) => {
+  async flush(scopePrefix?: string): Promise<void> {
+    const inFlight: Promise<void>[] = [];
+    for (const [id, state] of this.logs) {
       const { scope, key } = fromLogId(id);
-      return this.flushState(scope, key, state);
-    });
+      if (!matchesScope(scope, scopePrefix)) continue;
+      inFlight.push(this.flushState(scope, key, state));
+      if (state.retirement !== undefined) inFlight.push(state.retirement);
+    }
     const settled = await Promise.allSettled(inFlight);
     for (const result of settled) {
       if (result.status === 'rejected') throw result.reason;
@@ -187,16 +192,14 @@ export class AppendLogStore implements IAppendLogStore {
     state.refCount--;
     if (state.refCount > 0) return;
     state.retired = true;
-    state.retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    state.retirement = this.settleRetiredState(scope, key, state);
+    void state.retirement.catch((error) => state.onError?.(error));
   }
 
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
-    try {
-      await this.flushState(scope, key, state);
-    } finally {
-      const id = logId(scope, key);
-      if (this.logs.get(id) === state) this.logs.delete(id);
-    }
+    await this.flushState(scope, key, state);
+    const id = logId(scope, key);
+    if (this.logs.get(id) === state) this.logs.delete(id);
   }
 
   private ownFlush(
@@ -257,6 +260,7 @@ export class AppendLogStore implements IAppendLogStore {
       state.pending.splice(0, batch.length);
     }
   }
+
 }
 
 function logId(scope: string, key: string): string {
@@ -266,6 +270,10 @@ function logId(scope: string, key: string): string {
 function fromLogId(id: string): { scope: string; key: string } {
   const index = id.indexOf('\n');
   return { scope: id.slice(0, index), key: id.slice(index + 1) };
+}
+
+function matchesScope(scope: string, scopePrefix: string | undefined): boolean {
+  return scopePrefix === undefined || scope === scopePrefix || scope.startsWith(`${scopePrefix}/`);
 }
 
 function encodeBatch(records: readonly unknown[]): Uint8Array {

@@ -63,7 +63,7 @@ class MemoryHostFs implements IHostFileSystem {
     return text;
   }
 
-  async writeText(path: string, data: string): Promise<void> {
+  async writeText(path: string, data: string): Promise<HostFileStat> {
     const pause = this.nextWritePause;
     if (pause !== undefined) {
       this.nextWritePause = undefined;
@@ -76,10 +76,13 @@ class MemoryHostFs implements IHostFileSystem {
       }
     }
     this.files.set(path, data);
+    return { isFile: true, isDirectory: false, size: Buffer.byteLength(data) };
   }
 
-  async appendText(path: string, data: string): Promise<void> {
-    this.files.set(path, (this.files.get(path) ?? '') + data);
+  async appendText(path: string, data: string): Promise<HostFileStat> {
+    const content = (this.files.get(path) ?? '') + data;
+    this.files.set(path, content);
+    return { isFile: true, isDirectory: false, size: Buffer.byteLength(content) };
   }
 
   pauseNextWrite(): { readonly started: Promise<void>; readonly release: () => void } {

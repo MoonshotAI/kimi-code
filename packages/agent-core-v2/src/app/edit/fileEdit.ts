@@ -10,6 +10,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 
 export interface FileEditInput {
   readonly path: string;
@@ -20,7 +21,7 @@ export interface FileEditInput {
 }
 
 export type FileEditResult =
-  | { readonly ok: true; readonly count: number }
+  | { readonly ok: true; readonly count: number; readonly stat: HostFileStat }
   | { readonly ok: false; readonly error: string };
 
 export interface IFileEditService {

@@ -4,10 +4,9 @@
  * Subscribes to the os `IHostFsWatchService` on the workspace root, confines
  * events to the caller-declared subtree and to non-`.gitignore`d paths,
  * debounces them into fixed windows and re-exposes them as workspace-relative
- * `FsChangeEvent`s. The os watcher is started lazily on the first non-empty
- * subscription and stopped when the subscription set becomes empty. Path
- * confinement is lexical (`ISessionWorkspaceContext.isWithin`), matching
- * `sessionFs`.
+ * `FsChangeEvent`s. Path confinement is lexical (`ISessionWorkspaceContext.isWithin`),
+ * matching `sessionFs`. The os workDir watcher runs while the watched set is
+ * non-empty.
  */
 
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -26,12 +25,18 @@ import {
   IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { FsChangeEntry, FsChangeEvent } from './fsWatch';
+import type { FsChangeEvent } from './fsWatch';
 
 import { ISessionFsWatchService } from './fsWatch';
 
 const DEFAULT_DEBOUNCE_MS = 200;
 const DEFAULT_MAX_CHANGES_PER_WINDOW = 500;
+
+interface PendingChange {
+  readonly rel: string;
+  readonly change: HostFsChange['action'];
+  readonly kind: HostFsChange['kind'];
+}
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -51,7 +56,7 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   private handleSub: IDisposable | undefined;
 
   private debounceTimer: NodeJS.Timeout | undefined;
-  private pending: FsChangeEntry[] = [];
+  private pending: PendingChange[] = [];
   private rawCount = 0;
   private truncated = false;
 
@@ -64,7 +69,11 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     DEFAULT_MAX_CHANGES_PER_WINDOW,
   );
 
-  private readonly matcher: Ignore = ignore().add('.git/');
+  // The matcher is the entire filter state — a rules change swaps it in
+  // whole, nothing else is kept. Rules load asynchronously: until the
+  // initial load settles, filtering conservatively uses the base rules
+  // (only `.git/`), i.e. unknown-but-maybe-ignored paths still pass through.
+  private matcher: Ignore = ignore().add('.git/');
   private gitignoreLoaded = false;
 
   constructor(
@@ -112,24 +121,38 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   private loadGitignore(): void {
     if (this.gitignoreLoaded) return;
     this.gitignoreLoaded = true;
-    void this.hostFs
-      .readText(join(this.workspace.workDir, '.gitignore'))
-      .then(
-        (content) => {
-          this.matcher.add(content);
-        },
-        () => undefined,
-      );
+    void this.reloadGitignore();
+  }
+
+  private async reloadGitignore(): Promise<void> {
+    const next = ignore().add('.git/');
+    try {
+      next.add(await this.hostFs.readText(join(this.workspace.workDir, '.gitignore')));
+    } catch {
+      // Missing or unreadable `.gitignore` — fall back to the base rules.
+    }
+    this.matcher = next;
   }
 
   private onRaw(e: HostFsChange): void {
     const rel = this.toRel(e.path);
     if (rel === '.') return;
+    // A change to the workspace-root `.gitignore` invalidates the filter
+    // rules: rebuild the matcher asynchronously (the recursive watcher already
+    // delivers this event, so no extra watcher is needed). Events arriving
+    // while the rebuild is in flight are filtered by the previous matcher.
+    if (rel === '.gitignore' && e.kind !== 'directory') {
+      void this.reloadGitignore();
+    }
     const probe = e.kind === 'directory' ? `${rel}/` : rel;
     if (this.matcher.ignores(probe)) return;
-    if (!isUnderAny(rel, this.watched)) return;
+    if (isUnderAny(rel, this.watched)) {
+      this.record(e, rel);
+    }
+  }
 
-    this.pending.push({ path: rel, change: e.action, kind: e.kind });
+  private record(e: HostFsChange, rel: string): void {
+    this.pending.push({ rel, change: e.action, kind: e.kind });
     this.rawCount += 1;
     if (this.pending.length > this.maxChangesPerWindow) {
       this.truncated = true;
@@ -147,17 +170,26 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     if (this.rawCount === 0) return;
     const truncated = this.truncated;
     const count = this.rawCount;
-    const changes = truncated ? [] : this.pending;
+    const pending = this.pending;
     this.pending = [];
     this.rawCount = 0;
     this.truncated = false;
 
-    const event: FsChangeEvent = {
-      changes,
-      coalesced_window_ms: this.debounceMs,
-      ...(truncated ? { truncated: true, count } : {}),
-    };
-    this.emitter.fire(event);
+    const changes = truncated
+      ? []
+      : pending.map((entry) => ({
+          path: entry.rel,
+          change: entry.change,
+          kind: entry.kind,
+        }));
+    if (truncated || changes.length > 0) {
+      const event: FsChangeEvent = {
+        changes,
+        coalesced_window_ms: this.debounceMs,
+        ...(truncated ? { truncated: true, count } : {}),
+      };
+      this.emitter.fire(event);
+    }
   }
 
   private clearWindow(): void {

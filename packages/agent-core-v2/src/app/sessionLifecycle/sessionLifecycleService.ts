@@ -32,6 +32,14 @@
  * kicked fire-and-forget). The session-level eager services whose
  * subscriptions must exist before the first agent / turn (external hooks,
  * cron) are force-instantiated at the same point.
+ *
+ * Every materialization (create/resume/fork-target) first takes the session's
+ * cross-process write lease under `session-leases/` and registers that lease
+ * as the session's write admission. Close/archive stop producers, flush the
+ * session's append-log tail, seal new write admission, await already-admitted
+ * I/O, and then release the lease. Any release failure converges internally to
+ * a dirty-marked abandoned release; callers never need a second teardown
+ * operation. Lease loss follows the same fail-closed release path.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -41,7 +49,7 @@ import { ulid } from 'ulid';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -50,6 +58,7 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -72,13 +81,29 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IStorageWriteAdmission } from '#/persistence/interface/storageWriteAdmission';
+import {
+  type CrossProcessLockInspection,
+  ICrossProcessLockService,
+  OsLockErrors,
+} from '#/os/interface/crossProcessLock';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import {
+  type HeldByPeerDetails,
+  HELD_BY_PEER_CREATING_DETAILS,
+  heldByPeerDetailsFromInspection,
+  SessionLease,
+  sessionLeasePath,
+  sessionLeaseSeed,
+} from '#/session/sessionLease/sessionLease';
+import { ISessionLeaseContactProvider } from '#/session/sessionLease/sessionLeaseContactProvider';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -101,6 +126,7 @@ import {
   type SessionForkedEvent,
   type SessionLifecycleHooks,
   type SessionWillCloseEvent,
+  type SessionWillReleaseEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
 
@@ -109,9 +135,33 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly workspaceId?: string;
 };
 
+type SessionEntryState = 'opening' | 'active' | 'closing';
+type SessionReleaseKind = 'close' | 'archive';
+type SessionReleaseStage =
+  | 'set-archived'
+  | 'drain-agents'
+  | 'publish-archive'
+  | 'will-close'
+  | 'dispose-scope'
+  | 'will-release'
+  | 'flush'
+  | 'drain-writes'
+  | 'lease-lost'
+  | 'shutdown';
+
+interface SessionEntry {
+  state: SessionEntryState;
+  readonly handle: ISessionScopeHandle;
+  readonly lease: SessionLease;
+  readonly writeAdmissionRegistration: IDisposable;
+  readonly storageScope: string;
+  disposed: boolean;
+  releasePromise?: Promise<void>;
+}
+
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
-  private readonly sessions = new Map<string, ISessionScopeHandle>();
+  private readonly entries = new Map<string, SessionEntry>();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
   readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
@@ -123,8 +173,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly hooks = createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
     'onDidCreateSession',
     'onWillCloseSession',
+    'onWillReleaseSession',
   ]);
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly inFlightOperations = new Set<Promise<unknown>>();
+  private closing = false;
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -141,13 +194,29 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly projectLocalConfig: IProjectLocalConfigService,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ILogService private readonly log: ILogService,
+    @ICrossProcessLockService private readonly locks: ICrossProcessLockService,
+    @IStorageWriteAdmission private readonly writeAdmission: IStorageWriteAdmission,
+    @ISessionLeaseContactProvider
+    private readonly leaseContact: ISessionLeaseContactProvider,
   ) {
     super();
   }
 
+  beginClose(): Promise<void> {
+    this.closing = true;
+    return Promise.allSettled([...this.inFlightOperations, ...this.resuming.values()]).then(() => undefined);
+  }
+
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
+    return this.trackOperation(this.doCreate(opts));
+  }
+
+  private async doCreate(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
-    const handle = await this.materializeSession({ ...opts, sessionId });
+    const entry = await this.materializeSession({ ...opts, sessionId });
+    const handle = entry.handle;
     try {
       const main =
         opts.mainAgentBinding === undefined
@@ -168,19 +237,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         opts.workDir,
         handle.accessor.get(ISessionContext).workspaceId,
       );
+      this.activateSession(entry);
+      await this.announceCreated({ sessionId, handle, source: 'startup' });
+      return handle;
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
-      this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
-      handle.dispose();
+      this.rollbackSession(entry);
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'startup' });
-    return handle;
   }
 
-  private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
+  private async materializeSession(
+    opts: MaterializeSessionOptions,
+    beforeReady?: (handle: ISessionScopeHandle) => Promise<void>,
+  ): Promise<SessionEntry> {
     const workspace = await this.workspaces.createOrTouch(opts.workDir);
     const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
@@ -203,31 +275,57 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
     const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        extra: [...sessionContextSeed(ctx)],
-      },
-    ) as ISessionScopeHandle;
-    if (additionalDirs.length > 0) {
-      handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
-    }
+    const lease = await this.acquireSessionLease(opts.sessionId);
+    let writeAdmissionRegistration: IDisposable;
     try {
+      writeAdmissionRegistration = this.writeAdmission.registerSession(sessionScope, lease);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+    let entry: SessionEntry | undefined;
+    try {
+      const handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Session,
+        opts.sessionId,
+        {
+          extra: [...sessionContextSeed(ctx), ...sessionLeaseSeed(lease)],
+        },
+      ) as ISessionScopeHandle;
+      if (additionalDirs.length > 0) {
+        handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
+      }
+      entry = {
+        state: 'opening',
+        handle,
+        lease,
+        writeAdmissionRegistration,
+        storageScope: sessionScope,
+        disposed: false,
+      };
+      this.entries.set(opts.sessionId, entry);
+      // Fork's session-file copy lands here: the lease is already held (so no
+      // peer can materialize the target underneath the copy) and the readiness
+      // awaits below still see the copied state (tool policy, agent files).
+      await beforeReady?.(handle);
+      handle.accessor.get(ISessionExternalHooksService);
+      handle.accessor.get(ISessionCronService);
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       void handle.accessor.get(ISessionSkillCatalog).ready;
       await handle.accessor.get(ISessionAgentProfileCatalog).ready;
       await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-      handle.accessor.get(ISessionExternalHooksService);
-      handle.accessor.get(ISessionCronService);
+      return entry;
     } catch (error) {
-      handle.dispose();
+      if (entry !== undefined) {
+        this.rollbackSession(entry);
+      } else {
+        writeAdmissionRegistration.dispose();
+        lease.release();
+      }
       throw error;
     }
-    this.sessions.set(opts.sessionId, handle);
-    return handle;
   }
 
   /**
@@ -248,7 +346,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       workDir,
     });
-    await this.appendLogStore.flush();
+    await this.appendLogStore.flush('');
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
@@ -259,14 +357,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
-    if (this.resuming.has(sessionId)) return undefined;
-    return this.sessions.get(sessionId);
+    const entry = this.entries.get(sessionId);
+    return entry?.state === 'active' ? entry.handle : undefined;
   }
 
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    if (this.closing) return Promise.reject(this.lifecycleClosingError());
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
-    const live = this.sessions.get(sessionId);
+    const live = this.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
     const promise = this.doResume(sessionId)
       .catch((error: unknown) => {
@@ -282,7 +381,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async doResume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    const live = this.sessions.get(sessionId);
+    const live = this.get(sessionId);
     if (live !== undefined) return live;
 
     const summary = await this.index.get(sessionId);
@@ -292,51 +391,45 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const workDir = summary.cwd ?? workspace?.root;
     if (workDir === undefined) return undefined;
 
-    const handle = await this.materializeSession({
+    const entry = await this.materializeSession({
       sessionId,
       workDir,
       workspaceId: summary.workspaceId,
     });
-    const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.get(MAIN_AGENT_ID) === undefined) {
-      await agents.create({ agentId: MAIN_AGENT_ID });
+    const handle = entry.handle;
+    try {
+      const agents = handle.accessor.get(IAgentLifecycleService);
+      if (agents.get(MAIN_AGENT_ID) === undefined) {
+        await agents.create({ agentId: MAIN_AGENT_ID });
+      }
+      this.activateSession(entry);
+      await this.announceCreated({ sessionId, handle, source: 'resume' });
+      return handle;
+    } catch (error) {
+      this.rollbackSession(entry);
+      throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'resume' });
-    return handle;
   }
 
   list(): readonly ISessionScopeHandle[] {
     const ready: ISessionScopeHandle[] = [];
-    for (const [id, handle] of this.sessions) {
-      if (!this.resuming.has(id)) ready.push(handle);
+    for (const entry of this.entries.values()) {
+      if (entry.state === 'active') ready.push(entry.handle);
     }
     return ready;
   }
 
   async close(sessionId: string): Promise<void> {
-    const handle = this.sessions.get(sessionId);
-    if (handle === undefined) return;
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    this.sessions.delete(sessionId);
-    await this.drainAgents(handle);
-    handle.dispose();
-    this._onDidCloseSession.fire({ sessionId });
+    await this.releaseSession(sessionId, 'close');
+  }
+
+  async closeAll(): Promise<void> {
+    await this.beginClose();
+    await Promise.allSettled([...this.entries].map(([sessionId]) => this.close(sessionId)));
   }
 
   async archive(sessionId: string): Promise<void> {
-    const handle = this.sessions.get(sessionId);
-    if (handle === undefined) return;
-    const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    await this.drainAgents(handle);
-    this.event.publish({
-      type: 'event.session.archived',
-      payload: { sessionId },
-    });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    this.sessions.delete(sessionId);
-    handle.dispose();
-    this._onDidArchiveSession.fire({ sessionId });
+    await this.releaseSession(sessionId, 'archive');
   }
 
   async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
@@ -350,6 +443,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.hooks.onWillCloseSession.run(event);
   }
 
+  private async announceWillRelease(event: SessionWillReleaseEvent): Promise<void> {
+    try {
+      await this.hooks.onWillReleaseSession.run(event);
+    } catch (error) {
+      this.log.warn('session release hook failed', {
+        sessionId: event.sessionId,
+        reason: event.reason,
+        error: String(error),
+      });
+    }
+  }
+
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
     const agentLifecycle = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
@@ -357,10 +462,210 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
+  private releaseSession(
+    sessionId: string,
+    kind: SessionReleaseKind,
+  ): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    if (entry === undefined) return Promise.resolve();
+    if (entry.state === 'opening') {
+      this.rollbackSession(entry);
+      return Promise.resolve();
+    }
+    if (entry.releasePromise !== undefined) return entry.releasePromise;
+    entry.state = 'closing';
+    const releasePromise = this.runSessionRelease(sessionId, entry, kind);
+    entry.releasePromise = releasePromise;
+    return releasePromise;
+  }
+
+  private async runSessionRelease(
+    sessionId: string,
+    entry: SessionEntry,
+    kind: SessionReleaseKind,
+  ): Promise<void> {
+    let stage: SessionReleaseStage = kind === 'archive' ? 'set-archived' : 'will-close';
+    try {
+      if (kind === 'archive') {
+        await entry.handle.accessor.get(ISessionMetadata).setArchived(true);
+        stage = 'drain-agents';
+        await this.drainAgents(entry.handle);
+        stage = 'publish-archive';
+        this.event.publish({
+          type: 'event.session.archived',
+          payload: { sessionId },
+        });
+      } else {
+        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
+        stage = 'drain-agents';
+        await this.drainAgents(entry.handle);
+      }
+
+      stage = 'will-close';
+      if (kind === 'archive') {
+        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
+      }
+      stage = 'dispose-scope';
+      this.disposeSessionHandle(entry);
+      stage = 'will-release';
+      await this.announceWillRelease({ sessionId, reason: kind });
+      stage = 'flush';
+      await this.flushSessionTail(sessionId, entry.storageScope);
+      stage = 'drain-writes';
+      await entry.lease.sealAndDrain();
+    } catch (error) {
+      await this.abandonSession(entry, stage, error);
+      throw new Error2(
+        ErrorCodes.SESSION_DURABILITY_FAILED,
+        `session ${sessionId} was abandoned while releasing at ${stage}`,
+        {
+          details: { sessionId, stage },
+          cause: error,
+        },
+      );
+    }
+
+    this.finishSessionRelease(entry);
+    if (kind === 'archive') {
+      this._onDidArchiveSession.fire({ sessionId });
+    } else {
+      this._onDidCloseSession.fire({ sessionId });
+    }
+  }
+
+  private async abandonSession(
+    entry: SessionEntry,
+    stage: SessionReleaseStage,
+    cause: unknown,
+  ): Promise<void> {
+    const sessionId = entry.handle.id;
+    const reason = stage === 'flush' ? 'flush-failed' : 'release-failed';
+    this.log.warn('abandoning session after release failed', {
+      sessionId,
+      stage,
+      error: String(cause),
+    });
+
+    const taskServices = this.collectTaskServices(entry);
+    try {
+      this.disposeSessionHandle(entry);
+    } catch {
+    }
+
+    await this.writeDirtyMarker(entry, reason, stage);
+    await this.announceWillRelease({ sessionId, reason: 'dirty-abort' });
+    await Promise.allSettled(taskServices.map((tasks) => tasks.flushPersistence()));
+    await entry.lease.sealAndDrain();
+    this.finishSessionRelease(entry);
+    if (reason === 'flush-failed') {
+      this.telemetry.track2('session_dirty_abort', {
+        session_id: sessionId,
+        reason,
+      });
+    }
+  }
+
+  private async writeDirtyMarker(
+    entry: SessionEntry,
+    reason: 'flush-failed' | 'release-failed',
+    stage: SessionReleaseStage,
+  ): Promise<void> {
+    try {
+      await this.docs.update<SessionMeta>(entry.storageScope, 'state.json', (current) => {
+        if (current === undefined) {
+          throw new Error2(
+            ErrorCodes.SESSION_DURABILITY_FAILED,
+            `session ${entry.handle.id} metadata is missing while writing dirty marker`,
+            { details: { sessionId: entry.handle.id } },
+          );
+        }
+        return {
+          ...current,
+          custom: {
+            ...current.custom,
+            dirtyAbort: { reason, stage, at: Date.now() },
+          },
+        };
+      });
+    } catch (error) {
+      this.log.warn('failed to persist session dirty marker', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    }
+  }
+
+  private collectTaskServices(entry: SessionEntry): IAgentTaskService[] {
+    try {
+      return entry.handle
+        .accessor.get(IAgentLifecycleService)
+        .list()
+        .map((agent) => agent.accessor.get(IAgentTaskService));
+    } catch {
+      return [];
+    }
+  }
+
+  private finishSessionRelease(entry: SessionEntry): void {
+    try {
+      entry.writeAdmissionRegistration.dispose();
+    } catch (error) {
+      this.log.warn('failed to unregister session write admission', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    }
+    try {
+      entry.lease.release();
+    } catch (error) {
+      this.log.warn('failed to release session lease', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    }
+    if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
+  }
+
+  private activateSession(entry: SessionEntry): void {
+    if (this.entries.get(entry.handle.id) !== entry || entry.state !== 'opening') {
+      throw new Error2(
+        ErrorCodes.SESSION_LEASE_LOST,
+        `session ${entry.handle.id} was torn down before activation`,
+        { details: { sessionId: entry.handle.id } },
+      );
+    }
+    entry.lease.assertWritable();
+    entry.state = 'active';
+  }
+
+  private rollbackSession(entry: SessionEntry): void {
+    if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
+    try {
+      this.disposeSessionHandle(entry);
+    } catch {
+    }
+    try {
+      entry.writeAdmissionRegistration.dispose();
+    } catch {
+    }
+    entry.lease.release();
+  }
+
+  private disposeSessionHandle(entry: SessionEntry): void {
+    if (entry.disposed) return;
+    entry.handle.dispose();
+    entry.disposed = true;
+  }
+
   async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
+    return this.trackOperation(this.doFork(opts));
+  }
+
+  private async doFork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
     const sourceId = opts.sourceSessionId;
 
-    const sourceHandle = this.sessions.get(sourceId);
+    const sourceHandle = this.get(sourceId);
     const indexSummary = await this.index.get(sourceId);
     if (sourceHandle === undefined && indexSummary === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
@@ -378,6 +683,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // quiesce: the only requirement is a durable copy point, which
     // `copyAgentWire`'s flush provides.
     let targetId: string | undefined;
+    let targetEntry: SessionEntry | undefined;
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
@@ -392,24 +698,29 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           : await this.readMetaFromDisk(workspaceId, sourceId);
 
       targetId = opts.newSessionId ?? createSessionId();
-      if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
+      if (this.entries.has(targetId) || (await this.index.get(targetId)) !== undefined) {
         throw new Error2(
           ErrorCodes.SESSION_ALREADY_EXISTS,
           `Session "${targetId}" already exists`,
         );
       }
 
-      targetSessionDir = this.bootstrap.sessionDir(workspaceId, targetId);
-      await this.copySessionFiles(
-        this.bootstrap.sessionDir(workspaceId, sourceId),
-        targetSessionDir,
+      targetEntry = await this.materializeSession(
+        {
+          sessionId: targetId,
+          workDir: workspace.root,
+        },
+        async (handle) => {
+          const dir = handle.accessor.get(ISessionContext).sessionDir;
+          // Reached only under our own lease (post-acquisition), so a later
+          // failure may safely attribute the directory to us and remove it.
+          targetSessionDir = dir;
+          await this.copySessionFiles(this.bootstrap.sessionDir(workspaceId, sourceId), dir);
+        },
       );
-
-      target = await this.materializeSession({
-        sessionId: targetId,
-        workDir: workspace.root,
-      });
+      target = targetEntry.handle;
       const targetCtx = target.accessor.get(ISessionContext);
+      targetSessionDir = targetCtx.sessionDir;
       const targetMeta = target.accessor.get(ISessionMetadata);
 
       const sourceAgents = sourceMeta?.agents ?? {};
@@ -447,6 +758,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       await this.appendSessionIndexEntry(targetId, workspace.root, targetCtx.workspaceId);
+      this.activateSession(targetEntry);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,
@@ -455,15 +767,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
       return target;
     } catch (error) {
-      if (targetId !== undefined) {
-        this.sessions.delete(targetId);
-      }
-      if (target !== undefined) {
-        try {
-          target.dispose();
-        } catch {
-        }
-      }
+      if (targetEntry !== undefined) this.rollbackSession(targetEntry);
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
@@ -472,6 +776,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
     const title =
       opts.title ??
       `Child: ${(await this.resolveSourceTitle(opts.sourceSessionId)) ?? opts.sourceSessionId}`;
@@ -489,7 +794,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {
-    const live = this.sessions.get(sourceId);
+    const live = this.get(sourceId);
     if (live !== undefined) {
       return (await live.accessor.get(ISessionMetadata).read()).title;
     }
@@ -598,6 +903,118 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         tags: { ...task.tags, [CRON_SESSION_TAG]: targetId },
       };
       await this.cronStore.save(workspaceId, clone);
+    }
+  }
+
+  override dispose(): void {
+    this.closing = true;
+    for (const entry of this.entries.values()) {
+      this.startAbandon(entry, 'shutdown', new Error('session lifecycle disposed'));
+    }
+    super.dispose();
+  }
+
+  private assertOpen(): void {
+    if (this.closing) throw this.lifecycleClosingError();
+  }
+
+  private lifecycleClosingError(): Error2 {
+    return new Error2(ErrorCodes.SESSION_CLOSED, 'session lifecycle is closing');
+  }
+
+  private trackOperation<T>(promise: Promise<T>): Promise<T> {
+    this.inFlightOperations.add(promise);
+    const remove = (): void => {
+      this.inFlightOperations.delete(promise);
+    };
+    promise.then(remove, remove);
+    return promise;
+  }
+
+  private onLeaseLost(sessionId: string): void {
+    this.log.error('session lease lost; tearing the session down', { sessionId });
+    const entry = this.entries.get(sessionId);
+    if (entry !== undefined) {
+      this.startAbandon(
+        entry,
+        'lease-lost',
+        new Error2(ErrorCodes.SESSION_LEASE_LOST, `session ${sessionId} lost its write lease`, {
+          details: { sessionId },
+        }),
+      );
+    }
+  }
+
+  private startAbandon(
+    entry: SessionEntry,
+    stage: SessionReleaseStage,
+    cause: unknown,
+  ): void {
+    if (entry.releasePromise !== undefined) return;
+    entry.state = 'closing';
+    const releasePromise = this.abandonSession(entry, stage, cause);
+    entry.releasePromise = releasePromise;
+    void releasePromise.catch((error) => {
+      this.log.error('unexpected failure while abandoning session', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    });
+  }
+
+  private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
+    const leasePath = sessionLeasePath(this.bootstrap.homeDir, sessionId);
+    const contact = this.leaseContact.contact();
+    try {
+      const handle = await this.locks.acquire(leasePath, {
+        address: contact.type === 'address' ? contact.address : undefined,
+      });
+      const lease = new SessionLease(sessionId, handle, (id) => {
+        this.onLeaseLost(id);
+      });
+      this.telemetry.track2('session_lease_acquired', { session_id: sessionId });
+      return lease;
+    } catch (error) {
+      if (
+        isError2(error) &&
+        (error.code === OsLockErrors.codes.OS_LOCK_HELD ||
+          error.code === OsLockErrors.codes.OS_LOCK_WAIT_TIMEOUT)
+      ) {
+        this.throwHeldByPeer(sessionId, error);
+      }
+      throw error;
+    }
+  }
+
+  private throwHeldByPeer(sessionId: string, cause: unknown): never {
+    const inspection = this.locks.inspect(sessionLeasePath(this.bootstrap.homeDir, sessionId));
+    const details = this.heldByPeerDetails(inspection);
+    this.telemetry.track2('session_held_by_peer_returned', {
+      session_id: sessionId,
+      phase: details.phase,
+    });
+    throw new Error2(
+      ErrorCodes.SESSION_HELD_BY_PEER,
+      `session ${sessionId} is held by another instance (${details.phase})`,
+      { details, cause },
+    );
+  }
+
+  private heldByPeerDetails(inspection: CrossProcessLockInspection): HeldByPeerDetails {
+    // A free lease here means the holder vanished between the failed acquire
+    // and this probe; that race converges by retrying, same as 'creating'.
+    return heldByPeerDetailsFromInspection(inspection) ?? HELD_BY_PEER_CREATING_DETAILS;
+  }
+
+  private async flushSessionTail(sessionId: string, storageScope: string): Promise<void> {
+    try {
+      await this.appendLogStore.flush(storageScope);
+    } catch (error) {
+      this.log.warn('final journal flush failed while closing session', {
+        sessionId,
+        error: String(error),
+      });
+      throw error;
     }
   }
 

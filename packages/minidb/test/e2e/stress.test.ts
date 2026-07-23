@@ -184,25 +184,18 @@ test(
 );
 
 // ===========================================================================
-// Bug evidence: stale-lock takeover admits multiple owners
+// Kernel lock exclusivity under simultaneous acquisition
 // ===========================================================================
 
-// LockFile.acquire unlinks a stale lock and retries blindly. When several
-// processes race to take over a crashed owner's lock, the loser's unlink can
-// delete the winner's fresh lock file (and ENOENT on readFile is also treated
-// as "stale"), so many racers end up believing they hold the lock at once —
-// i.e. several writers on one database directory.
 test(
-  'stress: a stale lock must be taken over by exactly one process',
+  'stress: a kernel lock admits exactly one process per acquisition wave',
   { timeout: 180_000 },
   async () => {
     const dir = await tmpDir('minidb-stress-lock-');
     const lockPath = path.join(dir, 'db.lock');
     const RACER = path.join(__dirname, 'helpers', 'lock-racer.ts');
-    const DEAD_PID = 2 ** 30 - 3;
-    // 6-way simultaneous takeover still exposes any cascade (the historical
-    // failure mode grants everyone the lock), while fitting the test's process
-    // budget on 2-core runners (every racer is a full node+tsx child).
+    // Six simultaneous contenders exercise the OS-backed exclusion path while
+    // fitting the test's process budget on two-core runners.
     const RACERS = 6;
     const ROUNDS = 25;
 
@@ -233,7 +226,6 @@ test(
         await new Promise((res) => setTimeout(res, 5));
       }
       for (let r = 0; r < ROUNDS; r++) {
-        await fs.writeFile(lockPath, JSON.stringify({ pid: DEAD_PID, ts: Date.now() }));
         await fs.writeFile(`${dir}/go-${r}`, '1');
         const want = `R${r} `;
         for (;;) {
@@ -241,6 +233,11 @@ test(
           if (lines.length >= RACERS) {
             const holders = lines.filter((l) => l.endsWith(' 1'));
             if (holders.length !== 1) violations.push(`round ${r}: ${holders.length} holders (${holders.join(', ')})`);
+            // Every racer has resolved this round: let the winner release.
+            // Without the gate a racer descheduled past the winner's hold
+            // could acquire sequentially afterwards and report a truthful
+            // second "1" (see lock-racer.ts).
+            await fs.writeFile(`${dir}/release-${r}`, '1');
             break;
           }
           await new Promise((res) => setTimeout(res, 1));
@@ -842,4 +839,3 @@ test(
     }
   },
 );
-

@@ -17,9 +17,13 @@
  * — plus a `delivered` snapshot per domain used as the diff base for
  * `onDidSectionChange`. Reads config paths and the environment overlay through
  * `bootstrap`, persists the TOML document through the `storage` TOML
- * atomic-document store (reloading when the document changes on disk), and logs
- * through `log`. Late section / overlay registration re-validates the
- * already-loaded raw value and re-runs overlays. Bound at App scope.
+ * atomic-document store (reloading when the document changes on disk),
+ * serializes every persist through the atomic-document store's transactional
+ * update primitive (backed by a cross-process lock for file storage), re-reading
+ * inside the lock and applying only the touched section so writes from other
+ * processes survive, and logs through `log`.
+ * Late section / overlay registration re-validates the already-loaded raw
+ * value and re-runs overlays. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -32,7 +36,6 @@ import {
   IAtomicTomlDocumentStore,
   type IAtomicDocumentStore,
 } from '#/persistence/interface/atomicDocumentStore';
-
 import {
   type AnyEnvBindings,
   type ConfigChangedEvent,
@@ -323,8 +326,10 @@ export class ConfigService extends Disposable implements IConfigService {
         this.registry.validate(domain, stripped);
         this.raw[domain] = stripped;
       }
+      const previousRaw = this.raw;
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+      this.commitAbsorbed(previousRaw);
     });
   }
 
@@ -350,8 +355,10 @@ export class ConfigService extends Disposable implements IConfigService {
       } else {
         this.raw[domain] = this.registry.validate(domain, stripped);
       }
+      const previousRaw = this.raw;
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+      this.commitAbsorbed(previousRaw);
     });
   }
 
@@ -556,8 +563,24 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private async persist(domain: string): Promise<void> {
-    applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    const freshBase = await this.documentStore.update<ResolvedConfig>(
+      CONFIG_SCOPE,
+      this.configKey,
+      (data) => {
+        const next = data !== undefined && isPlainObject(data) ? cloneRecord(data) : {};
+        applySectionToToml(next, domain, this.raw[domain], this.registry);
+        return next;
+      },
+    );
+    this.rawSnake = freshBase;
+    this.raw = transformTomlData(freshBase, this.registry);
+  }
+
+  private commitAbsorbed(previousRaw: ResolvedConfig): void {
+    const absorbed = [...new Set([...Object.keys(previousRaw), ...Object.keys(this.raw)])].filter(
+      (domain) => !deepEqual(previousRaw[domain], this.raw[domain]),
+    );
+    if (absorbed.length > 0) this.commit('reload', absorbed);
   }
 }
 

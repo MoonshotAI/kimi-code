@@ -34,106 +34,15 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { IPluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
+import { fakeHostFsWatch } from '../sessionFs/stubs';
+import { configStub, pluginStub, workspaceStub } from './stubs';
 
 const bootstrapStub = stubBootstrap('/home');
-
-function configStub(): IConfigService & {
-  setExtraSkillDirs(dirs: readonly string[]): void;
-  setMergeAllAvailableSkills(value: boolean): void;
-  fireSectionChange(domain: string): void;
-} {
-  let extraSkillDirs: readonly string[] = [];
-  let mergeAllAvailableSkills = true;
-  const sectionChangeListeners: Array<(event: unknown) => void> = [];
-  return {
-    _serviceBrand: undefined,
-    ready: Promise.resolve(),
-    onDidChangeConfiguration: () => ({ dispose: () => {} }),
-    onDidSectionChange: (listener: (event: unknown) => void) => {
-      sectionChangeListeners.push(listener);
-      return { dispose: () => {} };
-    },
-    get: (domain: string) => {
-      if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
-      if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
-      return undefined;
-    },
-    inspect: () => ({ value: undefined, defaultValue: undefined, userValue: undefined, memoryValue: undefined }),
-    getAll: () => ({}),
-    set: async () => {},
-    replace: async () => {},
-    reload: async () => {},
-    diagnostics: () => [],
-    setExtraSkillDirs: (dirs: readonly string[]) => {
-      extraSkillDirs = [...dirs];
-    },
-    setMergeAllAvailableSkills: (value: boolean) => {
-      mergeAllAvailableSkills = value;
-    },
-    fireSectionChange: (domain: string) => {
-      for (const listener of sectionChangeListeners) {
-        listener({ domain, source: 'set', value: undefined, previousValue: undefined });
-      }
-    },
-  } as unknown as IConfigService & {
-    setExtraSkillDirs(dirs: readonly string[]): void;
-    setMergeAllAvailableSkills(value: boolean): void;
-    fireSectionChange(domain: string): void;
-  };
-}
-
-function pluginStub(
-  skillRoots: readonly SkillRoot[] = [],
-  reloadEmitter?: Emitter<ReloadSummary>,
-): IPluginService {
-  return {
-    _serviceBrand: undefined,
-    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
-    listPlugins: async () => [],
-    installPlugin: async () => ({ id: '' }) as never,
-    setPluginEnabled: async () => {},
-    setPluginMcpServerEnabled: async () => {},
-    removePlugin: async () => {},
-    reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
-    getPluginInfo: async () => {
-      throw new Error('getPluginInfo is not used by these tests');
-    },
-    listPluginCommands: async () => [],
-    checkUpdates: async () => [],
-    pluginSkillRoots: async () => skillRoots,
-    enabledSessionStarts: async () => [],
-    enabledMcpServers: async () => ({}),
-    enabledHooks: async () => [],
-  };
-}
-
-function workspaceStub(workDir: string): {
-  readonly stub: ISessionWorkspaceContext;
-  setWorkDir(dir: string): void;
-} {
-  let current = workDir;
-  const stub = {
-    _serviceBrand: undefined,
-    get workDir() {
-      return current;
-    },
-    additionalDirs: [] as readonly string[],
-    setWorkDir: (dir: string) => {
-      current = dir;
-    },
-    setAdditionalDirs: () => {},
-    resolve: (rel: string) => rel,
-    isWithin: () => true,
-    assertAllowed: (p: string) => p,
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
-  } satisfies ISessionWorkspaceContext;
-  return { stub, setWorkDir: (dir) => { current = dir; } };
-}
 
 function makeHost(
   store: ISkillDiscovery,
@@ -153,6 +62,7 @@ function makeHost(
     stubPair(IConfigService, config),
     stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
+    stubPair(IHostFsWatchService, fakeHostFsWatch().service),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
   return { host, session, config };
@@ -328,6 +238,7 @@ describe('SessionSkillCatalogService', () => {
       stubPair(IConfigService, config),
       stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, fakeHostFsWatch().service),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
 
@@ -367,6 +278,7 @@ describe('SessionSkillCatalogService', () => {
       stubPair(IConfigService, config),
       stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, fakeHostFsWatch().service),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
 
@@ -584,6 +496,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, fakeHostFsWatch().service),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [
       stubPair(ISessionWorkspaceContext, ws),
@@ -643,6 +556,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginService),
+      stubPair(IHostFsWatchService, fakeHostFsWatch().service),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [
       stubPair(ISessionWorkspaceContext, ws),
@@ -701,6 +615,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IHostFsWatchService, fakeHostFsWatch().service),
     ]);
     const { stub: ws } = workspaceStub('/work');
     const session = host.child(LifecycleScope.Session, 's1', [

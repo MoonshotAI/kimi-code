@@ -10,6 +10,9 @@
  *                fsync, so the replacement is both atomic and durable.
  *   - `append` → `open('a')` + write + `fh.sync()` (when `durable`), plus a
  *                one-time directory fsync per scope.
+ *   - `withExclusiveKeyMutation` → the shared cross-process lock protocol
+ *                                  on `<value-path>.lock`, bounding waits to
+ *                                  10 seconds.
  *   - `watch`  → chokidar on the parent directory, filtered to the exact key and
  *                debounced, so it survives atomic-replace renames and observes a
  *                file that does not exist yet at subscription time.
@@ -18,18 +21,26 @@
  * control over append offsets, fsync, atomic rename and streaming, which the
  * agent-execution-environment abstraction does not expose. Higher-level code
  * (wire journal, blob store) goes through the Store / Storage interfaces above
- * this backend, never `node:fs` directly.
+ * this backend, never `node:fs` directly. Session-rooted mutations run through
+ * the App-scoped write admission, which rejects writes after sealing and
+ * tracks admitted physical I/O until it settles.
  */
 
-import { createReadStream, mkdirSync } from 'node:fs';
+import { createReadStream, mkdirSync, statSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
 import { FSWatcher } from 'chokidar';
 import { dirname, join, normalize } from 'pathe';
 
 import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { optional } from '#/_base/di/instantiation';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { atomicWrite, syncDir } from '#/_base/utils/fs';
+import { atomicWrite, fileStatTuplesEqual, isSpecialFileStat, syncDir } from '#/_base/utils/fs';
+import {
+  CrossProcessLockError,
+  CrossProcessLockErrorCode,
+  ICrossProcessLockService,
+} from '#/os/interface/crossProcessLock';
 
 import type {
   IFileSystemStorageService,
@@ -37,9 +48,22 @@ import type {
   StorageReadRange,
   StorageWriteOptions,
 } from '#/persistence/interface/storage';
-import { toStorageIoError } from '#/persistence/interface/storage';
+import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
+import { IStorageWriteAdmission } from '#/persistence/interface/storageWriteAdmission';
 
 const WATCH_DEBOUNCE_MS = 150;
+const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
+
+type WatchFingerprint = { readonly size: number; readonly mtimeMs: number; readonly ino: number } | undefined;
+
+function fingerprint(path: string): WatchFingerprint {
+  try {
+    const stats = statSync(path);
+    return { size: stats.size, mtimeMs: stats.mtimeMs, ino: stats.ino };
+  } catch {
+    return undefined;
+  }
+}
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -54,6 +78,9 @@ export class FileStorageService implements IFileSystemStorageService {
     private readonly baseDir: string,
     private readonly dirMode?: number,
     private readonly fileMode?: number,
+    @optional(ICrossProcessLockService) private readonly locks?: ICrossProcessLockService,
+    @optional(IStorageWriteAdmission)
+    private readonly writeAdmission?: IStorageWriteAdmission,
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
@@ -93,13 +120,15 @@ export class FileStorageService implements IFileSystemStorageService {
     _options: StorageWriteOptions = {},
   ): Promise<void> {
     const filePath = this.path(scope, key);
-    try {
-      await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
-      await atomicWrite(filePath, data, undefined, this.fileMode);
-      await this.syncDirOnce(dirname(filePath));
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'write' });
-    }
+    await this.withPhysicalWrite(scope, async () => {
+      try {
+        await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
+        await atomicWrite(filePath, data, undefined, this.fileMode);
+        await this.syncDirOnce(dirname(filePath));
+      } catch (error) {
+        throw toStorageIoError(error, { path: filePath, op: 'write' });
+      }
+    });
   }
 
   async append(
@@ -110,24 +139,25 @@ export class FileStorageService implements IFileSystemStorageService {
   ): Promise<void> {
     const filePath = this.path(scope, key);
     const dir = dirname(filePath);
-    try {
-      await mkdir(dir, { recursive: true, mode: this.dirMode });
-
-      const fh = await open(filePath, 'a', this.fileMode);
+    await this.withPhysicalWrite(scope, async () => {
       try {
-        if (data.byteLength > 0) {
-          await fh.writeFile(data);
+        await mkdir(dir, { recursive: true, mode: this.dirMode });
+        const fh = await open(filePath, 'a', this.fileMode);
+        try {
+          if (data.byteLength > 0) {
+            await fh.writeFile(data);
+          }
+          if (options.durable !== false) {
+            await fh.sync();
+          }
+        } finally {
+          await fh.close();
         }
-        if (options.durable !== false) {
-          await fh.sync();
-        }
-      } finally {
-        await fh.close();
+        await this.syncDirOnce(dir);
+      } catch (error) {
+        throw toStorageIoError(error, { path: filePath, op: 'append' });
       }
-      await this.syncDirOnce(dir);
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'append' });
-    }
+    });
   }
 
   async list(scope: string, prefix?: string): Promise<readonly string[]> {
@@ -143,12 +173,14 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     const filePath = this.path(scope, key);
-    try {
-      await unlink(filePath);
-    } catch (error) {
-      if (isEnoent(error)) return;
-      throw toStorageIoError(error, { path: filePath, op: 'delete' });
-    }
+    await this.withPhysicalWrite(scope, async () => {
+      try {
+        await unlink(filePath);
+      } catch (error) {
+        if (isEnoent(error)) return;
+        throw toStorageIoError(error, { path: filePath, op: 'delete' });
+      }
+    });
   }
 
   watch(scope: string, key: string): Event<void> {
@@ -169,15 +201,23 @@ export class FileStorageService implements IFileSystemStorageService {
     const arm = (): void => {
       try {
         mkdirSync(dir, { recursive: true, mode: this.dirMode });
+        const before = fingerprint(normalizedTarget);
         watcher = new FSWatcher({
           ignoreInitial: true,
           awaitWriteFinish: false,
           depth: 0,
+          // chokidar attaches fs.watch to every scanned entry; special files
+          // (unix sockets, fifos, devices — e.g. an ipc `klient.sock` sharing
+          // the home root) make that call throw UNKNOWN. Skip them up front.
+          ignored: (_path, stats) => isSpecialFileStat(stats),
         });
         watcher.on('all', (_event, changedPath) => {
           if (normalize(changedPath) === normalizedTarget) schedule();
         });
         watcher.on('error', (error: unknown) => onUnexpectedError(error));
+        watcher.on('ready', () => {
+          if (!fileStatTuplesEqual(before, fingerprint(normalizedTarget))) schedule();
+        });
         watcher.add(dir);
       } catch (error) {
         onUnexpectedError(error);
@@ -215,6 +255,45 @@ export class FileStorageService implements IFileSystemStorageService {
     };
   }
 
+  async withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const filePath = this.path(scope, key);
+    const lockPath = `${filePath}.lock`;
+    this.assertCanWriteNow(scope);
+    if (this.locks === undefined) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_IO_FAILED,
+        'file storage transaction requires a cross-process lock service',
+        { details: { path: filePath, op: 'lock' } },
+      );
+    }
+    try {
+      return await this.locks.withLock(
+        lockPath,
+        { wait: { timeoutMs: STORAGE_LOCK_WAIT_TIMEOUT_MS } },
+        async () => {
+          this.assertCanWriteNow(scope);
+          return mutation();
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof CrossProcessLockError)) throw error;
+      if (
+        error.code === CrossProcessLockErrorCode.Held ||
+        error.code === CrossProcessLockErrorCode.WaitTimeout
+      ) {
+        throw new StorageError(StorageErrors.codes.STORAGE_LOCKED, 'storage transaction is locked', {
+          details: { path: filePath, op: 'lock' },
+          cause: error,
+        });
+      }
+      throw toStorageIoError(error, { path: lockPath, op: 'lock' });
+    }
+  }
+
   async flush(): Promise<void> {
   }
 
@@ -226,6 +305,14 @@ export class FileStorageService implements IFileSystemStorageService {
 
   private scopePath(scope: string): string {
     return join(this.baseDir, scope);
+  }
+
+  private assertCanWriteNow(scope: string): void {
+    this.writeAdmission?.assertCanWriteNow(scope);
+  }
+
+  private withPhysicalWrite<T>(scope: string, io: () => Promise<T>): Promise<T> {
+    return this.writeAdmission?.withPhysicalWrite(scope, io) ?? io();
   }
 
   private async syncDirOnce(dir: string): Promise<void> {

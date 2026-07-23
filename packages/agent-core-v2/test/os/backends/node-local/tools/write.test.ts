@@ -18,7 +18,12 @@ import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { type WriteInput, WriteInputSchema, WriteTool } from '#/os/backends/node-local/tools/write';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import {
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -47,8 +52,8 @@ function createTestEnv(home = '/home'): IHostEnvironment {
 
 interface WriteFsOptions {
   readText?: (path: string) => Promise<string>;
-  writeText?: (path: string, data: string) => Promise<void>;
-  appendText?: (path: string, data: string) => Promise<void>;
+  writeText?: (path: string, data: string) => Promise<HostFileStat>;
+  appendText?: (path: string, data: string) => Promise<HostFileStat>;
   stat?: (path: string) => Promise<HostFileStat>;
   mkdir?: (path: string) => Promise<void>;
 }
@@ -60,8 +65,26 @@ function createWriteFs(options: WriteFsOptions = {}) {
         throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
       }),
   );
-  const writeText = vi.fn(options.writeText ?? (async () => {}));
-  const appendText = vi.fn(options.appendText ?? (async () => {}));
+  const writeText = vi.fn(
+    options.writeText ??
+      (async (_path: string, data: string) => ({
+        isFile: true,
+        isDirectory: false,
+        size: Buffer.byteLength(data),
+        mtimeMs: 1000,
+        ino: 1,
+      })),
+  );
+  const appendText = vi.fn(
+    options.appendText ??
+      (async (_path: string, data: string) => ({
+        isFile: true,
+        isDirectory: false,
+        size: Buffer.byteLength(data),
+        mtimeMs: 1000,
+        ino: 1,
+      })),
+  );
   const stat = vi.fn(
     options.stat ?? (async () => ({ isFile: false, isDirectory: true, size: 0 })),
   );
@@ -192,6 +215,12 @@ describe('WriteTool', () => {
 
     expect(writeText).toHaveBeenCalledWith('/tmp/new.txt', 'hello');
     expect(result.output).toContain('Wrote 5 bytes');
+    expect(result[toolFileRevision]).toEqual({
+      path: '/tmp/new.txt',
+      size: 5,
+      mtimeMs: 1000,
+      ino: 1,
+    });
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {
