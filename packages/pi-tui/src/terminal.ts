@@ -41,6 +41,21 @@ export function isAppleTerminalSession(): boolean {
 	return process.platform === "darwin" && process.env['TERM_PROGRAM'] === "Apple_Terminal";
 }
 
+/**
+ * Detect Windows Terminal by checking for the WT_SESSION environment variable.
+ * Windows Terminal sets WT_SESSION to a unique GUID for every tab.
+ * Exclude SSH sessions (where the terminal is remote, not local WT).
+ */
+function isWindowsTerminal(): boolean {
+	return (
+		process.platform === "win32" &&
+		Boolean(process.env['WT_SESSION']) &&
+		!process.env['SSH_CONNECTION'] &&
+		!process.env['SSH_CLIENT'] &&
+		!process.env['SSH_TTY']
+	);
+}
+
 export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
 	if (isAppleTerminal && data === "\r" && isShiftPressed) return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE;
 	return data;
@@ -216,12 +231,28 @@ export class ProcessTerminal implements Terminal {
 	 * - 1 = disambiguate escape codes
 	 * - 2 = report event types (press/repeat/release)
 	 * - 4 = report alternate keys (shifted key, base layout key)
+	 *
+	 * On Windows Terminal, Kitty keyboard protocol with flag 4 (alternate keys)
+	 * causes Cyrillic and other non-Latin characters to be double-processed:
+	 * the terminal sends both the CSI-u sequence AND the raw character, resulting
+	 * in doubled input. Skip Kitty protocol on Windows Terminal and fall back to
+	 * modifyOtherKeys instead.
 	 */
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-		this.keyboardProtocolPushed = true;
 		this.clearKeyboardProtocolNegotiationBuffer();
+
+		// Windows Terminal: skip Kitty keyboard protocol to avoid Cyrillic doubling.
+		// The terminal sends CSI-u sequences for non-Latin characters when Kitty
+		// protocol flag 4 (alternate keys) is active, but also sends the raw
+		// character, causing every Cyrillic keystroke to be inserted twice.
+		if (isWindowsTerminal()) {
+			this.enableModifyOtherKeys();
+			return;
+		}
+
+		this.keyboardProtocolPushed = true;
 		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
