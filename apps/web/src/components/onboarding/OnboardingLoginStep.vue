@@ -51,13 +51,25 @@ function backToChoice(): void {
   phase.value = 'choice';
 }
 
-async function copyCode(): Promise<void> {
+// Copies the complete verification URI (device code embedded) — the manual
+// code-entry fallback is parked, but the link itself stays available.
+async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.userCode);
+  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
 }
+
+// TODO: parked with the manual device-code fallback (copy link + type the
+// code) — it has a bug; restore together with the template block below.
+// async function copyCode(): Promise<void> {
+//   if (!flow.value) return;
+//   const ok = await copyTextToClipboard(flow.value.userCode);
+//   if (!ok) return;
+//   copied.value = true;
+//   setTimeout(() => { copied.value = false; }, 2000);
+// }
 
 // Format seconds as mm:ss
 function formatSeconds(s: number): string {
@@ -116,9 +128,28 @@ function formatSeconds(s: number): string {
         <Icon name="external-link" size="sm" />
       </a>
 
+      <!-- Copyable complete link (device code embedded) for "open it elsewhere"
+           — the manual code-entry block below stays parked. -->
+      <div class="ls-code-row">
+        <span class="ls-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
+        <Button class="ls-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
+          <template v-if="copied">
+            <Icon name="check" size="sm" />
+            {{ t('login.copied') }}
+          </template>
+          <template v-else>
+            <Icon name="copy" size="sm" />
+            {{ t('login.copyLink') }}
+          </template>
+        </Button>
+      </div>
+
+      <!-- TODO: the manual fallback (copy the link + type the device code) has
+           a bug and is parked for now. Restore together with the commented-out
+           copyCode in the script.
+
       <div class="ls-or">{{ t('login.orDivider') }}</div>
 
-      <!-- Fallback path: open the plain URI and type the code manually -->
       <div class="ls-fb-text">
         {{ t('login.fallbackPrefix') }}<a
           class="ls-fb-link"
@@ -140,6 +171,7 @@ function formatSeconds(s: number): string {
           </template>
         </Button>
       </div>
+      -->
 
       <div class="ls-status">
         <Spinner size="sm" :label="t('login.waitingAuth')" />
@@ -374,6 +406,18 @@ function formatSeconds(s: number): string {
   font-weight: var(--weight-medium);
   color: var(--color-text);
   letter-spacing: 0.14em;
+}
+/* Copyable complete verification link (single-line, truncated). */
+.ls-link {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
 }
 .ls-copy.is-copied { color: var(--color-success); border-color: var(--color-success-bd); }
 .ls-status {

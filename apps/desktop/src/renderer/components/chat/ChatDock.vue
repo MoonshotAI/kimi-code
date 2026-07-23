@@ -37,6 +37,9 @@ const props = defineProps<{
   goalMode?: boolean;
   activationBadges?: ActivationBadges;
   models?: AppModel[];
+  /** Daemon auth/provider readiness (GET /auth ready) — forwarded to the
+      Composer for its sign-in affordance. */
+  authReady?: boolean;
   starredIds?: string[];
   skills?: AppSkill[];
   goal?: AppGoal | null;
@@ -77,6 +80,8 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  /** Composer sign-in entry (no usable model): opened the login dialog. */
+  login: [];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
@@ -431,6 +436,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
       :goal="goal"
       :activation-badges="activationBadges"
       :models="models"
+      :auth-ready="authReady"
       :starred-ids="starredIds"
       :skills="skills"
       :starting="starting"
@@ -451,6 +457,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
       @compact="emit('compact')"
       @pick-model="emit('pickModel')"
       @select-model="emit('selectModel', $event)"
+      @login="emit('login')"
     />
   </div>
 </template>

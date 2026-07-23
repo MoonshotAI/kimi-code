@@ -9,6 +9,7 @@ export default {
   fallbackSuffix: ' and enter the device code:',
   copy: 'Copy',
   copied: 'Copied',
+  copyLink: 'Copy link',
   waitingAuth: 'Waiting for authorization',
   waitingAutoClose: 'Waiting for authorization, signs in automatically…',
   success: 'Authorized',
@@ -21,4 +22,9 @@ export default {
   errorHint: 'Please upgrade kimi-code and try again',
   pollErrorTitle: 'Lost connection',
   pollErrorHint: 'Authorization polling failed repeatedly. Check the kimi-code process and try again.',
+  // Send gating / composer entry (signed out, no models)
+  action: 'Sign in',
+  requiredTitle: 'Sign in required',
+  requiredMessage: 'Sign in to your Kimi account and set up a model to start chatting.',
+  goToLogin: 'Sign in',
 } as const;

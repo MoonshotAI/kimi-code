@@ -26,6 +26,7 @@ import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { getKimiWebApi } from './api';
 import { useConfirmDialog } from './composables/useConfirmDialog';
 import type { PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
@@ -438,6 +439,9 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
   await client.addProvider(input);
+  // Provider count feeds /auth readiness (the composer send gate) — refresh it
+  // so a just-added provider unblocks sending without a full reload.
+  await client.checkAuth();
 }
 
 async function handleRefreshProvider(id: string): Promise<void> {
@@ -473,7 +477,12 @@ async function confirmDeleteProvider(id: string): Promise<void> {
     title: t('providers.delete'),
     message: t('providers.confirmDelete'),
     variant: 'danger',
-    action: () => client.deleteProvider(id),
+    // Refresh /auth readiness too — deleting the last provider must re-arm
+    // the composer send gate.
+    action: async () => {
+      await client.deleteProvider(id);
+      await client.checkAuth();
+    },
   });
 }
 
@@ -529,10 +538,70 @@ async function handleEditMessage(payload: {
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
-function handleCommand(cmd: string): void {
+//
+// Rebuild composer-editable attachments for a gated/cancelled payload: the
+// object URLs were revoked on submit, but the files were already uploaded, so
+// the edit-loading path reuses the fileIds directly (authenticated thumbnails
+// included) — the same mechanism as edit-and-resend for history messages.
+function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
+  const api = getKimiWebApi();
+  return atts.map((a) => ({
+    kind: a.kind,
+    url: api.getFileUrl(a.fileId),
+    fileId: a.fileId,
+    name: a.name,
+  }));
+}
+
+// Sign-in gate, shared by every path that submits work (plain sends and
+// command-form submissions like `/goal <objective>`). When the daemon reports
+// no usable provider/model (GET /auth not ready), shows the sign-in prompt
+// and hands the cleared composer content back — the gate must never eat the
+// draft. Resolves true when the caller may proceed.
+async function passAuthGate(text: string, attachments: PromptAttachment[]): Promise<boolean> {
+  if (client.authReady.value) return true;
+  const goLogin = await confirm({
+    title: t('login.requiredTitle'),
+    message: t('login.requiredMessage'),
+    confirmLabel: t('login.goToLogin'),
+    variant: 'primary',
+  });
+  conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
+  if (goLogin) openLogin();
+  return false;
+}
+
+// Workspace gate for command-form submissions (`/goal <objective>`, `/swarm
+// <task>`, skill activations): the same prompt as the plain-send gate, but
+// the command goes back to the composer for a manual re-fire — its
+// continuation is command-specific, not a plain prompt pendingWorkspaceSubmit
+// can resume. Resolves true when the caller may proceed.
+async function passWorkspaceGateForCommand(text: string): Promise<boolean> {
+  if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
+  const pick = await confirm({
+    title: t('workspace.requiredTitle'),
+    message: t('workspace.requiredMessage'),
+    confirmLabel: t('conversation.pickFolder'),
+    variant: 'primary',
+  });
+  conversationPaneRef.value?.loadComposerForEdit(text);
+  if (pick) showAddWorkspace.value = true;
+  return false;
+}
+
+// Both gates, for command paths that submit work. `text` is the full command
+// line, handed back to the composer when gated.
+async function passCommandGates(text: string): Promise<boolean> {
+  if (!(await passAuthGate(text, []))) return false;
+  return passWorkspaceGateForCommand(text);
+}
+
+// Handler for slash commands emitted by Composer (via ConversationPane)
+async function handleCommand(cmd: string): Promise<void> {
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
+    if (!(await passCommandGates(cmd))) return;
     client.compact(cmd.slice('/compact'.length).trim() || undefined);
     return;
   }
@@ -542,7 +611,11 @@ function handleCommand(cmd: string): void {
     const arg = cmd.slice('/swarm'.length).trim();
     if (arg === 'on') client.setSwarmMode(true);
     else if (arg === 'off') client.setSwarmMode(false);
-    else if (arg) { client.setSwarmMode(true); void client.sendPrompt(arg); }
+    else if (arg) {
+      if (!(await passCommandGates(cmd))) return;
+      client.setSwarmMode(true);
+      void client.sendPrompt(arg);
+    }
     else void client.toggleSwarmMode();
     return;
   }
@@ -551,7 +624,10 @@ function handleCommand(cmd: string): void {
   if (cmd === '/goal' || cmd.startsWith('/goal ')) {
     const arg = cmd.slice('/goal'.length).trim();
     if (arg === 'pause' || arg === 'resume' || arg === 'cancel') client.controlGoal(arg);
-    else if (arg) void client.createGoal(arg);
+    else if (arg) {
+      if (!(await passCommandGates(cmd))) return;
+      void client.createGoal(arg);
+    }
     else client.toggleGoalMode();
     return;
   }
@@ -564,6 +640,7 @@ function handleCommand(cmd: string): void {
       // client.closeSideChat() only hides the panel and leaves detailTarget set.
       closeSideChat();
     } else {
+      if (arg && !(await passCommandGates(cmd))) return;
       void openSideChatTab(arg || undefined);
     }
     return;
@@ -616,6 +693,7 @@ function handleCommand(cmd: string): void {
       const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
+      if (!(await passCommandGates(cmd))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
         void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args);
       } else {
@@ -641,6 +719,7 @@ function handleReorderQueue(payload: { from: number; to: number }): void {
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
+  if (!(await passAuthGate(payload.text, payload.attachments))) return;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
     await client.startSessionAndSendPrompt(wsId, payload.text, payload.attachments);
@@ -648,10 +727,34 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
   }
   if (!client.activeSessionId.value && !wsId) {
     pendingWorkspaceSubmit.value = payload;
-    showAddWorkspace.value = true;
+    // Ask first — never jump straight into the folder picker.
+    const pick = await confirm({
+      title: t('workspace.requiredTitle'),
+      message: t('workspace.requiredMessage'),
+      confirmLabel: t('conversation.pickFolder'),
+      variant: 'primary',
+    });
+    if (pick) {
+      showAddWorkspace.value = true;
+    } else {
+      dropPendingWorkspaceSubmit();
+    }
     return;
   }
   void client.sendPrompt(payload.text, payload.attachments);
+}
+
+// Drops a queued first-message submission and hands its content back to the
+// composer, so cancelling the workspace gate/picker never eats the draft.
+function dropPendingWorkspaceSubmit(): void {
+  const pending = pendingWorkspaceSubmit.value;
+  pendingWorkspaceSubmit.value = null;
+  if (pending) {
+    conversationPaneRef.value?.loadComposerForEdit(
+      pending.text,
+      toEditableAttachments(pending.attachments),
+    );
+  }
 }
 
 async function handleAddWorkspace(root: string): Promise<void> {
@@ -675,7 +778,7 @@ async function handleAddWorkspace(root: string): Promise<void> {
 }
 
 function handleCloseAddWorkspace(): void {
-  pendingWorkspaceSubmit.value = null;
+  dropPendingWorkspaceSubmit();
   addWorkspaceError.value = null;
   showAddWorkspace.value = false;
 }
@@ -808,6 +911,7 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :goal-mode="client.goalMode.value"
       :models="client.models.value"
+      :auth-ready="client.authReady.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"
@@ -840,6 +944,7 @@ function openPr(url: string): void {
       @add-workspace="showAddWorkspace = true"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
+      @login="openLogin()"
       @steer="client.steerPrompt($event.text, $event.attachments)"
       @approval="(approvalId, response) => client.respondApproval(approvalId, response)"
       @cancel-task="client.cancelTask($event)"

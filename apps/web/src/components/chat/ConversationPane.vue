@@ -78,6 +78,10 @@ const props = defineProps<{
   loadOlderMessages?: (sessionId: string) => Promise<void>;
   /** Available models for the quick-switch dropdown in the composer toolbar. */
   models?: AppModel[];
+  /** Daemon auth/provider readiness (GET /auth ready) — forwarded to the
+      composer, which shows a sign-in entry instead of the model pill when
+      nothing is usable. */
+  authReady?: boolean;
   /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
   starredIds?: string[];
   /** Session skills shown in the composer `/` menu. */
@@ -120,6 +124,8 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  /** Composer sign-in entry (no models): deep-link to the settings account tab. */
+  login: [];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
   openCompaction: [target: { turnId: string }];
@@ -1589,6 +1595,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :goal="goal"
               :activation-badges="activationBadges"
               :models="models"
+              :auth-ready="authReady"
               :starred-ids="starredIds"
               :skills="skills"
               :starting="starting"
@@ -1611,6 +1618,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
+              @login="emit('login')"
             >
               <!-- Workspace picker as an attachment card after the composer
                    card; hidden while starting. -->
@@ -1725,6 +1733,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :goal-mode="goalMode"
         :activation-badges="activationBadges"
         :models="models"
+        :auth-ready="authReady"
         :starred-ids="starredIds"
         :skills="skills"
         :goal="goal"
@@ -1765,6 +1774,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
           @compact="emit('compact')"
           @pick-model="emit('pickModel')"
           @select-model="emit('selectModel', $event)"
+          @login="emit('login')"
       />
     </div>
 

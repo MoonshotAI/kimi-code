@@ -31,6 +31,9 @@ export default {
   cancel: '取消',
   addHint: '粘贴一个绝对路径，或从最近用过的文件夹中选择。',
   addFailed: '无法打开此文件夹，请检查路径后重试。',
+  // Send gating (no workspace yet)
+  requiredTitle: '请先选择工作空间',
+  requiredMessage: '发送消息前，需要先选择一个文件夹作为工作区。',
   // Folder browser
   openThisFolder: '打开此文件夹',
   up: '上一级',

@@ -53,6 +53,10 @@ const props = withDefaults(defineProps<{
   activationBadges?: ActivationBadges;
   /** Available models for the quick-switch dropdown. */
   models?: AppModel[];
+  /** Daemon auth/provider readiness (GET /auth ready). When explicitly false
+      and the catalog is also empty, the model pill slot shows a sign-in
+      entry — an empty catalog alone may just be a failed /models fetch. */
+  authReady?: boolean;
   /** Starred model ids shown at the top of the quick-switch dropdown. */
   starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
@@ -100,6 +104,8 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  /** Signed out / no models — the model pill slot becomes a sign-in entry. */
+  login: [];
 }>();
 
 const { t, locale } = useI18n();
@@ -877,6 +883,13 @@ const providerModels = computed(() => {
   return props.models.filter((m) => m.provider === currentProvider.value);
 });
 
+// No models at all (signed out / no provider configured): the model pill slot
+// shows a sign-in button instead of a meaningless placeholder pill.
+const hasModels = computed(() => (props.models?.length ?? 0) > 0);
+// Gate on explicit unreadiness, not just an empty catalog — a failed /models
+// fetch must not mislabel a signed-in, ready daemon.
+const showSignIn = computed(() => props.authReady === false && !hasModels.value);
+
 const starredSet = computed(() => new Set(props.starredIds ?? []));
 function isStarred(modelId: string): boolean {
   return starredSet.value.has(modelId);
@@ -1197,7 +1210,7 @@ function selectModel(modelId: string): void {
 
           <!-- Model pill — click to open quick-switch dropdown -->
           <button
-            v-if="status"
+            v-if="status && !showSignIn"
             ref="modelPillRef"
             type="button"
             class="model-pill"
@@ -1209,6 +1222,17 @@ function selectModel(modelId: string): void {
             <span class="mp-name">{{ status.model }}</span>
             <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
             <Icon class="cv" name="chevron-down" size="sm" />
+          </button>
+          <!-- Signed out / no models — the pill slot becomes the sign-in entry
+               (deep-links into the settings account tab). -->
+          <button
+            v-else-if="status"
+            type="button"
+            class="model-pill login-pill"
+            @click.stop="emit('login')"
+          >
+            <Icon name="log-in" size="sm" />
+            <span class="mp-name">{{ t('login.action') }}</span>
           </button>
           <Tooltip v-if="running" :text="t('composer.interruptTitle')">
             <button
@@ -1854,6 +1878,16 @@ function selectModel(modelId: string): void {
 }
 .model-pill.open .cv {
   transform: rotate(180deg);
+}
+
+/* Sign-in entry (no models) — same pill shape, accent text to read as an
+   action rather than a disabled placeholder. */
+.model-pill.login-pill {
+  flex: none;
+  color: var(--color-accent);
+}
+.model-pill.login-pill .mp-name {
+  color: var(--color-accent);
 }
 
 /* Model dropdown — runtime positioning aligns it to the trigger pill. */

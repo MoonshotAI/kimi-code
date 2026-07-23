@@ -62,13 +62,25 @@ onMounted(async () => {
   await startFlow();
 });
 
-async function copyCode(): Promise<void> {
+// Copies the complete verification URI (device code embedded) — the manual
+// code-entry fallback is parked, but the link itself stays available.
+async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.userCode);
+  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
 }
+
+// TODO: parked with the manual device-code fallback (copy link + type the
+// code) — it has a bug; restore together with the template block below.
+// async function copyCode(): Promise<void> {
+//   if (!flow.value) return;
+//   const ok = await copyTextToClipboard(flow.value.userCode);
+//   if (!ok) return;
+//   copied.value = true;
+//   setTimeout(() => { copied.value = false; }, 2000);
+// }
 
 async function close(): Promise<void> {
   cancelFlow();
@@ -107,10 +119,28 @@ function formatSeconds(s: number): string {
         <Icon name="external-link" size="sm" />
       </a>
 
-      <!-- Divider -->
+      <!-- Copyable complete link (device code embedded) for "open it elsewhere"
+           — the manual code-entry block below stays parked. -->
+      <div class="nb-code-row">
+        <span class="nb-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
+        <Button class="nb-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
+          <template v-if="copied">
+            <Icon name="check" size="sm" />
+            {{ t('login.copied') }}
+          </template>
+          <template v-else>
+            <Icon name="copy" size="sm" />
+            {{ t('login.copyLink') }}
+          </template>
+        </Button>
+      </div>
+
+      <!-- TODO: the manual fallback (copy the link + type the device code) has
+           a bug and is parked for now. Restore together with the commented-out
+           copyCode in the script.
+
       <div class="nb-or">{{ t('login.orDivider') }}</div>
 
-      <!-- Fallback path: open the plain URI and type the code manually -->
       <div class="nb-fallback">
         <div class="nb-fb-text">
           {{ t('login.fallbackPrefix') }}<a
@@ -134,6 +164,7 @@ function formatSeconds(s: number): string {
           </Button>
         </div>
       </div>
+      -->
 
       <!-- Status -->
       <div class="nb-status">
@@ -294,6 +325,18 @@ function formatSeconds(s: number): string {
   font-weight: var(--weight-medium);
   color: var(--color-text);
   letter-spacing: 0.14em;
+}
+/* Copyable complete verification link (single-line, truncated). */
+.nb-link {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
 }
 /* Inline copy control: Button secondary + a success "copied" state. */
 .nb-copy.is-copied { color: var(--color-success); border-color: var(--color-success-bd); }

@@ -9,6 +9,7 @@ export default {
   fallbackSuffix: ' 输入设备码：',
   copy: '复制',
   copied: '已复制',
+  copyLink: '复制链接',
   waitingAuth: '等待授权',
   waitingAutoClose: '等待授权，完成后自动登录…',
   success: '已授权',
@@ -21,4 +22,9 @@ export default {
   errorHint: '请升级 kimi-code 后重试',
   pollErrorTitle: '连接已断开',
   pollErrorHint: '授权轮询连续失败，请检查 kimi-code 进程后重试',
+  // Send gating / composer entry (signed out, no models)
+  action: '登录',
+  requiredTitle: '请先登录',
+  requiredMessage: '登录 Kimi 账号并配置模型后，才能开始对话。',
+  goToLogin: '去登录',
 } as const;
