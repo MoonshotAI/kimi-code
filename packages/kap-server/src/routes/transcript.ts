@@ -30,6 +30,16 @@
  * per-agent by construction. It reads the same live-store / cold-rebuild
  * paths as the paged route, but unpaginated (user messages are few compared
  * to the timeline); `agent_id` is optional and narrows the read to one agent.
+ *
+ * `GET /sessions/{session_id}/transcript/plan` answers the plan information
+ * of one ExitPlanMode tool call (`agent_id` + `tool_call_id` required): the
+ * reviewed plan content, the plan file path, the offered options, and the
+ * review outcome. The content is projected from the first available fact —
+ * the linked approval interaction's persisted `request` display (every
+ * interactive review, live or cold), the live tool frame's display (auto
+ * permission mode), or the tool result output text (cold rebuilds where the
+ * call never went through an interaction). It never touches the blob store:
+ * the `plan.revision` reference records carry no tool-call linkage.
  */
 
 import { MAIN_AGENT_ID, type Scope } from '@moonshot-ai/agent-core-v2';
@@ -37,9 +47,12 @@ import {
   isPlainAgentId,
   paginateTurns,
   transcriptOpsCatchupResponseSchema,
+  transcriptPlanResponseSchema,
   transcriptResponseSchema,
   transcriptUserMessagesResponseSchema,
+  type ToolCallFrame,
   type TranscriptAttachment,
+  type TranscriptInteraction,
   type TranscriptItem,
   type TurnOrigin,
   type TurnState,
@@ -133,6 +146,26 @@ const userMessagesQueryCoercion = z
   })
   .superRefine((value, ctx) => {
     if (value.agent_id !== undefined && !isPlainAgentId(value.agent_id)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'agent_id must be a plain agent id (no path separators)',
+        path: ['agent_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+  });
+
+/**
+ * `GET .../transcript/plan` query: both `agent_id` and `tool_call_id` are
+ * required — a tool call only exists inside one agent's transcript.
+ */
+const planQueryCoercion = z
+  .object({
+    agent_id: z.string().min(1),
+    tool_call_id: z.string().min(1),
+  })
+  .superRefine((value, ctx) => {
+    if (!isPlainAgentId(value.agent_id)) {
       ctx.addIssue({
         code: 'custom',
         message: 'agent_id must be a plain agent id (no path separators)',
@@ -373,6 +406,63 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
     userMessagesRoute.options,
     userMessagesRoute.handler as Parameters<TranscriptRouteHost['get']>[2],
   );
+
+  const planRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/transcript/plan',
+      params: sessionIdParamSchema,
+      querystring: planQueryCoercion,
+      success: { data: transcriptPlanResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TOOL_CALL_NOT_FOUND]: {},
+      },
+      description:
+        'Plan information of one ExitPlanMode tool call (agent_id + tool_call_id required): the reviewed plan content, plan file path, offered options, and the review outcome. Content is projected from the linked approval interaction (interactive reviews, live or cold), the live tool frame display (auto mode), or the tool result output text (cold rebuilds without an interaction). Live sessions read the in-memory store (history backfill awaited), cold sessions rebuild the agent from the persisted wire records',
+      tags: ['transcript'],
+    },
+    async (req, reply) => {
+      const { session_id } = req.params;
+      const { agent_id, tool_call_id } = req.query;
+
+      // Live session — same read path as the paged route.
+      const store = transcriptService.forSessionLive(session_id);
+      if (store !== undefined) {
+        await transcriptService.whenReady(session_id);
+        await transcriptService.ensureAgentHistory(session_id, agent_id);
+        const transcript = store.ensureAgent(agent_id);
+        const info = projectPlanInfo(
+          transcript.getItems(),
+          [...transcript.getInteractions().values()],
+          tool_call_id,
+        );
+        if (info === undefined) {
+          sendToolCallNotFound(reply, req.id, tool_call_id);
+          return;
+        }
+        reply.send(okEnvelope({ agent_id, tool_call_id, ...info }, req.id));
+        return;
+      }
+
+      // Cold session — rebuild the agent from its wire records (undefined
+      // means the session itself is unknown, same mapping as the paged
+      // route).
+      const snapshot = await transcriptService.readColdSnapshot(session_id, agent_id);
+      if (snapshot === undefined) {
+        sendSessionNotFound(reply, req.id, session_id);
+        return;
+      }
+      const info = projectPlanInfo(snapshot.items, snapshot.interactions, tool_call_id);
+      if (info === undefined) {
+        sendToolCallNotFound(reply, req.id, tool_call_id);
+        return;
+      }
+      reply.send(okEnvelope({ agent_id, tool_call_id, ...info }, req.id));
+    },
+  );
+  app.get(planRoute.path, planRoute.options, planRoute.handler as Parameters<TranscriptRouteHost['get']>[2]);
 }
 
 /**
@@ -427,4 +517,186 @@ function sendSessionNotFound(
   reply.send(
     errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session not found: ${sessionId}`, requestId),
   );
+}
+
+function sendToolCallNotFound(
+  reply: { send(payload: unknown): unknown },
+  requestId: string,
+  toolCallId: string,
+): void {
+  reply.send(
+    errEnvelope(
+      ErrorCode.TOOL_CALL_NOT_FOUND,
+      `no ExitPlanMode tool call found for tool_call_id: ${toolCallId}`,
+      requestId,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plan projection (`GET .../transcript/plan`)
+// ---------------------------------------------------------------------------
+
+/** The review round-trip of one ExitPlanMode call, from its approval interaction. */
+interface PlanReviewInfo {
+  state: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  selected_option?: string;
+  feedback?: string;
+}
+
+/** One ExitPlanMode call's projected plan information. */
+interface PlanInfo {
+  turn_id: string;
+  source: 'interaction' | 'display' | 'output';
+  plan: string;
+  path?: string;
+  options?: { label: string; description?: string }[];
+  review?: PlanReviewInfo;
+}
+
+/** Structural read of the open-content `plan_review` display payload. */
+interface PlanReviewDisplayInfo {
+  plan: string;
+  path?: string;
+  options?: { label: string; description?: string }[];
+}
+
+/**
+ * Project the plan information of one ExitPlanMode tool call out of one
+ * agent's transcript. Content comes from the first available fact:
+ *
+ *  1. the linked approval interaction's persisted `request` display — every
+ *     interactive review (approve / Revise / Reject / dismiss), live or cold;
+ *  2. the tool frame's `display` — live only (cold rebuilds do not restore
+ *     displays), covers auto permission mode where no interaction exists;
+ *  3. the tool frame's `output` text — the approved/auto-approved tool
+ *     result embeds the plan body (see `parsePlanFromOutput`), the only
+ *     source for cold rebuilds without an interaction.
+ *
+ * `undefined` means the tool call does not exist or is not an ExitPlanMode
+ * call (or, defensively, carries no recoverable plan content).
+ */
+function projectPlanInfo(
+  items: readonly TranscriptItem[],
+  interactions: readonly TranscriptInteraction[],
+  toolCallId: string,
+): PlanInfo | undefined {
+  let turnId: string | undefined;
+  let frame: ToolCallFrame | undefined;
+  for (const item of items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const f of step.frames) {
+        if (f.kind === 'tool' && f.toolCallId === toolCallId) {
+          turnId = item.turnId;
+          frame = f;
+          break;
+        }
+      }
+    }
+  }
+  if (turnId === undefined || frame === undefined || frame.name !== 'ExitPlanMode') {
+    return undefined;
+  }
+
+  const interaction = interactions.find(
+    (i) => i.interactionKind === 'approval' && i.toolCallId === toolCallId,
+  );
+  const review = readPlanReview(interaction);
+
+  const requestDisplay =
+    interaction !== undefined && interaction.request !== null && typeof interaction.request === 'object'
+      ? (interaction.request as { display?: unknown }).display
+      : undefined;
+  const fromInteraction = readPlanReviewDisplay(requestDisplay);
+  if (fromInteraction !== undefined) {
+    return { turn_id: turnId, source: 'interaction', ...fromInteraction, review };
+  }
+  const fromDisplay = readPlanReviewDisplay(frame.display);
+  if (fromDisplay !== undefined) {
+    return { turn_id: turnId, source: 'display', ...fromDisplay, review };
+  }
+  const fromOutput = parsePlanFromOutput(frame.output);
+  if (fromOutput !== undefined) {
+    return { turn_id: turnId, source: 'output', ...fromOutput, review };
+  }
+  return undefined;
+}
+
+/** Map an approval interaction onto the review info; `undefined` when there is none. */
+function readPlanReview(interaction: TranscriptInteraction | undefined): PlanReviewInfo | undefined {
+  if (interaction === undefined) return undefined;
+  const state = interaction.state;
+  if (state !== 'pending' && state !== 'approved' && state !== 'rejected' && state !== 'cancelled') {
+    return undefined;
+  }
+  const response =
+    interaction.response !== null && typeof interaction.response === 'object'
+      ? (interaction.response as { selectedLabel?: unknown; feedback?: unknown })
+      : undefined;
+  const selected =
+    typeof response?.selectedLabel === 'string' && response.selectedLabel.length > 0
+      ? response.selectedLabel
+      : undefined;
+  const feedback =
+    typeof response?.feedback === 'string' && response.feedback.length > 0
+      ? response.feedback
+      : undefined;
+  return { state, selected_option: selected, feedback };
+}
+
+/** Read a `plan_review` display payload (open content) into plan info. */
+function readPlanReviewDisplay(display: unknown): PlanReviewDisplayInfo | undefined {
+  if (display === null || typeof display !== 'object') return undefined;
+  const d = display as { kind?: unknown; plan?: unknown; path?: unknown; options?: unknown };
+  if (d.kind !== 'plan_review' || typeof d.plan !== 'string' || d.plan.trim().length === 0) {
+    return undefined;
+  }
+  const options = Array.isArray(d.options)
+    ? d.options
+        .map((option: unknown): { label: string; description?: string } | null => {
+          if (option === null || typeof option !== 'object') return null;
+          const o = option as { label?: unknown; description?: unknown };
+          if (typeof o.label !== 'string' || o.label.length === 0) return null;
+          return {
+            label: o.label,
+            description: typeof o.description === 'string' ? o.description : undefined,
+          };
+        })
+        .filter((o): o is { label: string; description?: string } => o !== null)
+    : undefined;
+  return {
+    plan: d.plan,
+    path: typeof d.path === 'string' ? d.path : undefined,
+    options: options !== undefined && options.length > 0 ? options : undefined,
+  };
+}
+
+// The wording mirrors `formatPlanForOutput` / `formatAutoApprovedPlanForOutput`
+// in `agent-core-v2/src/agent/plan/tools/exit-plan-mode.ts` — the approved
+// tool result embeds the full plan body after one of these markers, and the
+// plan file path on a `Plan saved to: <path>` line.
+const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
+const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
+
+/**
+ * Recover plan info from the ExitPlanMode tool result output text — the cold
+ * rebuild path keeps the tool result but not the ephemeral review display.
+ */
+function parsePlanFromOutput(output: unknown): { plan: string; path?: string } | undefined {
+  if (typeof output !== 'string') return undefined;
+  let path: string | undefined;
+  for (const line of output.split('\n')) {
+    if (line.startsWith(PLAN_SAVED_TO_MARKER)) {
+      path = line.slice(PLAN_SAVED_TO_MARKER.length).trim() || undefined;
+      break;
+    }
+  }
+  for (const marker of PLAN_BODY_MARKERS) {
+    const index = output.indexOf(marker);
+    if (index === -1) continue;
+    const plan = output.slice(index + marker.length);
+    if (plan.trim().length > 0) return { plan, path };
+  }
+  return undefined;
 }

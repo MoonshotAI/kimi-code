@@ -603,6 +603,41 @@ export const transcriptUserMessagesResponseSchema = z.object({
   ),
 });
 
+/**
+ * The review round-trip of one ExitPlanMode call, projected from the linked
+ * approval interaction. Absent when the call never went through an
+ * interactive review (auto permission mode, or a configured allow rule).
+ */
+export const transcriptPlanReviewSchema = z.object({
+  state: z.enum(['pending', 'approved', 'rejected', 'cancelled']),
+  /** `response.selectedLabel` — a plan option label, or a reserved one ('Revise' / 'Reject and Exit'). */
+  selected_option: z.string().optional(),
+  /** `response.feedback` — the user's revision / rejection feedback. */
+  feedback: z.string().optional(),
+});
+
+/**
+ * `GET /v1/sessions/{session_id}/transcript/plan` contract shape: the plan
+ * information of one ExitPlanMode tool call. `source` records which fact the
+ * content was projected from — the linked approval interaction's `request`
+ * display (interactive review), the live tool frame's display (auto mode),
+ * or the tool result output text (cold rebuilds without an interaction).
+ */
+export const transcriptPlanResponseSchema = z.object({
+  agent_id: agentIdSchema,
+  tool_call_id: z.string(),
+  turn_id: turnIdSchema,
+  source: z.enum(['interaction', 'display', 'output']),
+  /** Full plan content as submitted for review. */
+  plan: z.string(),
+  /** The plan file path, when known. */
+  path: z.string().optional(),
+  options: z
+    .array(z.object({ label: z.string(), description: z.string().optional() }))
+    .optional(),
+  review: transcriptPlanReviewSchema.optional(),
+});
+
 // ---------------------------------------------------------------- WS payloads
 
 export const transcriptResetPayloadSchema = z.object({
