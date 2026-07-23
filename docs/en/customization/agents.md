@@ -117,7 +117,7 @@ Custom agents delegated as sub-agents run without the built-in sub-agent framing
 
 ### Selecting the Main Agent
 
-Two CLI flags select which agent drives the session. **Both currently require the v2 engine** — `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI (v1) rejects them with a clear error for now:
+Two CLI flags select which agent drives the session. **Both are currently available only under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`**; the interactive TUI rejects them with a clear error for now:
 
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
 - **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. The flag accepts exactly one file: it cannot be repeated, and it cannot be combined with `--agent`.
@@ -134,7 +134,7 @@ For main-agent customization, reference `${base_prompt}` in the body so the envi
 
 ### Overriding the main agent's system prompt with SYSTEM.md
 
-To override the main agent's system prompt permanently — without passing `--agent` or `--agent-file` on every launch — write a `$KIMI_CODE_HOME/SYSTEM.md` file (default: `~/.kimi-code/SYSTEM.md`; it moves with `KIMI_CODE_HOME`). While the file exists and is non-empty, it replaces the built-in default main agent's system prompt in full — and only the prompt: the description and tool set are inherited from the built-in defaults. Like `--agent` / `--agent-file`, SYSTEM.md currently takes effect only under the v2 engine (`KIMI_CODE_EXPERIMENTAL_FLAG=1`); the v1 engine ignores the file.
+To override the main agent's system prompt permanently — without passing `--agent` or `--agent-file` on every launch — write a `$KIMI_CODE_HOME/SYSTEM.md` file (default: `~/.kimi-code/SYSTEM.md`; it moves with `KIMI_CODE_HOME`). While the file exists and is non-empty, it replaces the built-in default main agent's system prompt in full — and only the prompt: the description and tool set are inherited from the built-in defaults. SYSTEM.md currently takes effect only under `kimi web` and under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI ignores the file.
 
 SYSTEM.md is a plain Markdown body — no frontmatter is required or read. A missing or empty file has no effect, and a read failure falls back to the built-in prompt with a warning. Explicit intent still outranks it: a project-scoped same-name agent file declaring `override: true` and any file passed via `--agent-file` take precedence, and selecting another agent with `--agent` bypasses it entirely. Within the user scope itself, SYSTEM.md wins over a same-name file discovered in the `agents/` directories.
 
