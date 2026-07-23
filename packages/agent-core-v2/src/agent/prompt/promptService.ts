@@ -9,7 +9,6 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -63,7 +62,6 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
   private launching = false;
-  private pauseCount = 0;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -164,19 +162,8 @@ export class AgentPromptService implements IAgentPromptService {
     this.context.clear();
   }
 
-  pauseLaunching(): IDisposable {
-    this.pauseCount++;
-    let released = false;
-    return toDisposable(() => {
-      if (released) return;
-      released = true;
-      this.pauseCount--;
-      if (this.pauseCount === 0) void this.startNext();
-    });
-  }
-
   private async startNext(): Promise<void> {
-    if (this.active !== undefined || this.launching || this.pauseCount > 0) return;
+    if (this.active !== undefined || this.launching) return;
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
     try {

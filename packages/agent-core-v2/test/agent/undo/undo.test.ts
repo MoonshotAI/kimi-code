@@ -356,63 +356,6 @@ describe('AgentConversationUndoService', () => {
     },
   );
 
-  it('prevents compaction from starting until undo reconciliation finishes', async () => {
-    setup();
-    const compaction = ctx.get(IAgentFullCompactionService);
-    let beginAccepted: boolean | undefined;
-    ctx.get(IAgentConversationUndoReconciliationRegistry).register({
-      id: 'test.compaction-admission',
-      reconcileAfterUndo: async () => {
-        beginAccepted = compaction.begin({ source: 'manual' });
-      },
-    });
-    ctx.appendTurnExchange('u1', 'a1');
-
-    await ctx.get(IAgentConversationUndoService).undo(1);
-
-    expect(beginAccepted).toBe(false);
-    expect(() => compaction.begin({ source: 'manual' })).toThrowError(
-      expect.objectContaining({ code: ErrorCodes.COMPACTION_UNABLE }),
-    );
-  });
-
-  it('re-enables compaction before releasing held loop work', async () => {
-    setup();
-    const order: string[] = [];
-    const compaction = ctx.get(IAgentFullCompactionService);
-    const originalPauseLaunching = compaction.pauseLaunching.bind(compaction);
-    const pauseLaunching = vi.spyOn(compaction, 'pauseLaunching').mockImplementation(() => {
-      const lease = originalPauseLaunching();
-      return {
-        dispose: () => {
-          order.push('compaction');
-          lease.dispose();
-        },
-      };
-    });
-    const loop = ctx.get(IAgentLoopService);
-    const originalTryAcquireQuiescence = loop.tryAcquireQuiescence.bind(loop);
-    const tryAcquireQuiescence = vi.spyOn(loop, 'tryAcquireQuiescence').mockImplementation(() => {
-      const lease = originalTryAcquireQuiescence();
-      if (lease === undefined) return undefined;
-      return {
-        dispose: () => {
-          order.push('loop');
-          lease.dispose();
-        },
-      };
-    });
-    ctx.appendTurnExchange('u1', 'a1');
-
-    try {
-      await ctx.get(IAgentConversationUndoService).undo(1);
-      expect(order).toEqual(['compaction', 'loop']);
-    } finally {
-      tryAcquireQuiescence.mockRestore();
-      pauseLaunching.mockRestore();
-    }
-  });
-
   it('serializes concurrent undos through projection reconciliation', async () => {
     setup();
     ctx.appendTurnExchange('u1', 'a1');

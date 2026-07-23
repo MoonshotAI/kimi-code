@@ -1,5 +1,4 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Turn, TurnResult } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';
@@ -57,7 +56,6 @@ export interface IAgentPromptService {
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
   clear(): void;
-  pauseLaunching(): IDisposable;
   readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
 }
 

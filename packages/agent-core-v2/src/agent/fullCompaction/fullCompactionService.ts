@@ -1,4 +1,4 @@
-import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
+import { Disposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -114,7 +114,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private consecutiveOverflowCompactions = 0;
   private activeTurnId: number | undefined;
   private contextInjectorService: IAgentContextInjectorService | undefined;
-  private launchPauseDepth = 0;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -248,7 +247,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   begin(input: FullCompactionInput): boolean {
-    if (this.launchPauseDepth > 0) return false;
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
     if (!this.reserveCompactionSlot(data.source)) return false;
@@ -281,13 +279,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     try {
       await active.promise;
     } catch {}
-  }
-
-  pauseLaunching(): IDisposable {
-    this.launchPauseDepth += 1;
-    return toDisposable(() => {
-      this.launchPauseDepth = Math.max(0, this.launchPauseDepth - 1);
-    });
   }
 
   private reserveCompactionSlot(source: CompactionBeginData['source']): boolean {

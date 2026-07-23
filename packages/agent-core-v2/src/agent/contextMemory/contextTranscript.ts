@@ -266,6 +266,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
           (!cutEntry.opensTurn || turn.turnId !== cutEntry.turnId),
       );
     }
+    currentTurnId = turns.at(-1)?.turnId;
     resetOpenState();
   };
 

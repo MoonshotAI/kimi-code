@@ -402,6 +402,31 @@ describe('reduceContextTranscript', () => {
     expect(result.turns.map((turn) => turn.turnId)).toEqual([0]);
   });
 
+  it('keeps restored task notifications off removed turn ids after undo', () => {
+    const result = reduceContextTranscript([
+      promptTurn('u0', { kind: 'user' }),
+      appendMessage(userMessage('u0', { kind: 'user' })),
+      ...assistantStep('s0', 'a0'),
+      promptTurn('u1', { kind: 'user' }),
+      appendMessage(userMessage('u1', { kind: 'user' })),
+      ...assistantStep('s1', 'a1'),
+      undo(1),
+      appendMessage(
+        userMessage('task done', {
+          kind: 'task',
+          taskId: 'bash-001',
+          status: 'completed',
+          notificationId: 'task:bash-001:completed',
+        }),
+      ),
+    ]);
+
+    expect(texts(result)).toEqual(['u0', 'a0', 'task done']);
+    expect(result.turnIds).toEqual([0, 0, 0]);
+    expect(result.turns.map((turn) => turn.turnId)).toEqual([0]);
+    expect(result.stableTurnIds).toBe(true);
+  });
+
   it('uses an active cancel turn id to resolve an idle steer before its first loop event', () => {
     const result = reduceContextTranscript([
       promptTurn('u0', { kind: 'user' }),

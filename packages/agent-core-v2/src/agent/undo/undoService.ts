@@ -102,8 +102,6 @@ export class AgentConversationUndoService
   }
 
   private async undoNow(turns: number): Promise<number> {
-    const pause = this.prompt.pauseLaunching();
-    const compactionPause = this.fullCompaction.pauseLaunching();
     let quiescence: IDisposable | undefined;
     try {
       quiescence = this.loop.tryAcquireQuiescence();
@@ -125,9 +123,7 @@ export class AgentConversationUndoService
       this.eventBus.publish({ type: 'context.undone', turns });
       return turns;
     } finally {
-      compactionPause.dispose();
       quiescence?.dispose();
-      pause.dispose();
     }
   }
 

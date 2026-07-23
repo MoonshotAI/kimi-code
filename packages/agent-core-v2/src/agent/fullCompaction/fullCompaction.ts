@@ -4,7 +4,6 @@ import type {
 } from './types';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { Event } from '#/_base/event';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Hooks } from '#/hooks';
 
 export interface FullCompactionInput {
@@ -26,7 +25,6 @@ export interface IAgentFullCompactionService {
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
   cancel(): Promise<void>;
-  pauseLaunching(): IDisposable;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;

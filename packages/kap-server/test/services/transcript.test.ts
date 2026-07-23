@@ -22,10 +22,12 @@ import {
   ISessionMetadata,
   ISessionTodoService,
   SessionInteractionService,
+  reduceContextTranscript,
   type DomainEvent,
   type ContextMessage,
   type ISessionScopeHandle,
   type Scope,
+  type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
@@ -1600,6 +1602,66 @@ describe('bindSessionTranscript', () => {
       state: 'running',
     });
     binding.dispose();
+  });
+
+  it('omits a phantom turn when undo is followed by a restored task notification', () => {
+    const records: WireRecord[] = [
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'kept prompt' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'kept prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'undone prompt' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'undone prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      { type: 'context.undo', count: 1 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'background task completed' }],
+          toolCalls: [],
+          origin: {
+            kind: 'task',
+            taskId: 'bash-001',
+            status: 'completed',
+            notificationId: 'task:bash-001:completed',
+          },
+        },
+      },
+    ];
+    const transcript = reduceContextTranscript(records);
+
+    const snapshot = groupMessagesIntoSnapshot(transcript.entries, {
+      turnIds: transcript.turnIds,
+      turns: transcript.turns,
+    });
+
+    expect(
+      snapshot.items
+        .filter((item): item is TranscriptTurn => item.kind === 'turn')
+        .map((turn) => ({ turnId: turn.turnId, prompt: turn.prompt })),
+    ).toEqual([{ turnId: 't0', prompt: 'kept prompt' }]);
   });
 
   it('projects session Todo changes into the main live transcript', () => {
