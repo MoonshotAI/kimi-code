@@ -40,10 +40,10 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
-import { IWorkspaceRegistry, type Workspace } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -167,12 +167,11 @@ function agentProfileCatalogStub(): ISessionAgentProfileCatalog {
   };
 }
 
-function workspaceRegistryStub(): IWorkspaceRegistry {
+function workspaceStub(): IWorkspaceService {
   return {
     _serviceBrand: undefined,
     list: () => Promise.resolve([]),
     get: () => Promise.resolve(undefined),
-    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) =>
       Promise.resolve<Workspace>({
         id: 'wd_stub',
@@ -186,9 +185,9 @@ function workspaceRegistryStub(): IWorkspaceRegistry {
   };
 }
 
-function workspaceLocalConfigStub(
+function projectLocalConfigStub(
   localDirs: readonly string[] = [],
-): IWorkspaceLocalConfigService {
+): IProjectLocalConfigService {
   return {
     _serviceBrand: undefined,
     readAdditionalDirs: (workDir: string) =>
@@ -203,13 +202,12 @@ function workspaceLocalConfigStub(
   };
 }
 
-function persistentWorkspaceRegistryStub(): IWorkspaceRegistry {
+function persistentWorkspaceStub(): IWorkspaceService {
   const workspaces = new Map<string, Workspace>();
   return {
     _serviceBrand: undefined,
     list: () => Promise.resolve([...workspaces.values()]),
     get: (id) => Promise.resolve(workspaces.get(id)),
-    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) => {
       const id = encodeWorkDirKey(root);
       const now = 1;
@@ -465,7 +463,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionSkillCatalog, skillCatalogStub()),
       stubPair(ISessionToolPolicy, sessionToolPolicyStub()),
       stubPair(ISessionAgentProfileCatalog, agentProfileCatalogStub()),
-      stubPair(IWorkspaceRegistry, workspaceRegistryStub()),
+      stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
@@ -474,7 +472,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
-      stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub()),
+      stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),
       ...extra,
@@ -584,8 +582,8 @@ describe('SessionLifecycleService', () => {
           appended.push({ scope, key, record });
         },
       }),
-      stubPair(IWorkspaceRegistry, {
-        ...workspaceRegistryStub(),
+      stubPair(IWorkspaceService, {
+        ...workspaceStub(),
         // As the real registry does after folding: the id minted for the
         // first-seen spelling is reused for the alias.
         createOrTouch: (root: string, name?: string) =>
@@ -617,22 +615,22 @@ describe('SessionLifecycleService', () => {
 
   it('registers the workspace during create so a cold resume can resolve the workdir', async () => {
     const workDir = '/tmp/proj';
-    const workspaceRegistry = persistentWorkspaceRegistryStub();
+    const workspaces = persistentWorkspaceStub();
     const sessionIndex = sessionIndexWithSummary('s1', workDir);
     const first = build([
-      stubPair(IWorkspaceRegistry, workspaceRegistry),
+      stubPair(IWorkspaceService, workspaces),
       stubPair(ISessionIndex, sessionIndex),
     ]);
 
     await first.create({ sessionId: 's1', workDir });
-    await expect(workspaceRegistry.get(encodeWorkDirKey(workDir))).resolves.toMatchObject({
+    await expect(workspaces.get(encodeWorkDirKey(workDir))).resolves.toMatchObject({
       root: workDir,
     });
     host?.dispose();
     host = undefined;
 
     const second = build([
-      stubPair(IWorkspaceRegistry, workspaceRegistry),
+      stubPair(IWorkspaceService, workspaces),
       stubPair(ISessionIndex, sessionIndex),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
     ]);
@@ -645,7 +643,7 @@ describe('SessionLifecycleService', () => {
   it('resumes from the persisted cwd when the workspace registry entry is missing', async () => {
     const workDir = '/tmp/proj';
     const svc = build([
-      stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
+      stubPair(IWorkspaceService, persistentWorkspaceStub()),
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', workDir)),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
     ]);
@@ -674,7 +672,7 @@ describe('SessionLifecycleService', () => {
     const workDir = '/tmp/proj';
     const staleRoot = '/tmp/stale';
     const indexedWorkspaceId = 'wd_indexed';
-    const workspaceRegistry: IWorkspaceRegistry = {
+    const workspaces: IWorkspaceService = {
       _serviceBrand: undefined,
       list: () => Promise.resolve([]),
       get: (id) =>
@@ -689,8 +687,7 @@ describe('SessionLifecycleService', () => {
               }
             : undefined,
         ),
-      resolveAliasIds: (id) => Promise.resolve([id]),
-      createOrTouch: (root, name) =>
+        createOrTouch: (root, name) =>
         Promise.resolve({
           id: encodeWorkDirKey(root),
           root,
@@ -702,7 +699,7 @@ describe('SessionLifecycleService', () => {
       delete: () => Promise.resolve(),
     };
     const svc = build([
-      stubPair(IWorkspaceRegistry, workspaceRegistry),
+      stubPair(IWorkspaceService, workspaces),
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', workDir, indexedWorkspaceId)),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
     ]);
@@ -800,8 +797,8 @@ describe('SessionLifecycleService', () => {
       dispose: () => {},
     } as unknown as IAgentScopeHandle;
     const svc = build([
-      stubPair(IWorkspaceRegistry, {
-        ...workspaceRegistryStub(),
+      stubPair(IWorkspaceService, {
+        ...workspaceStub(),
         get: () =>
           Promise.resolve({
             id: 'wd_stub',
@@ -847,7 +844,7 @@ describe('SessionLifecycleService', () => {
   it('emits session_started with resumed: true and the bound session id on resume', async () => {
     const workDir = '/tmp/proj';
     const svc = build([
-      stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
+      stubPair(IWorkspaceService, persistentWorkspaceStub()),
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', workDir)),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
     ]);
@@ -996,7 +993,7 @@ describe('SessionLifecycleService', () => {
 
     it('loads project-local additional dirs into the session workspace on create', async () => {
       const svc = build([
-        stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/extra'])),
+        stubPair(IProjectLocalConfigService, projectLocalConfigStub(['/tmp/extra'])),
       ]);
       const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
       expect(dirsOf(h)).toEqual(['/tmp/extra']);
@@ -1014,7 +1011,7 @@ describe('SessionLifecycleService', () => {
 
     it('deduplicates project-local and caller dirs after resolving', async () => {
       const svc = build([
-        stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/shared'])),
+        stubPair(IProjectLocalConfigService, projectLocalConfigStub(['/tmp/shared'])),
       ]);
       const h = await svc.create({
         sessionId: 's1',
@@ -1026,7 +1023,7 @@ describe('SessionLifecycleService', () => {
 
     it('supports multiple project-local and caller additionalDirs', async () => {
       const svc = build([
-        stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/a', '/tmp/b'])),
+        stubPair(IProjectLocalConfigService, projectLocalConfigStub(['/tmp/a', '/tmp/b'])),
       ]);
       const h = await svc.create({
         sessionId: 's1',
@@ -1045,13 +1042,13 @@ describe('SessionLifecycleService', () => {
       } as unknown as IAgentScopeHandle;
       const summary = { id: 's1', workspaceId: 'wd_stub' } as SessionSummary;
       const svc = build([
-        stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/extra'])),
+        stubPair(IProjectLocalConfigService, projectLocalConfigStub(['/tmp/extra'])),
         stubPair(ISessionIndex, {
           ...sessionIndexStub(),
           get: () => Promise.resolve(summary),
         }),
-        stubPair(IWorkspaceRegistry, {
-          ...workspaceRegistryStub(),
+        stubPair(IWorkspaceService, {
+          ...workspaceStub(),
           get: () =>
             Promise.resolve({
               id: 'wd_stub',
@@ -1075,9 +1072,9 @@ describe('SessionLifecycleService', () => {
 
     it('fork inherits project-local dirs', async () => {
       const svc = build([
-        stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/extra'])),
-        stubPair(IWorkspaceRegistry, {
-          ...workspaceRegistryStub(),
+        stubPair(IProjectLocalConfigService, projectLocalConfigStub(['/tmp/extra'])),
+        stubPair(IWorkspaceService, {
+          ...workspaceStub(),
           get: () =>
             Promise.resolve({
               id: 'wd_stub',
@@ -1106,8 +1103,8 @@ describe('SessionLifecycleService', () => {
 
     it('fork mints a session_-prefixed lowercase id when newSessionId is omitted', async () => {
       const svc = build([
-        stubPair(IWorkspaceRegistry, {
-          ...workspaceRegistryStub(),
+        stubPair(IWorkspaceService, {
+          ...workspaceStub(),
           get: () =>
             Promise.resolve({
               id: 'wd_stub',
@@ -1130,8 +1127,8 @@ describe('SessionLifecycleService', () => {
 
   describe('fork session state', () => {
     function workspaceGetStub(): ReturnType<typeof stubPair> {
-      return stubPair(IWorkspaceRegistry, {
-        ...workspaceRegistryStub(),
+      return stubPair(IWorkspaceService, {
+        ...workspaceStub(),
         get: () =>
           Promise.resolve({
             id: 'wd_stub',
@@ -1328,7 +1325,7 @@ describe('SessionLifecycleService', () => {
           ...sessionIndexStub(),
           get: () => Promise.resolve(summary),
         }),
-        stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
+        stubPair(IWorkspaceService, persistentWorkspaceStub()),
       ]);
 
       await svc.resume('s1');

@@ -46,7 +46,7 @@ Before introducing `I{Domain}EntityService`, classify the persistence model:
 | **Append-log / event-sourced** | The authoritative record is "what happened" | `wireRecord`, `contextMemory`, `goal`, `plan`, `permission` transitions |
 | **Blob / key-value** | Large or content-addressed bytes | media offload, blob store |
 | **Indexed query / read model** | Derived, queryable view | `sessionIndex`, future `IQueryStore` projections |
-| **Registry / catalog** | Global or scoped known items | `workspaceRegistry`, `toolRegistry` |
+| **Registry / catalog** | Global or scoped known items | `workspace`, `toolRegistry` |
 | **Ephemeral runtime state** | No durable entity | active turn handle, pending interactions, terminal handles |
 
 See [persistence.md](persistence.md) for the `Store → Storage → backend` rules. A domain EntityService is a business facade over those stores; it is not a replacement for the store layer.
@@ -101,7 +101,7 @@ The `session` domain owns only Session-level identity, metadata, lifecycle comma
 | Background tasks | `background` |
 | Cron tasks | `cron` |
 | Pending approvals / questions | `interaction` / `approval` / `question` |
-| Workspace | `workspaceRegistry` |
+| Workspace | `workspace` |
 | Provider / config | `provider` / `config` |
 
 Entity-service conclusion for `session`:

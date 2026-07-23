@@ -24,8 +24,10 @@
  * Cold path: rebuilds one agent's transcript from the persisted wire records
  * (`<sessionDir>/agents/<agentId>/wire.jsonl`), exactly the
  * `SnapshotReader` read (`readWireRecords` + `reduceContextTranscript`), then
- * groups the flat messages into a snapshot via
- * `groupMessagesIntoSnapshot` — best-effort fidelity.
+ * groups the flat messages into a base snapshot via
+ * `groupMessagesIntoSnapshot` and folds the non-`context.*` records
+ * (tasks / interactions / todos / goal / plan / swarm) on top via
+ * `foldWireRecordFacts` — best-effort fidelity.
  *
  * Lifecycle: entries are dropped when the session closes or archives
  * (`onDidCloseSession` / `onDidArchiveSession`, plus a lifecycle re-check on
@@ -55,6 +57,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   TranscriptStore,
+  foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
   type AgentDescriptor,
@@ -94,11 +97,38 @@ interface LiveEntry {
   readonly ready: Promise<void>;
   /** Per-agent history backfill promises (dedupe concurrent ensures). */
   readonly agentBackfills: Map<string, Promise<void>>;
+  /** Per-agent op-batch seq counters + bounded journals (die with the store). */
+  readonly opsJournals: Map<string, AgentOpsJournal>;
+}
+
+/**
+ * Per-agent op-batch journal: every dispatched batch gets the next
+ * consecutive seq (from 1) and is retained oldest-first, bounded by
+ * {@link TRANSCRIPT_OPS_JOURNAL_CAPACITY}. `nextSeq - 1` is the watermark
+ * ("state includes every batch with seq <= N").
+ */
+interface AgentOpsJournal {
+  nextSeq: number;
+  batches: { seq: number; ops: TranscriptOperation[] }[];
+}
+
+/** Retained op batches per agent; older batches evict (catch-up turns incomplete). */
+export const TRANSCRIPT_OPS_JOURNAL_CAPACITY = 2000;
+
+/** Catch-up view over one agent's journal: batches with seq > sinceSeq, oldest first. */
+export interface TranscriptOpsCatchup {
+  readonly batches: readonly { seq: number; ops: readonly TranscriptOperation[] }[];
+  readonly latestSeq: number;
+  /** false when the journal no longer reaches back to sinceSeq — the caller must do a full refresh. */
+  readonly complete: boolean;
 }
 
 export class TranscriptService {
   private readonly live = new Map<string, LiveEntry>();
-  private readonly opsListeners = new Map<string, Set<(event: TranscriptChangeEvent) => void>>();
+  private readonly opsListeners = new Map<
+    string,
+    Set<(event: TranscriptChangeEvent, seq: number) => void>
+  >();
   /** Debounced post-turn heals: `${sessionId}:${agentId}` → pending ordinals + timer. */
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
 
@@ -147,8 +177,8 @@ export class TranscriptService {
       ready: (async () => {
         await this.backfillMain(sessionId, store);
         // Pending interactions announce only after the initial backfill, so
-        // the persisted tool-call frames are present for frame placement and
-        // the resolve-time approvalId back-link (see TranscriptBinding).
+        // the persisted tool-call frames are present for the resolve-time
+        // approvalId back-link (see TranscriptBinding).
         // Scoped to the main agent here — other agents seed after their own
         // on-demand backfill (ensureAgentHistory).
         if (this.live.get(sessionId)?.store === store) {
@@ -156,6 +186,7 @@ export class TranscriptService {
         }
       })(),
       agentBackfills: new Map(),
+      opsJournals: new Map(),
     });
     return store;
   }
@@ -189,7 +220,7 @@ export class TranscriptService {
     }
     await backfill;
     // The agent's persisted tool frames are in place now — its pending
-    // interactions can be announced with correct placement and back-links.
+    // interactions can be announced with resolve-time back-links intact.
     if (this.live.get(sessionId)?.store === entry.store) {
       entry.binding.seedPendingInteractions(agentId);
     }
@@ -274,12 +305,14 @@ export class TranscriptService {
    * Subscribe to the session's mapped-op stream (one shared subscription per
    * session — the broadcaster fans grades out against it). These are the
    * projector-mapped ops, not the store's accepted ops; see
-   * `bindSessionTranscript` for why. Returns `undefined` when the session is
-   * not live (caller skips streaming for cold sessions).
+   * `bindSessionTranscript` for why. Each batch carries its per-agent seq
+   * (consecutive from 1; 0 only when the session has no live entry, which a
+   * registered listener cannot observe). Returns `undefined` when the session
+   * is not live (caller skips streaming for cold sessions).
    */
   onSessionOps(
     sessionId: string,
-    listener: (event: TranscriptChangeEvent) => void,
+    listener: (event: TranscriptChangeEvent, seq: number) => void,
   ): IDisposable | undefined {
     if (this.forSessionLive(sessionId) === undefined) return undefined;
     let listeners = this.opsListeners.get(sessionId);
@@ -299,15 +332,71 @@ export class TranscriptService {
   }
 
   private dispatchOps(sessionId: string, event: TranscriptChangeEvent): void {
+    const seq = this.journalOps(sessionId, event);
     const listeners = this.opsListeners.get(sessionId);
     if (listeners === undefined) return;
     for (const listener of listeners) {
       try {
-        listener(event);
+        listener(event, seq);
       } catch {
         // best-effort fan-out; a broken listener is dropped, not fatal
       }
     }
+  }
+
+  /**
+   * Append one dispatched batch to its agent's journal and assign the next
+   * consecutive seq. Journaling happens before the fan-out (and regardless of
+   * listeners), so the watermark always covers every dispatched batch. Returns
+   * 0 when the session has no live entry — the journal dies with the store.
+   */
+  private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
+    const entry = this.live.get(sessionId);
+    if (entry === undefined) return 0;
+    let journal = entry.opsJournals.get(event.agentId);
+    if (journal === undefined) {
+      journal = { nextSeq: 1, batches: [] };
+      entry.opsJournals.set(event.agentId, journal);
+    }
+    const seq = journal.nextSeq++;
+    journal.batches.push({ seq, ops: [...event.ops] });
+    if (journal.batches.length > TRANSCRIPT_OPS_JOURNAL_CAPACITY) journal.batches.shift();
+    return seq;
+  }
+
+  /**
+   * Watermark for one agent: the seq of its latest dispatched op batch (0 when
+   * nothing was dispatched — or the session is not live, cold sessions having
+   * no journal).
+   */
+  getSeqWatermark(sessionId: string, agentId: string): number {
+    const journal = this.live.get(sessionId)?.opsJournals.get(agentId);
+    return journal === undefined ? 0 : journal.nextSeq - 1;
+  }
+
+  /**
+   * Point-to-point catch-up: the journaled batches with seq > `sinceSeq`,
+   * oldest first. `complete` is true only when every batch in
+   * (sinceSeq, latestSeq] is retained — a sinceSeq ahead of the watermark
+   * (stale cursor from a dead journal incarnation) or one the bounded journal
+   * has already evicted yields `complete: false`, telling the caller to fall
+   * back to a full refresh. Returns `undefined` when the session is not live
+   * (cold sessions have no journal).
+   */
+  getOpsSince(
+    sessionId: string,
+    agentId: string,
+    sinceSeq: number,
+  ): TranscriptOpsCatchup | undefined {
+    if (this.forSessionLive(sessionId) === undefined) return undefined;
+    const journal = this.live.get(sessionId)?.opsJournals.get(agentId);
+    const latestSeq = journal === undefined ? 0 : journal.nextSeq - 1;
+    if (sinceSeq > latestSeq) return { batches: [], latestSeq, complete: false };
+    const batches = journal?.batches.filter((batch) => batch.seq > sinceSeq) ?? [];
+    // Batches are consecutive, so coverage reduces to the oldest retained seq.
+    const oldest = journal?.batches[0]?.seq;
+    const complete = batches.length === 0 || (oldest !== undefined && oldest <= sinceSeq + 1);
+    return { batches, latestSeq, complete };
   }
 
   /**
@@ -481,7 +570,10 @@ export class TranscriptService {
       throw error;
     }
     const messages = [...reduceContextTranscript(records).entries];
-    return groupMessagesIntoSnapshot(messages);
+    const base = groupMessagesIntoSnapshot(messages);
+    // Second fold: tasks / interactions / todos / meta (goal, plan, swarm)
+    // come from the non-`context.*` records in the same journal.
+    return foldWireRecordFacts(records, base);
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

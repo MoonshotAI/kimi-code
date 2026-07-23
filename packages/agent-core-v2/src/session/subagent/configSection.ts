@@ -27,8 +27,7 @@ import { registerConfigSection } from '#/app/config/configSectionContributions';
 export const SUBAGENT_SECTION = 'subagent';
 
 export const SubagentConfigSchema = z.object({
-  /** Per-run subagent timeout in milliseconds; set a large value to effectively disable the cap. */
-  timeoutMs: z.number().int().min(1).optional(),
+  timeoutMs: z.number().int().min(0).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;

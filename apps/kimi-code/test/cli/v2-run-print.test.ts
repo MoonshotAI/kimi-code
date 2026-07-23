@@ -18,6 +18,7 @@ import {
   IEventBus,
   IFileSystemStorageService,
   IOAuthToolkit,
+  ISessionCronService,
   ISessionIndex,
   ISessionLifecycleService,
   ISkillCatalogRuntimeOptions,
@@ -173,6 +174,8 @@ function makeFakeHarness() {
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
     [IAgentLifecycleService, { list: vi.fn(() => []) }],
+    // No scheduled cron tasks → no future fire time to wait on.
+    [ISessionCronService, { getNextFireTime: vi.fn(() => null) }],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -182,6 +185,10 @@ function makeFakeHarness() {
       {
         ready: Promise.resolve(),
         get: vi.fn((section: string) => (section === 'defaultModel' ? 'k2' : undefined)),
+        // `applyPrintModeConfigDefaults` inspects each section and fills unset
+        // keys via the memory layer; an empty section means everything is unset.
+        inspect: vi.fn(() => ({ value: {} })),
+        set: vi.fn(async () => {}),
         diagnostics: vi.fn(() => []),
       },
     ],

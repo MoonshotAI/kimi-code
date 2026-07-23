@@ -14,11 +14,13 @@
  */
 
 import {
+  transcriptOpsCatchupResponseSchema,
   transcriptResponseSchema,
   type TranscriptAttachment,
   type TranscriptInteraction,
   type TranscriptItem,
   type TranscriptMeta,
+  type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTodo,
 } from '@moonshot-ai/transcript';
@@ -35,9 +37,12 @@ export interface TranscriptPage {
   readonly todos: readonly TranscriptTodo[];
   readonly meta: TranscriptMeta;
   readonly pendingInteractions: readonly string[];
+  /** Op-batch watermark (state includes every batch with seq <= N); absent on legacy servers. */
+  readonly seq?: number | undefined;
 }
 
-export const TRANSCRIPT_PAGE_SIZE = 30;
+/** One turn per page: fine-grained paging — the viewport grows a turn at a time. */
+export const TRANSCRIPT_PAGE_SIZE = 1;
 
 export interface FetchTranscriptPageOptions {
   readonly baseUrl: string;
@@ -90,5 +95,68 @@ export async function fetchTranscriptPage(
     todos,
     meta: parsed.data.meta,
     pendingInteractions: parsed.data.pending_interactions,
+    seq: parsed.data.seq,
+  };
+}
+
+// ---------------------------------------------------------------- ops catch-up
+
+/** One sequenced op batch from the catch-up endpoint. */
+export interface TranscriptOpBatch {
+  readonly seq: number;
+  readonly ops: readonly TranscriptOperation[];
+}
+
+export interface TranscriptOpsCatchup {
+  readonly batches: readonly TranscriptOpBatch[];
+  readonly latestSeq: number;
+  /** False = the journal cannot cover `sinceSeq`; the caller must full-refresh. */
+  readonly complete: boolean;
+}
+
+export interface FetchTranscriptOpsOptions {
+  readonly baseUrl: string;
+  readonly token?: string | undefined;
+  readonly sessionId: string;
+  readonly agentId: string;
+  /** Return journaled batches with seq strictly greater than this watermark. */
+  readonly sinceSeq: number;
+  /** Injectable for tests. */
+  readonly fetchImpl?: typeof fetch;
+}
+
+/**
+ * Point-to-point catch-up: `GET .../transcript/ops?agent_id=&since_seq=N`.
+ * Available on sequenced servers; a 404/envelope error means the server
+ * predates the endpoint and the caller should fall back to a full refresh.
+ */
+export async function fetchTranscriptOps(
+  opts: FetchTranscriptOpsOptions,
+): Promise<TranscriptOpsCatchup> {
+  const params = new URLSearchParams({
+    agent_id: opts.agentId,
+    since_seq: String(opts.sinceSeq),
+  });
+  const headers: Record<string, string> = {};
+  if (opts.token !== undefined && opts.token !== '') {
+    headers['authorization'] = `Bearer ${opts.token}`;
+  }
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(
+    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/transcript/ops?${params.toString()}`,
+    { headers },
+  );
+  const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
+  if (envelope.code !== 0) {
+    throw new Error(`transcript ops failed (${envelope.code}): ${envelope.msg}`);
+  }
+  const parsed = transcriptOpsCatchupResponseSchema.safeParse(envelope.data);
+  if (!parsed.success) {
+    throw new Error('transcript ops: unexpected response shape');
+  }
+  return {
+    batches: parsed.data.batches,
+    latestSeq: parsed.data.latest_seq,
+    complete: parsed.data.complete,
   };
 }

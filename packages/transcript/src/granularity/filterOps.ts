@@ -9,7 +9,8 @@
  * Content-bearing ops gated below 'block':
  *  - step.upsert / frame.upsert (step & frame detail)
  * Everything else (turn headers, markers, taskrefs, tasks, interactions,
- * meta, removals, resets) flows at 'turn' and up. `off` admits nothing.
+ * prompts, meta, removals, resets) flows at 'turn' and up. `off` admits
+ * nothing.
  */
 
 import type { TranscriptGrade } from './grade';
@@ -39,7 +40,7 @@ function admits(grade: TranscriptGrade, op: TranscriptOperation): boolean {
 
 /**
  * Whether an op batch consists solely of `append` chunks — such batches are
- * safe to mark volatile on the wire (droppable on backpressure: the client
+ * safe to mark volatile on the WS channel (droppable on backpressure: the client
  * will hit an offset gap or a later flush and resynchronize).
  */
 export function isAppendOnly(ops: readonly TranscriptOperation[]): boolean {

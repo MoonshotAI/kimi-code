@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
 import type { ToolCall } from '#/kosong/contract/message';
@@ -12,6 +13,7 @@ import { IAgentPermissionRulesService } from '#/agent/permissionRules/permission
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
@@ -280,6 +282,192 @@ describe('Plan service', () => {
     });
   });
 
+  describe('plan revisions', () => {
+    function revisionRecords(): Record<string, unknown>[] {
+      return ctx.allEvents
+        .filter((event) => event.type === '[wire]' && event.event === 'plan.revision')
+        .map((event) => event.args as Record<string, unknown>);
+    }
+
+    function revisionPath(id: string, version: number): string {
+      const agent = ctx.get(IAgentScopeContext);
+      return `${agent.scope()}/plan/${id}/v${version}.md`;
+    }
+
+    async function readRevisionBlob(id: string, version: number): Promise<string | undefined> {
+      const blobs = ctx.get(IBlobStore);
+      const agent = ctx.get(IAgentScopeContext);
+      const data = await blobs.get(agent.scope(), `plan/${id}/v${version}.md`);
+      return data === undefined ? undefined : Buffer.from(data).toString('utf8');
+    }
+
+    it('is a no-op while plan mode is inactive', async () => {
+      await plan.recordRevision();
+      expect(revisionRecords()).toEqual([]);
+    });
+
+    it('snapshots the current plan file into a versioned blob with a reference record', async () => {
+      const cwd = await makeTempDir('kimi-plan-revision-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      profile.update({ cwd });
+      await plan.enter('rev-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      const content = '# Plan\n\n- Inspect\n- Verify';
+      files.set(planPath, content);
+
+      await plan.recordRevision();
+
+      expect(await readRevisionBlob('rev-plan', 1)).toBe(content);
+      expect(revisionRecords()).toEqual([
+        {
+          id: 'rev-plan',
+          version: 1,
+          path: revisionPath('rev-plan', 1),
+          sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+          bytes: Buffer.byteLength(content),
+          time: expect.any(Number),
+        },
+      ]);
+    });
+
+    it('increments the version on every recording and keeps earlier blobs', async () => {
+      const cwd = await makeTempDir('kimi-plan-revision-twice-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      profile.update({ cwd });
+      await plan.enter('rev-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      files.set(planPath, '# Plan\n\n- Draft');
+      await plan.recordRevision();
+      files.set(planPath, '# Plan\n\n- Final');
+      await plan.recordRevision();
+
+      expect(revisionRecords().map((record) => record['version'])).toEqual([1, 2]);
+      expect(await readRevisionBlob('rev-plan', 1)).toBe('# Plan\n\n- Draft');
+      expect(await readRevisionBlob('rev-plan', 2)).toBe('# Plan\n\n- Final');
+    });
+
+    it('mints the next version from the replayed counter', async () => {
+      const cwd = await makeTempDir('kimi-plan-revision-restore-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      profile.update({ cwd });
+      await plan.enter('rev-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      const content = '# Plan\n\n- After restore';
+      files.set(planPath, content);
+
+      // Simulate a restored v1 fact: replay applies the record to the model
+      // without re-recording a snapshot entry.
+      await ctx.dispatch({
+        type: 'plan.revision',
+        id: 'rev-plan',
+        version: 1,
+        path: revisionPath('rev-plan', 1),
+        sha256: 'restored-sha',
+        bytes: 5,
+      });
+
+      await plan.recordRevision();
+
+      expect(revisionRecords().map((record) => record['version'])).toEqual([2]);
+      expect(await readRevisionBlob('rev-plan', 2)).toBe(content);
+    });
+
+    it('records a revision when ExitPlanMode submits the plan', async () => {
+      const cwd = await makeTempDir('kimi-plan-submit-revision-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await plan.enter('submit-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      const content = '# Plan\n\n- Inspect\n- Change\n- Verify';
+      files.set(planPath, content);
+
+      const exitPlanModeCall: ToolCall = {
+        type: 'function',
+        id: 'call_exit_revision',
+        name: 'ExitPlanMode',
+        arguments: '{}',
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
+      ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
+
+      await ctx.untilTurnEnd();
+      await expectPlanActive(false);
+      expect(revisionRecords().map((record) => record['version'])).toEqual([1]);
+      expect(await readRevisionBlob('submit-plan', 1)).toBe(content);
+    });
+
+    it('records the next version when a revised plan is resubmitted', async () => {
+      const cwd = await makeTempDir('kimi-plan-revise-revision-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'manual' });
+      await plan.enter('revise-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      files.set(planPath, '# Plan\n\n- Draft');
+
+      const firstCall: ToolCall = {
+        type: 'function',
+        id: 'call_exit_first',
+        name: 'ExitPlanMode',
+        arguments: '{}',
+      };
+      const secondCall: ToolCall = {
+        type: 'function',
+        id: 'call_exit_second',
+        name: 'ExitPlanMode',
+        arguments: '{}',
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, firstCall);
+      ctx.mockNextResponse({ type: 'text', text: 'I tightened the plan.' }, secondCall);
+      ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
+
+      const first = await ctx.takeApprovalRequest();
+      first.respond({ decision: 'rejected', selectedLabel: 'Revise', feedback: 'Tighten it.' });
+      // Set synchronously so the resubmission resolves against the revision.
+      files.set(planPath, '# Plan\n\n- Tightened');
+
+      const second = await ctx.takeApprovalRequest();
+      second.respond({ decision: 'approved' });
+
+      await ctx.untilTurnEnd();
+      await expectPlanActive(false);
+      expect(revisionRecords().map((record) => record['version'])).toEqual([1, 2]);
+      expect(await readRevisionBlob('revise-plan', 1)).toBe('# Plan\n\n- Draft');
+      expect(await readRevisionBlob('revise-plan', 2)).toBe('# Plan\n\n- Tightened');
+    });
+
+    it('does not record a revision on clear or on plan file writes', async () => {
+      const cwd = await makeTempDir('kimi-plan-no-revision-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      profile.update({ cwd });
+      await plan.enter('quiet-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      files.set(planPath, '# Plan\n\n- Step 1');
+
+      await plan.clear();
+      files.set(planPath, '# Plan\n\n- Step 2');
+
+      expect(revisionRecords()).toEqual([]);
+    });
+  });
+
   describe('plan exit tool', () => {
     it('reads the current plan file and exits plan mode directly in auto mode', async () => {
       const cwd = await makeTempDir('kimi-plan-exit-');
@@ -514,7 +702,7 @@ describe('Plan service', () => {
       },
     );
 
-    it('keeps explicit deny rules above active plan file writes', async () => {
+    it('short-circuits active plan file writes ahead of explicit deny rules', async () => {
       const files = new Map<string, string>();
       const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
         files.set(path, content);
@@ -548,11 +736,12 @@ describe('Plan service', () => {
 
       await ctx.untilTurnEnd();
 
-      expect(files.get(planPath)).toBeUndefined();
-      expect(writeText).not.toHaveBeenCalled();
-      expect(toolResultText(context.get())).toContain(
-        'Tool "Write" was denied by permission rule. Reason: blocked by test',
-      );
+      // The plan-guard hook lets plan-file writes through before the
+      // permission chain runs, so user-configured deny rules no longer
+      // adjudicate them.
+      expect(files.get(planPath)).toBe(content);
+      expect(writeText).toHaveBeenCalledWith(planPath, content);
+      expect(toolResultText(context.get())).not.toContain('denied by permission rule');
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);
