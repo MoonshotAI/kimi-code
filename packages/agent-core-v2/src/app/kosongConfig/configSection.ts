@@ -263,11 +263,6 @@ export const modelsToToml = (value: unknown, rawSnake: unknown): unknown => {
       out[id] = entry;
       continue;
     }
-    // Overlay onto the entry's old raw the same way providerEntryToToml does:
-    // `setDefined` must delete from the merged record directly. Spreading
-    // `{...rawEntry, ...converted}` instead would resurrect any key the entry
-    // carried with an explicit undefined — setDefined already deleted it from
-    // `converted`, so the spread would put the old raw value right back.
     const merged = cloneRecord(rawSub[id]);
     for (const [key, field] of Object.entries(entry)) {
       if (key === 'capabilities' && Array.isArray(field)) {
