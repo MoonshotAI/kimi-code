@@ -42,6 +42,8 @@ import {
   GlobalMcpConfigStore,
   McpConnectionManager,
   McpOAuthService,
+  resolveMcpStartupTimeoutMs,
+  resolveMcpToolTimeoutMs,
   resolveSessionMcpConfig,
   mergeCallerMcpServers,
   type BeginAuthorizationResult,
@@ -788,6 +790,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const manager = new McpConnectionManager({
       stdioCwd: cwd,
       oauthService: this.globalMcpOAuth,
+      defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(this.config.mcp?.startupTimeoutMs),
+      defaultToolTimeoutMs: resolveMcpToolTimeoutMs(this.config.mcp?.toolTimeoutMs),
     });
     try {
       await manager.connectAll({ [server.name]: config });

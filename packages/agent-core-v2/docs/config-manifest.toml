@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (20 sections · 1 overlay(s))
+# Index (21 sections · 1 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -19,6 +19,7 @@
 #   hooks                    src/agent/externalHooks/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
+#   mcp                      src/agent/mcp/configSection.ts
 #   mergeAllAvailableSkills  src/app/skillCatalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
@@ -160,6 +161,20 @@ extra_skill_dirs = []
 # max_ralph_iterations: integer
 # reserved_context_size: integer
 # compaction_trigger_ratio: number
+
+# ##########################################################################
+# mcp
+#   owner: src/agent/mcp/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     startup_timeout_ms <- KIMI_MCP_STARTUP_TIMEOUT_MS (custom parse)
+#     tool_timeout_ms <- KIMI_MCP_TOOL_TIMEOUT_MS (custom parse)
+# ##########################################################################
+
+[mcp]
+# startup_timeout_ms: integer
+# tool_timeout_ms: integer
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)

@@ -244,6 +244,15 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
 
+## `mcp`
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `startup_timeout_ms` | `integer` | `30000` (30 seconds) | Global default connection (startup + tool discovery) timeout in milliseconds for all MCP servers. Accepts `1`–`2147483647`. A per-server `startupTimeoutMs` in `mcp.json` always wins over this section and the environment variable; when neither is set, the default applies |
+| `tool_timeout_ms` | `integer` | `60000` (60 seconds) | Global default single tool-call timeout in milliseconds for all MCP servers. Accepts `1`–`2147483647`. A per-server `toolTimeoutMs` in `mcp.json` always wins over this section and the environment variable; when neither is set, the client built-in default applies |
+
+`startup_timeout_ms` and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS` and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
+
 ## `tools`
 
 `tools` is the global tool switch: it applies to every agent in all sessions and intersects with each agent's own `tools` / `disallowedTools` policy.

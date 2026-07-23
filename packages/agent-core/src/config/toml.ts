@@ -14,6 +14,7 @@ import {
   type ImageConfig,
   type KimiConfig,
   type LoopControl,
+  type McpConfig,
   type ModelAlias,
   type MoonshotServiceConfig,
   type OAuthRef,
@@ -320,6 +321,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = cloneRecord(value);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'mcp' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (!isPlainObject(value)) {
       result[targetKey] = value;
     }
@@ -496,6 +499,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
   setSection(out, 'background', config.background, backgroundToToml);
   setSection(out, 'subagent', config.subagent, subagentToToml);
+  setSection(out, 'mcp', config.mcp, mcpToToml);
   setSection(out, 'image', config.image, imageToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
@@ -681,6 +685,14 @@ function backgroundToToml(
 function subagentToToml(subagent: SubagentConfig, rawSubagent: unknown): Record<string, unknown> {
   const out = cloneRecord(rawSubagent);
   for (const [key, value] of Object.entries(subagent)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function mcpToToml(mcp: McpConfig, rawMcp: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawMcp);
+  for (const [key, value] of Object.entries(mcp)) {
     setDefined(out, camelToSnake(key), value);
   }
   return out;

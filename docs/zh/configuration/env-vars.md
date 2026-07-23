@@ -128,6 +128,8 @@ kimi
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 覆盖 `/plugins` 加载的 plugin marketplace JSON，适合 dev loopback server、测试 CDN 文件或替换 marketplace 目录 | `https://code.kimi.com/kimi-code/plugins/marketplace.json`；也接受 `http://`、`file://` URL 和本地路径 |
 | `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 初始提升并发阶段可同时运行的子 Agent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
 | `KIMI_SUBAGENT_TIMEOUT_MS` | 单个子 Agent（`Agent` / `AgentSwarm`）可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[subagent] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
+| `KIMI_MCP_STARTUP_TIMEOUT_MS` | 所有 MCP server 的全局默认连接超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] startup_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `startupTimeoutMs`（默认 `30000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
+| `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_RETRIES_PER_STEP` | 单步失败后的最大重试次数；优先级高于 `config.toml` 的 `[loop_control] max_retries_per_step`（默认 `10`） | 非负整数；非法值被忽略 |
 | `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能 | `1`、`true`、`yes`、`on` |
