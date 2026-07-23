@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -304,8 +304,67 @@ describe('mergeStdioEnv', () => {
     const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
     expect(merged['HTTP_PROXY']).toBe('http://corp:3128');
     expect(merged['NODE_USE_ENV_PROXY']).toBe('1');
-    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
     expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('keeps bracketed IPv6 loopback for direct and wrapped Node launchers', () => {
+    for (const { command, args } of [
+      { command: 'node', args: [] },
+      { command: 'bash', args: ['-c', 'node server.js'] },
+      { command: 'cmd.exe', args: ['/c', '"C:\\Program Files\\nodejs\\node.exe" server.js'] },
+    ]) {
+      const merged = mergeStdioEnv(
+        { HTTP_PROXY: 'http://corp:3128' },
+        { PATH: '/usr/bin' },
+        command,
+        args,
+      );
+      expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+    }
+  });
+
+  it('keeps bracketed IPv6 loopback for extensionless Node shebang launchers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-mcp-v2-node-bin-'));
+    const launcher = join(dir, 'my-mcp');
+    writeFileSync(launcher, '#!/usr/bin/env node\n');
+    try {
+      for (const { command, cwd } of [
+        { command: launcher, cwd: undefined },
+        { command: 'my-mcp', cwd: undefined },
+        { command: './my-mcp', cwd: dir },
+      ]) {
+        const merged = mergeStdioEnv(
+          { HTTP_PROXY: 'http://corp:3128' },
+          { PATH: dir },
+          command,
+          [],
+          cwd,
+        );
+        expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps portable IPv6 syntax for a non-Node shell child', () => {
+    const merged = mergeStdioEnv(
+      { HTTP_PROXY: 'http://corp:3128' },
+      { PATH: '/usr/bin' },
+      'bash',
+      ['-c', 'python server.py'],
+    );
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
+  });
+
+  it('honors an explicit bracketed IPv6 override', () => {
+    const merged = mergeStdioEnv(
+      { HTTP_PROXY: 'http://corp:3128', NO_PROXY: 'internal,[::1]' },
+      { PATH: '/usr/bin' },
+      'uvx',
+    );
+    expect(merged['NO_PROXY']).toBe('internal,[::1],localhost,127.0.0.1,::1');
   });
 
   it('does not inject NODE_USE_ENV_PROXY when no proxy is configured', () => {
