@@ -330,6 +330,8 @@ export interface ActivationBadges {
 
 /** A queued prompt as shown inline at the tail of the transcript. */
 export interface QueuedPromptView {
+  /** Stable entry id assigned at enqueue — keys per-entry UI state. */
+  id: string;
   text: string;
   /** Number of attachments waiting with this prompt. */
   attachmentCount: number;

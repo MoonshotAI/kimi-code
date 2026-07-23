@@ -529,11 +529,18 @@ function registerUserTextEl(turnId: string, el: unknown): void {
   measureUserText(turnId, el);
 }
 
-// Turns removed for real (e.g. undo) leave stale clamp state behind — prune it.
+// Queue clamp state keys off the entry id so it follows the prompt across
+// reorder/remove, not the slot.
+function queueClampId(item: QueuedPromptView): string {
+  return `queue:${item.id}`;
+}
+
+// Turns (or queue entries) removed for real leave stale clamp state — prune it.
 watch(
-  () => props.turns,
-  (turns) => {
-    const ids = new Set(turns.map((t) => t.id));
+  [() => props.turns, () => props.queued],
+  () => {
+    const ids = new Set(props.turns.map((t) => t.id));
+    for (const item of props.queued) ids.add(queueClampId(item));
     for (const [id, el] of userTextEls) {
       if (ids.has(id)) continue;
       userTextObserver.unobserve(el);
@@ -951,7 +958,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       </div>
       <div
         v-for="(item, qi) in queued"
-        :key="qi"
+        :key="item.id"
         class="u-turn q-turn"
         :class="{
           'q-dragging': dragFrom === qi,
@@ -971,18 +978,35 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           >
             <Icon name="grip" size="sm" />
           </span>
-          <button
-            type="button"
-            class="q-body"
-            :title="t('composer.editQueued')"
-            @click="onQueueEdit(qi)"
-          >
-            <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
-            <span v-else class="q-text q-text-placeholder">
-              <Icon name="file" size="sm" />
-              {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
-            </span>
-          </button>
+          <div class="q-clamp u-text-wrap" :class="{ 'is-clamped': isUserTextClamped(queueClampId(item)) }">
+            <button
+              type="button"
+              class="q-body"
+              :title="t('composer.editQueued')"
+              :ref="(el) => registerUserTextEl(queueClampId(item), el)"
+              @click="onQueueEdit(qi)"
+            >
+              <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
+              <span v-else class="q-text q-text-placeholder">
+                <Icon name="file" size="sm" />
+                {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
+              </span>
+            </button>
+            <button
+              v-if="clampableUserTurns.has(queueClampId(item))"
+              type="button"
+              class="u-text-toggle"
+              :aria-expanded="!isUserTextClamped(queueClampId(item))"
+              @click="toggleUserText(queueClampId(item), $event)"
+            >
+              <span>{{
+                isUserTextClamped(queueClampId(item))
+                  ? t('conversation.userMessage.expand')
+                  : t('conversation.userMessage.collapse')
+              }}</span>
+              <Icon class="u-text-toggle-car" name="chevron-down" size="sm" aria-hidden="true" />
+            </button>
+          </div>
           <div v-if="hasAttachments(item)" class="q-imgs">
             <template v-for="(att, ai) in item.attachments" :key="ai">
               <span v-if="att.kind === 'file'" class="q-file">
@@ -1162,7 +1186,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   min-width: 120px;
 }
 .u-text-wrap.is-clamped .u-text,
-.u-text-wrap.is-clamped .skill-act-args {
+.u-text-wrap.is-clamped .skill-act-args,
+.u-text-wrap.is-clamped .q-body {
   max-height: calc(10 * 1lh);
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
@@ -1765,6 +1790,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .q-grip:active {
   cursor: grabbing;
+}
+/* The clamp wrapper takes .q-body's place as the flex:1 item in the queue row. */
+.q-clamp {
+  flex: 1;
+  min-width: 0;
 }
 .q-body {
   flex: 1;

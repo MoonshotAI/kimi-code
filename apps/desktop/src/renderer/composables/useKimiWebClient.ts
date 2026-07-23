@@ -2203,6 +2203,9 @@ const queued = computed<QueuedPromptView[]>(() => {
   if (!sid) return [];
   const api = getKimiWebApi();
   return (rawState.queuedBySession[sid] ?? []).map((q) => ({
+    // enqueue() always assigns an id; the text fallback mirrors the flush
+    // failure-budget key for any hand-built entry.
+    id: q.id ?? q.text,
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
     attachments: q.attachments?.map((a) => ({
