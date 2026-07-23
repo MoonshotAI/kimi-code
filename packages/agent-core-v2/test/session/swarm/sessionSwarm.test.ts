@@ -1279,7 +1279,7 @@ function lifecycleStub(
 ): IAgentLifecycleService {
   const lifecycle = {
     _serviceBrand: undefined,
-    onWillRestore: Event.None,
+    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {

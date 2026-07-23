@@ -761,7 +761,12 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const preparing: string[] = [];
     const created: string[] = [];
-    disposables.add(svc.onWillRestore((handle) => preparing.push(handle.id)));
+    disposables.add(
+      svc.hooks.onWillRestore.register('test-visibility', async (handle, next) => {
+        preparing.push(handle.id);
+        await next();
+      }),
+    );
     disposables.add(svc.onDidCreate((handle) => created.push(handle.id)));
     const create = svc.create({ agentId: 'main' });
 
@@ -777,6 +782,69 @@ describe('AgentLifecycleService', () => {
     expect(joinedHandle).toBe(handle);
     expect(svc.get('main')).toBe(handle);
     expect(created).toEqual(['main']);
+  });
+
+  it('waits for async restore participation before registering the agent', async () => {
+    let participantEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      participantEntered = resolve;
+    });
+    let releaseParticipant!: () => void;
+    const participantGate = new Promise<void>((resolve) => {
+      releaseParticipant = resolve;
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    disposables.add(
+      svc.hooks.onWillRestore.register('test-async-wait', async (_handle, next) => {
+        participantEntered();
+        await participantGate;
+        await next();
+      }),
+    );
+    let settled = false;
+    const create = svc.create({ agentId: 'main' }).then((handle) => {
+      settled = true;
+      return handle;
+    });
+
+    await entered;
+    expect(settled).toBe(false);
+    expect(registerAgent).not.toHaveBeenCalled();
+
+    releaseParticipant();
+    await expect(create).resolves.toMatchObject({ id: 'main' });
+    expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects creation when a restore participant throws synchronously', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    disposables.add(
+      svc.hooks.onWillRestore.register('test-sync-failure', () => {
+        throw new Error('restore preparation failed');
+      }),
+    );
+
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
+      'restore preparation failed',
+    );
+    expect(registerAgent).not.toHaveBeenCalled();
+    expect(svc.get('main')).toBeUndefined();
+  });
+
+  it('rejects creation when a restore participant rejects asynchronously', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    disposables.add(
+      svc.hooks.onWillRestore.register('test-async-failure', async () => {
+        await Promise.resolve();
+        throw new Error('async restore preparation failed');
+      }),
+    );
+
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
+      'async restore preparation failed',
+    );
+    expect(registerAgent).not.toHaveBeenCalled();
+    expect(svc.get('main')).toBeUndefined();
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {

@@ -6,6 +6,7 @@ import { LifecycleScope } from '#/_base/di/scope';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
+import { createHooks } from '#/hooks';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -180,7 +181,7 @@ function agentsStub(): AgentsStub {
   return {
     _serviceBrand: undefined,
     mainContext,
-    onWillRestore: () => ({ dispose: () => {} }),
+    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: created.event,
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),

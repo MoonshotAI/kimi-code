@@ -14,17 +14,20 @@
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
- * exist. Caller-facing orchestration (record mirroring, hooks, telemetry,
- * prompt prefixes) lives with the callers — driving turns on an agent is the
- * `subagent` domain (`ISessionSubagentService`); the session's shared MCP
- * subsystem is the `sessionMcp` domain (`ISessionMcpService`), which this
- * service awaits during creation.
+ * exist. Session-owned restore participants run before wire replay and fail
+ * creation when their preparation cannot complete. Caller-facing
+ * orchestration (record mirroring, hooks, telemetry, prompt prefixes) lives
+ * with the callers — driving turns on an agent is the `subagent` domain
+ * (`ISessionSubagentService`); the session's shared MCP subsystem is the
+ * `sessionMcp` domain (`ISessionMcpService`), which this service awaits during
+ * creation.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { createHooks } from '#/hooks';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
@@ -69,6 +72,7 @@ import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
+  type AgentLifecycleHooks,
   type AgentListFilter,
   type CreateAgentOptions,
   type ForkAgentOptions,
@@ -80,7 +84,9 @@ let nextAgentId = 0;
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly handles = new Map<string, IAgentScopeHandle>();
-  private readonly onWillRestoreEmitter = this._register(new Emitter<IAgentScopeHandle>());
+  readonly hooks = createHooks<AgentLifecycleHooks, keyof AgentLifecycleHooks>([
+    'onWillRestore',
+  ]);
   private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
@@ -91,9 +97,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
    *  always receives a fully-bootstrapped handle. */
   private readonly creating = new Map<string, Promise<IAgentScopeHandle>>();
 
-  get onWillRestore() {
-    return this.onWillRestoreEmitter.event;
-  }
   get onDidCreate() {
     return this.onDidCreateEmitter.event;
   }
@@ -222,7 +225,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await wire.seal();
       this.igniteEagerServices(handle);
       await mcpReady;
-      this.onWillRestoreEmitter.fire(handle);
+      await this.hooks.onWillRestore.run(handle);
       await wire.restore();
       await this.bindBootstrap(handle, opts);
       await this.sessionMetadata.registerAgent(agentId, {

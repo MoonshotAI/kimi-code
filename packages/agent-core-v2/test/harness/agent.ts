@@ -8,6 +8,7 @@ import { expect, vi } from 'vitest';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
+import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
@@ -1157,7 +1158,7 @@ export class AgentTestContext {
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
-              onWillRestore: Event.None as Event<IAgentScopeHandle>,
+              hooks: createHooks(['onWillRestore']),
               onDidCreate: Event.None as Event<IAgentScopeHandle>,
               onDidDispose: Event.None as Event<string>,
               create: () =>

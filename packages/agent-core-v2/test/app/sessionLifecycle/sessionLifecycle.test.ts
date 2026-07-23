@@ -14,6 +14,7 @@ import {
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { createHooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -297,7 +298,7 @@ function sessionToolPolicyStub(): ISessionToolPolicy {
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    onWillRestore: Event.None as IAgentLifecycleService['onWillRestore'],
+    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),

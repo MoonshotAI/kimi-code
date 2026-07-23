@@ -21,9 +21,10 @@
  *   join), an already-created agent is returned as-is, and a failed bootstrap
  *   drops the incomplete handle. The registry exposes only fully bootstrapped,
  *   metadata-registered agents.
- * - `onWillRestore` exposes a provisional handle only so session domains can
- *   attach handle-scoped restore participants before wire replay. Committed
- *   lifecycle visibility begins at `onDidCreate`.
+ * - Restore participants receive a provisional handle before wire replay,
+ *   run in registration order, and may complete asynchronously. A participant
+ *   failure aborts creation; committed lifecycle visibility begins at
+ *   `onDidCreate`.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */
@@ -31,6 +32,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
+import type { Hooks } from '#/hooks';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
 
@@ -54,10 +56,14 @@ export interface AgentListFilter {
   readonly prefix?: string;
 }
 
+export type AgentLifecycleHooks = {
+  readonly onWillRestore: IAgentScopeHandle;
+};
+
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
-  readonly onWillRestore: Event<IAgentScopeHandle>;
+  readonly hooks: Hooks<AgentLifecycleHooks>;
   /** Fires after an agent is created and registered, with its scope handle. */
   readonly onDidCreate: Event<IAgentScopeHandle>;
   /** Fires after an agent is removed, with its agent id. */

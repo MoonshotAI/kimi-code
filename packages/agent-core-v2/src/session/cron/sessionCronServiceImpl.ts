@@ -90,9 +90,9 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     super();
 
     this._register(
-      this.agentLifecycle.onWillRestore((handle) => {
-        if (handle.id !== 'main') return;
-        this.bindMainAgent(handle);
+      this.agentLifecycle.hooks.onWillRestore.register('cron', async (handle, next) => {
+        if (handle.id === 'main') this.bindMainAgent(handle);
+        await next();
       }),
     );
 

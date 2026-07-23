@@ -953,7 +953,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
 function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    onWillRestore: noopEvent,
+    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: noopEvent,
     onDidDispose: noopEvent,
     create: async () => agents[0]!,

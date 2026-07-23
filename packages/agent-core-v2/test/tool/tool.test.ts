@@ -157,7 +157,9 @@ interface AgentLifecycleStubOptions {
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
 
-interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentService {
+type AgentLifecycleStub = Omit<IAgentLifecycleService, 'hooks'> &
+  Omit<ISessionSubagentService, 'hooks'> & {
+  readonly hooks: IAgentLifecycleService['hooks'] & ISessionSubagentService['hooks'];
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
@@ -166,7 +168,7 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
     profileName: string,
     services?: ReadonlyMap<unknown, unknown>,
   ): void;
-}
+};
 
 function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): AgentLifecycleStub {
   let lifecycle: AgentLifecycleStub;
@@ -252,10 +254,10 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   lifecycle = {
     _serviceBrand: undefined,
     hooks: {
+      onWillRestore: hookSlot(),
       onWillStartAgentTask: hookSlot(),
     },
     onDidStopAgentTask: Event.None as KimiEvent<AgentTaskStopHookContext>,
-    onWillRestore: Event.None as KimiEvent<IAgentScopeHandle>,
     onDidCreate: Event.None as KimiEvent<IAgentScopeHandle>,
     onDidDispose: Event.None as KimiEvent<string>,
     create: vi.fn(async (input = {}) => {
