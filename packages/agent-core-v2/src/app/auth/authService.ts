@@ -55,13 +55,18 @@ import {
   nonEmpty,
   resolveModelAuthMaterial,
 } from '#/kosong/model/modelAuth';
-import { DEFAULT_MODEL_SECTION, type ModelRecord, MODELS_SECTION } from '#/kosong/model/model';
+import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import {
+  DEFAULT_MODEL_SECTION,
+  MODELS_SECTION,
+  PROVIDERS_SECTION,
+  THINKING_SECTION,
+} from '#/app/kosongConfig/configSection';
 import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
   type ProvidersChangedEvent,
-  PROVIDERS_SECTION,
 } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -78,7 +83,6 @@ import {
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
-const THINKING_SECTION = 'thinking';
 const SERVICES_SECTION = 'services';
 
 interface FlowState {
@@ -585,6 +589,7 @@ export class AuthSummaryService implements IAuthSummaryService {
 
   constructor(
     @IProviderService private readonly providerService: IProviderService,
+    @IModelService private readonly modelService: IModelService,
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @ILogService private readonly log: ILogService,
@@ -614,10 +619,14 @@ export class AuthSummaryService implements IAuthSummaryService {
   }
 
   async ensureReady(modelOverride?: string): Promise<void> {
+    // Reload so external file edits reach the kosong registries through the
+    // persistence bridge, then read the RUNTIME state from the registries —
+    // the config sections are only their persistence and may lag a pending
+    // kosong-originated persist.
     await this.config.reload();
     const providers = this.providerService.list();
-    const models = this.config.get<Record<string, ModelRecord> | undefined>(MODELS_SECTION) ?? {};
-    const modelId = modelOverride ?? this.config.get<string | undefined>(DEFAULT_MODEL_SECTION);
+    const models = this.modelService.list();
+    const modelId = modelOverride ?? this.modelService.getDefaultModel();
     const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
     if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
       throw new AuthProvisioningRequiredError();

@@ -5,86 +5,21 @@
  *  - `ProviderTypeSchema` is free-form text: unregistered vendor names parse
  *    (validation happens at resolve time, not parse time);
  *  - the section TOML transforms round-trip snake_case ↔ camelCase;
- *  - `ProviderService` CRUD persists through config, diffs section changes
- *    into `onDidChangeProviders` (added/changed/removed), and clears
- *    `defaultProvider` when the default provider is deleted.
+ *  - `ProviderService` is an in-memory registry: `loadAll` hydrates and
+ *    resolves `ready`, CRUD diffs state changes into `onDidChangeProviders`
+ *    (added/changed/removed), equal writes stay silent, and deleting the
+ *    default provider clears the `defaultProvider` pointer.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { createScopedTestHost } from '#/_base/di/test';
-import { Emitter, type Event } from '#/_base/event';
 import {
-  type ConfigChangedEvent,
-  type ConfigDiagnostic,
-  type ConfigInspectValue,
-  IConfigService,
-  type ResolvedConfig,
-} from '#/app/config/config';
-import { providersFromToml, providersToToml } from '#/kosong/provider/configSection';
-import '#/kosong/provider/providerService';
-import {
-  DEFAULT_PROVIDER_SECTION,
-  IProviderService,
-  type ProviderConfig,
   ProvidersSectionSchema,
-} from '#/kosong/provider/provider';
-
-class StubConfigService implements IConfigService {
-  declare readonly _serviceBrand: undefined;
-  readonly ready = Promise.resolve();
-  private readonly _onDidChange = new Emitter<ConfigChangedEvent>();
-  readonly onDidChangeConfiguration: Event<ConfigChangedEvent> = this._onDidChange.event;
-  readonly onDidSectionChange: Event<ConfigChangedEvent> = this._onDidChange.event;
-  private readonly _values = new Map<string, unknown>();
-
-  get<T = unknown>(domain: string): T {
-    return this._values.get(domain) as T;
-  }
-
-  inspect<T = unknown>(domain: string): ConfigInspectValue<T> {
-    return {
-      value: this._values.get(domain) as T | undefined,
-      defaultValue: undefined,
-      userValue: undefined,
-      memoryValue: undefined,
-    };
-  }
-
-  getAll(): ResolvedConfig {
-    return Object.fromEntries(this._values) as ResolvedConfig;
-  }
-
-  set(domain: string, patch: unknown): Promise<void> {
-    const previousValue = this._values.get(domain);
-    const value =
-      patch !== null && typeof patch === 'object'
-        ? { ...(previousValue as Record<string, unknown> | undefined), ...patch }
-        : patch;
-    this._values.set(domain, value);
-    this._onDidChange.fire({ domain, source: 'set', value, previousValue });
-    return Promise.resolve();
-  }
-
-  replace(domain: string, value: unknown): Promise<void> {
-    const previousValue = this._values.get(domain);
-    if (value === undefined) {
-      this._values.delete(domain);
-    } else {
-      this._values.set(domain, value);
-    }
-    this._onDidChange.fire({ domain, source: 'set', value, previousValue });
-    return Promise.resolve();
-  }
-
-  reload(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  diagnostics(): readonly ConfigDiagnostic[] {
-    return [];
-  }
-}
+  providersFromToml,
+  providersToToml,
+} from '#/app/kosongConfig/configSection';
+import { ProviderService } from '#/kosong/provider/providerService';
+import { type ProviderConfig } from '#/kosong/provider/provider';
 
 describe('ProviderTypeSchema (free-form vendor identity)', () => {
   it('parses unregistered vendor names — resolve-time validation, not parse-time', () => {
@@ -126,61 +61,106 @@ describe('providers TOML transforms', () => {
 });
 
 describe('ProviderService', () => {
-  function createHost(): {
-    host: ReturnType<typeof createScopedTestHost>;
-    service: IProviderService;
-    config: StubConfigService;
-  } {
-    const config = new StubConfigService();
-    const host = createScopedTestHost([[IConfigService, config]]);
-    const service = host.app.accessor.get(IProviderService);
-    return { host, service, config };
+  function createService(providers: Readonly<Record<string, ProviderConfig>> = {}): ProviderService {
+    const service = new ProviderService();
+    service.loadAll({ ...providers }, undefined);
+    return service;
   }
 
-  it('supports CRUD and diffs section changes into onDidChangeProviders', async () => {
-    const { host, service } = createHost();
-    try {
-      const events: Array<{
-        added: readonly string[];
-        removed: readonly string[];
-        changed: readonly string[];
-      }> = [];
-      service.onDidChangeProviders((e) => events.push(e));
+  it('resolves ready on the first loadAll and gates mutations on it', async () => {
+    const service = new ProviderService();
+    let ready = false;
+    void service.ready.then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
 
-      const moonshot: ProviderConfig = { type: 'kimi', baseUrl: 'https://api.moonshot.ai/v1' };
-      await service.set('moonshot', moonshot);
-      expect(service.get('moonshot')).toEqual(moonshot);
-      expect(service.list()).toEqual({ moonshot });
-      expect(events).toEqual([{ added: ['moonshot'], removed: [], changed: [] }]);
-
-      const updated: ProviderConfig = { ...moonshot, apiKey: 'sk-1' };
-      await service.set('moonshot', updated);
-      expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['moonshot'] });
-
-      // Rewriting with an identical record still fires the config event but
-      // diffs to no changed keys.
-      await service.set('moonshot', updated);
-      expect(events.at(-1)).toEqual({ added: [], removed: [], changed: [] });
-
-      await service.delete('moonshot');
-      expect(service.get('moonshot')).toBeUndefined();
-      expect(events.at(-1)).toEqual({ added: [], removed: ['moonshot'], changed: [] });
-    } finally {
-      host.dispose();
-    }
+    service.loadAll({ moonshot: { type: 'kimi' } }, 'moonshot');
+    await service.ready;
+    expect(ready).toBe(true);
+    expect(service.get('moonshot')).toEqual({ type: 'kimi' });
+    expect(service.getDefaultProvider()).toBe('moonshot');
   });
 
-  it('clears defaultProvider when the default provider is deleted', async () => {
-    const { host, service, config } = createHost();
-    try {
-      await service.set('moonshot', { type: 'kimi' });
-      await config.replace(DEFAULT_PROVIDER_SECTION, 'moonshot');
-      expect(config.get<string>(DEFAULT_PROVIDER_SECTION)).toBe('moonshot');
+  it('supports CRUD and diffs state changes into onDidChangeProviders', async () => {
+    const service = createService();
+    const events: Array<{
+      added: readonly string[];
+      removed: readonly string[];
+      changed: readonly string[];
+    }> = [];
+    service.onDidChangeProviders((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
 
-      await service.delete('moonshot');
-      expect(config.get<string>(DEFAULT_PROVIDER_SECTION)).toBeUndefined();
-    } finally {
-      host.dispose();
-    }
+    const moonshot: ProviderConfig = { type: 'kimi', baseUrl: 'https://api.moonshot.ai/v1' };
+    await service.set('moonshot', moonshot);
+    expect(service.get('moonshot')).toEqual(moonshot);
+    expect(service.list()).toEqual({ moonshot });
+    expect(events).toEqual([{ added: ['moonshot'], removed: [], changed: [] }]);
+
+    const updated: ProviderConfig = { ...moonshot, apiKey: 'sk-1' };
+    await service.set('moonshot', updated);
+    expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['moonshot'] });
+
+    // Rewriting with an identical record is silent — no event fires.
+    await service.set('moonshot', updated);
+    expect(events).toHaveLength(2);
+
+    await service.delete('moonshot');
+    expect(service.get('moonshot')).toBeUndefined();
+    expect(events.at(-1)).toEqual({ added: [], removed: ['moonshot'], changed: [] });
+  });
+
+  it('loadAll fires only for real diffs on re-sync', async () => {
+    const service = createService({ moonshot: { type: 'kimi' } });
+    const events: unknown[] = [];
+    service.onDidChangeProviders((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
+
+    service.loadAll({ moonshot: { type: 'kimi' } }, undefined);
+    expect(events).toHaveLength(0);
+
+    service.loadAll({ moonshot: { type: 'kimi' }, other: { baseUrl: 'https://example.com' } }, undefined);
+    expect(events).toEqual([{ added: ['other'], removed: [], changed: [] }]);
+  });
+
+  it('replaceAll replaces the records and keeps the default pointer', async () => {
+    const service = createService({ a: { type: 'kimi' }, b: { type: 'kimi' } });
+    await service.setDefaultProvider('a');
+
+    await service.replaceAll({ c: { type: 'kimi' } });
+    expect(service.list()).toEqual({ c: { type: 'kimi' } });
+    expect(service.getDefaultProvider()).toBe('a');
+  });
+
+  it('clears the defaultProvider pointer when the default provider is deleted', async () => {
+    const service = createService({ moonshot: { type: 'kimi' } });
+    const pointerEvents: Array<string | undefined> = [];
+    service.onDidChangeDefaultProvider((e) => pointerEvents.push(e.id));
+
+    await service.setDefaultProvider('moonshot');
+    expect(service.getDefaultProvider()).toBe('moonshot');
+
+    await service.delete('moonshot');
+    expect(service.getDefaultProvider()).toBeUndefined();
+    expect(pointerEvents).toEqual(['moonshot', undefined]);
+  });
+
+  it('a mutation resolves only after the listeners’ waitUntil work completes', async () => {
+    const service = createService();
+    let persistDone = false;
+    service.onDidChangeProviders((e) => {
+      e.waitUntil(
+        new Promise<void>((resolve) => setTimeout(resolve, 50)).then(() => {
+          persistDone = true;
+        }),
+      );
+    });
+
+    await service.set('moonshot', { type: 'kimi' });
+    expect(persistDone).toBe(true);
   });
 });

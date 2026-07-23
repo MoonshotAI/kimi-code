@@ -26,11 +26,23 @@ import {
   snakeToCamel,
   transformPlainObject,
 } from '#/app/config/toml';
-import { OAuthRefSchema } from '#/kosong/provider/provider';
+import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
+import type { OAuthRef } from '#/kosong/provider/provider';
 
 export const SERVICES_SECTION = 'services';
 
 const StringRecordSchema = z.record(z.string(), z.string());
+
+// Local re-derivation of kosong's `OAuthRef` type: the canonical section
+// schema lives in `app/kosongConfig` (L3), which this L2 domain must not
+// import. The `AssertExact` pin keeps this copy in lockstep with the type.
+const OAuthRefSchema = z.object({
+  storage: z.enum(['file', 'keyring']),
+  key: z.string().min(1),
+  oauthHost: z.string().min(1).optional(),
+});
+
+type _AssertOAuthRef = AssertExact<Equal<z.infer<typeof OAuthRefSchema>, OAuthRef>>;
 
 export const MoonshotServiceConfigSchema = z.object({
   baseUrl: z.string().optional(),
