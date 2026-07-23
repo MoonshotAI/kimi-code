@@ -31,7 +31,6 @@ export interface AgentRunAttemptOptions {
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
-  /** Concrete model/thinking to bind; defaults to the caller agent's own. */
   readonly binding?: { readonly model: string; readonly thinking: string };
 }
 
@@ -651,5 +650,4 @@ export function resolveSwarmMaxConcurrency(
   }
   return value;
 }
-
 

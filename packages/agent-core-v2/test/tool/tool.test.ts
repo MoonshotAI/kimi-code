@@ -255,6 +255,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       onWillStartAgentTask: hookSlot(),
     },
     onDidStopAgentTask: Event.None as KimiEvent<AgentTaskStopHookContext>,
+    onWillRestore: Event.None as KimiEvent<IAgentScopeHandle>,
     onDidCreate: Event.None as KimiEvent<IAgentScopeHandle>,
     onDidDispose: Event.None as KimiEvent<string>,
     create: vi.fn(async (input = {}) => {

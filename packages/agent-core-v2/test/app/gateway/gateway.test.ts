@@ -72,6 +72,7 @@ describe('RestGateway', () => {
     };
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
+      onWillRestore: () => ({ dispose: () => {} }),
       onDidCreate: () => ({ dispose: () => {} }),
       onDidDispose: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(agentHandle),

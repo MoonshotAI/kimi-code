@@ -19,7 +19,11 @@
  *   domain branches on it.
  * - Creation is single-flight per explicit agent id (concurrent creations
  *   join), an already-created agent is returned as-is, and a failed bootstrap
- *   drops the incomplete handle.
+ *   drops the incomplete handle. The registry exposes only fully bootstrapped,
+ *   metadata-registered agents.
+ * - `onWillRestore` exposes a provisional handle only so session domains can
+ *   attach handle-scoped restore participants before wire replay. Committed
+ *   lifecycle visibility begins at `onDidCreate`.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */
@@ -53,6 +57,7 @@ export interface AgentListFilter {
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
+  readonly onWillRestore: Event<IAgentScopeHandle>;
   /** Fires after an agent is created and registered, with its scope handle. */
   readonly onDidCreate: Event<IAgentScopeHandle>;
   /** Fires after an agent is removed, with its agent id. */
@@ -77,7 +82,6 @@ export interface IAgentLifecycleService {
    */
   fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle>;
 
-  /** Look up a live agent by id. The handle is visible while its creation is still in flight. */
   get(agentId: string): IAgentScopeHandle | undefined;
   list(filter?: AgentListFilter): readonly IAgentScopeHandle[];
   /**

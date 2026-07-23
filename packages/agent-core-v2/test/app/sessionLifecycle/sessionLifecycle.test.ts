@@ -297,6 +297,7 @@ function sessionToolPolicyStub(): ISessionToolPolicy {
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
+    onWillRestore: Event.None as IAgentLifecycleService['onWillRestore'],
     onDidCreate: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),

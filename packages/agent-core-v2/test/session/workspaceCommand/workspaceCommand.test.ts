@@ -180,6 +180,7 @@ function agentsStub(): AgentsStub {
   return {
     _serviceBrand: undefined,
     mainContext,
+    onWillRestore: () => ({ dispose: () => {} }),
     onDidCreate: created.event,
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),

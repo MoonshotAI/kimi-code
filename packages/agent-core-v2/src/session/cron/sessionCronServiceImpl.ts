@@ -10,8 +10,8 @@
  * to the main agent's `IEventBus`, steers the main agent
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
- * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
- * `onDidCreateMain`. Bound at Session scope.
+ * `IAgentToolRegistryService` during the lifecycle's pre-restore preparation.
+ * Bound at Session scope.
  */
 
 import { ulid } from 'ulid';
@@ -90,16 +90,11 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     super();
 
     this._register(
-      this.agentLifecycle.onDidCreate((handle) => {
+      this.agentLifecycle.onWillRestore((handle) => {
         if (handle.id !== 'main') return;
         this.bindMainAgent(handle);
       }),
     );
-
-    const existingMain = this.agentLifecycle.get('main');
-    if (existingMain) {
-      this.bindMainAgent(existingMain);
-    }
 
     this._register(
       toDisposable(() => {

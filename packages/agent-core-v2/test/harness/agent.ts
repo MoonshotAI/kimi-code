@@ -1157,6 +1157,7 @@ export class AgentTestContext {
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
+              onWillRestore: Event.None as Event<IAgentScopeHandle>,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,
               onDidDispose: Event.None as Event<string>,
               create: () =>
