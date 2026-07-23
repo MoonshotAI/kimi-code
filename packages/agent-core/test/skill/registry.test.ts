@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'pathe';
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { SessionSkillRegistry } from '../../src/skill';
 import type { SkillDefinition, SkillSource } from '../../src/skill';
@@ -160,4 +164,98 @@ function sectionFor(rendered: string, header: string): string {
   if (start === -1) return '';
   const next = rendered.indexOf('### ', start + header.length);
   return next === -1 ? rendered.slice(start) : rendered.slice(start, next);
+}
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  for (const dir of tempDirs.splice(0)) {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+describe('SessionSkillRegistry load warnings', () => {
+  it('collects a warning when a skill file fails to parse', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kimi-skill-registry-'));
+    tempDirs.push(root);
+    // Directory-form SKILL.md with a missing required "name" field triggers a
+    // SkillParseError (not an unsupported-type skip), which must surface as a
+    // load warning instead of being silently dropped.
+    await writeSkill(root, path.join('broken', 'SKILL.md'), [
+      '---',
+      'description: missing the name field',
+      '---',
+      'body',
+    ]);
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([{ path: root, source: 'project' }]);
+
+    expect(registry.listSkills()).toEqual([]);
+    const warnings = registry.getLoadWarnings();
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.some((w) => w.message.includes('broken'))).toBe(true);
+  });
+
+  it('collects a warning for malformed YAML frontmatter', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kimi-skill-registry-'));
+    tempDirs.push(root);
+    // "description: foo: bar" is not a valid YAML plain scalar — the second
+    // ": " turns the line into an ambiguous mapping, which js-yaml rejects.
+    await writeSkill(root, path.join('bad-yaml', 'SKILL.md'), [
+      '---',
+      'name: bad-yaml',
+      'description: foo: bar',
+      '---',
+      'body',
+    ]);
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([{ path: root, source: 'user' }]);
+
+    expect(registry.listSkills()).toEqual([]);
+    expect(registry.getLoadWarnings().length).toBeGreaterThan(0);
+  });
+
+  it('produces no warning when all skills parse cleanly', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kimi-skill-registry-'));
+    tempDirs.push(root);
+    await writeSkill(root, path.join('good', 'SKILL.md'), [
+      '---',
+      'name: good',
+      'description: A fine skill',
+      '---',
+      'body',
+    ]);
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([{ path: root, source: 'project' }]);
+
+    expect(registry.listSkills().map((s) => s.name)).toEqual(['good']);
+    expect(registry.getLoadWarnings()).toEqual([]);
+  });
+
+  it('still forwards warnings to the onWarning callback', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kimi-skill-registry-'));
+    tempDirs.push(root);
+    await writeSkill(root, path.join('broken', 'SKILL.md'), [
+      '---',
+      'description: missing the name field',
+      '---',
+      'body',
+    ]);
+
+    const received: string[] = [];
+    const registry = new SessionSkillRegistry({ onWarning: (m) => received.push(m) });
+    await registry.loadRoots([{ path: root, source: 'project' }]);
+
+    expect(registry.getLoadWarnings().length).toBeGreaterThan(0);
+    expect(received.length).toBeGreaterThan(0);
+  });
+});
+
+async function writeSkill(root: string, relativePath: string, lines: readonly string[]): Promise<void> {
+  const target = path.join(root, relativePath);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, lines.join('\n'));
 }
