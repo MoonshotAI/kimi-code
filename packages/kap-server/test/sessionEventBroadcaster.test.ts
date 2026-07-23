@@ -10,7 +10,7 @@ import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
   ContextSizeModel,
   IAgentActivityView,
-  IAgentConversationReconciliationRegistry,
+  IAgentConversationUndoReconciliationRegistry,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -80,7 +80,7 @@ class FakeAgentHandle {
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
     this.services.set(IEventBus, this.bus);
-    this.services.set(IAgentConversationReconciliationRegistry, {
+    this.services.set(IAgentConversationUndoReconciliationRegistry, {
       register: () => ({ dispose: () => {} }),
     });
     this.accessor = {

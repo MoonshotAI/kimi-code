@@ -26,7 +26,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentRewindService } from '#/agent/rewind/rewind';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
@@ -737,7 +738,7 @@ describe('AgentTaskService — notification delivery', () => {
         new Error('output unavailable'),
       );
 
-      await ctx.get(IAgentRewindService).rewind(1);
+      await ctx.get(IAgentConversationUndoService).undo(1);
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
       expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
@@ -749,7 +750,7 @@ describe('AgentTaskService — notification delivery', () => {
     }
   });
 
-  it('re-delivers a queued notification cancelled by rewind before materialization', async () => {
+  it('preserves a queued notification when undo rejects an active turn', async () => {
     const fixture = createAgentTaskService();
     const { ctx, manager } = fixture;
     const loop = ctx.get(IAgentLoopService);
@@ -757,11 +758,13 @@ describe('AgentTaskService — notification delivery', () => {
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const hook = loop.hooks.onWillBeginStep.register('test-notification-rewind', async (hookCtx, next) => {
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-notification-undo', async (_hookCtx, next) => {
       markStarted();
-      await new Promise<void>((_, reject) => {
-        hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });
-      });
+      await canFinish;
       await next();
     });
 
@@ -788,9 +791,19 @@ describe('AgentTaskService — notification delivery', () => {
       });
       expect(notifiedCount(ctx)).toBe(0);
 
-      await ctx.get(IAgentRewindService).rewind(1);
+      await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_BUSY,
+        details: { reason: 'loop' },
+      });
+      expect(active.signal.aborted).toBe(false);
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toEqual([]);
 
-      await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+      ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
+      ctx.mockNextResponse({ type: 'text', text: 'turn completed' });
+      release();
+      await expect(active.result).resolves.toMatchObject({ type: 'completed' });
       expect(
         ctx.context.get().filter((message) => message.origin?.kind === 'task'),
       ).toEqual([
@@ -800,6 +813,7 @@ describe('AgentTaskService — notification delivery', () => {
       ]);
       expect(notifiedCount(ctx)).toBe(1);
     } finally {
+      release();
       hook.dispose();
       await ctx.get(ISessionMetadata).ready;
       await ctx.dispose();

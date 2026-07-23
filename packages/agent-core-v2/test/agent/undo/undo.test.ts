@@ -1,14 +1,15 @@
 /**
- * Scenario: rewind validation and restoration across conversation-scoped models.
- * Responsibility: AgentRewindService commits one undo and publishes restored observable state.
+ * Scenario: undo validation and restoration across conversation-scoped models.
+ * Responsibility: AgentConversationUndoService commits one undo and publishes
+ * restored observable state.
  * Wiring: full TestAgentContext with real wire models and event bus.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/agent/rewind/rewind.test.ts
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/agent/undo/undo.test.ts
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentConversationReconciliationRegistry } from '#/agent/contextMemory/conversationReconciliation';
+import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
 import { contextApplyCompaction } from '#/agent/contextMemory/contextOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -17,7 +18,7 @@ import { TurnModel } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { PlanModel } from '#/agent/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentRewindService } from '#/agent/rewind/rewind';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
@@ -28,7 +29,7 @@ import { IWireService } from '#/wire/wire';
 import { createTestAgent, telemetryServices, type TestAgentContext } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
-describe('AgentRewindService', () => {
+describe('AgentConversationUndoService', () => {
   let ctx: TestAgentContext;
   let records: TelemetryRecord[];
 
@@ -49,31 +50,51 @@ describe('AgentRewindService', () => {
 
   it('exposes availability from context history', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
-    expect(rewind.availability()).toEqual({ maxTurns: 0, stoppedAtCompaction: false });
+    const undo = ctx.get(IAgentConversationUndoService);
+    expect(undo.availability()).toEqual({ maxTurns: 0, stoppedAtCompaction: false });
 
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
-    expect(rewind.availability()).toEqual({ maxTurns: 2, stoppedAtCompaction: false });
+    expect(undo.availability()).toEqual({ maxTurns: 2, stoppedAtCompaction: false });
   });
 
   it('rejects undo with structured reasons', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
 
-    await expect(rewind.rewind(1)).rejects.toMatchObject({
+    await expect(undo.undo(1)).rejects.toMatchObject({
       code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       details: { reason: 'empty', requestedCount: 1, undoableCount: 0 },
     });
 
     ctx.appendTurnExchange('u1', 'a1');
-    await expect(rewind.rewind(2)).rejects.toMatchObject({
+    await expect(undo.undo(2)).rejects.toMatchObject({
       code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       details: { reason: 'insufficient', requestedCount: 2, undoableCount: 1 },
     });
   });
 
-  it('does not interrupt an active turn when undo is unavailable', async () => {
+  it.each([
+    0,
+    -1,
+    0.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.POSITIVE_INFINITY,
+    Number.NaN,
+  ])('rejects invalid undo count %s without mutating history', async (count) => {
+    setup();
+    ctx.appendTurnExchange('u1', 'a1');
+    const history = ctx.context.get();
+
+    await expect(ctx.get(IAgentConversationUndoService).undo(count)).rejects.toMatchObject({
+      code: ErrorCodes.REQUEST_INVALID,
+      details: { field: 'count' },
+    });
+
+    expect(ctx.context.get()).toBe(history);
+  });
+
+  it('returns session.busy for an active turn without cancelling it', async () => {
     setup();
     const loop = ctx.get(IAgentLoopService);
     let started!: () => void;
@@ -84,7 +105,7 @@ describe('AgentRewindService', () => {
     const canFinish = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const hook = loop.hooks.onWillBeginStep.register('test-invalid-rewind', async (_hookCtx, next) => {
+    const hook = loop.hooks.onWillBeginStep.register('test-invalid-undo', async (_hookCtx, next) => {
       started();
       await canFinish;
       await next();
@@ -104,22 +125,53 @@ describe('AgentRewindService', () => {
       ).assigned
     ).turn;
     await didStart;
+    const history = ctx.context.get();
 
-    await expect(ctx.get(IAgentRewindService).rewind(1)).rejects.toMatchObject({
-      code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
-      details: { reason: 'empty' },
+    await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_BUSY,
+      details: { reason: 'loop' },
     });
     expect(turn.signal.aborted).toBe(false);
     expect(loop.status().state).toBe('running');
+    expect(ctx.context.get()).toBe(history);
 
     hook.dispose();
     release();
     await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
   });
 
+  it('returns session.busy for active compaction without cancelling it', async () => {
+    setup();
+    ctx.appendTurnExchange('u1', 'a1');
+    const history = ctx.context.get();
+    const compaction = ctx.get(IAgentFullCompactionService);
+    const abortController = new AbortController();
+    const active = vi.spyOn(compaction, 'compacting', 'get').mockReturnValue({
+      abortController,
+      promise: new Promise<never>(() => {}),
+      trigger: 'manual',
+      tokenCount: 2,
+    });
+    const cancel = vi.spyOn(compaction, 'cancel').mockImplementation(async () => {
+      abortController.abort();
+    });
+
+    try {
+      await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_BUSY,
+        details: { reason: 'compaction' },
+      });
+      expect(abortController.signal.aborted).toBe(false);
+      expect(ctx.context.get()).toBe(history);
+    } finally {
+      cancel.mockRestore();
+      active.mockRestore();
+    }
+  });
+
   it('refuses to cross a compaction boundary', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.get(IAgentContextMemoryService).applyCompaction({
       summary: 'summary of u1',
@@ -129,13 +181,13 @@ describe('AgentRewindService', () => {
     });
     ctx.appendTurnExchange('u2', 'a2');
 
-    expect(rewind.availability()).toEqual({ maxTurns: 1, stoppedAtCompaction: true });
-    await expect(rewind.rewind(2)).rejects.toMatchObject({
+    expect(undo.availability()).toEqual({ maxTurns: 1, stoppedAtCompaction: true });
+    await expect(undo.undo(2)).rejects.toMatchObject({
       code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       details: { reason: 'compaction_boundary', requestedCount: 2, undoableCount: 1 },
     });
 
-    await rewind.rewind(1);
+    await undo.undo(1);
     const history = ctx.context.get();
     expect(history.map((m) => m.role)).toEqual(['user', 'user']);
     expect(history[1]?.origin?.kind).toBe('compaction_summary');
@@ -143,14 +195,14 @@ describe('AgentRewindService', () => {
 
   it('refuses loudly when a legacy compaction leaves anchors without checkpoints', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
     const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     wire.dispatch(contextApplyCompaction({ summary: 'legacy summary', compactedCount: 2 }));
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
 
-    await expect(rewind.rewind(1)).rejects.toMatchObject({
+    await expect(undo.undo(1)).rejects.toMatchObject({
       code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       details: { reason: 'compaction_boundary', requestedCount: 1, undoableCount: 0 },
     });
@@ -159,21 +211,21 @@ describe('AgentRewindService', () => {
 
   it('restores todos to their pre-turn value', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
     const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'kept', status: 'pending' }] }));
     ctx.appendTurnExchange('u2', 'a2');
     wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }));
 
-    await rewind.rewind(1);
+    await undo.undo(1);
 
     expect(wire.getModel(TodoModel).current).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
     const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
@@ -184,7 +236,7 @@ describe('AgentRewindService', () => {
     });
 
     try {
-      await rewind.rewind(1);
+      await undo.undo(1);
 
       expect(wire.getModel(PlanModel).current.active).toBe(false);
       expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
@@ -196,13 +248,13 @@ describe('AgentRewindService', () => {
 
   it('does not roll back world-time turn bookkeeping', async () => {
     setup();
-    const rewind = ctx.get(IAgentRewindService);
+    const undo = ctx.get(IAgentConversationUndoService);
     const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     expect(wire.getModel(TurnModel).nextTurnId).toBe(2);
 
-    await rewind.rewind(1);
+    await undo.undo(1);
 
     expect(wire.getModel(TurnModel).nextTurnId).toBe(2);
   });
@@ -217,27 +269,27 @@ describe('AgentRewindService', () => {
       order.push('flush');
       await originalFlush?.();
     });
-    const participants = ctx.get(IAgentConversationReconciliationRegistry);
+    const participants = ctx.get(IAgentConversationUndoReconciliationRegistry);
     participants.register({
       id: 'test.state',
-      reconcileAfterRewind: async () => {
+      reconcileAfterUndo: async () => {
         order.push('state');
       },
     });
     participants.register({
       id: 'test.projection',
       phase: 'projection',
-      reconcileAfterRewind: async () => {
+      reconcileAfterUndo: async () => {
         order.push('projection');
       },
     });
-    const subscription = ctx.get(IEventBus).subscribe('context.rewound', () => {
-      order.push('context.rewound');
+    const subscription = ctx.get(IEventBus).subscribe('context.undone', () => {
+      order.push('context.undone');
     });
     ctx.appendTurnExchange('u1', 'a1');
 
     try {
-      await ctx.get(IAgentRewindService).rewind(1);
+      await ctx.get(IAgentConversationUndoService).undo(1);
 
       expect(order).toEqual([
         'flush',
@@ -245,7 +297,7 @@ describe('AgentRewindService', () => {
         'flush',
         'projection',
         'flush',
-        'context.rewound',
+        'context.undone',
       ]);
     } finally {
       subscription.dispose();
@@ -253,44 +305,50 @@ describe('AgentRewindService', () => {
     }
   });
 
-  it.each([1, 2, 3])(
-    'finishes the committed rewind when post-cut flush %i fails',
-    async (failureCall) => {
+  it.each([
+    [1, []],
+    [2, ['state']],
+    [3, ['state', 'projection']],
+  ] as const)(
+    'rejects the committed undo when post-cut flush %i fails',
+    async (failureCall, expectedReconciled) => {
       setup();
       const wire = ctx.get(IWireService);
       const originalFlush = wire.flush.bind(wire);
       let flushCalls = 0;
+      const storageError = new Error('storage unavailable');
       const flush = vi.spyOn(wire, 'flush').mockImplementation(async () => {
         flushCalls += 1;
-        if (flushCalls === failureCall) throw new Error('storage unavailable');
+        if (flushCalls === failureCall) throw storageError;
         await originalFlush();
       });
       const reconciled: string[] = [];
-      const participants = ctx.get(IAgentConversationReconciliationRegistry);
+      const participants = ctx.get(IAgentConversationUndoReconciliationRegistry);
       participants.register({
         id: 'test.flush-failure-state',
-        reconcileAfterRewind: async () => {
+        reconcileAfterUndo: async () => {
           reconciled.push('state');
         },
       });
       participants.register({
         id: 'test.flush-failure-projection',
         phase: 'projection',
-        reconcileAfterRewind: async () => {
+        reconcileAfterUndo: async () => {
           reconciled.push('projection');
         },
       });
-      const rewound: number[] = [];
-      const subscription = ctx.get(IEventBus).subscribe('context.rewound', ({ turns }) => {
-        rewound.push(turns);
+      const undone: number[] = [];
+      const subscription = ctx.get(IEventBus).subscribe('context.undone', ({ turns }) => {
+        undone.push(turns);
       });
       ctx.appendTurnExchange('u1', 'a1');
 
       try {
-        await expect(ctx.get(IAgentRewindService).rewind(1)).resolves.toBe(1);
+        await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toBe(storageError);
         expect(ctx.context.get()).toEqual([]);
-        expect(reconciled).toEqual(['state', 'projection']);
-        expect(rewound).toEqual([1]);
+        expect(reconciled).toEqual(expectedReconciled);
+        expect(undone).toEqual([]);
+        expect(records.filter((record) => record.event === 'conversation_undo')).toEqual([]);
       } finally {
         subscription.dispose();
         flush.mockRestore();
@@ -298,19 +356,19 @@ describe('AgentRewindService', () => {
     },
   );
 
-  it('prevents compaction from starting until rewind reconciliation finishes', async () => {
+  it('prevents compaction from starting until undo reconciliation finishes', async () => {
     setup();
     const compaction = ctx.get(IAgentFullCompactionService);
     let beginAccepted: boolean | undefined;
-    ctx.get(IAgentConversationReconciliationRegistry).register({
+    ctx.get(IAgentConversationUndoReconciliationRegistry).register({
       id: 'test.compaction-admission',
-      reconcileAfterRewind: async () => {
+      reconcileAfterUndo: async () => {
         beginAccepted = compaction.begin({ source: 'manual' });
       },
     });
     ctx.appendTurnExchange('u1', 'a1');
 
-    await ctx.get(IAgentRewindService).rewind(1);
+    await ctx.get(IAgentConversationUndoService).undo(1);
 
     expect(beginAccepted).toBe(false);
     expect(() => compaction.begin({ source: 'manual' })).toThrowError(
@@ -333,9 +391,10 @@ describe('AgentRewindService', () => {
       };
     });
     const loop = ctx.get(IAgentLoopService);
-    const originalAcquireQuiescence = loop.acquireQuiescence.bind(loop);
-    const acquireQuiescence = vi.spyOn(loop, 'acquireQuiescence').mockImplementation(async () => {
-      const lease = await originalAcquireQuiescence();
+    const originalTryAcquireQuiescence = loop.tryAcquireQuiescence.bind(loop);
+    const tryAcquireQuiescence = vi.spyOn(loop, 'tryAcquireQuiescence').mockImplementation(() => {
+      const lease = originalTryAcquireQuiescence();
+      if (lease === undefined) return undefined;
       return {
         dispose: () => {
           order.push('loop');
@@ -346,15 +405,15 @@ describe('AgentRewindService', () => {
     ctx.appendTurnExchange('u1', 'a1');
 
     try {
-      await ctx.get(IAgentRewindService).rewind(1);
+      await ctx.get(IAgentConversationUndoService).undo(1);
       expect(order).toEqual(['compaction', 'loop']);
     } finally {
-      acquireQuiescence.mockRestore();
+      tryAcquireQuiescence.mockRestore();
       pauseLaunching.mockRestore();
     }
   });
 
-  it('serializes concurrent rewinds through projection reconciliation', async () => {
+  it('serializes concurrent undos through projection reconciliation', async () => {
     setup();
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
@@ -369,10 +428,10 @@ describe('AgentRewindService', () => {
     let calls = 0;
     let active = 0;
     let maxActive = 0;
-    ctx.get(IAgentConversationReconciliationRegistry).register({
+    ctx.get(IAgentConversationUndoReconciliationRegistry).register({
       id: 'test.serial-projection',
       phase: 'projection',
-      reconcileAfterRewind: async () => {
+      reconcileAfterUndo: async () => {
         calls += 1;
         active += 1;
         maxActive = Math.max(maxActive, active);
@@ -384,9 +443,9 @@ describe('AgentRewindService', () => {
       },
     });
 
-    const first = ctx.get(IAgentRewindService).rewind(1);
+    const first = ctx.get(IAgentConversationUndoService).undo(1);
     await firstStarted;
-    const second = ctx.get(IAgentRewindService).rewind(1);
+    const second = ctx.get(IAgentConversationUndoService).undo(1);
     await Promise.resolve();
 
     expect(calls).toBe(1);
@@ -399,9 +458,9 @@ describe('AgentRewindService', () => {
     expect(ctx.context.get()).toEqual([]);
   });
 
-  it('publishes context.rewound and tracks conversation_undo', async () => {
+  it('publishes context.undone and tracks conversation_undo', async () => {
     setup();
-    ctx.get(IAgentRewindService);
+    ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
 
@@ -421,7 +480,7 @@ describe('AgentRewindService', () => {
     await metadata.update({ lastPrompt: 'u1' });
     ctx.appendTurnExchange('u1', 'a1');
 
-    await ctx.get(IAgentRewindService).rewind(1);
+    await ctx.get(IAgentConversationUndoService).undo(1);
 
     await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: undefined });
   });
@@ -451,7 +510,7 @@ describe('AgentRewindService', () => {
     });
 
     try {
-      await ctx.get(IAgentRewindService).rewind(1);
+      await ctx.get(IAgentConversationUndoService).undo(1);
       await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: 'queued prompt' });
     } finally {
       list.mockRestore();
@@ -465,16 +524,16 @@ describe('AgentRewindService', () => {
     const update = vi.spyOn(ctx.get(ISessionMetadata), 'update').mockRejectedValueOnce(
       new Error('metadata write failed'),
     );
-    const rewound: number[] = [];
-    const subscription = ctx.get(IEventBus).subscribe('context.rewound', ({ turns }) => {
-      rewound.push(turns);
+    const undone: number[] = [];
+    const subscription = ctx.get(IEventBus).subscribe('context.undone', ({ turns }) => {
+      undone.push(turns);
     });
 
     try {
-      await expect(ctx.get(IAgentRewindService).rewind(1)).resolves.toBe(1);
+      await expect(ctx.get(IAgentConversationUndoService).undo(1)).resolves.toBe(1);
 
       expect(ctx.context.get().map((message) => message.role)).toEqual(['user', 'assistant']);
-      expect(rewound).toEqual([1]);
+      expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
         properties: { agent_id: 'main', count: 1 },
@@ -489,7 +548,7 @@ describe('AgentRewindService', () => {
     setup();
     ctx.appendTurnExchange('u1', 'a1');
 
-    await ctx.get(IAgentRewindService).rewind(1);
+    await ctx.get(IAgentConversationUndoService).undo(1);
     await ctx.get(IWireService).flush();
 
     const wireEvents = ctx.allEvents

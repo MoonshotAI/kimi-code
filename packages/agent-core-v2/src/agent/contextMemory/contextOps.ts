@@ -48,7 +48,7 @@ import {
   createCompactionSummaryMessage,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
-import { isUndoAnchor } from './conversationTime';
+import { isUndoAnchor, isValidUndoCount } from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
@@ -359,9 +359,11 @@ export function formatUndoUnavailableMessage(
 }
 
 export const contextUndo = ContextModel.defineOp('context.undo', {
-  schema: z.object({ count: z.number() }),
+  schema: z.object({
+    count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }),
   apply: (state, p) => {
-    if (p.count <= 0 || state.length === 0) return state;
+    if (!isValidUndoCount(p.count) || state.length === 0) return state;
     const cut = computeUndoCut(state, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;
     return resetFold(state.slice(0, cut.cutIndex)) as ContextMessage[];

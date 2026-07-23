@@ -26,7 +26,7 @@ import {
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { defineCheckpointedModel } from '#/agent/contextMemory/conversationTime';
-import { IAgentConversationReconciliationRegistry } from '#/agent/contextMemory/conversationReconciliation';
+import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -224,8 +224,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentConversationReconciliationRegistry
-    conversationReconciliation: IAgentConversationReconciliationRegistry,
+    @IAgentConversationUndoReconciliationRegistry
+    conversationUndoReconciliation: IAgentConversationUndoReconciliationRegistry,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -241,9 +241,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       fallbackRoot,
     );
     this._register(
-      conversationReconciliation.register({
+      conversationUndoReconciliation.register({
         id: 'task.notificationDelivery',
-        reconcileAfterRewind: () => this.reconcileNotificationDeliveryAfterUndo(),
+        reconcileAfterUndo: () => this.reconcileNotificationDeliveryAfterUndo(),
       }),
     );
     this._register(

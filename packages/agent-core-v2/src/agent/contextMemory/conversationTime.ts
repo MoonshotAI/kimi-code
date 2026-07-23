@@ -3,7 +3,7 @@
  * wire-Model factory.
  *
  * Defines the undo anchor vocabulary and registers conversation-time Models
- * for rewind validation. Scope-agnostic.
+ * for undo validation. Scope-agnostic.
  */
 
 import { defineModel, type ModelDef } from '#/wire/model';
@@ -18,6 +18,10 @@ export function isUndoAnchor(message: ContextMessage): boolean {
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
   );
+}
+
+export function isValidUndoCount(count: number): boolean {
+  return Number.isSafeInteger(count) && count > 0;
 }
 
 export interface Checkpointed<T> {
@@ -54,7 +58,7 @@ export function defineCheckpointedModel<T>(
         'context.clear': (state) =>
           state.checkpoints.length === 0 ? state : { ...state, checkpoints: [] },
         'context.undo': (state, { count }) => {
-          if (count <= 0 || state.checkpoints.length < count) return state;
+          if (!isValidUndoCount(count) || state.checkpoints.length < count) return state;
           const checkpointIndex = state.checkpoints.length - count;
           return {
             current: state.checkpoints[checkpointIndex]!,

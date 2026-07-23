@@ -529,50 +529,62 @@ describe('Agent loop', () => {
     expect(ctx.llmCalls).toHaveLength(3);
   });
 
-  it('holds new admissions until the active turn is quiescent and the lease is released', async () => {
+  it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
     let started!: () => void;
     const activeStarted = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const hook = loop.hooks.onWillBeginStep.register('test-quiescence', async (hookCtx, next) => {
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-quiescence', async (_hookCtx, next) => {
       started();
-      await new Promise<void>((_, reject) => {
-        hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });
-      });
+      await canFinish;
       await next();
     });
 
     const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
     await activeStarted;
-    const leasePromise = loop.acquireQuiescence();
+
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    expect(active.signal.aborted).toBe(false);
+
+    hook.dispose();
+    ctx.mockNextResponse({ type: 'text', text: 'completed normally' });
+    release();
+    await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+  });
+
+  it('holds new admissions until an idle quiescence lease is released', async () => {
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
     const held = loop.enqueue(nextTurnMessage('held'));
     let assigned = false;
     void held.assigned.then(() => {
       assigned = true;
     });
 
-    const lease = await leasePromise;
-    await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
     await Promise.resolve();
     expect(assigned).toBe(false);
     expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: true });
 
-    hook.dispose();
-    ctx.mockNextResponse({ type: 'text', text: 'after rewind' });
-    lease.dispose();
+    ctx.mockNextResponse({ type: 'text', text: 'after undo' });
+    lease?.dispose();
     const resumed = (await held.assigned).turn;
     await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
   });
 
   it('can abort an admission while quiescence holds it', async () => {
-    const lease = await loop.acquireQuiescence();
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
     const held = loop.enqueue(nextTurnMessage('held'));
 
     expect(held.abort()).toBe(true);
     await expect(held.assigned).rejects.toBeDefined();
     expect(loop.hasPendingRequests()).toBe(false);
 
-    lease.dispose();
+    lease?.dispose();
     expect(loop.status().state).toBe('idle');
   });
 

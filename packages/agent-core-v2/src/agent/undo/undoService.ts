@@ -1,7 +1,7 @@
 /**
- * `rewind` domain (L6) — `IAgentRewindService` implementation.
+ * `undo` domain (L6) — `IAgentConversationUndoService` implementation.
  *
- * Owns conversation rewind coordination and restored observable state.
+ * Owns idle conversation undo coordination and restored observable state.
  * Coordinates `contextMemory`, conversation reconciliation, `fullCompaction`,
  * `loop`, `prompt`, Agent and Session identity, `sessionMetadata`, `event`,
  * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
@@ -13,9 +13,9 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
-  IAgentConversationReconciliationRegistry,
-  type AgentConversationReconciliationPhase,
-} from '#/agent/contextMemory/conversationReconciliation';
+  IAgentConversationUndoReconciliationRegistry,
+  type AgentConversationUndoReconciliationPhase,
+} from '#/agent/contextMemory/conversationUndoReconciliation';
 import {
   computeUndoCut,
   formatUndoUnavailableMessage,
@@ -24,6 +24,7 @@ import {
 import {
   CHECKPOINTED_MODELS,
   isUndoAnchor,
+  isValidUndoCount,
   type Checkpointed,
 } from '#/agent/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -40,26 +41,29 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IWireService } from '#/wire/wire';
 
-import { IAgentRewindService, type RewindAvailability } from './rewind';
+import { IAgentConversationUndoService, type UndoAvailability } from './undo';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    'context.rewound': { turns: number };
+    'context.undone': { turns: number };
   }
 }
 
-export class AgentRewindService extends Disposable implements IAgentRewindService {
+export class AgentConversationUndoService
+  extends Disposable
+  implements IAgentConversationUndoService
+{
   declare readonly _serviceBrand: undefined;
 
-  private rewindQueue: Promise<void> = Promise.resolve();
+  private undoQueue: Promise<void> = Promise.resolve();
 
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentConversationReconciliationRegistry
-    private readonly participants: IAgentConversationReconciliationRegistry,
+    @IAgentConversationUndoReconciliationRegistry
+    private readonly participants: IAgentConversationUndoReconciliationRegistry,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -72,7 +76,7 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
     super();
   }
 
-  availability(): RewindAvailability {
+  availability(): UndoAvailability {
     const cut = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER);
     const maxTurns = Math.min(cut.removedCount, this.checkpointDepth());
     return {
@@ -81,27 +85,34 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
     };
   }
 
-  async rewind(turns: number): Promise<number> {
-    if (turns <= 0) return 0;
-    this.assertUndoAvailable(turns);
-    const run = this.rewindQueue.then(() => this.rewindNow(turns));
-    this.rewindQueue = run.then(
+  async undo(turns: number): Promise<number> {
+    if (!isValidUndoCount(turns)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'Undo count must be a positive safe integer',
+        { details: { field: 'count' } },
+      );
+    }
+    const run = this.undoQueue.then(() => this.undoNow(turns));
+    this.undoQueue = run.then(
       () => undefined,
       () => undefined,
     );
     return run;
   }
 
-  private async rewindNow(turns: number): Promise<number> {
-    this.assertUndoAvailable(turns);
+  private async undoNow(turns: number): Promise<number> {
     const pause = this.prompt.pauseLaunching();
     const compactionPause = this.fullCompaction.pauseLaunching();
     let quiescence: IDisposable | undefined;
     try {
-      [quiescence] = await Promise.all([
-        this.loop.acquireQuiescence(),
-        this.fullCompaction.cancel(),
-      ]);
+      quiescence = this.loop.tryAcquireQuiescence();
+      if (quiescence === undefined) {
+        throw this.busyError('loop');
+      }
+      if (this.fullCompaction.compacting !== null) {
+        throw this.busyError('compaction');
+      }
       this.assertUndoAvailable(turns);
       this.context.undo(turns);
       await this.flushAfterCommit('context cut');
@@ -111,7 +122,7 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
       await this.flushAfterCommit('projection reconciliation');
       await this.reconcileLastPromptSafely();
       this.telemetry.track2('conversation_undo', { count: turns });
-      this.eventBus.publish({ type: 'context.rewound', turns });
+      this.eventBus.publish({ type: 'context.undone', turns });
       return turns;
     } finally {
       compactionPause.dispose();
@@ -127,6 +138,13 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
       depth = Math.min(depth, state.checkpoints.length);
     }
     return depth;
+  }
+
+  private busyError(reason: 'loop' | 'compaction'): Error2 {
+    const message = reason === 'loop'
+      ? 'Cannot undo while a turn is active or queued. Wait for it to finish, then retry.'
+      : 'Cannot undo while conversation compaction is running. Wait for it to finish, then retry.';
+    return new Error2(ErrorCodes.SESSION_BUSY, message, { details: { reason } });
   }
 
   private assertUndoAvailable(turns: number): void {
@@ -164,16 +182,18 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
     );
   }
 
-  private async reconcileParticipants(phase: AgentConversationReconciliationPhase): Promise<void> {
+  private async reconcileParticipants(
+    phase: AgentConversationUndoReconciliationPhase,
+  ): Promise<void> {
     const participants = this.participants
       .list()
       .filter((participant) => (participant.phase ?? 'state') === phase);
     const results = await Promise.allSettled(
-      participants.map((participant) => participant.reconcileAfterRewind()),
+      participants.map((participant) => participant.reconcileAfterUndo()),
     );
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') return;
-      this.log.error('rewind participant reconciliation failed', {
+      this.log.error('undo participant reconciliation failed', {
         participantId: participants[index]?.id,
         error: result.reason,
       });
@@ -184,7 +204,7 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
     try {
       await this.reconcileLastPrompt();
     } catch (error) {
-      this.log.error('rewind lastPrompt reconciliation failed', { error });
+      this.log.error('undo lastPrompt reconciliation failed', { error });
     }
   }
 
@@ -192,7 +212,8 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
     try {
       await this.wire.flush();
     } catch (error) {
-      this.log.error('rewind wire flush failed after in-memory commit', { stage, error });
+      this.log.error('undo wire flush failed after in-memory commit', { stage, error });
+      throw error;
     }
   }
 
@@ -225,8 +246,8 @@ export class AgentRewindService extends Disposable implements IAgentRewindServic
 
 registerScopedService(
   LifecycleScope.Agent,
-  IAgentRewindService,
-  AgentRewindService,
+  IAgentConversationUndoService,
+  AgentConversationUndoService,
   InstantiationType.Eager,
-  'rewind',
+  'undo',
 );

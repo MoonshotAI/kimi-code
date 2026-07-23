@@ -1,5 +1,5 @@
 /**
- * Scenario: session-shared Todo state, including rewind restoration.
+ * Scenario: session-shared Todo state, including undo restoration.
  * Responsibility: SessionTodoService exposes the main wire state and emits observable changes.
  * Wiring: lightweight lifecycle/agent fakes with real event-bus behavior.
  * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/session/todo/sessionTodo.test.ts
@@ -220,7 +220,7 @@ describe('SessionTodoService', () => {
     ]);
   });
 
-  it('fires the restored list once when rewind changes the main wire state', async () => {
+  it('fires the restored list once when undo changes the main wire state', async () => {
     const main = makeFakeAgent('main');
     const lifecycle = makeLifecycleStub([main.handle]);
     const service = new SessionTodoService(lifecycle.service);
@@ -231,8 +231,8 @@ describe('SessionTodoService', () => {
     await main.restore([
       { type: 'tools.update_store', key: 'todo', value: [{ title: 'kept', status: 'pending' }] },
     ]);
-    main.eventBus.publish({ type: 'context.rewound', turns: 1 });
-    main.eventBus.publish({ type: 'context.rewound', turns: 1 });
+    main.eventBus.publish({ type: 'context.undone', turns: 1 });
+    main.eventBus.publish({ type: 'context.undone', turns: 1 });
     subscription.dispose();
 
     expect(seen).toEqual([[{ title: 'kept', status: 'pending' }]]);

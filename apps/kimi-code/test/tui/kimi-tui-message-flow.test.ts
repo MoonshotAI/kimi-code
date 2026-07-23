@@ -8,7 +8,13 @@ import {
   resetCapabilitiesCache,
   setCapabilities,
 } from '@moonshot-ai/pi-tui';
-import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
+import {
+  ErrorCodes,
+  KimiError,
+  type ApprovalRequest,
+  type ApprovalResponse,
+  type Event,
+} from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
@@ -1204,6 +1210,55 @@ command = "vim"
     ]);
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello');
+  });
+
+  it.each([
+    {
+      backend: 'v1',
+      details: {
+        reason: 'undo_limit',
+        requestedCount: 1,
+        undoableCount: 0,
+        stoppedAtCompaction: true,
+      },
+    },
+    {
+      backend: 'v2',
+      details: {
+        reason: 'compaction_boundary',
+        requestedCount: 1,
+        undoableCount: 0,
+      },
+    },
+  ])('shows the undo limit from a $backend RPC error', async ({ details }) => {
+    const session = makeSession({
+      undoHistory: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Undo unavailable', { details });
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/undo 1');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Cannot undo 1 prompt; only 0 prompts can be undone in the active context after the last compaction.',
+      );
+    });
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Error: Failed to undo');
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+      expect.objectContaining({
+        kind: 'status',
+        content:
+          'Cannot undo 1 prompt; only 0 prompts can be undone in the active context after the last compaction.',
+      }),
+    ]);
   });
 
   it('does not duplicate welcome after undoing the only turn', async () => {

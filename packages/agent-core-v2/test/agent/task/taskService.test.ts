@@ -15,7 +15,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentConversationReconciliationRegistry } from '#/agent/contextMemory/conversationReconciliation';
+import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
@@ -91,7 +91,7 @@ describe('AgentTaskService', () => {
     eventBus = disposables.add(new EventBusService());
     injectionProviders = new Map();
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentConversationReconciliationRegistry, {
+    ix.stub(IAgentConversationUndoReconciliationRegistry, {
       register: () => toDisposable(() => {}),
       list: () => [],
     });
@@ -402,7 +402,7 @@ describe('AgentTaskService', () => {
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentConversationReconciliationRegistry, {
+    ix.stub(IAgentConversationUndoReconciliationRegistry, {
       register: () => toDisposable(() => {}),
       list: () => [],
     });

@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  IAgentConversationReconciliationRegistry,
+  IAgentConversationUndoReconciliationRegistry,
   IAgentContextMemoryService,
   IAgentLoopService,
   IEventBus,
@@ -697,7 +697,7 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'compaction.started', trigger: 'auto' }));
     feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
     feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
-    feed(ev({ type: 'context.rewound', turns: 1 }));
+    feed(ev({ type: 'context.undone', turns: 1 }));
 
     const markers = tx
       .getItems()
@@ -1025,13 +1025,13 @@ describe('bindSessionTranscript', () => {
       string,
       {
         readonly phase?: 'state' | 'projection';
-        reconcileAfterRewind(): Promise<void>;
+        reconcileAfterUndo(): Promise<void>;
       }
     >();
     register(participant: {
       readonly id: string;
       readonly phase?: 'state' | 'projection';
-      reconcileAfterRewind(): Promise<void>;
+      reconcileAfterUndo(): Promise<void>;
     }): { dispose: () => void } {
       this.participants.set(participant.id, participant);
       return {
@@ -1046,7 +1046,7 @@ describe('bindSessionTranscript', () => {
       await Promise.all(
         [...this.participants.values()]
           .filter((participant) => (participant.phase ?? 'state') === phase)
-          .map((participant) => participant.reconcileAfterRewind()),
+          .map((participant) => participant.reconcileAfterUndo()),
       );
     }
   }
@@ -1082,7 +1082,7 @@ describe('bindSessionTranscript', () => {
         accessor: {
           get: (token: unknown) => {
             if (token === IEventBus) return bus;
-            if (token === IAgentConversationReconciliationRegistry) return reconciliation;
+            if (token === IAgentConversationUndoReconciliationRegistry) return reconciliation;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
             }
@@ -1150,7 +1150,7 @@ describe('bindSessionTranscript', () => {
     } as unknown as ISessionScopeHandle;
   }
 
-  it('resets conversation items from the authoritative post-rewind context', () => {
+  it('resets conversation items from the authoritative post-undo context', () => {
     const interactions = new SessionInteractionService();
     const agents = new FakeAgents();
     const main = agents.add('main', {
@@ -1212,7 +1212,7 @@ describe('bindSessionTranscript', () => {
       }),
     );
     main.bus.emit(ev({ type: 'context.spliced', start: 1, deleteCount: 4, messages: [] }));
-    main.bus.emit(ev({ type: 'context.rewound', turns: 2 }));
+    main.bus.emit(ev({ type: 'context.undone', turns: 2 }));
 
     expect(
       store
@@ -1228,7 +1228,7 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  it('does not infer the rewind cut from the displayed turn count', () => {
+  it('does not infer the undo cut from the displayed turn count', () => {
     const interactions = new SessionInteractionService();
     const agents = new FakeAgents();
     const main = agents.add('main', {
@@ -1265,7 +1265,7 @@ describe('bindSessionTranscript', () => {
     main.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
     main.bus.emit(ev({ type: 'context.spliced', start: 0, deleteCount: 3, messages: [] }));
-    main.bus.emit(ev({ type: 'context.rewound', turns: 5 }));
+    main.bus.emit(ev({ type: 'context.undone', turns: 5 }));
 
     expect(
       store
@@ -1279,7 +1279,7 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  it('rebuilds the post-rewind projection from full journal history after compaction', async () => {
+  it('rebuilds the post-undo projection from full journal history after compaction', async () => {
     const interactions = new SessionInteractionService();
     const agents = new FakeAgents();
     const foldedHistory: ContextMessage[] = [
@@ -1385,7 +1385,7 @@ describe('bindSessionTranscript', () => {
     );
 
     await main.reconcile('projection');
-    main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
 
     const transcript = store.getAgent('main');
     const items = transcript?.getItems() ?? [];
@@ -1402,6 +1402,129 @@ describe('bindSessionTranscript', () => {
     expect(transcript?.getTask('task-1')).toMatchObject({ state: 'running' });
     expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
     expect(invalidations).toBe(1);
+    binding.dispose();
+  });
+
+  it('keeps only interactions anchored to surviving tool calls after undo', async () => {
+    const interactions = new SessionInteractionService();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const survivingHistory: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'kept prompt' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call-kept',
+            name: 'Read',
+            arguments: '{"path":"/kept"}',
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'kept result' }],
+        toolCalls: [],
+        toolCallId: 'call-kept',
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'kept answer' }],
+        toolCalls: [],
+      },
+    ];
+    const doomedHistory: ContextMessage[] = [
+      ...survivingHistory,
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'undone prompt' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call-undone-resolved',
+            name: 'Write',
+            arguments: '{"path":"/undone"}',
+          },
+          {
+            type: 'function',
+            id: 'call-undone-pending',
+            name: 'Bash',
+            arguments: '{"command":"false"}',
+          },
+        ],
+      },
+    ];
+    const store = new TranscriptStore('s1');
+    store.ensureAgent('main').apply([
+      {
+        op: 'reset',
+        agentId: 'main',
+        snapshot: groupMessagesIntoSnapshot(doomedHistory),
+      },
+      {
+        op: 'interaction.upsert',
+        interaction: {
+          interactionId: 'approval-kept',
+          interactionKind: 'approval',
+          toolCallId: 'call-kept',
+          state: 'approved',
+          response: { decision: 'approved' },
+        },
+      },
+      {
+        op: 'interaction.upsert',
+        interaction: {
+          interactionId: 'approval-undone',
+          interactionKind: 'approval',
+          toolCallId: 'call-undone-resolved',
+          state: 'approved',
+          response: { decision: 'approved' },
+        },
+      },
+      {
+        op: 'interaction.upsert',
+        interaction: {
+          interactionId: 'question-undone',
+          interactionKind: 'question',
+          toolCallId: 'call-undone-pending',
+          state: 'pending',
+          request: { questions: [{ question: 'Continue?', options: [] }] },
+        },
+      },
+    ]);
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(interactions, agents),
+      undefined,
+      undefined,
+      undefined,
+      async () => groupMessagesIntoSnapshot(survivingHistory),
+    );
+
+    await main.reconcile('projection');
+    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
+
+    const transcript = store.getAgent('main');
+    expect([...transcript!.getInteractions().keys()]).toEqual(['approval-kept']);
+    expect(transcript?.getInteraction('approval-kept')).toMatchObject({
+      toolCallId: 'call-kept',
+      state: 'approved',
+    });
+    expect(transcript?.getInteraction('approval-undone')).toBeUndefined();
+    expect(transcript?.listPendingInteractions()).toEqual([]);
     binding.dispose();
   });
 
@@ -1462,7 +1585,7 @@ describe('bindSessionTranscript', () => {
     );
 
     await main.reconcile('projection');
-    main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
 
     const items = store.getAgent('main')?.getItems() ?? [];
     expect(
@@ -1901,13 +2024,13 @@ describe('bindSessionTranscript', () => {
     }
   });
 
-  it('drops a stale backfill that completes after a rewind reset', async () => {
+  it('drops a stale backfill that completes after an undo reset', async () => {
     const home = await seedWireHome();
     try {
       const history: ContextMessage[] = [
         {
           role: 'user',
-          content: [{ type: 'text', text: 'kept after rewind' }],
+          content: [{ type: 'text', text: 'kept after undo' }],
           toolCalls: [],
           origin: { kind: 'user' },
         },
@@ -1932,7 +2055,7 @@ describe('bindSessionTranscript', () => {
         return groupMessagesIntoSnapshot([
           {
             role: 'user',
-            content: [{ type: 'text', text: 'stale before rewind' }],
+            content: [{ type: 'text', text: 'stale before undo' }],
             toolCalls: [],
             origin: { kind: 'user' },
           },
@@ -1941,7 +2064,7 @@ describe('bindSessionTranscript', () => {
 
       const store = service.forSessionLive('s1');
       await started;
-      main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+      main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
       release();
       await service.whenReady('s1');
 
@@ -1950,7 +2073,7 @@ describe('bindSessionTranscript', () => {
         ?.getItems()
         .filter((item): item is TranscriptTurn => item.kind === 'turn')
         .map((turn) => turn.prompt);
-      expect(prompts).toEqual(['kept after rewind']);
+      expect(prompts).toEqual(['kept after undo']);
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

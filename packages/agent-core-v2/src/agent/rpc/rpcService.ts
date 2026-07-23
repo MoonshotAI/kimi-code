@@ -19,7 +19,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ProfileError } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentRewindService } from '#/agent/rewind/rewind';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
@@ -65,7 +65,8 @@ export class AgentRPCService implements IAgentRPCService {
 
   constructor(
     @IAgentPromptService private readonly promptService: IAgentPromptService,
-    @IAgentRewindService private readonly rewind: IAgentRewindService,
+    @IAgentConversationUndoService
+    private readonly conversationUndo: IAgentConversationUndoService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -130,7 +131,7 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   async undoHistory(payload: UndoHistoryPayload): Promise<number> {
-    return this.rewind.rewind(payload.count);
+    return this.conversationUndo.undo(payload.count);
   }
 
   setPermission(payload: SetPermissionPayload): void {

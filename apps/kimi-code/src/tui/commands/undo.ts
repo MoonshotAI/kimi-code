@@ -375,14 +375,20 @@ function undoLimitFromError(
 ): (UndoAvailability & { readonly requestedCount: number }) | undefined {
   if (!isKimiError(error)) return undefined;
   const details = error.details;
-  // server-v2 rewind error shape: { reason, requestedCount, undoableCount }
   const reason = details?.['reason'];
-  if (reason !== 'empty' && reason !== 'compaction_boundary' && reason !== 'insufficient') {
-    return undefined;
-  }
   const requestedCount = details?.['requestedCount'];
   const maxCount = details?.['undoableCount'];
   if (typeof requestedCount !== 'number' || typeof maxCount !== 'number') {
+    return undefined;
+  }
+
+  if (reason === 'undo_limit') {
+    const stoppedAtCompaction = details?.['stoppedAtCompaction'];
+    if (typeof stoppedAtCompaction !== 'boolean') return undefined;
+    return { requestedCount, maxCount, stoppedAtCompaction };
+  }
+
+  if (reason !== 'empty' && reason !== 'compaction_boundary' && reason !== 'insufficient') {
     return undefined;
   }
   return { requestedCount, maxCount, stoppedAtCompaction: reason === 'compaction_boundary' };

@@ -55,7 +55,7 @@ Business code must not `import 'node:fs'`, write SQL, hand-roll append-logs / at
 
 ## Conversation undo
 
-`context.undo` is the only persisted undo fact. `contextMemory/conversationTime.ts` owns the conversation clock (`isUndoAnchor` — the single tick predicate used by `computeUndoCut`, the checkpoint reducers, and the transcript reducer) and the checkpoint protocol. A wire Model whose state must follow conversation undo (todo, plan, task-notification delivery, …) **MUST** be defined with `defineCheckpointedModel` — never hand-roll the push/clear/restore reducers — which also registers it into `CHECKPOINTED_MODELS` for the rewind pipeline's pre-cut depth check. World-time state (turn counters, task registries, revision counters) must stay outside checkpointed Models.
+`context.undo` is the only persisted undo fact. `contextMemory/conversationTime.ts` owns the conversation clock (`isUndoAnchor` — the single tick predicate used by `computeUndoCut`, the checkpoint reducers, and the transcript reducer) and the checkpoint protocol. A wire Model whose state must follow conversation undo (todo, plan, task-notification delivery, …) **MUST** be defined with `defineCheckpointedModel` — never hand-roll the push/clear/restore reducers — which also registers it into `CHECKPOINTED_MODELS` for the undo pipeline's pre-cut depth check. World-time state (turn counters, task registries, revision counters) must stay outside checkpointed Models.
 
 ## Docs
 

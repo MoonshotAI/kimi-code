@@ -614,8 +614,8 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(res.body.code).toBe(40911);
     expect(res.body.msg).toMatch(/nothing to undo/i);
     // The thrown Error2's stack is surfaced so operators can locate the
-    // source — the precheck/throw now lives in the rewind service.
-    expect(res.body.stack).toEqual(expect.stringContaining('rewindService'));
+    // source — the precheck/throw now lives in the undo service.
+    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
   });
 
   it('rejects an unsupported action suffix (40001)', async () => {

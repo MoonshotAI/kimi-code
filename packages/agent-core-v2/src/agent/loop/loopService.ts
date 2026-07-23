@@ -105,7 +105,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private activeTurnJob: TurnJob | undefined;
   private nextReservedTurnId: number | undefined;
   private readonly settleWaiters: Array<() => void> = [];
-  private readonly quiescenceWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private lastRequestTraceId: string | undefined;
@@ -214,17 +213,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  async acquireQuiescence(): Promise<IDisposable> {
+  tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
+    if (this.activeTurnJob !== undefined || this.hasPendingRequests()) return undefined;
     this.quiescenceDepth += 1;
-    const active = this.activeTurnJob;
-    if (active !== undefined) {
-      this.cancel(active.turn.id);
-      await new Promise<void>((resolve) => {
-        if (this.activeTurnJob === undefined) resolve();
-        else this.quiescenceWaiters.push(resolve);
-      });
-    }
     return toDisposable(() => this.releaseQuiescence());
   }
 
@@ -538,8 +530,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (step.state === 'queued' || step.state === 'running') step.cancel(reason);
     }
     this.activeTurnJob = undefined;
-    const waiters = this.quiescenceWaiters.splice(0);
-    for (const resolve of waiters) resolve();
     this.maybeSettle();
   }
 

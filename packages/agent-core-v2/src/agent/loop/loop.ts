@@ -146,7 +146,7 @@ export interface IAgentLoopService {
 
   cancel(turnId?: number, reason?: unknown): boolean;
 
-  acquireQuiescence(): Promise<IDisposable>;
+  tryAcquireQuiescence(): IDisposable | undefined;
 
   /** Resolves once no turn is active and none are queued — the disposal drain
    *  awaited by `agentLifecycle.remove`. */

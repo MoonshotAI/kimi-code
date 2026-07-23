@@ -115,8 +115,11 @@ describe('contextUndo op', () => {
     expect(contextUndo.apply(state, { count: 1 })).toBe(state);
   });
 
-  it('returns the same reference for a non-positive count', () => {
-    const state = [user(USER_ORIGIN), assistant()];
-    expect(contextUndo.apply(state, { count: 0 })).toBe(state);
-  });
+  it.each([0, 0.5, Number.MAX_SAFE_INTEGER + 1])(
+    'returns the same reference for invalid count %s',
+    (count) => {
+      const state = [user(USER_ORIGIN), assistant()];
+      expect(contextUndo.apply(state, { count })).toBe(state);
+    },
+  );
 });

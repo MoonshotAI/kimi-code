@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { contextAppendMessage, contextUndo } from '#/agent/contextMemory/contextOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import {
@@ -119,6 +120,25 @@ describe('plan ops (wire-backed)', () => {
     const active = wire.getModel(PlanModel);
     wire.dispatch(planModeEnter({ id: 'p1' }));
     expect(wire.getModel(PlanModel)).toBe(active);
+  });
+
+  it('ignores an invalid undo count without corrupting checkpoint state', () => {
+    wire.dispatch(
+      contextAppendMessage({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep me' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      }),
+    );
+    const checkpointed = wire.getModel(PlanModel);
+
+    wire.dispatch(contextUndo({ count: 0.5 }));
+
+    expect(wire.getModel(PlanModel)).toBe(checkpointed);
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
   });
 
   it('replay rebuilds active state silently', async () => {

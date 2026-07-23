@@ -15,7 +15,7 @@
  *     progress streaming are dropped; `tool.result` carries the terminal
  *     state). Known limitation.
  *   - `context.spliced` projects the visible undo marker. The session binding
- *     handles `context.rewound` as a full conversation projection reset.
+ *     handles `context.undone` as a full conversation projection reset.
  *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
  *     enter a step.
  *   - No `swarm.*` / `plan.*` mode-transition events exist on the v2 bus today;
@@ -201,7 +201,7 @@ export class AgentTranscriptProjector {
         ];
       case 'context.spliced':
         return [this.markerOp('undo', restOf(event))];
-      case 'context.rewound':
+      case 'context.undone':
         return [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];

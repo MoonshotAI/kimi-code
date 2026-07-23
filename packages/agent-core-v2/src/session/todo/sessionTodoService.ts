@@ -103,7 +103,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
     this.lastKnownTodos = handle.accessor.get(IWireService).getModel(TodoModel).current;
     this.trackAgentBinding(
       handle.id,
-      handle.accessor.get(IEventBus).subscribe('context.rewound', () => {
+      handle.accessor.get(IEventBus).subscribe('context.undone', () => {
         const current = handle.accessor.get(IWireService).getModel(TodoModel).current;
         if (todoItemsEqual(current, this.lastKnownTodos)) return;
         this.lastKnownTodos = current;
