@@ -306,6 +306,23 @@ export * from '#/app/gateway/gatewayService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
+import '#/session/sandbox/configSection';
+export {
+  SANDBOX_SECTION,
+  SandboxConfigSchema,
+  resolveSandboxConfig,
+  sandboxFromToml,
+  sandboxToToml,
+} from '#/session/sandbox/configSection';
+export * from '#/session/sandbox/sandboxTypes';
+export * from '#/session/sandbox/sandboxPolicy';
+export * from '#/session/sandbox/pathRules';
+export * from '#/session/sandbox/envScrub';
+export * from '#/session/sandbox/backends/sandboxBackend';
+export * from '#/session/sandbox/backends/bwrapBackend';
+export * from '#/session/sandbox/backends/seatbeltBackend';
+export * from '#/session/sandbox/sandbox';
+export * from '#/session/sandbox/sandboxService';
 export * from '#/session/workspaceCommand/workspaceCommand';
 export * from '#/session/workspaceCommand/workspaceCommandService';
 export * from '#/app/projectLocalConfig/projectLocalConfig';

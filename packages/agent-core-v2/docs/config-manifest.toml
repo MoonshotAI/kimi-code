@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (21 sections · 2 overlay(s))
+# Index (22 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -25,6 +25,7 @@
 #   models                   src/app/kosongConfig/configSection.ts
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
+#   sandbox                  src/session/sandbox/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
@@ -282,6 +283,30 @@ merge_all_available_skills = true
     # oauth_host: string
   # env: record<string, string>
   # source: record<string, any>
+
+# ##########################################################################
+# sandbox
+#   owner: src/session/sandbox/configSection.ts
+#   scope: core
+#   hooks: custom fromToml · custom toToml
+# ##########################################################################
+
+[sandbox]
+# enabled: boolean
+# mode: "workspace-write" | "read-only"
+# require: boolean
+# auto_allow_sandboxed_bash: boolean
+# excluded_commands: string[]
+
+# [sandbox.filesystem]
+  # deny_read: string[]
+  # allow_write: string[]
+  # deny_write: string[]
+
+# [sandbox.network]
+  # enabled: boolean
+  # allowed_domains: string[]
+  # allow_unix_sockets: string[]
 
 # ##########################################################################
 # services

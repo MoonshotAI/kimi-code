@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { IConfigService } from '#/app/config/config';
 import {
   literalRulePattern,
   matchesGlobRuleSubject,
@@ -27,6 +28,7 @@ import {
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
+import type { SandboxConfig, SandboxDecision } from '#/session/sandbox/sandboxTypes';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -62,6 +64,9 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.defineInstance(ISessionWorkspaceContext, workspace);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+        });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -199,6 +204,9 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(ISessionWorkspaceContext, workspace);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+        });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -327,6 +335,121 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   });
 });
 
+describe('AgentPermissionPolicyService sandbox policies', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let mode: PermissionMode;
+  let sandboxConfig: SandboxConfig | undefined;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    mode = 'manual';
+    sandboxConfig = undefined;
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
+        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
+        reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace'));
+        reg.defineInstance(IHostEnvironment, kaosStub());
+        reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IConfigService, {
+          get: ((section: string) =>
+            section === 'sandbox' ? sandboxConfig : undefined) as IConfigService['get'],
+        });
+        reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
+      },
+      strict: true,
+    });
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+  });
+
+  async function evaluate(
+    input: PolicyContextInput,
+  ): Promise<PermissionPolicyEvaluation | undefined> {
+    const svc = ix.get(IAgentPermissionPolicyService);
+    return svc.evaluate(policyContext(input));
+  }
+
+  it('approves sandboxed Bash in manual mode when auto-allow is on', async () => {
+    sandboxConfig = { enabled: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'ls', timeout: 60 },
+      sandbox: { kind: 'sandboxed', argv: ['bwrap', '--', 'ls'], backendId: 'bwrap' },
+    })).resolves.toMatchObject({
+      policyName: 'sandboxed-bash-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('falls through to ask for unsandboxed Bash when the sandbox is enabled', async () => {
+    sandboxConfig = { enabled: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'ls', timeout: 60 },
+      sandbox: { kind: 'unsandboxed', reason: 'backend-unavailable' },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('denies sandbox deny_read matches before auto-mode approval', async () => {
+    mode = 'auto';
+    sandboxConfig = { enabled: true, filesystem: { denyRead: ['/workspace/secret/**'] } };
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: '/workspace/secret/key.txt' },
+      accesses: ToolAccesses.readFile('/workspace/secret/key.txt'),
+    })).resolves.toMatchObject({
+      policyName: 'sandbox-fs-deny',
+      result: { kind: 'deny' },
+    });
+  });
+
+  it('denies sensitive files instead of asking when the sandbox is enabled', async () => {
+    sandboxConfig = { enabled: true };
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: '/home/test/.ssh/id_rsa' },
+      accesses: ToolAccesses.readFile('/home/test/.ssh/id_rsa'),
+    })).resolves.toMatchObject({
+      policyName: 'sandbox-fs-deny',
+      result: { kind: 'deny' },
+    });
+  });
+
+  it('asks for file writes outside the writable roots when the sandbox is enabled', async () => {
+    sandboxConfig = { enabled: true };
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '/etc/sandbox-probe.conf', content: 'x' },
+      accesses: ToolAccesses.writeFile('/etc/sandbox-probe.conf'),
+    })).resolves.toMatchObject({
+      policyName: 'sandbox-outside-workspace-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('keeps the pre-sandbox outcome for outside-workspace writes when disabled', async () => {
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '/etc/sandbox-probe.conf', content: 'x' },
+      accesses: ToolAccesses.writeFile('/etc/sandbox-probe.conf'),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+});
+
 interface MutablePermissionRulesStubOptions {
   readonly rules?: () => readonly PermissionRule[];
   readonly sessionApprovalRulePatterns?: () => readonly string[];
@@ -354,6 +477,7 @@ interface PolicyContextInput {
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly accesses?: ToolAccessList;
+  readonly sandbox?: SandboxDecision;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
@@ -375,6 +499,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
         subject === undefined
           ? undefined
           : (ruleArgs) => matchesRuleSubject(input.toolName, ruleArgs, subject),
+      sandbox: input.sandbox,
       execute: async () => ({ output: '' }),
     },
   };

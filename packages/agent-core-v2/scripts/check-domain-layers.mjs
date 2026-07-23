@@ -153,6 +153,11 @@ const DOMAIN_LAYER = new Map([
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
   ['agentFileCatalog', 3],
+  // `sandbox` is the Session-scope OS command-sandbox decision point (bwrap /
+  // seatbelt policy + backend probe); it consumes `config` (L2),
+  // `workspaceContext` (L1) and the `os/interface` host bridges (L1), and is
+  // consumed by the L3 `tool` contract and the L6 `os/backends` Bash tool.
+  ['sandbox', 3],
   // L4 — agent behaviour
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no

@@ -34,6 +34,8 @@ import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISandboxService } from '#/session/sandbox/sandbox';
+import type { SandboxDecision } from '#/session/sandbox/sandboxTypes';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -712,6 +714,15 @@ function stubConfig(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function stubSandbox(
+  decision: SandboxDecision = { kind: 'unsandboxed', reason: 'disabled' },
+): ISandboxService {
+  return {
+    _serviceBrand: undefined,
+    decide: vi.fn(async () => decision),
+  } as unknown as ISandboxService;
+}
+
 function bashTool(
   runner: ISessionProcessRunner,
   env: IHostEnvironment = createTestEnv(),
@@ -719,8 +730,9 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
+  sandbox: ISandboxService = stubSandbox(),
 ): BashTool {
-  return new BashTool(runner, env, ctx, background, toolPolicy, config);
+  return new BashTool(runner, env, ctx, background, toolPolicy, config, sandbox);
 }
 
 
@@ -848,6 +860,113 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
 
     expect(exec.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', "cd '/var/app' && pwd"]);
+  });
+
+  it('execs the wrapped argv and exposes the decision when the command is sandboxed', async () => {
+    const proc = processWithOutput({ stdout: 'ok\n' });
+    const { runner, exec } = createTestRunner(proc);
+    const decision: SandboxDecision = {
+      kind: 'sandboxed',
+      argv: ['bwrap', '--die-with-parent', '--', '/bin/bash', '-c', "cd '/workspace' && printf ok"],
+      backendId: 'bwrap',
+    };
+    const sandbox = stubSandbox(decision);
+    const tool = bashTool(runner, posixEnv, createTestCtx(), undefined, undefined, undefined, sandbox);
+
+    const resolved = await tool.resolveExecution({ command: 'printf ok', timeout: 60 });
+    expect(resolved.isError).not.toBe(true);
+    if (resolved.isError === true) return;
+    expect(resolved.sandbox).toEqual(decision);
+    expect(sandbox.decide).toHaveBeenCalledWith('printf ok', '/workspace');
+
+    const result = await resolved.execute(context({ command: 'printf ok', timeout: 60 }));
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec.mock.calls[0]?.[0]).toEqual(decision.argv);
+    expect(result).toMatchObject({ output: 'ok\n', isError: false });
+  });
+
+  it('returns the blocked reason without spawning when the sandbox blocks the command', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const tool = bashTool(
+      runner,
+      posixEnv,
+      createTestCtx(),
+      undefined,
+      undefined,
+      undefined,
+      stubSandbox({ kind: 'blocked', reason: 'Sandbox is required but unavailable.' }),
+    );
+
+    const resolved = await tool.resolveExecution({ command: 'ls', timeout: 60 });
+    expect(resolved).toMatchObject({
+      isError: true,
+      output: 'Sandbox is required but unavailable.',
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('appends the sandbox hint when a sandboxed command output shows denial signatures', async () => {
+    const { runner } = createTestRunner(
+      processWithOutput({
+        stderr: 'cat: /home/test/.ssh/id_rsa: Operation not permitted\n',
+        exitCode: 1,
+      }),
+    );
+    const tool = bashTool(
+      runner,
+      posixEnv,
+      createTestCtx(),
+      undefined,
+      undefined,
+      undefined,
+      stubSandbox({ kind: 'sandboxed', argv: ['bwrap', '--', 'true'], backendId: 'bwrap' }),
+    );
+
+    const result = await executeTool(tool, context({ command: 'cat ~/.ssh/id_rsa', timeout: 60 }));
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('sandbox.excluded_commands');
+  });
+
+  it('does not append the sandbox hint when the command ran unsandboxed', async () => {
+    const { runner } = createTestRunner(
+      processWithOutput({ stderr: 'x: Operation not permitted\n', exitCode: 1 }),
+    );
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'x', timeout: 60 }));
+    expect(result.output).not.toContain('sandbox.excluded_commands');
+  });
+
+  it('scrubs sensitive env vars only when the command runs sandboxed', async () => {
+    const key = 'KIMI_TEST_FAKE_API_KEY';
+    const previous = process.env[key];
+    process.env[key] = 'supersecret';
+    try {
+      const { runner: sandboxedRunner, exec: sandboxedExec } = createTestRunner(
+        processWithOutput({ stdout: 'ok\n' }),
+      );
+      const sandboxedTool = bashTool(
+        sandboxedRunner,
+        posixEnv,
+        createTestCtx(),
+        undefined,
+        undefined,
+        undefined,
+        stubSandbox({ kind: 'sandboxed', argv: ['bwrap', '--', 'true'], backendId: 'bwrap' }),
+      );
+      await executeTool(sandboxedTool, context({ command: 'env', timeout: 60 }));
+      const sandboxedEnv = sandboxedExec.mock.calls[0]?.[1]?.env as Record<string, string>;
+      expect(sandboxedEnv[key]).toBe('');
+
+      const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'ok\n' }));
+      const tool = bashTool(runner);
+      await executeTool(tool, context({ command: 'env', timeout: 60 }));
+      const plainEnv = exec.mock.calls[0]?.[1]?.env as Record<string, string>;
+      expect(plainEnv[key]).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
   });
 
   it('uses Git Bash semantics on Windows', async () => {

@@ -18,6 +18,7 @@
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { SandboxDecision } from '#/session/sandbox/sandboxTypes';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
@@ -82,6 +83,7 @@ export interface RunnableToolExecution {
   readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
   readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
+  readonly sandbox?: SandboxDecision | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
 }
 

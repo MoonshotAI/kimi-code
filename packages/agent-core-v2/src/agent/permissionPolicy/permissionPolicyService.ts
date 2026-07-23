@@ -18,6 +18,9 @@ import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPol
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
 import { GitControlPathAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/git-control-path-access-ask';
 import { GitCwdWriteApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/git-cwd-write-approve';
+import { SandboxFsDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/sandbox-fs-deny';
+import { SandboxOutsideWorkspaceAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sandbox-outside-workspace-ask';
+import { SandboxedBashApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/sandboxed-bash-approve';
 import { SensitiveFileAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sensitive-file-access-ask';
 import { SessionApprovalHistoryPermissionPolicyService } from '#/agent/permissionPolicy/policies/session-approval-history';
 import { UserConfiguredAllowPermissionPolicyService } from '#/agent/permissionPolicy/policies/user-configured-allow';
@@ -47,12 +50,15 @@ export class AgentPermissionPolicyService
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
+      this.instantiation.createInstance(SandboxFsDenyPermissionPolicyService),
       this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),
       this.instantiation.createInstance(SensitiveFileAccessAskPermissionPolicyService),
+      this.instantiation.createInstance(SandboxOutsideWorkspaceAskPermissionPolicyService),
       this.instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService),
+      this.instantiation.createInstance(SandboxedBashApprovePermissionPolicyService),
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
       this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),

@@ -11,6 +11,10 @@
  *   - `ctx`      — `ISessionContext`, session cwd used to render the shell prompt
  *   - `tasks`    — `IAgentTaskService`, owns foreground/detached task
  *                  lifecycle (timeouts, detach, user interrupt)
+ *   - `sandbox`  — `ISandboxService`, decides per command whether the shell
+ *                  argv is wrapped in the OS sandbox (bwrap/seatbelt);
+ *                  sandboxed runs also scrub sensitive env vars (API keys,
+ *                  tokens, agent sockets) to empty in the exec overlay
  *
  * Execution goes through `ISessionProcessRunner`, never directly via
  * `node:child_process`.
@@ -38,6 +42,9 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISandboxService } from '#/session/sandbox/sandbox';
+import { sensitiveEnvNames } from '#/session/sandbox/envScrub';
+import type { SandboxDecision } from '#/session/sandbox/sandboxTypes';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -59,6 +66,10 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
+
+const SANDBOX_DENIAL_RE = /Operation not permitted|bwrap: |sandbox-exec: /;
+const SANDBOX_DENIAL_HINT =
+  '[sandbox] 命令可能被沙箱拦截。如属误伤，可将命令加入配置 sandbox.excluded_commands。';
 
 export const BashInputSchema = z
   .object({
@@ -187,6 +198,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @ISandboxService private readonly sandbox: ISandboxService,
   ) {
     this.isWindowsBash = this.env.osKind === 'Windows';
     this.renderedDescription = renderBashDescription(this.env.shellName);
@@ -218,7 +230,12 @@ export class BashTool implements BuiltinTool<BashInput> {
     return this.renderedDescription;
   }
 
-  resolveExecution(args: BashInput): ToolExecution {
+  async resolveExecution(args: BashInput): Promise<ToolExecution> {
+    const effectiveCwd = args.cwd ?? this.ctx.cwd;
+    const decision = await this.sandbox.decide(args.command, effectiveCwd);
+    if (decision.kind === 'blocked') {
+      return { isError: true, output: decision.reason };
+    }
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
@@ -227,24 +244,28 @@ export class BashTool implements BuiltinTool<BashInput> {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: args.cwd ?? this.ctx.cwd,
+        cwd: effectiveCwd,
         description: args.description,
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
+      sandbox: decision,
       execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
-        this.execution(args, signal, onUpdate, onForegroundTaskStart),
+        this.execution(args, decision, signal, onUpdate, onForegroundTaskStart),
     };
   }
 
-  private spawn(effectiveCwd: string, command: string): Promise<IProcess> {
+  private spawn(
+    effectiveCwd: string,
+    command: string,
+    decision: SandboxDecision,
+  ): Promise<IProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
-    const shellArgs = [
-      this.env.shellPath,
-      '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
-    ];
+    const shellArgs: readonly string[] =
+      decision.kind === 'sandboxed'
+        ? decision.argv
+        : [this.env.shellPath, '-c', `cd ${shellQuote(shellCwd)} && ${command}`];
 
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
@@ -252,12 +273,18 @@ export class BashTool implements BuiltinTool<BashInput> {
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: this.env.shellPath,
     };
+    if (decision.kind === 'sandboxed') {
+      for (const name of sensitiveEnvNames(Object.keys(process.env))) {
+        noninteractiveEnv[name] = '';
+      }
+    }
 
     return this.runner.exec(shellArgs, { env: noninteractiveEnv });
   }
 
   private async execution(
     args: BashInput,
+    decision: SandboxDecision,
     signal: AbortSignal,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
@@ -279,7 +306,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     const builder = new ToolResultBuilder();
     let proc: IProcess;
     try {
-      proc = await this.spawn(effectiveCwd, command);
+      proc = await this.spawn(effectiveCwd, command, decision);
     } catch (error) {
       return {
         isError: true,
@@ -358,10 +385,22 @@ export class BashTool implements BuiltinTool<BashInput> {
         );
       }
 
-      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      return this.annotateSandboxDenial(
+        await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs),
+        decision,
+      );
     } finally {
       collectForegroundOutput = false;
     }
+  }
+
+  private annotateSandboxDenial(
+    result: ExecutableToolResult,
+    decision: SandboxDecision,
+  ): ExecutableToolResult {
+    if (decision.kind !== 'sandboxed') return result;
+    if (typeof result.output !== 'string' || !SANDBOX_DENIAL_RE.test(result.output)) return result;
+    return { ...result, output: `${result.output}\n${SANDBOX_DENIAL_HINT}` };
   }
 
   private validateRunRequest(
