@@ -243,13 +243,14 @@ function renderBody(section: ConfigSectionContribution): string[] {
     return lines;
   }
 
-  // Array-of-tables section — one `[[section]]` entry per element.
+  // Array-of-tables section — one `[[section]]` entry per element. There is
+  // no `[section]` parent table in TOML, so the whole shape stays commented;
+  // emitting a bare `[${key}]` header would parse as a plain table, which
+  // array sections (e.g. `hooks`) reject on load.
   if (jsonSchema.type === 'array') {
     const itemProps = asJsonSchema(resolveRef(jsonSchema.items, jsonSchema))?.properties;
     if (isRecord(itemProps) && Object.keys(itemProps).length > 0) {
       return [
-        `[${key}]`,
-        '',
         `# one [[${key}]] table per entry:`,
         `# [[${key}]]`,
         ...renderFieldComments(itemProps, jsonSchema, '  '),

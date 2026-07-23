@@ -123,8 +123,6 @@ extra_skill_dirs = []
 #   hooks: custom fromToml · custom toToml
 # ##########################################################################
 
-[hooks]
-
 # one [[hooks]] table per entry:
 # [[hooks]]
   # event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionResult" | "UserPromptSubmit" | "Stop" | "StopFailure" | "Interrupt" | "SessionStart" | "SessionEnd" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Notification"
