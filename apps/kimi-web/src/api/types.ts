@@ -90,6 +90,12 @@ export interface AppSession {
    * from. Used to keep child sessions out of the main session list.
    */
   parentSessionId?: string;
+  /**
+   * Creation source of the session (e.g. 'acp' for sessions created through
+   * the ACP adapter), forwarded from the persisted session `custom` map.
+   * Used to hide ACP-created sessions/workspaces from the sidebar.
+   */
+  source?: string;
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { acpOnlyWorkspaceRoots, isAcpSession } from '../lib/acpSessions';
 import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -1331,7 +1332,9 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
 
   if (rawState.activeSessionId !== sessionId) return;
 
-  const next = rawState.sessions[0];
+  // Skip sessions hidden from the sidebar (e.g. ACP-created), matching the
+  // other pick-next paths in useWorkspaceState.
+  const next = rawState.sessions.find((s) => !(hideAcpSessions.value && isAcpSession(s)));
   if (next) {
     await workspaceState.selectSession(next.id, { urlMode: 'replace' });
   } else {
@@ -2295,6 +2298,36 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
 }
 
 /**
+ * Hide ACP-created sessions/workspaces from the sidebar. Default ON: sessions
+ * created via the ACP adapter (e.g. bot clients driving kimi-code headlessly)
+ * carry `source: 'acp'` in their persisted custom metadata, and their
+ * workspaces are usually machine-owned directories the user never edits in.
+ * Persisted as '1'/'0' like the notification prefs.
+ */
+function loadHideAcpSessions(): boolean {
+  const v = safeGetString(STORAGE_KEYS.hideAcpSessions);
+  return v === null ? true : v === '1';
+}
+
+const hideAcpSessions = ref(loadHideAcpSessions());
+
+function setHideAcpSessions(on: boolean): void {
+  hideAcpSessions.value = on;
+  safeSetString(STORAGE_KEYS.hideAcpSessions, on ? '1' : '0');
+}
+
+/**
+ * Roots whose loaded sessions are ALL ACP-created (see `acpOnlyWorkspaceRoots`
+ * for the semantics and the pagination caveat). Deliberately NOT written into
+ * `rawState.hiddenWorkspaceRoots`: that set is user-owned, gets persisted,
+ * and is auto-cleared by workspace WS broadcasts. These roots only exist at
+ * the `mergeWorkspaces` call site below.
+ */
+const acpHiddenWorkspaceRoots = computed<string[]>(() =>
+  hideAcpSessions.value ? acpOnlyWorkspaceRoots(rawState.sessions) : [],
+);
+
+/**
  * Merge real (daemon) workspaces with workspaces DERIVED from the current
  * sessions' cwds. Each distinct cwd with no matching real workspace becomes one
  * derived workspace (id = root = cwd). This makes the switcher + grouping work
@@ -2303,8 +2336,10 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
 const mergedWorkspaces = computed<AppWorkspace[]>(() =>
   mergeWorkspaces({
     workspaces: rawState.workspaces,
-    sessions: rawState.sessions,
-    hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
+    sessions: hideAcpSessions.value
+      ? rawState.sessions.filter((s) => !isAcpSession(s))
+      : rawState.sessions,
+    hiddenWorkspaceRoots: [...rawState.hiddenWorkspaceRoots, ...acpHiddenWorkspaceRoots.value],
     sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
   }),
 );
@@ -2427,7 +2462,12 @@ const sessionsForView = computed<Session[]>(() => {
   // excluded too, so this flat list matches what the grouped sidebar renders
   // and sidebar search can't resurrect sessions from a removed workspace.
   return rawState.sessions
-    .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
+    .filter(
+      (s) =>
+        !s.parentSessionId &&
+        visibleWorkspaceIds.has(workspaceIdForSession(s)) &&
+        !(hideAcpSessions.value && isAcpSession(s)),
+    )
     .map((s) => {
       const workspaceId = workspaceIdForSession(s);
       return {
@@ -2452,6 +2492,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   )) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
+    if (hideAcpSessions.value && isAcpSession(s)) continue; // ACP sessions hidden by preference
     const wid = workspaceIdForSession(s);
     const view: Session = {
       id: s.id,
@@ -2598,6 +2639,7 @@ const workspaceState = useWorkspaceState(rawState, {
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
+  isSessionHiddenFromList: (s: AppSession) => hideAcpSessions.value && isAcpSession(s),
   status,
   workspaceIdForSession,
   savePermissionToStorage,
@@ -2832,6 +2874,10 @@ export function useKimiWebClient() {
     // Conversation outline (TOC)
     conversationToc,
     setConversationToc,
+
+    // Hide ACP-created sessions/workspaces from the sidebar
+    hideAcpSessions,
+    setHideAcpSessions,
 
     // Color scheme
     colorScheme: appearance.colorScheme,

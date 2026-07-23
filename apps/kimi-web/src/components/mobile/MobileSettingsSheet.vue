@@ -198,6 +198,7 @@ function backToMain(): void {
 const filteredArchived = computed<AppSession[]>(() => {
   const q = archiveQuery.value.trim().toLowerCase();
   let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (client.hideAcpSessions.value) rows = rows.filter((s) => s.source !== 'acp');
   if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
   rows = rows.slice();
   if (archiveSort.value === 'archived-desc') {

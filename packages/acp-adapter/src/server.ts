@@ -221,6 +221,7 @@ function effortStringOrUndefined(effort: unknown): string | undefined {
 export class AcpServer implements Agent {
   private negotiated: AcpVersionSpec | undefined;
   private clientCapabilities: ClientCapabilities | undefined;
+  private clientInfo: Implementation | undefined;
   private readonly sessions = new Map<string, AcpSession>();
   private readonly agentInfo: Implementation | undefined;
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
@@ -305,6 +306,7 @@ export class AcpServer implements Agent {
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
     this.negotiated = negotiateVersion(params.protocolVersion);
     this.clientCapabilities = params.clientCapabilities;
+    this.clientInfo = params.clientInfo ?? undefined;
 
     const agentCapabilities: AgentCapabilities = {
       loadSession: true,
@@ -380,6 +382,17 @@ export class AcpServer implements Agent {
       kaos: acpKaos,
       persistenceKaos,
       sessionStartedProperties: { mode: 'new' },
+      // Tag the session as ACP-created so surfaces like kimi-web can
+      // filter them out of the workspace sidebar. `metadata` lands in the
+      // persisted session `custom` map (agent-core `CreateSessionPayload`)
+      // and is forwarded verbatim onto the wire session's `metadata` by
+      // kap-server. Forked sessions inherit `custom` (minus `goal`), so
+      // the tag propagates to forks — it marks "created via ACP", not
+      // "currently driven by an ACP client" (`session/resume` never tags).
+      metadata: {
+        source: 'acp',
+        ...(this.clientInfo ? { acp_client: this.clientInfo.name } : {}),
+      },
       // @ts-expect-error — `mcpServers` is a kernel-side extension
       // (agent-core `CreateSessionPayload`) the SDK transparently
       // forwards via spread. See block comment above.
