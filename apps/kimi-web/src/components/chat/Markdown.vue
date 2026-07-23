@@ -11,12 +11,16 @@ import {
   setMermaidWorker,
   clearMermaidWorker,
 } from 'markstream-vue';
-import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyTextToClipboard } from '../../lib/clipboard';
+// Inline math (`$…$`): enableInlineMath swaps markstream's built-in `math`
+// rule for a conservative pandoc-style variant (see lib/mathInline.ts) so
+// `$…$` formulas render through KaTeX without false-positiving on prices,
+// env vars, and shell paths. `math_block` (the $$ block rule) is untouched.
+import { enableInlineMath } from '../../lib/mathInline';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import Tooltip from '../ui/Tooltip.vue';
@@ -63,15 +67,6 @@ clearMermaidWorker();
 
 setKaTeXWorker(new katexWorkerModule.default());
 setMermaidWorker(new mermaidWorkerModule.default());
-
-// Only `$$…$$` display math is rendered; single `$` inline math is disabled so
-// prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
-// without any escaping or code-detection gymnastics. `math_block` (the $$ rule)
-// is left enabled.
-function disableInlineMath(md: MarkdownIt): MarkdownIt {
-  md.inline.ruler.disable('math');
-  return md;
-}
 
 const { t } = useI18n();
 
@@ -434,7 +429,7 @@ function copyDiff(code: string, idx: number) {
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
-        :custom-markdown-it="disableInlineMath"
+        :custom-markdown-it="enableInlineMath"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"
@@ -702,6 +697,13 @@ function copyDiff(code: string, idx: number) {
      formula (e.g. integral/sum subscripts) */
   padding: 2px 0 6px;
   margin: 0.6em 0;
+}
+
+/* Progressive inline math: while a formula streams in unclosed, KaTeX may
+   not parse the partial source yet — MathInlineNode shows the raw text plus
+   a spinner. The raw text alone is the honest state, so hide the spinner. */
+.md :deep(.math-inline__loading) {
+  display: none;
 }
 
 /* Blockquote */
