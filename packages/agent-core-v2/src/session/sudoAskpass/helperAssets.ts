@@ -1,7 +1,7 @@
 /**
  * `sudoAskpass` domain (L7) — askpass helper script sources.
  *
- * Pure builders for the two files dropped into the per-session
+ * Pure builders for the files dropped into the per-session
  * `<sessionDir>/sudo-askpass/` directory:
  *   - `helper.sh` — the `SUDO_ASKPASS` entrypoint; execs the current node
  *     binary on `helper.mjs`, forwarding sudo's prompt argv;
@@ -9,7 +9,11 @@
  *     unix socket whose absolute path is baked in at generation time (see
  *     below), sends one JSON line (`{token, prompt, command}`), waits one
  *     JSON line reply, prints the password on `{"password": "…"}`
- *     (exit 0), exits 1 on `{"cancelled": true}` / error / disconnect.
+ *     (exit 0), exits 1 on `{"cancelled": true}` / error / disconnect;
+ *   - `bin/sudo` — PATH shim that prepends `-A` and execs the real sudo:
+ *     sudo only consults `SUDO_ASKPASS` in askpass mode, and the Bash
+ *     tool's pipes give it no TTY, so without the shim it would fail
+ *     with its no-TTY error instead of prompting.
  *
  * Why the socket path is baked in: unix-domain socket paths are capped at
  * ~104 bytes on macOS, so the socket cannot always live inside the (deep)
@@ -20,14 +24,12 @@
  *
  * SECURITY: the token travels via the `KIMI_SUDO_ASKPASS_TOKEN` env var of
  * the spawned shell, never on a command line; the password only ever exists
- * as one stdout line from helper to sudo.
+ * as one stdout line from helper to sudo. The server ends the connection
+ * right after the reply line, so on a successful answer helper.mjs removes
+ * its `end` listener before flushing stdout — otherwise the disconnect
+ * would exit(1) ahead of the flush.
  */
 
-/**
- * `helper.mjs` source. The reply race note: the server ends the connection
- * right after the reply line, so a successful answer removes the `end`
- * listener before it can exit(1) ahead of the stdout flush.
- */
 export function helperMjsSource(socketPath: string): string {
   return `import net from 'node:net';
 
@@ -62,10 +64,26 @@ socket.on('end', () => process.exit(1));
 `;
 }
 
-/** `helper.sh` source — sudo invokes this via `SUDO_ASKPASS`. */
 export function helperShSource(dir: string, execPath: string): string {
   return `#!/bin/sh
 exec ${shellQuote(execPath)} ${shellQuote(`${dir}/helper.mjs`)} "$@"
+`;
+}
+
+export function sudoShimSource(realSudoPath: string): string {
+  return `#!/bin/sh
+# Force askpass mode so SUDO_ASKPASS is consulted (sudo 1.9+ requires -A) —
+# unless the caller asked for stdin passwords (-S/--stdin), which sudo
+# rejects in combination with -A; keep sudo's own behavior there.
+for arg do
+  case $arg in
+    --) break ;;
+    -S*|--stdin) exec ${shellQuote(realSudoPath)} "$@" ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+exec ${shellQuote(realSudoPath)} -A "$@"
 `;
 }
 

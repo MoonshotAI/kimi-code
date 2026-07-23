@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { Socket } from 'node:net';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -212,7 +212,13 @@ describe('BashTool with a fake sudo', () => {
   function installFakeSudo(binDir: string): void {
     const script = [
       '#!/bin/sh',
-      '# Fake sudo for tests: asks via SUDO_ASKPASS, only "hunter2" passes.',
+      '# Fake sudo for tests: mimics sudo 1.9, which only consults SUDO_ASKPASS',
+      '# in askpass mode (-A) — proving the manager\'s bin/sudo PATH shim works.',
+      'if [ "$1" != "-A" ]; then',
+      '  echo "sudo: a terminal is required to read the password" >&2',
+      '  exit 1',
+      'fi',
+      'shift',
       'password=$("$SUDO_ASKPASS" "[sudo] password for alice:") || exit 1',
       'if [ "$password" != "hunter2" ]; then',
       '  echo "sudo: sorry, try again." >&2',
@@ -279,4 +285,89 @@ describe('BashTool with a fake sudo', () => {
     expect(result.output).not.toContain('hunter2');
     await fixture.manager.dispose();
   });
+});
+
+describe('BashTool with real sudo (smoke)', () => {
+  // Real sudo (1.9+) only consults SUDO_ASKPASS in askpass mode; this proves
+  // the manager's bin/sudo PATH shim makes real sudo invoke the helper at
+  // all. The handler always cancels, so no real credentials are involved —
+  // the helper exits 1 and sudo fails before any authentication attempt.
+  const realSudoAvailable = (process.env['PATH'] ?? '')
+    .split(delimiter)
+    .some((entry) => entry !== '' && existsSync(join(entry, 'sudo')));
+
+  async function runRealSudo(
+    fixture: ManagerFixture,
+    command: string,
+  ): Promise<{ isError: boolean; output: string }> {
+    const tool = new BashTool(testKaos, '/tmp', createBackgroundManager().manager, {
+      sudoAskpass: fixture.manager,
+    });
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_real_sudo',
+      args: { command, timeout: 60 },
+      signal: new AbortController().signal,
+    });
+    return {
+      isError: result.isError === true,
+      output: typeof result.output === 'string' ? result.output : JSON.stringify(result.output),
+    };
+  }
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'real sudo invokes the askpass helper through the shim',
+    async () => {
+      const fixture = createManager(makeTempDir());
+      fixture.respond({ kind: 'cancelled' });
+
+      const result = await runRealSudo(fixture, 'sudo -k -p SMOKETEST-PROMPT true');
+
+      expect(fixture.requests).toHaveLength(1);
+      expect(fixture.requests[0]?.prompt).toContain('SMOKETEST-PROMPT');
+      expect(result.isError).toBe(true);
+      await fixture.manager.dispose();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -n stays non-interactive and never prompts',
+    async () => {
+      const fixture = createManager(makeTempDir());
+
+      const result = await runRealSudo(fixture, 'sudo -k -n true');
+
+      expect(fixture.requests).toHaveLength(0);
+      expect(result.isError).toBe(true);
+      await fixture.manager.dispose();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'an explicit -A from the caller is harmless',
+    async () => {
+      const fixture = createManager(makeTempDir());
+      fixture.respond({ kind: 'cancelled' });
+
+      const result = await runRealSudo(fixture, 'sudo -A -k -p SMOKETEST-PROMPT true');
+
+      expect(fixture.requests).toHaveLength(1);
+      expect(result.isError).toBe(true);
+      await fixture.manager.dispose();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -S is not forced into askpass mode (sudo rejects -A with -S)',
+    async () => {
+      const fixture = createManager(makeTempDir());
+
+      const result = await runRealSudo(fixture, 'sudo -k -S true');
+
+      expect(fixture.requests).toHaveLength(0);
+      expect(result.isError).toBe(true);
+      expect(result.output).not.toContain('may not be used together');
+      await fixture.manager.dispose();
+    },
+  );
 });

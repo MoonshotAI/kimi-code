@@ -102,9 +102,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
     entry.resolve(response);
     this.recordResolved(id, response, entry.interaction.origin, entry.interaction.kind);
     this._onDidChangePending.fire({ pending: [...this.pending.keys()] });
-    // The raw in-memory response may carry a secret (password interactions);
-    // broadcast only the journaled (redacted) shape so no event consumer can
-    // ever observe it.
     this._onDidResolve.fire({
       id,
       response: journalResponse(entry.interaction.kind, response),
@@ -178,8 +175,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
         (accessor) => accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IWireService),
       );
     } catch {
-      // Journaling is best-effort: a partial scope without the agent
-      // lifecycle (test hosts, embeddings) must not break the kernel.
       return undefined;
     }
   }
@@ -208,12 +203,6 @@ function readPayloadToolCallId(payload: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-/**
- * Response shape persisted to wire.jsonl. A `password` interaction's
- * in-memory response carries the raw password; the durable journal keeps
- * only the terminal outcome so the secret never reaches disk, the cold
- * transcript fold, or any replay consumer.
- */
 function journalResponse(kind: InteractionKind, response: unknown): unknown {
   if (kind !== 'password') return response;
   const cancelled =

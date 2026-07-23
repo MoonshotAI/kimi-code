@@ -258,9 +258,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       SHELL: this.env.shellPath,
     };
 
-    // No tty on these pipes: when the command needs a sudo password, sudo
-    // falls back to SUDO_ASKPASS, which bridges to the session's password
-    // interaction. Undefined when the channel is disabled or unsupported.
     const askpassEnv = await this.sudoAskpass.envForCommand(command);
     return this.runner.exec(shellArgs, { env: { ...noninteractiveEnv, ...askpassEnv } });
   }

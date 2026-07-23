@@ -3,11 +3,13 @@
  *
  * When the Bash tool spawns a command on macOS/Linux, the manager injects
  * `SUDO_ASKPASS` (plus a per-session token and the triggering command) into
- * the command's environment. Because the tool spawns with pipes and no TTY,
- * sudo invokes the askpass helper whenever it needs a password. The helper
- * connects to a per-session unix socket owned by this process; the manager
- * validates the token and issues a reverse-RPC `requestPassword` to the
- * connected client (the TUI's masked prompt), then replies over the socket.
+ * the command's environment. sudo (1.9+) only consults `SUDO_ASKPASS` in
+ * askpass mode, so a `bin/sudo` shim that prepends `-A` and execs the real
+ * sudo (resolved from the ambient PATH) is written into the askpass dir and
+ * prepended to the spawned command's PATH. The helper connects to a
+ * per-session unix socket owned by this process; the manager validates the
+ * token and issues a reverse-RPC `requestPassword` to the connected client
+ * (the TUI's masked prompt), then replies over the socket.
  *
  * SECURITY: the password flows only TUI input → in-memory → socket → helper
  * stdout → sudo. It must never appear in logs, journals, tool results,
@@ -16,9 +18,10 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { accessSync, constants } from 'node:fs';
 import { chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import type { Logger } from '#/logging/types';
 
@@ -57,6 +60,7 @@ interface AskpassState {
   readonly token: string;
   readonly server: Server;
   readonly connections: Set<Socket>;
+  readonly binDir?: string;
 }
 
 export function sudoAskpassDir(sessionDir: string): string {
@@ -79,12 +83,16 @@ export class SudoAskpassManager implements SudoAskpassEnvProvider {
     if (this.options.requestPassword === undefined) return undefined;
     const state = await this.ensureInitialized();
     if (state === undefined) return undefined;
-    return {
+    const env: Record<string, string> = {
       SUDO_ASKPASS: join(state.dir, HELPER_SCRIPT_NAME),
       KIMI_SUDO_ASKPASS_TOKEN: state.token,
       KIMI_SUDO_ASKPASS_COMMAND:
         command.length > MAX_COMMAND_LENGTH ? command.slice(0, MAX_COMMAND_LENGTH) : command,
     };
+    if (state.binDir !== undefined) {
+      env['PATH'] = `${state.binDir}${delimiter}${process.env['PATH'] ?? ''}`;
+    }
+    return env;
   }
 
   async dispose(): Promise<void> {
@@ -127,6 +135,7 @@ export class SudoAskpassManager implements SudoAskpassEnvProvider {
       mode: 0o600,
     });
     await writeFile(join(dir, HELPER_SCRIPT_NAME), renderHelperScript(dir), { mode: 0o700 });
+    const binDir = await writeSudoShim(dir);
 
     const socketPath = join(
       // The helper resolves its own dir via `import.meta.url`, which node
@@ -153,7 +162,7 @@ export class SudoAskpassManager implements SudoAskpassEnvProvider {
         resolve();
       });
     });
-    const state: AskpassState = { dir, token, server, connections };
+    const state: AskpassState = { dir, token, server, connections, binDir };
     this.state = state;
     return state;
   }
@@ -219,6 +228,53 @@ function renderHelperScript(dir: string): string {
     '#!/bin/sh\n' +
     `exec "${shDoubleQuote(process.execPath)}" "${shDoubleQuote(join(dir, HELPER_IMPL_NAME))}" "$@"\n`
   );
+}
+
+/**
+ * `bin/sudo` — PATH shim that prepends `-A` and execs the real sudo, so the
+ * askpass helper is actually consulted (sudo 1.9+ ignores `SUDO_ASKPASS`
+ * unless askpass mode is on).
+ */
+async function writeSudoShim(dir: string): Promise<string | undefined> {
+  const realSudo = resolveRealSudo();
+  if (realSudo === undefined) return undefined;
+  const binDir = join(dir, 'bin');
+  const shim = join(binDir, 'sudo');
+  await mkdir(binDir, { recursive: true, mode: 0o700 });
+  const real = `"${shDoubleQuote(realSudo)}"`;
+  await writeFile(
+    shim,
+    '#!/bin/sh\n' +
+      '# Force askpass mode so SUDO_ASKPASS is consulted (sudo 1.9+ requires -A) —\n' +
+      '# unless the caller asked for stdin passwords (-S/--stdin), which sudo\n' +
+      '# rejects in combination with -A; keep the original sudo behavior there.\n' +
+      'for arg do\n' +
+      '  case $arg in\n' +
+      '    --) break ;;\n' +
+      `    -S*|--stdin) exec ${real} "$@" ;;\n` +
+      '    -*) ;;\n' +
+      '    *) break ;;\n' +
+      '  esac\n' +
+      'done\n' +
+      `exec ${real} -A "$@"\n`,
+    { mode: 0o700 },
+  );
+  await chmod(shim, 0o700);
+  return binDir;
+}
+
+function resolveRealSudo(): string | undefined {
+  for (const entry of (process.env['PATH'] ?? '').split(delimiter)) {
+    if (entry === '') continue;
+    const candidate = join(entry, 'sudo');
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 /**

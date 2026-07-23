@@ -17,9 +17,10 @@
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1893,12 +1894,19 @@ describe('BashTool sudo askpass env injection', () => {
 
 /**
  * End-to-end password flow through the Bash tool layer: a FAKE `sudo`
- * executable (temp dir on PATH) invokes `$SUDO_ASKPASS` exactly like real
- * sudo does when no tty is present; the askpass helper bridges back to the
- * session's password interaction over the unix socket. Never real sudo.
+ * executable (temp dir on PATH) mimics real sudo 1.9 behavior — it only
+ * consults `$SUDO_ASKPASS` in askpass mode, so the session's `bin/sudo`
+ * PATH shim must prepend `-A` for the prompt to happen at all. The askpass
+ * helper bridges back to the session's password interaction over the unix
+ * socket. Never real sudo.
  */
 describe('BashTool sudo askpass (end-to-end with fake sudo)', () => {
   const FAKE_SUDO = `#!/bin/sh
+if [ "$1" != "-A" ]; then
+  echo "sudo: a terminal is required to read the password" >&2
+  exit 1
+fi
+shift
 password=$("$SUDO_ASKPASS" "[sudo] password for testuser: ") || exit 1
 if [ "$password" != "hunter2" ]; then
   echo "Sorry, try again." >&2
@@ -1976,9 +1984,9 @@ exec "$@"
       });
     });
     return {
-      stdin: child.stdin!,
-      stdout: child.stdout!,
-      stderr: child.stderr!,
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
       pid: child.pid ?? 0,
       get exitCode() {
         return currentExitCode;
@@ -2051,4 +2059,166 @@ exec "$@"
     expect(result).toMatchObject({ isError: true });
     expect(result.output).not.toContain('should-not-run');
   });
+});
+
+/**
+ * Real-sudo smoke test: sudo 1.9+ only consults SUDO_ASKPASS in askpass
+ * mode, so this proves the session's `bin/sudo` PATH shim makes real sudo
+ * invoke the helper at all. The request is cancelled, so no real
+ * credentials are involved — the helper exits 1 and sudo fails before any
+ * authentication attempt.
+ */
+describe('BashTool sudo askpass (real sudo smoke)', () => {
+  const realSudoAvailable = (process.env['PATH'] ?? '')
+    .split(delimiter)
+    .some((entry) => entry !== '' && existsSync(join(entry, 'sudo')));
+
+  const noopLog: ILogService = {
+    _serviceBrand: undefined,
+    level: 'off',
+    setLevel: () => {},
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+    child: () => noopLog,
+    flush: () => Promise.resolve(),
+  };
+
+  let sessionDir: string;
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bash-askpass-real-'));
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 's',
+        workspaceId: 'w',
+        sessionDir,
+        sessionScope: 'sessions/w/s',
+        cwd: sessionDir,
+      }),
+    );
+    ix.stub(IHostEnvironment, createTestEnv());
+    ix.stub(IConfigService, stubConfig());
+    ix.stub(ILogService, noopLog);
+    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
+    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+  });
+
+  afterEach(async () => {
+    disposables.dispose();
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  function realProcess(args: readonly string[], env: Record<string, string>): IProcess {
+    const child = spawn(args[0]!, args.slice(1), {
+      env: { ...process.env, ...env },
+    });
+    let currentExitCode: number | null = null;
+    const waited = new Promise<number>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => {
+        currentExitCode = code;
+        resolve(code ?? 0);
+      });
+    });
+    return {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      pid: child.pid ?? 0,
+      get exitCode() {
+        return currentExitCode;
+      },
+      wait: () => waited,
+      kill: async (signal) => {
+        child.kill(signal);
+      },
+      dispose: () => {},
+    };
+  }
+
+  function runRealSudo(command: string) {
+    const passwords = ix.get(ISessionPasswordService);
+    const bash = new BashTool(
+      {
+        _serviceBrand: undefined,
+        exec: (args, options) => Promise.resolve(realProcess(args, options?.env ?? {})),
+      },
+      createTestEnv(),
+      ix.get(ISessionContext),
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+      ix.get(ISessionSudoAskpassService),
+    );
+    return { passwords, running: executeTool(bash, context({ command, timeout: 30 })) };
+  }
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'real sudo invokes the askpass helper through the shim',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -p SMOKETEST-PROMPT true');
+
+      await vi.waitFor(
+        () => {
+          expect(passwords.listPending()).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      const pending = passwords.listPending()[0]!;
+      expect(pending.prompt).toContain('SMOKETEST-PROMPT');
+      passwords.resolve(pending.id!, { cancelled: true });
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -n stays non-interactive and never prompts',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -n true');
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+      expect(passwords.listPending()).toHaveLength(0);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'an explicit -A from the caller is harmless',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -A -k -p SMOKETEST-PROMPT true');
+
+      await vi.waitFor(
+        () => {
+          expect(passwords.listPending()).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      passwords.resolve(passwords.listPending()[0]!.id!, { cancelled: true });
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -S is not forced into askpass mode (sudo rejects -A with -S)',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -S true');
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+      expect(passwords.listPending()).toHaveLength(0);
+      expect(result.output).not.toContain('may not be used together');
+    },
+  );
 });

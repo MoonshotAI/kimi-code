@@ -9,7 +9,14 @@
  * deep session dirs fall back to a short, session-keyed directory under the
  * OS temp dir, with the chosen path baked into the generated helper.mjs.
  * Everything starts lazily on the first `envForCommand` call and is torn
- * down when the Session scope is disposed.
+ * down when the Session scope is disposed; a dispose racing a start in
+ * flight tears the half-built runtime down instead of leaking it.
+ *
+ * sudo (1.9+) only consults `SUDO_ASKPASS` in askpass mode, so the service
+ * also resolves the real sudo from the ambient PATH and writes a
+ * `bin/sudo` shim that prepends `-A`; `envForCommand` prepends that `bin`
+ * dir to the spawned command's PATH. Without the shim, a no-TTY sudo would
+ * fail with its terminal-required error instead of prompting.
  *
  * Each connection that presents a well-formed request with the session
  * token becomes ONE `password` interaction via `ISessionPasswordService`;
@@ -26,10 +33,10 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { accessSync, constants, promises as fs } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -41,7 +48,7 @@ import { ISessionPasswordService } from '#/session/password/password';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { resolveSudoAskpassConfig } from './configSection';
-import { helperMjsSource, helperShSource } from './helperAssets';
+import { helperMjsSource, helperShSource, sudoShimSource } from './helperAssets';
 import {
   ISessionSudoAskpassService,
   SUDO_ASKPASS_COMMAND_ENV,
@@ -51,16 +58,8 @@ import {
 
 const ASKPASS_DIR_NAME = 'sudo-askpass';
 const SOCKET_NAME = 'askpass.sock';
-/**
- * Longest unix-domain socket path this service will bind. macOS caps
- * `sun_path` at 104 bytes (Linux 108) INCLUDING the nul terminator; deep
- * session dirs exceed that, so longer paths fall back to a short,
- * session-keyed directory under the OS temp dir.
- */
 const MAX_SOCKET_PATH_CHARS = 100;
-/** Longest command string forwarded through the askpass env. */
 const COMMAND_ENV_MAX_CHARS = 500;
-/** Hard cap on one askpass request line (token + prompt + command). */
 const MAX_REQUEST_LINE_CHARS = 64 * 1024;
 
 interface AskpassRuntime {
@@ -68,6 +67,7 @@ interface AskpassRuntime {
   readonly socketDir: string;
   readonly token: string;
   readonly server: Server;
+  readonly binDir?: string;
 }
 
 export class SessionSudoAskpassService extends Disposable implements ISessionSudoAskpassService {
@@ -99,11 +99,15 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
       });
       return undefined;
     }
-    return {
+    const env: Record<string, string> = {
       [SUDO_ASKPASS_ENV]: join(runtime.dir, 'helper.sh'),
       [SUDO_ASKPASS_TOKEN_ENV]: runtime.token,
       [SUDO_ASKPASS_COMMAND_ENV]: command.slice(0, COMMAND_ENV_MAX_CHARS),
     };
+    if (runtime.binDir !== undefined) {
+      env['PATH'] = `${runtime.binDir}${delimiter}${process.env['PATH'] ?? ''}`;
+    }
+    return env;
   }
 
   private ensureStarted(): Promise<AskpassRuntime> {
@@ -112,8 +116,6 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
       (runtime) => {
         this.starting = undefined;
         if (this._store.isDisposed) {
-          // dispose() ran while start() was in flight — tear down the
-          // half-registered runtime instead of leaking it.
           runtime.server.close();
           void fs.rm(runtime.dir, { recursive: true, force: true }).catch(() => {});
           if (runtime.socketDir !== runtime.dir) {
@@ -134,8 +136,6 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
 
   private async start(): Promise<AskpassRuntime> {
     const dir = join(this.ctx.sessionDir, ASKPASS_DIR_NAME);
-    // A stale directory from a previous process may hold a dead socket and
-    // outdated helpers; rebuild from scratch (the token rotates anyway).
     await fs.rm(dir, { recursive: true, force: true });
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.chmod(dir, 0o700);
@@ -153,6 +153,7 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
     await fs.chmod(helperMjs, 0o600);
     await fs.writeFile(helperSh, helperShSource(dir, process.execPath), { mode: 0o700 });
     await fs.chmod(helperSh, 0o700);
+    const binDir = await writeSudoShim(dir);
 
     const token = randomBytes(16).toString('hex');
     const server = createServer((socket) => {
@@ -167,7 +168,7 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
         resolve();
       });
     });
-    return { dir, socketDir, token, server };
+    return { dir, socketDir, token, server, binDir };
   }
 
   private async handleConnection(socket: Socket): Promise<void> {
@@ -175,7 +176,6 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
     try {
       request = JSON.parse(await readRequestLine(socket)) as typeof request;
     } catch {
-      // Malformed / oversized / truncated request — not an askpass client.
       socket.destroy();
       return;
     }
@@ -191,9 +191,6 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
     const prompt = typeof request.prompt === 'string' ? request.prompt : '';
     const command = typeof request.command === 'string' ? request.command : undefined;
 
-    // One validated connection = one password interaction. A helper that
-    // disconnects while waiting (sudo killed, command interrupted) resolves
-    // its own request as cancelled instead of lingering on the pending list.
     const id = `sudo-askpass:${randomBytes(8).toString('hex')}`;
     let settled = false;
     const cancelOnClose = (): void => {
@@ -219,8 +216,6 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
     this.connections.clear();
     runtime?.server.close();
     if (runtime !== undefined) {
-      // Best-effort removal of the socket file and helpers (the session dir
-      // itself is owned by sessionLifecycle).
       void fs.rm(runtime.dir, { recursive: true, force: true }).catch(() => {});
       if (runtime.socketDir !== runtime.dir) {
         void fs.rm(runtime.socketDir, { recursive: true, force: true }).catch(() => {});
@@ -230,13 +225,31 @@ export class SessionSudoAskpassService extends Disposable implements ISessionSud
   }
 }
 
-/**
- * Pick the askpass socket location for a session's helper dir. The socket
- * lives beside the helpers when the path fits the platform `sun_path` cap;
- * deep session dirs fall back to a short, session-keyed directory under the
- * OS temp dir. The generated helper.mjs has the chosen path baked in, so
- * helper and server always agree.
- */
+async function writeSudoShim(dir: string): Promise<string | undefined> {
+  const realSudo = resolveRealSudo();
+  if (realSudo === undefined) return undefined;
+  const binDir = join(dir, 'bin');
+  const shim = join(binDir, 'sudo');
+  await fs.mkdir(binDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(shim, sudoShimSource(realSudo), { mode: 0o700 });
+  await fs.chmod(shim, 0o700);
+  return binDir;
+}
+
+function resolveRealSudo(): string | undefined {
+  for (const entry of (process.env['PATH'] ?? '').split(delimiter)) {
+    if (entry === '') continue;
+    const candidate = join(entry, 'sudo');
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 function resolveSocketLocation(dir: string): { socketDir: string; socketPath: string } {
   const inSession = join(dir, SOCKET_NAME);
   if (inSession.length <= MAX_SOCKET_PATH_CHARS) {
@@ -247,7 +260,6 @@ function resolveSocketLocation(dir: string): { socketDir: string; socketPath: st
   return { socketDir, socketPath: join(socketDir, SOCKET_NAME) };
 }
 
-/** Read one newline-terminated request line from an askpass helper. */
 function readRequestLine(socket: Socket): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let buf = '';
