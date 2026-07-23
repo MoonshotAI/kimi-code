@@ -1,7 +1,11 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  extractOpenAICodexAccountId,
+  OPENAI_CODEX_PROVIDER_NAME,
+  parseKimiCodeCustomHeaders,
+} from '@moonshot-ai/kimi-code-oauth';
 import {
   effectiveModelAlias,
   type KimiConfig,
@@ -34,6 +38,8 @@ export interface ResolvedRuntimeProvider {
   readonly type: ProviderType;
   /** Model-level protocol override (`alias.protocol`); when set, takes precedence over `type` for transport selection. */
   readonly protocol: ModelAlias['protocol'];
+  /** Disable local max-completion-token injection for providers that reject it. */
+  readonly disableCompletionBudget?: boolean;
 }
 
 interface ProviderManagerOptions {
@@ -122,13 +128,15 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
+    const disableCompletionBudget = providerName === OPENAI_CODEX_PROVIDER_NAME;
+    const maxOutputSize = disableCompletionBudget ? undefined : effectiveAlias.maxOutputSize;
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
       alias.protocol,
       alias.baseUrl,
       this.options.kimiRequestHeaders,
-      effectiveAlias.maxOutputSize,
+      maxOutputSize,
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
       effectiveAlias.supportEfforts,
@@ -146,9 +154,10 @@ export class ProviderManager implements ModelProvider {
       ),
       supportEfforts: effectiveAlias.supportEfforts,
       defaultEffort: effectiveAlias.defaultEffort,
-      maxOutputSize: effectiveAlias.maxOutputSize,
+      maxOutputSize,
       type: providerConfig.type,
       protocol: alias.protocol,
+      disableCompletionBudget,
     };
   }
 
@@ -199,6 +208,23 @@ export class ProviderManager implements ModelProvider {
         throw error;
       }
       if (apiKey.trim().length === 0) throw loginRequired();
+      if (providerName === OPENAI_CODEX_PROVIDER_NAME) {
+        const accountId = extractOpenAICodexAccountId(apiKey);
+        if (accountId === undefined) {
+          throw new KimiError(
+            ErrorCodes.PROVIDER_AUTH_ERROR,
+            `OAuth provider "${providerName}" returned a token without a ChatGPT account id.`,
+          );
+        }
+        return {
+          apiKey,
+          headers: {
+            'ChatGPT-Account-Id': accountId,
+            'OpenAI-Beta': 'responses=experimental',
+            originator: 'kimi-code',
+          },
+        };
+      }
       return { apiKey };
     };
 

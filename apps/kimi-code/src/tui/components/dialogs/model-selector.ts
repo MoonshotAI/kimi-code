@@ -132,11 +132,15 @@ export function effortLabel(effort: string): string {
  * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
  * thinking is unsupported.
  */
-function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
-  if (thinkingAvailability(model) === 'unsupported') return 'off';
-  const efforts = effortsOf(model);
+export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
+  const effective = effectiveModelAlias(model);
+  if (thinkingAvailability(effective) === 'unsupported') return 'off';
+  const efforts = effortsOf(effective);
   if (efforts.length > 0) {
-    return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+    if (effective.defaultEffort !== undefined && efforts.includes(effective.defaultEffort)) {
+      return effective.defaultEffort;
+    }
+    return efforts[Math.floor(efforts.length / 2)]!;
   }
   return 'on';
 }
@@ -191,15 +195,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
     if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingEffort;
-    const efforts = effortsOf(choice.model);
-    if (efforts.length > 0) {
-      // A model with support_efforts but no default_effort defaults to the
-      // middle entry of its supported efforts.
-      const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
-      if (def !== undefined && efforts.includes(def)) return def;
-      return efforts[0]!;
-    }
-    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+    return defaultThinkingEffortFor(choice.model);
   }
 
   /** Draft coerced onto the model's segment list so rendering/selection never

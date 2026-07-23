@@ -1,18 +1,30 @@
+import { join } from 'node:path';
+
 import { readConfigFile, writeConfigFile } from '../../config';
 import type { KimiConfig, OAuthRef } from '../../config';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
 import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
+  clearOpenAICodexConfig,
+  createOpenAICodexTokenProvider,
+  FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  OAuthConnectionError,
+  OAuthUnauthorizedError,
+  OPENAI_CODEX_OAUTH_KEY,
+  OPENAI_CODEX_PROVIDER_NAME,
+  RetryableRefreshError,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
+  resolveKimiTokenStorageName,
   type BearerTokenProvider,
   type KimiOAuthLoginOptions,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { ErrorCodes, KimiError } from '../../errors';
 import type { IEnvironmentService } from '../environment/environment';
 
 type ServicesManagedConfig = KimiConfig & ManagedKimiConfigShape;
@@ -30,6 +42,24 @@ interface ServicesAuthLoginResult {
 interface ServicesAuthLogoutResult {
   readonly providerName: string;
   readonly ok: true;
+}
+
+function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
+  if (error instanceof OAuthUnauthorizedError) {
+    return new KimiError(
+      ErrorCodes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${providerName}" requires login before it can be used.`,
+      { cause: error },
+    );
+  }
+  if (error instanceof OAuthConnectionError || error instanceof RetryableRefreshError) {
+    return new KimiError(
+      ErrorCodes.PROVIDER_CONNECTION_ERROR,
+      `OAuth provider "${providerName}" failed to fetch an access token: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return undefined;
 }
 
 export interface ServicesAuthFacade {
@@ -98,10 +128,23 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
   async logout(
     providerName?: string | undefined,
   ): Promise<ServicesAuthLogoutResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     const result = await this.toolkit.logout(
       providerName,
-      this.resolveRuntimeManagedAuth(providerName).oauthRef,
+      auth.oauthRef,
     );
+    if (this.isOpenAICodexAuth(result.providerName, auth.oauthRef)) {
+      const config = readConfigFile(this.options.configPath) as ServicesManagedConfig;
+      const cleanup = clearOpenAICodexConfig(config);
+      if (
+        cleanup.removedProvider ||
+        cleanup.removedModels.length > 0 ||
+        cleanup.defaultModelCleared
+      ) {
+        if (cleanup.defaultModelCleared) config.thinking = undefined;
+        await writeConfigFile(this.options.configPath, config);
+      }
+    }
     return {
       providerName: result.providerName,
       ok: result.ok,
@@ -112,6 +155,15 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName?: string,
     oauthRef?: OAuthRef | undefined,
   ): Promise<string | undefined> {
+    if (this.isOpenAICodexAuth(providerName, oauthRef)) {
+      const storageName = resolveKimiTokenStorageName({
+        providerName: providerName ?? OPENAI_CODEX_PROVIDER_NAME,
+        oauthKey: oauthRef?.key ?? OPENAI_CODEX_OAUTH_KEY,
+      });
+      return new FileTokenStorage(join(this.options.homeDir, 'credentials'))
+        .load(storageName)
+        .then((token) => token?.accessToken);
+    }
     return this.toolkit.getCachedAccessToken(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
@@ -122,10 +174,25 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
-    return this.toolkit.tokenProvider(
-      providerName,
-      this.runtimeOAuthRef(providerName, oauthRef),
-    );
+    const provider = this.isOpenAICodexAuth(providerName, oauthRef)
+      ? createOpenAICodexTokenProvider({
+          storage: new FileTokenStorage(join(this.options.homeDir, 'credentials')),
+          providerName,
+          oauthRef,
+        })
+      : this.toolkit.tokenProvider(
+          providerName,
+          this.runtimeOAuthRef(providerName, oauthRef),
+        );
+    return {
+      getAccessToken: async (options) => {
+        try {
+          return await provider.getAccessToken(options);
+        } catch (error) {
+          throw mapOAuthTokenError(error, providerName) ?? error;
+        }
+      },
+    };
   };
 
   private resolveManagedAuth(providerName?: string | undefined): {
@@ -164,6 +231,16 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: oauthRef ?? auth.oauthRef,
     }).oauthRef;
+  }
+
+  private isOpenAICodexAuth(
+    providerName: string | undefined,
+    oauthRef?: OAuthRef | undefined,
+  ): boolean {
+    return (
+      providerName === OPENAI_CODEX_PROVIDER_NAME ||
+      oauthRef?.key === OPENAI_CODEX_OAUTH_KEY
+    );
   }
 }
 

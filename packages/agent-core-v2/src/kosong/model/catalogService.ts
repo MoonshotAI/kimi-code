@@ -45,7 +45,11 @@
  * refresh lives in `app/kosongConfig`, not here.
  */
 
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  createOpenAICodexRequestAuth,
+  isOpenAICodexAuth,
+  parseKimiCodeCustomHeaders,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -60,6 +64,7 @@ import {
   type Protocol,
   type ProtocolProviderOptions,
 } from '#/kosong/protocol/protocol';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 
 import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
 import {
@@ -565,10 +570,22 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       const tokens = this.oauth;
       return {
         canRefresh: true,
+        disableCompletionBudget: isOpenAICodexAuth(providerKey, oauthRef),
         async getAuth(options): Promise<ProviderRequestAuth | undefined> {
           const apiKey = await tokens.getAccessToken(providerKey, oauthRef, {
             force: options?.force === true,
           });
+          if (isOpenAICodexAuth(providerKey, oauthRef)) {
+            try {
+              return createOpenAICodexRequestAuth(apiKey);
+            } catch (error) {
+              throw new Error2(
+                ProtocolErrors.codes.PROVIDER_AUTH_ERROR,
+                `OAuth provider "${providerKey}" returned a token without a ChatGPT account id.`,
+                { cause: error },
+              );
+            }
+          }
           return { apiKey };
         },
       };

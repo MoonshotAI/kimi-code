@@ -1,12 +1,20 @@
 <!-- apps/kimi-web/src/components/dialogs/LoginDialog.vue -->
-<!-- Managed Kimi OAuth device-code login dialog. Built on the design-system -->
+<!-- OAuth device-code login dialog. Built on the design-system -->
 <!-- Dialog primitive; the device code + countdown stay monospace. -->
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type {
+  AppOAuthProvider,
+  OAuthLoginOptions,
+  OAuthLoginProvider,
+  OAuthLoginStartResult,
+  OAuthLoginStatus,
+} from '../../api/types';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import Dialog from '../ui/Dialog.vue';
 import Button from '../ui/Button.vue';
+import Badge from '../ui/Badge.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
 import AuthStateIcon from '../ui/AuthStateIcon.vue';
@@ -33,47 +41,46 @@ const emit = defineEmits<{
 // -------------------------------------------------------------------------
 
 const props = defineProps<{
-  onStartOAuthLogin: () => Promise<
-    | {
-        flowId: string;
-        provider: string;
-        status: 'pending';
-        verificationUri: string;
-        verificationUriComplete: string;
-        userCode: string;
-        expiresIn: number;
-        interval: number;
-        expiresAt: string;
-      }
-    | {
-        flowId: string;
-        provider: string;
-        status: 'authenticated';
-      }
-    | null
-  >;
-  onPollOAuthLogin: () => Promise<{
+  initialProvider?: OAuthLoginProvider;
+  oauthProviders: AppOAuthProvider[];
+  preserveDefaultModel: boolean;
+  onStartOAuthLogin: (
+    provider: OAuthLoginProvider,
+    options: OAuthLoginOptions,
+  ) => Promise<OAuthLoginStartResult | null>;
+  onPollOAuthLogin: (provider: OAuthLoginProvider) => Promise<{
     flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+    status: OAuthLoginStatus;
     resolvedAt?: string;
+    errorMessage?: string;
   } | null>;
-  onCancelOAuthLogin: () => Promise<void>;
+  onCancelOAuthLogin: (provider: OAuthLoginProvider) => Promise<void>;
 }>();
 
 // -------------------------------------------------------------------------
 // State
-// 'starting'     → calling startOAuthLogin (brief spinner)
-// 'device-code'  → showing code, polling
-// 'success'      → authenticated
-// 'expired'      → flow expired or cancelled
-// 'error'        → startOAuthLogin failed (endpoint missing)
+// 'provider-choice' -> choosing Kimi Code or ChatGPT
+// 'starting'        -> calling startOAuthLogin (brief spinner)
+// 'device-code'     -> showing code, polling
+// 'success'         -> authenticated
+// 'expired'         -> flow expired or cancelled
+// 'error'           -> startOAuthLogin failed (endpoint missing)
 // -------------------------------------------------------------------------
 
-type Step = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
-const step = ref<Step>('starting');
+type Step = 'provider-choice' | 'starting' | 'device-code' | 'success' | 'expired' | 'error';
+const step = ref<Step>(props.initialProvider === undefined ? 'provider-choice' : 'starting');
+const selectedProvider = ref<OAuthLoginProvider | null>(props.initialProvider ?? null);
 // True when the error step came from repeated poll failures (daemon gone)
 // rather than startOAuthLogin failing (unsupported endpoint) — picks the copy.
 const pollError = ref(false);
+const authorizationDenied = ref(false);
+const authorizationErrorMessage = ref<string | null>(null);
+
+const dialogTitle = computed(() => {
+  if (selectedProvider.value === 'openai-codex') return t('login.chatGptTitle');
+  if (selectedProvider.value === 'managed:kimi-code') return t('login.kimiTitle');
+  return t('login.chooseTitle');
+});
 
 interface FlowData {
   flowId: string;
@@ -101,7 +108,7 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 // -------------------------------------------------------------------------
 
 onMounted(async () => {
-  await startFlow();
+  if (selectedProvider.value !== null) await startFlow();
 });
 
 onUnmounted(() => {
@@ -113,14 +120,30 @@ onUnmounted(() => {
 // -------------------------------------------------------------------------
 
 async function startFlow(): Promise<void> {
+  const provider = selectedProvider.value;
+  if (provider === null) {
+    step.value = 'provider-choice';
+    return;
+  }
   stopTimers();
   flow.value = null;
   pollError.value = false;
+  authorizationDenied.value = false;
+  authorizationErrorMessage.value = null;
   consecutivePollFailures = 0;
   step.value = 'starting';
 
-  const result = await props.onStartOAuthLogin();
+  const result = await props.onStartOAuthLogin(provider, {
+    preserveDefaultModel: props.preserveDefaultModel,
+  });
   if (!result) {
+    step.value = 'error';
+    return;
+  }
+
+  if (result.status === 'denied') {
+    authorizationDenied.value = true;
+    authorizationErrorMessage.value = result.errorMessage.trim() || null;
     step.value = 'error';
     return;
   }
@@ -167,7 +190,9 @@ function startCountdown(): void {
 function scheduleNextPoll(intervalSec: number): void {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
-    const result = await props.onPollOAuthLogin();
+    const provider = selectedProvider.value;
+    if (provider === null) return;
+    const result = await props.onPollOAuthLogin(provider);
     if (result === null) {
       // Poll failed (or no active flow). Keep polling through transient
       // blips, but give up with an explicit error after several in a row.
@@ -192,6 +217,11 @@ function scheduleNextPoll(intervalSec: number): void {
     } else if (result.status === 'expired' || result.status === 'cancelled') {
       stopTimers();
       step.value = 'expired';
+    } else if (result.status === 'denied') {
+      stopTimers();
+      authorizationDenied.value = true;
+      authorizationErrorMessage.value = result.errorMessage?.trim() || null;
+      step.value = 'error';
     } else {
       // pending — keep polling
       scheduleNextPoll(intervalSec);
@@ -208,6 +238,20 @@ async function retryFlow(): Promise<void> {
   await startFlow();
 }
 
+async function chooseProvider(provider: OAuthLoginProvider): Promise<void> {
+  selectedProvider.value = provider;
+  await startFlow();
+}
+
+function providerIsAuthenticated(provider: OAuthLoginProvider): boolean {
+  return props.oauthProviders.some((entry) => {
+    const sameProvider =
+      entry.name === provider ||
+      (provider === 'managed:kimi-code' && entry.name === 'kimi-code');
+    return sameProvider && entry.status === 'authenticated';
+  });
+}
+
 async function copyCode(): Promise<void> {
   if (!flow.value) return;
   const ok = await copyTextToClipboard(flow.value.userCode);
@@ -219,8 +263,8 @@ async function copyCode(): Promise<void> {
 async function close(): Promise<void> {
   stopTimers();
   // Best-effort cancel
-  if (step.value === 'device-code') {
-    void props.onCancelOAuthLogin();
+  if (step.value === 'device-code' && selectedProvider.value !== null) {
+    void props.onCancelOAuthLogin(selectedProvider.value);
   }
   emit('close');
 }
@@ -234,7 +278,38 @@ function formatSeconds(s: number): string {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t('login.title')" :close-on-overlay="false" @close="close">
+  <Dialog v-model:open="open" :title="dialogTitle" :close-on-overlay="false" @close="close">
+
+    <!-- Provider choice -->
+    <div v-if="step === 'provider-choice'" class="provider-choice">
+      <p class="provider-choice-lead">{{ t('login.chooseHint') }}</p>
+      <div class="provider-options">
+        <Button
+          class="provider-option"
+          variant="secondary"
+          size="lg"
+          @click="chooseProvider('managed:kimi-code')"
+        >
+          <span>{{ t('login.kimiOption') }}</span>
+          <Badge v-if="providerIsAuthenticated('managed:kimi-code')" variant="success" size="sm" dot>
+            {{ t('login.signedIn') }}
+          </Badge>
+          <Icon name="arrow-right" size="sm" />
+        </Button>
+        <Button
+          class="provider-option"
+          variant="secondary"
+          size="lg"
+          @click="chooseProvider('openai-codex')"
+        >
+          <span>{{ t('login.chatGptOption') }}</span>
+          <Badge v-if="providerIsAuthenticated('openai-codex')" variant="success" size="sm" dot>
+            {{ t('login.signedIn') }}
+          </Badge>
+          <Icon name="arrow-right" size="sm" />
+        </Button>
+      </div>
+    </div>
 
     <!-- Starting (brief spinner) -->
     <div v-if="step === 'starting'" class="center-body">
@@ -318,10 +393,22 @@ function formatSeconds(s: number): string {
       <div class="center-body">
         <AuthStateIcon kind="error" />
         <span class="center-text warn-text">
-          {{ pollError ? t('login.pollErrorTitle') : t('login.errorTitle') }}
+          {{
+            authorizationDenied
+              ? t('login.deniedTitle')
+              : pollError
+                ? t('login.pollErrorTitle')
+                : t('login.errorTitle')
+          }}
         </span>
         <span class="center-hint">
-          {{ pollError ? t('login.pollErrorHint') : t('login.errorHint') }}
+          {{
+            authorizationDenied
+              ? authorizationErrorMessage ?? t('login.deniedHint')
+              : pollError
+                ? t('login.pollErrorHint')
+                : t('login.errorHint')
+          }}
         </span>
       </div>
       <div class="actions">
@@ -334,6 +421,34 @@ function formatSeconds(s: number): string {
 </template>
 
 <style scoped>
+.provider-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-4);
+}
+.provider-choice-lead {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.provider-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.provider-option {
+  width: 100%;
+}
+.provider-option :deep(.ui-button__content) {
+  width: 100%;
+  justify-content: flex-start;
+}
+.provider-option :deep(.kw-icon:last-child) {
+  margin-left: auto;
+}
+
 /* Centered single-state bodies */
 .center-body {
   display: flex;
@@ -354,6 +469,7 @@ function formatSeconds(s: number): string {
 .center-hint {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* Device-code body */

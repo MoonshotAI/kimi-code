@@ -178,6 +178,8 @@ Multiple instances can share one home directory: each registers itself under `~/
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
+In Settings > Account, the web UI lists every configured OAuth account and lets you sign out of each provider independently.
+
 ::: info
 The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
 :::

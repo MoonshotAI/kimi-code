@@ -13,7 +13,10 @@ import type {
   AppProvider,
   AppSession,
   AppSkill,
+  OAuthLoginOptions,
+  OAuthLoginProvider,
   OAuthLoginStartResult,
+  OAuthLoginStatus,
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
@@ -527,25 +530,29 @@ export function useModelProviderState(
     }
   }
 
-  /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
+  /** Start the selected OAuth provider's device flow. Returns flow data or null on error. */
+  async function startOAuthLogin(
+    provider: OAuthLoginProvider,
+    options: OAuthLoginOptions,
+  ): Promise<OAuthLoginStartResult | null> {
     try {
       const api = getKimiWebApi();
-      return await api.startOAuthLogin();
+      return await api.startOAuthLogin(provider, options);
     } catch {
       return null;
     }
   }
 
-  /** Poll the singleton OAuth flow. Returns null on error or no active flow. */
-  async function pollOAuthLogin(): Promise<{
+  /** Poll the selected provider's OAuth flow. Returns null on error or no active flow. */
+  async function pollOAuthLogin(provider: OAuthLoginProvider): Promise<{
     flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+    status: OAuthLoginStatus;
     resolvedAt?: string;
+    errorMessage?: string;
   } | null> {
     try {
       const api = getKimiWebApi();
-      return await api.pollOAuthLogin();
+      return await api.pollOAuthLogin(provider);
     } catch (err) {
       // The dialog counts consecutive nulls and gives up after a few; keep the
       // cause in the log so a dead daemon is diagnosable.
@@ -555,10 +562,10 @@ export function useModelProviderState(
   }
 
   /** Cancel the current OAuth flow (best-effort). */
-  async function cancelOAuthLogin(): Promise<void> {
+  async function cancelOAuthLogin(provider: OAuthLoginProvider): Promise<void> {
     try {
       const api = getKimiWebApi();
-      await api.cancelOAuthLogin();
+      await api.cancelOAuthLogin(provider);
     } catch {
       // Best-effort
     }

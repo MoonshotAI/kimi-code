@@ -13,23 +13,41 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import {
+  applyOpenAICodexConfig,
+  clearOpenAICodexConfig,
+  createOpenAICodexTokenProvider,
   DeviceCodeTimeoutError,
+  FileTokenStorage,
+  fetchOpenAICodexModels,
+  isOpenAICodexAuth,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  loginOpenAICodexDeviceCode,
+  ManagedKimiCodeModelsAuthError,
+  openAICodexOAuthRef,
+  OPENAI_CODEX_BASE_URL,
+  OPENAI_CODEX_MODELS,
+  OPENAI_CODEX_OAUTH_KEY,
+  OPENAI_CODEX_PROVIDER_NAME,
   OAuthError,
+  OAuthUnauthorizedError,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
+  resolveKimiTokenStorageName,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
   type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
+  type KimiOAuthLoginOptions,
+  type KimiOAuthLoginResult,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import type {
@@ -69,6 +87,7 @@ import {
   type ProvidersChangedEvent,
 } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {
@@ -79,11 +98,19 @@ import {
   IAuthSummaryService,
   IOAuthService,
   IOAuthToolkit,
+  type OAuthEntitlementStatus,
+  type OAuthLoginOptions,
 } from './auth';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
 const SERVICES_SECTION = 'services';
+const AUTH_STATE_KEY = 'oauth-entitlements.json';
+
+interface PersistedOAuthEntitlements {
+  readonly version: 1;
+  readonly providers: Readonly<Record<string, OAuthEntitlementStatus>>;
+}
 
 interface FlowState {
   readonly flowId: string;
@@ -91,6 +118,7 @@ interface FlowState {
   readonly controller: AbortController;
   readonly oauthRef: OAuthRef | undefined;
   readonly loginBaseUrl: string | undefined;
+  readonly preserveDefaultModel: boolean;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
   expiresAt: number;
@@ -107,11 +135,13 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   constructor(
     @IOAuthToolkit private readonly toolkit: IOAuthToolkit,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IProviderService private readonly providerService: IProviderService,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly events: IEventService,
+    @IAtomicDocumentStore private readonly atomicDocs: IAtomicDocumentStore,
   ) {
     super();
     this._register(providerService.onDidChangeProviders((event) => {
@@ -119,7 +149,10 @@ export class OAuthService extends Disposable implements IOAuthService {
     }));
   }
 
-  async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
+  async startLogin(
+    provider = KIMI_CODE_PROVIDER_NAME,
+    options: OAuthLoginOptions = {},
+  ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
     const loginAuth = this.resolveLoginAuth(provider);
     this.log.info('oauth startLogin: resolved login auth', {
@@ -136,6 +169,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       controller: new AbortController(),
       oauthRef: loginAuth.oauthRef,
       loginBaseUrl: loginAuth.baseUrl,
+      preserveDefaultModel: options.preserveDefaultModel === true,
       device: undefined,
       status: 'pending',
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
@@ -173,6 +207,14 @@ export class OAuthService extends Disposable implements IOAuthService {
         provider,
       });
       await this.completeAlreadyAuthenticatedLogin(state);
+      if (state.status !== 'authenticated') {
+        return {
+          flow_id: state.flowId,
+          provider: state.provider,
+          status: 'denied',
+          error_message: state.errorMessage ?? 'OAuth provider setup could not be completed.',
+        };
+      }
       return {
         flow_id: state.flowId,
         provider: state.provider,
@@ -206,7 +248,10 @@ export class OAuthService extends Disposable implements IOAuthService {
       fastPath.then((result) => ({ kind: 'fast' as const, result })),
     ]);
     if (winner.kind === 'fast' && winner.result !== undefined) {
-      this.log.info('oauth startLogin: fast path returned authenticated', { provider });
+      this.log.info('oauth startLogin: fast path completed', {
+        provider,
+        status: winner.result.status,
+      });
       return winner.result;
     }
     const device = winner.kind === 'device' ? winner.device : await deviceReady;
@@ -231,13 +276,11 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   async logout(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthLogoutResponse> {
-    const oauthRef =
-      provider === KIMI_CODE_PROVIDER_NAME
-        ? this.resolveRuntimeOAuthRef(provider)
-        : this.readOAuthRefOptional(provider);
+    const oauthRef = this.resolveRuntimeOAuthRef(provider, this.readOAuthRefOptional(provider));
     const result = await this.toolkit.logout(provider, oauthRef);
     this.abortExisting(provider);
     await this.deprovisionProvider(provider);
+    await this.clearEntitlementStatus(provider);
     return { logged_out: true, provider: result.providerName };
   }
 
@@ -257,8 +300,22 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
   }
 
+  async entitlementStatus(
+    provider = KIMI_CODE_PROVIDER_NAME,
+  ): Promise<OAuthEntitlementStatus | undefined> {
+    return (await this.readEntitlements()).providers[provider];
+  }
+
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined {
-    return this.toolkit.tokenProvider(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
+    const runtimeOAuthRef = this.resolveRuntimeOAuthRef(provider, oauthRef);
+    if (isOpenAICodexAuth(provider, runtimeOAuthRef)) {
+      return createOpenAICodexTokenProvider({
+        storage: new FileTokenStorage(join(this.bootstrap.homeDir, 'credentials')),
+        providerName: provider,
+        oauthRef: runtimeOAuthRef,
+      });
+    }
+    return this.toolkit.tokenProvider(provider, runtimeOAuthRef);
   }
 
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined> {
@@ -281,7 +338,15 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
-    const run = this.refreshChain.then(() => this.doRefreshOAuthProviderModels());
+    return this.enqueueOAuthProviderModelsRefresh(false);
+  }
+
+  private enqueueOAuthProviderModelsRefresh(
+    throwOnFailure: boolean,
+  ): Promise<RefreshOAuthProviderModelsResponse> {
+    const run = this.refreshChain.then(() =>
+      this.doRefreshOAuthProviderModels(throwOnFailure),
+    );
     this.refreshChain = run.then(
       () => undefined,
       () => undefined,
@@ -289,7 +354,9 @@ export class OAuthService extends Disposable implements IOAuthService {
     return run;
   }
 
-  private async doRefreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
+  private async doRefreshOAuthProviderModels(
+    throwOnFailure: boolean,
+  ): Promise<RefreshOAuthProviderModelsResponse> {
     const changed: RefreshOAuthProviderModelsResponse['changed'] = [];
     const unchanged: string[] = [];
     const failed: RefreshOAuthProviderModelsResponse['failed'] = [];
@@ -362,6 +429,7 @@ export class OAuthService extends Disposable implements IOAuthService {
         });
       }
     } catch (error) {
+      if (throwOnFailure) throw error;
       failed.push({
         provider: KIMI_CODE_PROVIDER_NAME,
         reason: error instanceof Error ? error.message : String(error),
@@ -399,6 +467,14 @@ export class OAuthService extends Disposable implements IOAuthService {
     readonly oauthHost: string | undefined;
   } {
     const config = this.providerService.get(provider);
+    if (provider === OPENAI_CODEX_PROVIDER_NAME) {
+      const oauthRef = config?.oauth ?? openAICodexOAuthRef();
+      return {
+        oauthRef,
+        baseUrl: config?.baseUrl ?? OPENAI_CODEX_BASE_URL,
+        oauthHost: oauthRef.oauthHost,
+      };
+    }
     if (provider !== KIMI_CODE_PROVIDER_NAME) {
       return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
     }
@@ -424,6 +500,9 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private resolveRuntimeOAuthRef(provider: string, oauthRef?: OAuthRef): OAuthRef | undefined {
+    if (isOpenAICodexAuth(provider, oauthRef)) {
+      return oauthRef ?? openAICodexOAuthRef();
+    }
     if (provider !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
     const config = this.providerService.get(provider);
     return resolveKimiCodeRuntimeAuth({
@@ -462,23 +541,116 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private async finalizeAuthentication(state: FlowState): Promise<void> {
+    let shouldRollbackFailedKimiProvision = false;
     try {
-      await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
+      shouldRollbackFailedKimiProvision =
+        state.provider === KIMI_CODE_PROVIDER_NAME &&
+        providerAliasKeys(this.readUserConfigShape(), KIMI_CODE_PROVIDER_NAME).size === 0;
+      if (isOpenAICodexAuth(state.provider, state.oauthRef)) {
+        await this.provisionOpenAICodexProvider(state);
+      } else {
+        await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
+      }
       if (state.status !== 'pending') return;
       if (state.provider === KIMI_CODE_PROVIDER_NAME) {
-        await this.refreshOAuthProviderModelsBestEffort(state.provider);
+        await this.refreshOAuthProviderModelsForLogin(state.provider);
         if (state.status !== 'pending') return;
+        await this.clearEntitlementStatus(state.provider);
       }
+      this.setTerminal(state, 'authenticated');
     } catch (error) {
       this.log.warn('oauth provider provisioning failed', {
         provider: state.provider,
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
       if (state.status === 'pending') {
-        this.setTerminal(state, 'authenticated');
+        state.errorMessage = error instanceof Error ? error.message : String(error);
+        this.setTerminal(state, 'denied');
+      }
+      if (
+        state.provider === KIMI_CODE_PROVIDER_NAME &&
+        error instanceof ManagedKimiCodeModelsAuthError &&
+        error.status === 402
+      ) {
+        await this.recordEntitlementStatus(state.provider, 'membership_required');
+      }
+      if (shouldRollbackFailedKimiProvision || error instanceof OAuthUnauthorizedError) {
+        try {
+          await this.deprovisionProvider(state.provider);
+        } catch (cleanupError) {
+          this.log.warn('oauth provider cleanup after failed provisioning failed', {
+            provider: state.provider,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
       }
     }
+  }
+
+  private async provisionOpenAICodexProvider(state: FlowState): Promise<void> {
+    const accessToken = await this.toolkit.getCachedAccessToken(state.provider, state.oauthRef);
+    if (accessToken === undefined) {
+      throw new OAuthUnauthorizedError('OpenAI Codex OAuth token is unavailable after login.');
+    }
+
+    let models = OPENAI_CODEX_MODELS;
+    try {
+      models = await fetchOpenAICodexModels(accessToken, { signal: state.controller.signal });
+    } catch (error) {
+      this.log.warn('oauth startLogin: OpenAI Codex model refresh failed; using fallback', {
+        provider: state.provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const selectedModelId =
+      models.find((model) => model.id === 'gpt-5.4')?.id ?? models[0]?.id;
+    if (selectedModelId === undefined) {
+      throw new Error('OpenAI Codex model catalog is empty.');
+    }
+
+    const current = this.readUserConfigShape();
+    const next = structuredClone(current);
+    applyOpenAICodexConfig(next, { selectedModelId, models });
+    if (
+      state.preserveDefaultModel &&
+      current.defaultModel !== undefined &&
+      next.models?.[current.defaultModel] !== undefined
+    ) {
+      next.defaultModel = current.defaultModel;
+      next.thinking =
+        current.thinking === undefined ? undefined : structuredClone(current.thinking);
+    }
+
+    const previousIds = collectModelIdsForAliases(
+      current,
+      providerAliasKeys(current, OPENAI_CODEX_PROVIDER_NAME),
+    );
+    const nextIds = collectModelIdsForAliases(
+      next,
+      providerAliasKeys(next, OPENAI_CODEX_PROVIDER_NAME),
+    );
+    const { added, removed } = computeChanges(previousIds, nextIds);
+
+    await this.config.replace(PROVIDERS_SECTION, next.providers);
+    await this.config.replace(MODELS_SECTION, next.models ?? {});
+    await this.config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
+    await this.config.replace(THINKING_SECTION, next.thinking);
+    this.events.publish({
+      type: 'event.model_catalog.changed',
+      payload: {
+        changed: [
+          {
+            provider_id: OPENAI_CODEX_PROVIDER_NAME,
+            provider_name: 'OpenAI ChatGPT Plus/Pro',
+            added,
+            removed,
+          },
+        ],
+        unchanged: [],
+        failed: [],
+      },
+    });
   }
 
   private async provisionProvider(
@@ -497,19 +669,43 @@ export class OAuthService extends Disposable implements IOAuthService {
     });
   }
 
-  private async refreshOAuthProviderModelsBestEffort(provider: string): Promise<void> {
-    const result = await this.refreshOAuthProviderModels();
-    if (result.failed.length > 0) {
-      this.log.warn('oauth startLogin: model refresh failed on already-authenticated fast path', {
-        provider,
-        failures: result.failed,
-      });
+  private async refreshOAuthProviderModelsForLogin(provider: string): Promise<void> {
+    const result = await this.enqueueOAuthProviderModelsRefresh(true);
+    const refreshed =
+      result.changed.some((item) => item.provider_id === provider) ||
+      result.unchanged.includes(provider);
+    if (!refreshed) {
+      throw new OAuthUnauthorizedError(
+        'No Kimi Code models are available for this account. Verify that your Kimi Code membership is active.',
+      );
     }
   }
 
   private async deprovisionProvider(provider: string): Promise<void> {
-    if (provider !== KIMI_CODE_PROVIDER_NAME) return;
     const next = structuredClone(this.readUserConfigShape());
+    if (isOpenAICodexAuth(provider, this.providerService.get(provider)?.oauth)) {
+      const cleanup = clearOpenAICodexConfig(next);
+      if (
+        !cleanup.removedProvider &&
+        cleanup.removedModels.length === 0 &&
+        !cleanup.defaultModelCleared
+      ) {
+        return;
+      }
+      if (cleanup.defaultModelCleared) next.thinking = undefined;
+      if (cleanup.removedProvider) {
+        await this.config.replace(PROVIDERS_SECTION, next.providers);
+      }
+      if (cleanup.removedModels.length > 0) {
+        await this.config.replace(MODELS_SECTION, next.models ?? {});
+      }
+      if (cleanup.defaultModelCleared) {
+        await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
+        await this.config.replace(THINKING_SECTION, undefined);
+      }
+      return;
+    }
+    if (provider !== KIMI_CODE_PROVIDER_NAME) return;
     const cleanup = clearManagedKimiCodeConfig(next);
     if (
       !cleanup.removedProvider &&
@@ -538,6 +734,65 @@ export class OAuthService extends Disposable implements IOAuthService {
       // model keeps /api/v1/auth reporting ready=true after logout.
       await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
       await this.config.replace(THINKING_SECTION, undefined);
+    }
+  }
+
+  private async readEntitlements(): Promise<PersistedOAuthEntitlements> {
+    const value = await this.atomicDocs.get<unknown>(
+      this.bootstrap.scope('store'),
+      AUTH_STATE_KEY,
+    );
+    if (typeof value !== 'object' || value === null) {
+      return { version: 1, providers: {} };
+    }
+    const providers = (value as { providers?: unknown }).providers;
+    if (typeof providers !== 'object' || providers === null) {
+      return { version: 1, providers: {} };
+    }
+    const valid: Record<string, OAuthEntitlementStatus> = {};
+    for (const [provider, status] of Object.entries(providers)) {
+      if (status === 'membership_required') valid[provider] = status;
+    }
+    return { version: 1, providers: valid };
+  }
+
+  private async recordEntitlementStatus(
+    provider: string,
+    status: OAuthEntitlementStatus,
+  ): Promise<void> {
+    try {
+      const current = await this.readEntitlements();
+      await this.atomicDocs.set(this.bootstrap.scope('store'), AUTH_STATE_KEY, {
+        version: 1,
+        providers: { ...current.providers, [provider]: status },
+      } satisfies PersistedOAuthEntitlements);
+    } catch (error) {
+      this.log.warn('oauth entitlement status persistence failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async clearEntitlementStatus(provider: string): Promise<void> {
+    try {
+      const current = await this.readEntitlements();
+      if (current.providers[provider] === undefined) return;
+      const providers = { ...current.providers };
+      delete providers[provider];
+      if (Object.keys(providers).length === 0) {
+        await this.atomicDocs.delete(this.bootstrap.scope('store'), AUTH_STATE_KEY);
+        return;
+      }
+      await this.atomicDocs.set(this.bootstrap.scope('store'), AUTH_STATE_KEY, {
+        version: 1,
+        providers,
+      } satisfies PersistedOAuthEntitlements);
+    } catch (error) {
+      this.log.warn('oauth entitlement status cleanup failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -862,10 +1117,58 @@ function managedModel(
   return config.models?.[alias] as ManagedModel | undefined;
 }
 
-class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
+export class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   declare readonly _serviceBrand: undefined;
+  private readonly openAICodexStorage: FileTokenStorage;
+
   constructor(@IBootstrapService bootstrap: IBootstrapService) {
     super({ homeDir: bootstrap.homeDir });
+    this.openAICodexStorage = new FileTokenStorage(join(bootstrap.homeDir, 'credentials'));
+  }
+
+  override async login(
+    providerName?: string,
+    options: KimiOAuthLoginOptions = {},
+  ): Promise<KimiOAuthLoginResult> {
+    const provider = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const configuredOAuthRef =
+      options.oauthRef?.key === undefined ? undefined : { key: options.oauthRef.key };
+    if (!isOpenAICodexAuth(provider, configuredOAuthRef)) {
+      return super.login(provider, options);
+    }
+
+    const oauthRef = { key: options.oauthRef?.key ?? OPENAI_CODEX_OAUTH_KEY };
+    const tokenProvider = createOpenAICodexTokenProvider({
+      storage: this.openAICodexStorage,
+      providerName: provider,
+      oauthRef,
+    });
+    try {
+      await tokenProvider.getAccessToken();
+      return { providerName: provider, ok: true };
+    } catch (error) {
+      if (!(error instanceof OAuthUnauthorizedError)) throw error;
+    }
+
+    const token = await loginOpenAICodexDeviceCode({
+      signal: options.signal,
+      onDeviceCode: (device) => {
+        void options.onDeviceCode?.({
+          userCode: device.userCode,
+          deviceCode: '',
+          verificationUri: device.verificationUri,
+          verificationUriComplete: device.verificationUri,
+          expiresIn: device.expiresIn,
+          interval: device.interval,
+        });
+      },
+    });
+    const storageName = resolveKimiTokenStorageName({
+      providerName: provider,
+      oauthKey: oauthRef.key,
+    });
+    await this.openAICodexStorage.save(storageName, token);
+    return { providerName: provider, ok: true };
   }
 }
 

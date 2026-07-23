@@ -1,5 +1,12 @@
 export default {
   title: 'Sign in to Kimi Code',
+  chooseTitle: 'Choose an account',
+  chooseHint: 'Select the account you want to connect to Kimi Code.',
+  kimiTitle: 'Sign in to Kimi Code',
+  chatGptTitle: 'Sign in to ChatGPT',
+  kimiOption: 'Kimi Code',
+  chatGptOption: 'OpenAI ChatGPT Plus/Pro',
+  signedIn: 'Signed in',
   close: 'Close (Esc)',
   starting: 'Starting authorization flow…',
   lead: 'Click the button below to authorize in a new browser tab.',
@@ -19,6 +26,8 @@ export default {
   closeBtn: 'Close',
   errorTitle: 'The current daemon does not support login yet',
   errorHint: 'Please upgrade kimi-code and try again',
+  deniedTitle: 'Authorization failed',
+  deniedHint: 'The provider rejected the authorization or setup could not be completed. Please try again.',
   pollErrorTitle: 'Lost connection to the daemon',
   pollErrorHint: 'Authorization polling failed repeatedly. Check the kimi-code process and try again.',
 } as const;

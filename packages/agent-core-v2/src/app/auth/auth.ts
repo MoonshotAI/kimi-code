@@ -37,14 +37,21 @@ export interface AuthStatus {
   readonly provider?: string;
 }
 
+export type OAuthEntitlementStatus = 'membership_required';
+
+export interface OAuthLoginOptions {
+  readonly preserveDefaultModel?: boolean;
+}
+
 export interface IOAuthService {
   readonly _serviceBrand: undefined;
 
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   getFlow(provider?: string): OAuthFlowSnapshot | undefined;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
   status(provider?: string): Promise<AuthStatus>;
+  entitlementStatus(provider?: string): Promise<OAuthEntitlementStatus | undefined>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
   getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;

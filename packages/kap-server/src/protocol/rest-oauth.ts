@@ -1,5 +1,5 @@
 /**
- *   POST   /v1/oauth/login
+ *   POST   /v1/oauth/login   body: { provider?, preserve_default_model? }
  *   GET    /v1/oauth/login
  *   POST   /v1/oauth/logout
  *
@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 export const oauthLoginStartRequestSchema = z.object({
   provider: z.string().min(1).optional(),
+  preserve_default_model: z.boolean().optional(),
 });
 export type OAuthLoginStartRequest = z.infer<typeof oauthLoginStartRequestSchema>;
 

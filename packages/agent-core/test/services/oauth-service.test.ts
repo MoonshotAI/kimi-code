@@ -25,6 +25,10 @@
  *   - logout → delegates to facade.logout
  */
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { assert, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -33,7 +37,12 @@ import {
   type DeviceAuthorization,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import type { ServicesAuthFacade } from '../../src/services/auth/managedAuth';
+import { readConfigFile, writeConfigFile } from '../../src/config';
+import { ErrorCodes } from '../../src/errors';
+import {
+  createManagedAuthFacade,
+  type ServicesAuthFacade,
+} from '../../src/services/auth/managedAuth';
 import { IEnvironmentService } from '../../src/services/environment/environment';
 import { OAuthService } from '../../src/services/oauth/oauthService';
 
@@ -335,5 +344,74 @@ describe('OAuthService.logout', () => {
     // After logout, the in-memory flow is in 'cancelled' terminal state
     expect(impl.getFlow()!.status).toBe('cancelled');
     expect(mock.loginCalls[0]!.signal!.aborted).toBe(true);
+  });
+});
+
+describe('managed auth facade logout', () => {
+  it('removes only the ChatGPT OAuth provider configuration', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-managed-auth-'));
+    const configPath = join(homeDir, 'config.toml');
+    try {
+      await writeConfigFile(configPath, {
+        providers: {
+          openai: { type: 'openai', apiKey: 'YOUR_API_KEY' },
+          'openai-codex': {
+            type: 'openai_responses',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            oauth: { storage: 'file', key: 'oauth/openai-codex' },
+          },
+        },
+        models: {
+          api: { provider: 'openai', model: 'gpt-test', maxContextSize: 128000 },
+          codex: {
+            provider: 'openai-codex',
+            model: 'gpt-test',
+            maxContextSize: 353000,
+          },
+        },
+        defaultModel: 'codex',
+        thinking: { enabled: true },
+      });
+
+      await createManagedAuthFacade({ homeDir, configPath }).logout('openai-codex');
+
+      expect(readConfigFile(configPath)).toMatchObject({
+        providers: {
+          openai: { type: 'openai', apiKey: 'YOUR_API_KEY' },
+        },
+        models: {
+          api: { provider: 'openai', model: 'gpt-test', maxContextSize: 128000 },
+        },
+      });
+      expect(readConfigFile(configPath)).not.toHaveProperty('providers.openai-codex');
+      expect(readConfigFile(configPath)).not.toHaveProperty('models.codex');
+      expect(readConfigFile(configPath).defaultModel).toBeUndefined();
+      expect(readConfigFile(configPath).thinking).toBeUndefined();
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('managed auth facade token provider', () => {
+  it('returns login-required when ChatGPT OAuth credentials are missing', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-managed-auth-'));
+    try {
+      const facade = createManagedAuthFacade({
+        homeDir,
+        configPath: join(homeDir, 'config.toml'),
+      });
+      const provider = facade.resolveOAuthTokenProvider('openai-codex', {
+        storage: 'file',
+        key: 'oauth/openai-codex',
+      });
+      expect(provider).toBeDefined();
+
+      await expect(provider!.getAccessToken()).rejects.toMatchObject({
+        code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+      });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 });

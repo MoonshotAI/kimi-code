@@ -100,9 +100,10 @@ On first launch you need to configure an API source. In the interactive UI, ente
 /login
 ```
 
-`/login` opens a platform selector supporting two options:
+`/login` opens a platform selector supporting these options:
 
 - **Kimi Code (OAuth)** — device-code flow; open the link on any device, sign in, and enter the code to authorize
+- **OpenAI ChatGPT Plus/Pro (OAuth)** — sign in with a ChatGPT subscription and choose one of the bundled Codex models
 - **Kimi Platform API key** — enter an API key from `platform.kimi.com` or `platform.kimi.ai`
 
 To sign out, enter `/logout` to clear the current credentials.

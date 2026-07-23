@@ -3,7 +3,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppProvider } from '../../api/types';
+import type { AppProvider, OAuthLoginProvider } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import Dialog from '../ui/Dialog.vue';
 import Button from '../ui/Button.vue';
@@ -33,7 +33,7 @@ const emit = defineEmits<{
   refresh: [id: string];
   delete: [id: string];
   /** Open the login dialog for the given platform (OAuth flow) */
-  openLogin: [platform: string];
+  openLogin: [provider: OAuthLoginProvider];
   close: [];
 }>();
 
@@ -174,13 +174,13 @@ function statusLabel(status: AppProvider['status']): string {
         <template v-if="!showAddForm">
           <div class="add-btns">
             <!-- OAuth login shortcuts for common platforms -->
-            <Button variant="secondary" size="sm" @click="emit('openLogin', 'moonshot')">
+            <Button variant="secondary" size="sm" @click="emit('openLogin', 'managed:kimi-code')">
               <Icon name="user" size="sm" />
               {{ t('providers.loginKimi') }}
             </Button>
-            <Button variant="secondary" size="sm" @click="emit('openLogin', 'anthropic')">
+            <Button variant="secondary" size="sm" @click="emit('openLogin', 'openai-codex')">
               <Icon name="user" size="sm" />
-              {{ t('providers.loginAnthropic') }}
+              {{ t('providers.loginChatGpt') }}
             </Button>
             <Button variant="primary" size="sm" @click="openAdd">
               <Icon name="plus" size="sm" />

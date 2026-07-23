@@ -427,8 +427,14 @@ export interface WireConfig {
 // ---------------------------------------------------------------------------
 
 export interface WireManagedProvider {
+  name: string;
   status: string;
   [key: string]: unknown;
+}
+
+export interface WireOAuthProvider extends WireManagedProvider {
+  active: boolean;
+  entitlement_status?: 'membership_required';
 }
 
 export interface WireAuthResult {
@@ -436,15 +442,18 @@ export interface WireAuthResult {
   providers_count: number;
   default_model: string | null;
   managed_provider: WireManagedProvider | null;
+  oauth_providers?: WireOAuthProvider[];
 }
 
-// `POST /oauth/login` returns one of two shapes, discriminated by `status`:
+// `POST /oauth/login` returns one of three shapes, discriminated by `status`:
 //   - `pending`: a real device-code flow was started; all device fields are
 //     populated so the client can render the device-code step and poll.
 //   - `authenticated`: the toolkit already had a usable token and short-
 //     circuited via its `ensureFresh` fast path, so no device code was
 //     issued; the client can skip the device-code step and treat the login
 //     as already complete.
+//   - `denied`: cached credentials exist, but provider setup or entitlement
+//     verification failed before the account became usable.
 interface WireOAuthLoginStartPending {
   flow_id: string;
   provider: string;
@@ -463,14 +472,23 @@ interface WireOAuthLoginStartAuthenticated {
   status: 'authenticated';
 }
 
+interface WireOAuthLoginStartDenied {
+  flow_id: string;
+  provider: string;
+  status: 'denied';
+  error_message: string;
+}
+
 export type WireOAuthLoginStartResult =
   | WireOAuthLoginStartPending
-  | WireOAuthLoginStartAuthenticated;
+  | WireOAuthLoginStartAuthenticated
+  | WireOAuthLoginStartDenied;
 
 export interface WireOAuthLoginPollResult {
   flow_id: string;
-  status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+  status: 'pending' | 'authenticated' | 'denied' | 'expired' | 'cancelled';
   resolved_at?: string;
+  error_message?: string;
 }
 
 export interface WireOAuthCancelResult {

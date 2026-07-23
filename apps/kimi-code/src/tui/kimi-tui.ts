@@ -2342,11 +2342,14 @@ export class KimiTUI {
     };
   }
 
-  showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
+  showLoginAuthorizationPrompt(
+    auth: DeviceAuthorization,
+    options: { readonly title?: string | undefined } = {},
+  ): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
       new DeviceCodeBoxComponent({
-        title: 'Sign in to Kimi Code',
+        title: options.title ?? 'Sign in to Kimi Code',
         url: auth.verificationUriComplete,
         code: auth.userCode,
         hint: 'Press Ctrl-C to cancel',

@@ -1,5 +1,5 @@
 /**
- *   POST   /v1/oauth/login   body: { provider? }   data: OAuthFlowStart
+ *   POST   /v1/oauth/login   body: { provider?, preserve_default_model? }
  *   GET    /v1/oauth/login   query: { provider? }  data: OAuthFlowStatus | null
  *   DELETE /v1/oauth/login   query: { provider? }  data: { cancelled, status }
  *   POST   /v1/oauth/logout  body: { provider? }   data: { logged_out, provider }
@@ -19,13 +19,14 @@ export type OAuthFlowStatus = z.infer<typeof oauthFlowStatusEnum>;
 
 export const oauthLoginStartRequestSchema = z.object({
   provider: z.string().min(1).optional(),
+  preserve_default_model: z.boolean().optional(),
 });
 export type OAuthLoginStartRequest = z.infer<typeof oauthLoginStartRequestSchema>;
 
 /**
  * Result of `POST /v1/oauth/login`.
  *
- * Two shapes, discriminated by `status`:
+ * Three shapes, discriminated by `status`:
  *   - `pending`: a real device-code flow was started; the `verification_*`,
  *     `user_code`, `expires_*`, and `interval` fields are populated so the
  *     client can render the device-code step and start polling.
@@ -33,6 +34,8 @@ export type OAuthLoginStartRequest = z.infer<typeof oauthLoginStartRequestSchema
  *     circuited via its `ensureFresh` fast path, so no device code was
  *     issued. The client can skip the device-code step and treat the login
  *     as already complete.
+ *   - `denied`: the cached token was accepted, but provider setup or account
+ *     entitlement verification failed before the login became usable.
  */
 export const oauthFlowStartPendingSchema = z.object({
   flow_id: z.string().min(1),
@@ -54,9 +57,18 @@ export const oauthFlowStartAuthenticatedSchema = z.object({
 });
 export type OAuthFlowStartAuthenticated = z.infer<typeof oauthFlowStartAuthenticatedSchema>;
 
+export const oauthFlowStartDeniedSchema = z.object({
+  flow_id: z.string().min(1),
+  provider: z.string().min(1),
+  status: z.literal('denied'),
+  error_message: z.string().min(1),
+});
+export type OAuthFlowStartDenied = z.infer<typeof oauthFlowStartDeniedSchema>;
+
 export const oauthFlowStartSchema = z.discriminatedUnion('status', [
   oauthFlowStartPendingSchema,
   oauthFlowStartAuthenticatedSchema,
+  oauthFlowStartDeniedSchema,
 ]);
 export type OAuthFlowStart = z.infer<typeof oauthFlowStartSchema>;
 

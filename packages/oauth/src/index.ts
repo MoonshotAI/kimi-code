@@ -134,6 +134,32 @@ export type {
 } from './open-platform';
 
 export {
+  applyOpenAICodexConfig,
+  clearOpenAICodexConfig,
+  createOpenAICodexTokenProvider,
+  createOpenAICodexRequestAuth,
+  extractOpenAICodexAccountId,
+  fetchOpenAICodexModels,
+  isOpenAICodexAuth,
+  loginOpenAICodexDeviceCode,
+  openAICodexModelToAlias,
+  openAICodexOAuthRef,
+  OPENAI_CODEX_BASE_URL,
+  OPENAI_CODEX_CLIENT_ID,
+  OPENAI_CODEX_MODELS,
+  OPENAI_CODEX_OAUTH_HOST,
+  OPENAI_CODEX_OAUTH_KEY,
+  OPENAI_CODEX_PROVIDER_NAME,
+  refreshOpenAICodexToken,
+} from './openai-codex';
+export type {
+  OpenAICodexCleanupResult,
+  OpenAICodexDeviceCode,
+  OpenAICodexModelInfo,
+  OpenAICodexRequestAuth,
+} from './openai-codex';
+
+export {
   applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   capabilitiesFromCustomEntry,

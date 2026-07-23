@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import {
   loadRuntimeConfigSafe,
   readConfigFile,
@@ -9,10 +11,15 @@ import {
 import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
+  createOpenAICodexTokenProvider,
+  FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  OPENAI_CODEX_OAUTH_KEY,
+  OPENAI_CODEX_PROVIDER_NAME,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
+  resolveKimiTokenStorageName,
   type AuthManagedUsageResult,
   type AuthStatus,
   type BearerTokenProvider,
@@ -251,6 +258,15 @@ export class KimiAuthFacade {
     providerName?: string,
     oauthRef?: OAuthRef | undefined,
   ): Promise<string | undefined> {
+    if (this.isOpenAICodexAuth(providerName, oauthRef)) {
+      const storageName = resolveKimiTokenStorageName({
+        providerName: providerName ?? OPENAI_CODEX_PROVIDER_NAME,
+        oauthKey: oauthRef?.key ?? OPENAI_CODEX_OAUTH_KEY,
+      });
+      return new FileTokenStorage(join(this.options.homeDir, 'credentials'))
+        .load(storageName)
+        .then((token) => token?.accessToken);
+    }
     return this.toolkit.getCachedAccessToken(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
@@ -261,6 +277,22 @@ export class KimiAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
+    if (this.isOpenAICodexAuth(providerName, oauthRef)) {
+      const provider = createOpenAICodexTokenProvider({
+        storage: new FileTokenStorage(join(this.options.homeDir, 'credentials')),
+        providerName,
+        oauthRef,
+      });
+      return {
+        getAccessToken: async (options) => {
+          try {
+            return await provider.getAccessToken(options);
+          } catch (error) {
+            throw mapOAuthTokenError(error, providerName) ?? error;
+          }
+        },
+      };
+    }
     const provider = this.toolkit.tokenProvider(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
@@ -315,5 +347,15 @@ export class KimiAuthFacade {
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: oauthRef ?? auth.oauthRef,
     }).oauthRef;
+  }
+
+  private isOpenAICodexAuth(
+    providerName: string | undefined,
+    oauthRef?: OAuthRef | undefined,
+  ): boolean {
+    return (
+      providerName === OPENAI_CODEX_PROVIDER_NAME ||
+      oauthRef?.key === OPENAI_CODEX_OAUTH_KEY
+    );
   }
 }
