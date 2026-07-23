@@ -20,6 +20,5 @@ export function stubSkill(
     plugin: overrides.plugin,
     mermaid: overrides.mermaid,
     d2: overrides.d2,
-    resources: overrides.resources,
   };
 }

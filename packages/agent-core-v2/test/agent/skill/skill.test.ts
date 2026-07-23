@@ -188,11 +188,7 @@ describe('SkillTool', () => {
   });
   afterEach(() => disposables.dispose());
 
-  function toolContext(args: {
-    readonly skill: string;
-    readonly args?: string;
-    readonly resource?: string;
-  }) {
+  function toolContext(args: { readonly skill: string; readonly args?: string }) {
     return {
       turnId: 0,
       toolCallId: 'call_skill',
@@ -343,81 +339,5 @@ describe('SkillTool', () => {
       ),
     ).rejects.toBeInstanceOf(NestedSkillTooDeepError);
     expect(prompted).toHaveLength(0);
-  });
-
-  describe('resource fetch', () => {
-    const BUNDLED_SKILL = stubSkill('bundled', {
-      description: 'skill with bundled resources',
-      resources: {
-        'AGENTS.md': '# Agents notes',
-        'references/hooks-patterns.md': '# Hooks patterns',
-      },
-    });
-
-    it('returns the bundled resource content as a plain tool result', async () => {
-      skills.register(BUNDLED_SKILL);
-
-      const result = await executeTool(
-        makeTool(ix),
-        toolContext({ skill: 'bundled', resource: 'references/hooks-patterns.md' }),
-      );
-
-      expect(result.output).toBe('# Hooks patterns');
-      expect(result.isError).toBeUndefined();
-      expect(result.delivery).toBeUndefined();
-      expect(prompted).toHaveLength(0);
-    });
-
-    it('lists the available resource paths when the requested resource is unknown', async () => {
-      skills.register(BUNDLED_SKILL);
-
-      const result = await executeTool(
-        makeTool(ix),
-        toolContext({ skill: 'bundled', resource: 'references/missing.md' }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain(
-        'Skill "bundled" has no bundled resource "references/missing.md"',
-      );
-      expect(result.output).toContain('- AGENTS.md');
-      expect(result.output).toContain('- references/hooks-patterns.md');
-    });
-
-    it('reports when the skill has no bundled resource files', async () => {
-      const result = await executeTool(
-        makeTool(ix),
-        toolContext({ skill: 'commit', resource: 'AGENTS.md' }),
-      );
-
-      expect(result).toMatchObject({
-        isError: true,
-        output: 'Skill "commit" has no bundled resource files.',
-      });
-    });
-
-    it('does not count a resource fetch against the skill recursion depth', async () => {
-      skills.register(BUNDLED_SKILL);
-
-      const result = await executeTool(
-        makeTool(ix, MAX_SKILL_QUERY_DEPTH),
-        toolContext({ skill: 'bundled', resource: 'AGENTS.md' }),
-      );
-
-      expect(result.output).toBe('# Agents notes');
-      expect(result.delivery).toBeUndefined();
-    });
-
-    it('returns the same not-found error as the invocation path', async () => {
-      const result = await executeTool(
-        makeTool(ix),
-        toolContext({ skill: 'missing', resource: 'AGENTS.md' }),
-      );
-
-      expect(result).toMatchObject({
-        isError: true,
-        output: 'Skill "missing" not found in the current skill listing.',
-      });
-    });
   });
 });

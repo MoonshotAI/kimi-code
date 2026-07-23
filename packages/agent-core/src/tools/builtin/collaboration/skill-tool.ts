@@ -46,7 +46,6 @@ export class NestedSkillTooDeepError extends Error {
 export interface SkillToolInput {
   skill: string;
   args?: string;
-  resource?: string;
 }
 
 export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
@@ -60,12 +59,6 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
     .optional()
     .describe(
       'Optional argument string for the skill, written like a command line (e.g. `-m "fix bug"`, `123`, a file path). It is split on whitespace (quotes group a token) and expanded into the skill\'s placeholders ($NAME, $1, $ARGUMENTS); if the skill body has no placeholders, the whole string is still appended as a trailing `ARGUMENTS:` line. Omit it only when there is nothing to pass.',
-    ),
-  resource: z
-    .string()
-    .optional()
-    .describe(
-      'Optional skill-relative path of a bundled resource file to load (e.g. `references/hooks-patterns.md`) instead of invoking the skill. The available paths are listed in the loaded skill\'s bundled resources. Omit it to invoke the skill normally.',
     ),
 });
 
@@ -92,12 +85,8 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
-    const description =
-      args.resource !== undefined
-        ? `Load resource ${args.resource} from skill ${args.skill}`
-        : `Invoke skill ${args.skill}`;
     return {
-      description,
+      description: `Invoke skill ${args.skill}`,
       display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
@@ -113,12 +102,6 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   }
 
   private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
-    // A resource fetch is a read, not an invocation: it runs before the
-    // recursion cap, records no activation, and appends no message.
-    if (args.resource !== undefined) {
-      return this.fetchResource(args.skill, args.resource);
-    }
-
     // Recursion hard cap. Once `currentDepth` has reached
     // MAX_SKILL_QUERY_DEPTH, firing another Skill call would push the
     // child to depth+1 which violates the invariant. Throw a structured
@@ -166,7 +149,6 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
             skillContent,
             skillSource: skill.source,
             skillDir: skill.dir,
-            skillResources: Object.keys(skill.resources ?? {}).sort(),
             trigger: promptTrigger,
           }),
         },
@@ -176,45 +158,6 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     return {
       output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
     };
-  }
-
-  private fetchResource(skillName: string, resourcePath: string): ExecutableToolResult {
-    const skills = this.agent.skills;
-    if (skills === null) {
-      return errorResult(`Skill "${skillName}" not found in the current skill listing.`);
-    }
-    const skill = skills.registry.getSkill(skillName);
-    if (skill === undefined) {
-      return errorResult(`Skill "${skillName}" not found in the current skill listing.`);
-    }
-    if (skill.metadata.disableModelInvocation === true) {
-      // Keep the exact wording "can only be triggered by the user" so
-      // contract audits and integration tests stay deterministic.
-      return errorResult(
-        `Skill "${skillName}" can only be triggered by the user (model invocation is disabled).`,
-      );
-    }
-    if (!isInlineSkillType(skill.metadata.type)) {
-      return errorResult(
-        `Skill "${skill.name}" is not an inline skill and cannot be invoked by the model in v1.`,
-      );
-    }
-
-    const resources = skill.resources ?? {};
-    const content = resources[resourcePath];
-    if (content !== undefined) {
-      return { output: content };
-    }
-    const available = Object.keys(resources).sort();
-    if (available.length === 0) {
-      return errorResult(`Skill "${skill.name}" has no bundled resource files.`);
-    }
-    return errorResult(
-      [
-        `Skill "${skill.name}" has no bundled resource "${resourcePath}". Available bundled resources:`,
-        ...available.map((path) => `- ${path}`),
-      ].join('\n'),
-    );
   }
 }
 
