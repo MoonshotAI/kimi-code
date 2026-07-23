@@ -44,6 +44,8 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  readonly modelAlias?: string;
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -81,6 +83,8 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly modelAlias?: string;
+  readonly thinkingEffort?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -107,6 +111,8 @@ export function emitAgentRunSpawned(
     description: meta.description,
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
+    modelAlias: meta.modelAlias,
+    thinkingEffort: meta.thinkingEffort,
   });
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,

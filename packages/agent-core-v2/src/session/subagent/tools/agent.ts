@@ -2,8 +2,12 @@
  * `subagent` domain (L6) — the `Agent` collaboration tool.
  *
  * The LLM-facing wrapper over the `subagent` domain: translates the tool args
- * into a Profile + Model binding, creates (or resumes) an agent through
- * `IAgentLifecycleService`, drives one turn via `ISessionSubagentService.run`,
+ * into a Profile + Model binding — resolving the workspace model bindings
+ * (`bindingResolution`) behind the `subagent-model-selection` experimental
+ * flag, asking the user once to create a missing or stale binding
+ * (`bindingAsk`) — creates (or resumes) an agent through
+ * `IAgentLifecycleService` (resume keeps the child's own binding and fails
+ * fast on a stale alias), drives one turn via `ISessionSubagentService.run`,
  * and mirrors the run onto the calling agent's record stream
  * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
  * approval rule, background-task registration (so the LLM can see the run
@@ -56,12 +60,19 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { ISessionQuestionService } from '#/session/question/question';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
+import { createSubagentBindingAsker } from '../bindingAsk';
+import { resolveSubagentSpawnBinding } from '../bindingResolution';
+import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from '../flag';
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
 import { ISessionSubagentService } from '../subagent';
 import {
@@ -110,6 +121,12 @@ export const AgentToolInputSchema = z.preprocess(
       .describe(
         'Optional agent ID to resume instead of creating a new instance. When set, do not also pass subagent_type — the resumed agent keeps its own type, and supplying both is rejected.',
       ),
+    binding_slot: z
+      .string()
+      .optional()
+      .describe(
+        'Named binding slot pre-configured by the user for this workspace (.kimi-code/local.toml under [subagent-slot.<name>]). Set ONLY when the task or preset explicitly names a slot — a slot selects a user-configured model/effort. Never invent slot names, and never use this to choose a model yourself.',
+      ),
     run_in_background: z
       .boolean()
       .optional()
@@ -143,11 +160,14 @@ const RESUME_WITH_TYPE_UNAVAILABLE =
 const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The subagent was stopped before it finished by user.';
 const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
+const SUBAGENT_MODEL_UNAVAILABLE_MESSAGE =
+  'The configured subagent model alias is not resolvable. Check the bindings in .kimi-code/local.toml and your models config.';
 
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly name: string = 'Agent';
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
+
+  private readonly fullParameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -167,12 +187,25 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
+    @IProjectLocalConfigService private readonly projectLocalConfig: IProjectLocalConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @ISessionQuestionService private readonly question: ISessionQuestionService,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
       this.toolPolicy.isToolActive('TaskStop');
+  }
+
+  get parameters(): Record<string, unknown> {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+      return this.fullParameters;
+    }
+    const properties = { ...(this.fullParameters['properties'] as Record<string, unknown>) };
+    delete properties['binding_slot'];
+    return { ...this.fullParameters, properties };
   }
 
   get description(): string {
@@ -250,6 +283,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     let agentId: string;
     let profileName: string;
     let promptText = args.prompt;
+    let spawnedModelAlias: string | undefined;
+    let spawnedThinkingEffort: string | undefined;
     if (isResume) {
       const target = this.lifecycle.get(resumeAgentId);
       if (target === undefined) {
@@ -258,8 +293,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       this.realignChildModel(target);
       agentId = target.id;
-      profileName =
-        target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
+      const childData = target.accessor.get(IAgentProfileService).data();
+      profileName = childData.profileName ?? RESUMED_LABEL;
+      if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+        spawnedModelAlias = childData.modelAlias;
+        spawnedThinkingEffort = childData.thinkingLevel;
+      }
     } else {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
@@ -274,14 +313,43 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       if (profile === undefined) {
         throw new Error(`Unknown agent type: "${requestedProfileName}"`);
       }
-      if (own.modelAlias === undefined) {
+      const bindingResolution = await resolveSubagentSpawnBinding(
+        {
+          flags: this.flags,
+          projectLocalConfig: this.projectLocalConfig,
+          modelCatalog: this.modelCatalog,
+          ask: createSubagentBindingAsker({
+            question: this.question,
+            projectLocalConfig: this.projectLocalConfig,
+            modelCatalog: this.modelCatalog,
+            workDir: this.workspace.workDir,
+            agentId: this.callerAgentId,
+            signal: controller.signal,
+          }),
+        },
+        {
+          workDir: this.workspace.workDir,
+          profileName: profile.name,
+          bindingSlot: args.binding_slot,
+        },
+      );
+      if (bindingResolution.warning !== undefined) {
+        this.log.warn('subagent binding resolution', { warning: bindingResolution.warning });
+      }
+      const model = bindingResolution.model ?? own.modelAlias;
+      if (model === undefined) {
         throw new Error('Caller agent has no model bound');
+      }
+      const thinking = bindingResolution.thinking ?? own.thinkingLevel;
+      if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+        spawnedModelAlias = model;
+        spawnedThinkingEffort = thinking;
       }
       const created = await this.lifecycle.create({
         binding: {
           profile: profile.name,
-          model: own.modelAlias,
-          thinking: own.thinkingLevel,
+          model,
+          thinking,
           cwd: own.cwd,
         },
         labels: subagentLabels(this.callerAgentId),
@@ -305,6 +373,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       parentToolCallId: toolCallId,
       description: args.description,
       runInBackground,
+      modelAlias: spawnedModelAlias,
+      thinkingEffort: spawnedThinkingEffort,
     });
 
     const run = await this.subagents.run(
@@ -344,6 +414,17 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 
   private realignChildModel(target: IAgentScopeHandle): void {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+      const childModelAlias = target.accessor.get(IAgentProfileService).data().modelAlias;
+      if (childModelAlias !== undefined) {
+        try {
+          this.modelCatalog.get(childModelAlias);
+        } catch {
+          throw new Error(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+        }
+      }
+      return;
+    }
     const modelAlias = this.profile.data().modelAlias;
     if (modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');

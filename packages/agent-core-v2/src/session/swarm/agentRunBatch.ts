@@ -31,6 +31,7 @@ export interface AgentRunAttemptOptions {
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
+  readonly bindingSlot?: string;
 }
 
 export type AgentRunAttemptHandle = {
@@ -301,6 +302,7 @@ export class AgentRunBatch<T> {
         const spawnOptions: AgentSpawnAttemptOptions = {
           profileName: task.profileName,
           swarmItem: task.swarmItem,
+          bindingSlot: task.bindingSlot,
           ...runOptions,
         };
         handle = await this.launcher.spawn(spawnOptions);

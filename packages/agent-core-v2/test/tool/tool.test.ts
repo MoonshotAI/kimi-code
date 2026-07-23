@@ -34,7 +34,14 @@ import {
 } from '#/session/subagent/tools/agent';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import {
+  emitAgentRunSpawned,
+  mirrorAgentRun,
+  type SubagentSpawnedEvent,
+} from '#/session/subagent/mirrorAgentRun';
+import { IFlagService } from '#/app/flag/flag';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   type AgentRunHandle,
@@ -47,6 +54,7 @@ import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { ISessionQuestionService } from '#/session/question/question';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type {
@@ -57,7 +65,11 @@ import type {
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { stubFlag } from '../app/flag/stubs';
+import { stubProjectLocalConfig } from '../app/projectLocalConfig/stubs';
+import { stubQuestionService } from '../session/question/stubs';
 import {
+  appService,
   configServices,
   createCommandRunner,
   createTestAgent,
@@ -365,6 +377,20 @@ function subagentMeta(parentAgentId = 'main'): AgentMeta {
   };
 }
 
+function modelCatalogStub(validAliases: readonly string[]): IModelCatalog {
+  const valid = new Set(validAliases);
+  return {
+    _serviceBrand: undefined,
+    get: (alias: string): Model => {
+      if (!valid.has(alias)) throw new Error(`model.not_configured: ${alias}`);
+      return {} as Model;
+    },
+    // The harness drops the assembled-Model cache behind the service's back
+    // during context setup (see AgentTestContext.configureRuntimeModel).
+    notifyConfigChanged: () => {},
+  } as unknown as IModelCatalog;
+}
+
 describe('AgentToolInputSchema', () => {
   it('accepts the snake_case background parameter', () => {
     const parsed = AgentToolInputSchema.parse({
@@ -639,6 +665,12 @@ describe('Agent tool execution contract', () => {
       sessionService(IAgentLifecycleService, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
+      // With the experimental flag enabled (e.g. via the dev env's
+      // KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION), an unbound spawn
+      // asks for a binding: default to a dismissing question service so the
+      // spawn falls back to inheritance instead of parking on the harness
+      // RPC. Tests that exercise the ask override this via `extra`.
+      sessionService(ISessionQuestionService, stubQuestionService()),
       ...extra,
     );
     lifecycle.addHandle('main', 'agent');
@@ -674,6 +706,24 @@ describe('Agent tool execution contract', () => {
       reload: async () => {},
     };
   }
+
+  it('hides binding_slot from the advertised schema unless the binding flag is enabled', async () => {
+    const offContext = createAgentToolContext(
+      createAgentLifecycleStub(),
+      appService(IFlagService, stubFlag(false)),
+    );
+    const offSchema = agentTool(offContext).parameters as { properties: Record<string, unknown> };
+    await offContext.dispose();
+
+    const onContext = createAgentToolContext(
+      createAgentLifecycleStub(),
+      appService(IFlagService, stubFlag(true)),
+    );
+    const onSchema = agentTool(onContext).parameters as { properties: Record<string, unknown> };
+
+    expect(Object.keys(offSchema.properties)).not.toContain('binding_slot');
+    expect(Object.keys(onSchema.properties)).toContain('binding_slot');
+  });
 
   it('rejects a subagent type outside the caller allowlist', async () => {
     const lifecycle = createAgentLifecycleStub();
@@ -1094,6 +1144,7 @@ describe('Agent tool execution contract', () => {
         ISessionMetadata,
         sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
+      appService(IFlagService, stubFlag(false)),
     );
     lifecycle.addHandle(
       'agent-existing',
@@ -1607,6 +1658,494 @@ describe('Agent tool execution contract', () => {
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('subagent error: Agent timed out after 1 second.');
   });
+
+  describe('subagent model bindings', () => {
+    it('keeps inheriting the caller model and emits no model fields when the flag is disabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        appService(IFlagService, stubFlag(false)),
+        appService(
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
+            bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
+          }),
+        ),
+      );
+      const own = context.get(IAgentProfileService).data();
+
+      await executeAgentTool(context, {
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'explore',
+      });
+
+      expect(lifecycle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            profile: 'explore',
+            model: own.modelAlias,
+            thinking: own.thinkingLevel,
+          }),
+        }),
+      );
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toBeDefined();
+      expect(spawned?.modelAlias).toBeUndefined();
+      expect(spawned?.thinkingEffort).toBeUndefined();
+    });
+
+    it('applies the type binding and reports the effective model on the spawned event when enabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        appService(IFlagService, stubFlag(true)),
+        appService(
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
+            bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
+          }),
+        ),
+      );
+      context.get(IAgentProfileService).update({ modelAlias: 'parent-model' });
+
+      await executeAgentTool(context, {
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'explore',
+      });
+
+      expect(lifecycle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            profile: 'explore',
+            model: 'mock-model',
+            thinking: 'high',
+          }),
+        }),
+      );
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toMatchObject({
+        modelAlias: 'mock-model',
+        thinkingEffort: 'high',
+      });
+    });
+
+    it('prefers the named binding slot over the type binding when enabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        appService(IFlagService, stubFlag(true)),
+        appService(
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
+            bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
+            slotBindings: { fast: { model: 'mock-model', thinkingEffort: 'low' } },
+          }),
+        ),
+      );
+
+      await executeAgentTool(context, {
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'explore',
+        binding_slot: 'fast',
+      });
+
+      expect(lifecycle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            profile: 'explore',
+            model: 'mock-model',
+            thinking: 'low',
+          }),
+        }),
+      );
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toMatchObject({
+        modelAlias: 'mock-model',
+        thinkingEffort: 'low',
+      });
+    });
+
+    it('asks once when the type has no binding and applies and persists the answer when enabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const localConfig = stubProjectLocalConfig();
+      const writeType = vi.spyOn(localConfig, 'writeSubagentBinding');
+      const question = stubQuestionService({
+        respond: (req) => ({ answers: { [req.questions[0]?.question ?? '']: 'mock-model' } }),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        appService(IFlagService, stubFlag(true)),
+        appService(IProjectLocalConfigService, localConfig),
+        sessionService(ISessionQuestionService, question),
+      );
+
+      await executeAgentTool(context, {
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'explore',
+      });
+
+      expect(question.request).toHaveBeenCalledOnce();
+      expect(lifecycle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            profile: 'explore',
+            model: 'mock-model',
+          }),
+        }),
+      );
+      expect(writeType).toHaveBeenCalledWith(expect.any(String), 'explore', {
+        model: 'mock-model',
+        thinkingEffort: undefined,
+      });
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toMatchObject({
+        modelAlias: 'mock-model',
+      });
+    });
+
+    it('inherits the caller model without persisting when the binding ask is dismissed and enabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const lifecycle = createAgentLifecycleStub({
+        createAgentIds: ['agent-child'],
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const localConfig = stubProjectLocalConfig();
+      const writeType = vi.spyOn(localConfig, 'writeSubagentBinding');
+      const question = stubQuestionService();
+      const context = createAgentToolContext(
+        lifecycle,
+        appService(IFlagService, stubFlag(true)),
+        appService(IProjectLocalConfigService, localConfig),
+        sessionService(ISessionQuestionService, question),
+      );
+      const own = context.get(IAgentProfileService).data();
+
+      await executeAgentTool(context, {
+        prompt: 'Investigate',
+        description: 'Find cause',
+        subagent_type: 'explore',
+      });
+
+      expect(question.request).toHaveBeenCalledOnce();
+      expect(lifecycle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            profile: 'explore',
+            model: own.modelAlias,
+            thinking: own.thinkingLevel,
+          }),
+        }),
+      );
+      expect(writeType).not.toHaveBeenCalled();
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toMatchObject({
+        modelAlias: own.modelAlias,
+      });
+    });
+
+    it('keeps the bound model on a directly resumed subagent and reports it on the spawned event when enabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const targetProfile = {
+        _serviceBrand: undefined,
+        data: () => ({ profileName: 'explore', modelAlias: 'sub/model', thinkingLevel: 'high' }),
+        update: vi.fn(),
+        isToolActive: () => false,
+      } as unknown as IAgentProfileService;
+      const lifecycle = createAgentLifecycleStub({
+        runCompletion: async () => ({ summary: 'resumed result' }),
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(
+          ISessionMetadata,
+          sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+        ),
+        appService(IFlagService, stubFlag(true)),
+        appService(IModelCatalog, modelCatalogStub(['mock-model', 'sub/model'])),
+        appService(
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
+            bindings: { explore: { model: 'sub/model', thinkingEffort: 'high' } },
+          }),
+        ),
+      );
+      lifecycle.addHandle(
+        'agent-existing',
+        'explore',
+        new Map([[IAgentProfileService, targetProfile]]),
+      );
+
+      await executeAgentTool(context, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      });
+
+      expect(targetProfile.update).not.toHaveBeenCalled();
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toMatchObject({
+        modelAlias: 'sub/model',
+        thinkingEffort: 'high',
+      });
+    });
+
+    it('fails a sticky resume when the bound model alias no longer resolves and the flag is enabled', async () => {
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn(),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const targetProfile = {
+        _serviceBrand: undefined,
+        data: () => ({ profileName: 'explore', modelAlias: 'gone/model', thinkingLevel: 'high' }),
+        update: vi.fn(),
+        isToolActive: () => false,
+      } as unknown as IAgentProfileService;
+      const lifecycle = createAgentLifecycleStub({
+        runCompletion: async () => ({ summary: 'resumed result' }),
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(
+          ISessionMetadata,
+          sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+        ),
+        appService(IFlagService, stubFlag(true)),
+        appService(IModelCatalog, modelCatalogStub(['mock-model'])),
+      );
+      lifecycle.addHandle(
+        'agent-existing',
+        'explore',
+        new Map([[IAgentProfileService, targetProfile]]),
+      );
+
+      const result = await executeAgentTool(context, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain(
+        'The configured subagent model alias is not resolvable. Check the bindings in .kimi-code/local.toml and your models config.',
+      );
+      expect(targetProfile.update).not.toHaveBeenCalled();
+      expect(lifecycle.run).not.toHaveBeenCalled();
+    });
+
+    it('resumes a sticky subagent without realigning when the bound alias still resolves and the flag is enabled', async () => {
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn(),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const targetProfile = {
+        _serviceBrand: undefined,
+        data: () => ({ profileName: 'explore', modelAlias: 'sub/model', thinkingLevel: 'high' }),
+        update: vi.fn(),
+        isToolActive: () => false,
+      } as unknown as IAgentProfileService;
+      const lifecycle = createAgentLifecycleStub({
+        runCompletion: async () => ({ summary: 'resumed result' }),
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(
+          ISessionMetadata,
+          sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+        ),
+        appService(IFlagService, stubFlag(true)),
+        appService(IModelCatalog, modelCatalogStub(['mock-model', 'sub/model'])),
+      );
+      lifecycle.addHandle(
+        'agent-existing',
+        'explore',
+        new Map([[IAgentProfileService, targetProfile]]),
+      );
+
+      const result = await executeAgentTool(context, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(result.output).toContain('resumed result');
+      expect(targetProfile.update).not.toHaveBeenCalled();
+    });
+
+    it('does not validate the resumed subagent model alias when the flag is disabled', async () => {
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn(),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const targetProfile = {
+        _serviceBrand: undefined,
+        data: () => ({ profileName: 'explore', modelAlias: 'gone/model', thinkingLevel: 'high' }),
+        update: vi.fn(),
+        isToolActive: () => false,
+      } as unknown as IAgentProfileService;
+      const lifecycle = createAgentLifecycleStub({
+        runCompletion: async () => ({ summary: 'resumed result' }),
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(
+          ISessionMetadata,
+          sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+        ),
+        appService(IFlagService, stubFlag(false)),
+        appService(IModelCatalog, modelCatalogStub(['mock-model'])),
+      );
+      lifecycle.addHandle(
+        'agent-existing',
+        'explore',
+        new Map([[IAgentProfileService, targetProfile]]),
+      );
+
+      const result = await executeAgentTool(context, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(targetProfile.update).toHaveBeenCalledWith({ modelAlias: 'mock-model' });
+    });
+
+    it('realigns a directly resumed subagent to the caller model and emits no model fields when disabled', async () => {
+      const events: DomainEvent[] = [];
+      const eventBus = {
+        _serviceBrand: undefined,
+        publish: vi.fn((event: DomainEvent) => {
+          events.push(event);
+        }),
+        subscribe: vi.fn(() => noopDisposable()),
+      } as IEventBus;
+      const targetProfile = {
+        _serviceBrand: undefined,
+        data: () => ({ profileName: 'explore', modelAlias: 'stale-model', thinkingLevel: 'high' }),
+        update: vi.fn(),
+        isToolActive: () => false,
+      } as unknown as IAgentProfileService;
+      const lifecycle = createAgentLifecycleStub({
+        runCompletion: async () => ({ summary: 'resumed result' }),
+        handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(
+          ISessionMetadata,
+          sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+        ),
+        appService(IFlagService, stubFlag(false)),
+        appService(
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
+            bindings: { explore: { model: 'sub/model', thinkingEffort: 'high' } },
+          }),
+        ),
+      );
+      lifecycle.addHandle(
+        'agent-existing',
+        'explore',
+        new Map([[IAgentProfileService, targetProfile]]),
+      );
+
+      await executeAgentTool(context, {
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      });
+
+      expect(targetProfile.update).toHaveBeenCalledWith({ modelAlias: 'mock-model' });
+      const spawned = events.find(
+        (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+      );
+      expect(spawned).toBeDefined();
+      expect(spawned?.modelAlias).toBeUndefined();
+      expect(spawned?.thinkingEffort).toBeUndefined();
+    });
+  });
 });
 
 describe('AgentSwarmToolInputSchema', () => {
@@ -1654,6 +2193,15 @@ describe('AgentSwarmToolInputSchema', () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it('accepts an optional binding_slot and rejects blank values', () => {
+    expect(
+      AgentSwarmToolInputSchema.safeParse({ ...spawnInput, binding_slot: 'fast' }).success,
+    ).toBe(true);
+    expect(
+      AgentSwarmToolInputSchema.safeParse({ ...spawnInput, binding_slot: '   ' }).success,
+    ).toBe(false);
   });
 
   it('exposes subagent_type and resume_agent_ids parameters', () => {
@@ -1780,6 +2328,48 @@ describe('AgentSwarm tool execution contract', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
+  });
+
+  it('forwards the binding slot to item-spawned tasks but not resumed tasks', async () => {
+    const runSwarm = vi.fn(
+      async (
+        args: SessionSwarmRunArgs<unknown>,
+      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => {
+        return args.tasks.map((task, index) => ({
+          task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed' as const,
+          result: `result ${String(index + 1)}`,
+        }));
+      },
+    );
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+
+    await executeTool(agentSwarmTool(ctx), {
+      turnId: 0,
+      toolCallId: 'call_swarm',
+      args: {
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        resume_agent_ids: { 'agent-old-1': 'Continue previous review' },
+        binding_slot: 'fast',
+      },
+      signal,
+    });
+
+    expect(runSwarm).toHaveBeenCalledOnce();
+    const tasks = runSwarm.mock.calls[0]![0].tasks;
+    expect(tasks).toHaveLength(3);
+    expect(
+      tasks.map((task) => (task.kind === 'spawn' ? task.bindingSlot : task.kind)),
+    ).toEqual(['resume', 'fast', 'fast']);
   });
 
   it('resumes mapped agents before spawning item subagents', async () => {
@@ -2318,6 +2908,9 @@ describe('Agent tools', () => {
         sessionService(IAgentLifecycleService, lifecycle),
         sessionService(ISessionSubagentService, lifecycle),
         sessionService(ISessionCronService, cronStub),
+        // See createAgentToolContext: an unbound spawn asks for a binding
+        // when the experimental flag is enabled; dismiss by default.
+        sessionService(ISessionQuestionService, stubQuestionService()),
       );
       lifecycle.addHandle('main', 'agent');
     });
@@ -2509,7 +3102,7 @@ describe('Agent tools', () => {
     };
 
     beforeEach(async () => {
-      ctx = createTestAgent();
+      ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
       await ctx.rpc.setPermission({ mode: 'auto' });
       await ctx.rpc.registerTool({
         name: 'Lookup',

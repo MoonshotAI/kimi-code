@@ -12,15 +12,18 @@ import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
+  appService,
   createTestAgent,
   permissionModeServices,
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
+import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
@@ -89,6 +92,8 @@ describe('Agent loop', () => {
   });
 
   it('fails the turn after a filtered step completes', async () => {
+    await ctx.dispose();
+    ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'blocked' }],
       finishReason: 'filtered',

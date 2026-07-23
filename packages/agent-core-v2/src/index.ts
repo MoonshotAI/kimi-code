@@ -225,6 +225,7 @@ export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
 import '#/agent/faultInjection/flag';
+import '#/session/subagent/flag';
 import '#/agent/toolSelect/tools/select-tools';
 export * from '#/agent/toolSelect/dynamicTools';
 export * from '#/agent/toolSelect/toolSelect';

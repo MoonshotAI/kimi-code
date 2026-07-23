@@ -445,6 +445,10 @@ const ALLOWED_EXCEPTIONS = new Set([
   // config defaults reaches the `subagent` section (L6) for the subagent
   // timeout — same cross-scope config-fill shape as `swarm>subagent`.
   'agentTask>subagent',
+  // `subagent` (L6) ask-once binding creation questions the user through the
+  // L7 question broker on the Agent tool spawn path (swarm never asks) — same
+  // shape as the `permissionGate>approval` boundary-broker exception above.
+  'subagent>question',
   'cron>agentLifecycle',
   'cron>sessionContext',
   'todo>agentLifecycle',

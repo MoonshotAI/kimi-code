@@ -5,8 +5,12 @@
  * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives
  * (`create({ binding })`, `run`), drives the internal `AgentRunBatch`
  * scheduler, and tracks one `AbortController` per caller so `cancel` can abort
- * every in-flight run. The caller ↔ child association is this domain's own
- * business data: requester-side display facts (`subagent.spawned` wire signals
+ * every in-flight run. Spawn attempts resolve the workspace model bindings
+ * (`subagent/bindingResolution`) behind the `subagent-model-selection`
+ * experimental flag before falling back to the caller model; resume attempts
+ * keep the child's own binding and fail fast on a stale alias. The caller ↔
+ * child association is this domain's own business data: requester-side display
+ * facts (`subagent.spawned` wire signals
  * carrying the swarm's tool-call context, `subagent.suspended` when a task is
  * requeued after a provider rate limit) are emitted here / via the
  * `agentLifecycle` wrapper helper `mirrorAgentRun`; the lifecycle registry
@@ -24,8 +28,11 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   isSubagentMeta,
@@ -33,6 +40,8 @@ import {
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
+import { resolveSubagentSpawnBinding } from '#/session/subagent/bindingResolution';
+import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from '#/session/subagent/flag';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -68,6 +77,8 @@ declare module '#/app/event/eventBus' {
 }
 
 const RESUMED_PROFILE_FALLBACK = 'subagent';
+const SUBAGENT_MODEL_UNAVAILABLE_MESSAGE =
+  'The configured subagent model alias is not resolvable. Check the bindings in .kimi-code/local.toml and your models config.';
 
 export class SessionSwarmService implements ISessionSwarmService {
   declare readonly _serviceBrand: undefined;
@@ -82,6 +93,9 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @IFlagService private readonly flags: IFlagService,
+    @IProjectLocalConfigService private readonly projectLocalConfig: IProjectLocalConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
   async getSwarmItem(args: {
@@ -141,14 +155,32 @@ export class SessionSwarmService implements ISessionSwarmService {
       throw new Error(`Unknown agent type: "${options.profileName}"`);
     }
     const callerData = caller.accessor.get(IAgentProfileService).data();
-    if (callerData.modelAlias === undefined) {
+    const bindingResolution = await resolveSubagentSpawnBinding(
+      {
+        flags: this.flags,
+        projectLocalConfig: this.projectLocalConfig,
+        modelCatalog: this.modelCatalog,
+      },
+      {
+        workDir: this.sessionContext.cwd,
+        profileName: profile.name,
+        bindingSlot: options.bindingSlot,
+      },
+    );
+    if (bindingResolution.warning !== undefined) {
+      this.log.warn('subagent binding resolution', { warning: bindingResolution.warning });
+    }
+    const model = bindingResolution.model ?? callerData.modelAlias;
+    if (model === undefined) {
       throw new Error('Caller agent has no model bound');
     }
+    const thinking = bindingResolution.thinking ?? callerData.thinkingLevel;
+    const selectionEnabled = this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID);
     const child = await this.lifecycle.create({
       binding: {
         profile: profile.name,
-        model: callerData.modelAlias,
-        thinking: callerData.thinkingLevel,
+        model,
+        thinking,
         cwd: callerData.cwd,
       },
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
@@ -166,6 +198,8 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
+      modelAlias: selectionEnabled ? model : undefined,
+      thinkingEffort: selectionEnabled ? thinking : undefined,
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
       cwd: this.sessionContext.cwd,
@@ -190,9 +224,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
     this.realignChildModel(caller, child);
-    const profileName =
-      child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
+    const childData = child.accessor.get(IAgentProfileService).data();
+    const profileName = childData.profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
+      const selectionEnabled = this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID);
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -200,6 +235,8 @@ export class SessionSwarmService implements ISessionSwarmService {
         description: options.description,
         swarmIndex: options.swarmIndex,
         runInBackground: options.runInBackground,
+        modelAlias: selectionEnabled ? childData.modelAlias : undefined,
+        thinkingEffort: selectionEnabled ? childData.thinkingLevel : undefined,
       });
     }
     const request = retryTurn
@@ -239,6 +276,17 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+      const childModelAlias = child.accessor.get(IAgentProfileService).data().modelAlias;
+      if (childModelAlias !== undefined) {
+        try {
+          this.modelCatalog.get(childModelAlias);
+        } catch {
+          throw new Error(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+        }
+      }
+      return;
+    }
     const modelAlias = caller.accessor.get(IAgentProfileService).data().modelAlias;
     if (modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');
