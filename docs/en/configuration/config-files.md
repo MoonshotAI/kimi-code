@@ -305,6 +305,8 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 | `oauth` | `table` | No | OAuth credential reference, same structure as `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
 
+`base_url` and `api_key` can also come from environment variables, which take priority over the config file: `KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` for `moonshot_search`, and `KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` for `moonshot_fetch`. Setting only the environment variables — without any config section — enables the corresponding service all the same.
+
 ```toml
 [services.moonshot_search]
 base_url = "https://api.moonshot.cn/v1/search"

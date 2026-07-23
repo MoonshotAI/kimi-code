@@ -1,11 +1,15 @@
 /**
- * `auth` domain (L2) — `services` config-section schema and TOML transforms.
+ * `auth` domain (L2) — `services` config-section schema, TOML transforms, and
+ * env bindings.
  *
  * Owns the `[services]` configuration section (`moonshot_search` /
  * `moonshot_fetch`), mirroring v1's `ServicesConfigSchema`: the schema, and the
  * snake_case ↔ camelCase TOML transforms (including the nested `oauth` and
  * `custom_headers` normalization, with `custom_headers` record keys preserved
- * verbatim). Self-registered at module load via `registerConfigSection`, so the
+ * verbatim). Both entries' `base_url` / `api_key` are env-overridable
+ * (`KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*`, env wins over the file); the
+ * composed `stripEnv` keeps env-derived values from being persisted.
+ * Self-registered at module load via `registerConfigSection`, so the
  * `config` domain never imports this domain's types.
  *
  * The `auth` domain owns this section because its OAuth login/logout flows
@@ -16,6 +20,12 @@
 
 import { z } from 'zod';
 
+import {
+  type ConfigStripEnv,
+  type EnvBindings,
+  envBindings,
+  stripEnvBoundFields,
+} from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   camelToSnake,
@@ -61,6 +71,64 @@ export const ServicesConfigSchema = z
   .passthrough();
 
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
+
+export const WEB_SEARCH_BASE_URL_ENV = 'KIMI_WEB_SEARCH_BASE_URL';
+export const WEB_SEARCH_API_KEY_ENV = 'KIMI_WEB_SEARCH_API_KEY';
+export const WEB_FETCH_BASE_URL_ENV = 'KIMI_WEB_FETCH_BASE_URL';
+export const WEB_FETCH_API_KEY_ENV = 'KIMI_WEB_FETCH_API_KEY';
+
+/** Ignore blank env values so an empty override never masks the file value. */
+const nonBlankEnv = (raw: string): string | undefined => {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const moonshotSearchEnvBindings = envBindings(MoonshotServiceConfigSchema, {
+  baseUrl: { env: WEB_SEARCH_BASE_URL_ENV, parse: nonBlankEnv },
+  apiKey: { env: WEB_SEARCH_API_KEY_ENV, parse: nonBlankEnv },
+});
+
+const moonshotFetchEnvBindings = envBindings(MoonshotServiceConfigSchema, {
+  baseUrl: { env: WEB_FETCH_BASE_URL_ENV, parse: nonBlankEnv },
+  apiKey: { env: WEB_FETCH_API_KEY_ENV, parse: nonBlankEnv },
+});
+
+export const servicesEnvBindings: EnvBindings<ServicesConfig> = envBindings(
+  ServicesConfigSchema,
+  {
+    moonshotSearch: moonshotSearchEnvBindings,
+    moonshotFetch: moonshotFetchEnvBindings,
+  },
+);
+
+const stripMoonshotSearchEnv = stripEnvBoundFields(moonshotSearchEnvBindings);
+const stripMoonshotFetchEnv = stripEnvBoundFields(moonshotFetchEnvBindings);
+
+/**
+ * `stripEnvBoundFields` does not recurse into nested binding maps, so compose
+ * the per-entry strips by hand: while an entry's env vars resolve, persistence
+ * restores its env-free raw value (or drops the entry) instead of writing the
+ * env-derived `baseUrl` / `apiKey` back to `config.toml`.
+ */
+export const stripServicesEnv: ConfigStripEnv<ServicesConfig> = (value, raw, getEnv) => {
+  let out: ServicesConfig | undefined;
+  for (const [key, strip] of [
+    ['moonshotSearch', stripMoonshotSearchEnv],
+    ['moonshotFetch', stripMoonshotFetchEnv],
+  ] as const) {
+    const entry = value[key];
+    if (entry === undefined) continue;
+    const stripped = strip(entry, isPlainObject(raw) ? raw[key] : undefined, getEnv);
+    if (stripped === entry) continue;
+    out ??= { ...value };
+    if (stripped === undefined) {
+      delete out[key];
+    } else {
+      out[key] = stripped;
+    }
+  }
+  return out ?? value;
+};
 
 export const servicesFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
@@ -119,4 +187,6 @@ function serviceEntryToToml(service: Record<string, unknown>): Record<string, un
 registerConfigSection(SERVICES_SECTION, ServicesConfigSchema, {
   fromToml: servicesFromToml,
   toToml: servicesToToml,
+  env: servicesEnvBindings,
+  stripEnv: stripServicesEnv,
 });

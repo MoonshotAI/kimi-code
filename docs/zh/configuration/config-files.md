@@ -305,6 +305,8 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 | `oauth` | `table` | 否 | OAuth 凭据引用，结构同 `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | 否 | 请求时附加的自定义 HTTP 头 |
 
+`base_url` 和 `api_key` 也可由环境变量提供，环境变量优先于配置文件：`KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` 对应 `moonshot_search`，`KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` 对应 `moonshot_fetch`。只设置环境变量、不写配置段，也可以启用对应服务。
+
 ```toml
 [services.moonshot_search]
 base_url = "https://api.moonshot.cn/v1/search"

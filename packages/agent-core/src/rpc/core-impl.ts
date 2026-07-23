@@ -157,6 +157,10 @@ const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
+const WEB_SEARCH_BASE_URL_ENV = 'KIMI_WEB_SEARCH_BASE_URL';
+const WEB_SEARCH_API_KEY_ENV = 'KIMI_WEB_SEARCH_API_KEY';
+const WEB_FETCH_BASE_URL_ENV = 'KIMI_WEB_FETCH_BASE_URL';
+const WEB_FETCH_API_KEY_ENV = 'KIMI_WEB_FETCH_API_KEY';
 const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
@@ -1405,8 +1409,16 @@ async function createRuntimeConfig(input: {
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
 }): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
-  const searchService = input.config.services?.moonshotSearch;
-  const fetchService = input.config.services?.moonshotFetch;
+  const searchService = withServiceEnv(
+    input.config.services?.moonshotSearch,
+    WEB_SEARCH_BASE_URL_ENV,
+    WEB_SEARCH_API_KEY_ENV,
+  );
+  const fetchService = withServiceEnv(
+    input.config.services?.moonshotFetch,
+    WEB_FETCH_BASE_URL_ENV,
+    WEB_FETCH_API_KEY_ENV,
+  );
 
   return {
     urlFetcher:
@@ -1427,6 +1439,24 @@ async function createRuntimeConfig(input: {
             ...serviceCredentials(searchService, input.resolveOAuthTokenProvider),
           }),
   };
+}
+
+/**
+ * Overlay the `KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*` env vars onto a
+ * `[services.*]` entry, field by field (env wins over config.toml, mirroring
+ * the other `KIMI_*` overrides). Blank env values are treated as unset; an
+ * `api_key`-only override without any `base_url` stays inert because
+ * `baseUrl` remains the enable switch above.
+ */
+function withServiceEnv(
+  service: MoonshotServiceConfig | undefined,
+  baseUrlEnv: string,
+  apiKeyEnv: string,
+): MoonshotServiceConfig | undefined {
+  const baseUrl = nonEmptyString(process.env[baseUrlEnv]) ?? service?.baseUrl;
+  const apiKey = nonEmptyString(process.env[apiKeyEnv]) ?? service?.apiKey;
+  if (baseUrl === undefined && apiKey === undefined) return service;
+  return { ...service, baseUrl, apiKey };
 }
 
 function serviceCredentials(
