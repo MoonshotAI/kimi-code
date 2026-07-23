@@ -18,6 +18,7 @@ import {
   ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
+  ISessionTodoService,
   SessionInteractionService,
   type DomainEvent,
   type ISessionScopeHandle,
@@ -1057,9 +1058,31 @@ describe('bindSessionTranscript', () => {
     }
   }
 
+  class FakeTodos {
+    private readonly handlers = new Set<(items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]) => void>();
+    private current: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[] = [];
+    readonly onDidChange = (
+      handler: (items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]) => void,
+    ): { dispose: () => void } => {
+      this.handlers.add(handler);
+      return { dispose: () => this.handlers.delete(handler) };
+    };
+    getTodos(): readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[] {
+      return this.current;
+    }
+    setTodos(items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]): void {
+      this.current = items;
+      for (const handler of this.handlers) handler(items);
+    }
+    clear(): void {
+      this.setTodos([]);
+    }
+  }
+
   function fakeSession(
     interactions: SessionInteractionService,
     agents?: FakeAgents,
+    todos = new FakeTodos(),
   ): ISessionScopeHandle {
     return {
       accessor: {
@@ -1074,12 +1097,104 @@ describe('bindSessionTranscript', () => {
             );
           }
           if (token === ISessionInteractionService) return interactions;
+          if (token === ISessionTodoService) return todos;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },
       },
     } as unknown as ISessionScopeHandle;
   }
+
+  it('removes the rewound live turn suffix using real user-input anchors', () => {
+    const interactions = new SessionInteractionService();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const store = new TranscriptStore('s1');
+    store.ensureAgent('main').apply([
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+        },
+      },
+    ]);
+    const ops: TranscriptOperation[] = [];
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(interactions, agents),
+      undefined,
+      (event) => ops.push(...event.ops),
+    );
+    const emitTurn = (turnId: number, origin: Record<string, unknown>): void => {
+      main.bus.emit(ev({ type: 'turn.started', turnId, origin }));
+      main.bus.emit(ev({ type: 'turn.ended', turnId, reason: 'completed' }));
+    };
+
+    emitTurn(1, { kind: 'skill_activation', skillName: 'review', trigger: 'user-slash' });
+    emitTurn(2, { kind: 'shell_command' });
+    emitTurn(3, { kind: 'plugin_command', pluginId: 'p', commandName: 'c', trigger: 'user-slash' });
+    emitTurn(4, { kind: 'task', taskId: 'task-1' });
+    main.bus.emit(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-1',
+          kind: 'process',
+          description: 'build',
+          status: 'running',
+          detached: true,
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+    main.bus.emit(ev({ type: 'context.spliced', start: 1, deleteCount: 4, messages: [] }));
+    main.bus.emit(ev({ type: 'context.rewound', turns: 2 }));
+
+    expect(
+      store
+        .getAgent('main')
+        ?.getItems()
+        .filter((item): item is TranscriptTurn => item.kind === 'turn')
+        .map((turn) => turn.turnId),
+    ).toEqual(['t0']);
+    expect(store.getAgent('main')?.getTask('task-1')).toMatchObject({ state: 'running' });
+    expect(
+      store
+        .getAgent('main')
+        ?.getItems()
+        .filter((item) => item.kind === 'marker')
+        .map((marker) => marker.marker),
+    ).toEqual(['undo']);
+    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([
+      { op: 'items.remove', ids: ['t1', 't2', 't3', 't4'] },
+    ]);
+    binding.dispose();
+  });
+
+  it('projects session Todo changes into the main live transcript', () => {
+    const todos = new FakeTodos();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(), undefined, todos),
+    );
+
+    todos.setTodos([{ title: 'kept', status: 'pending' }]);
+    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
+      { title: 'kept', status: 'pending' },
+    ]);
+
+    binding.dispose();
+    todos.setTodos([{ title: 'ignored after dispose', status: 'done' }]);
+    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
+      { title: 'kept', status: 'pending' },
+    ]);
+  });
 
   it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
     const interactions = new SessionInteractionService();

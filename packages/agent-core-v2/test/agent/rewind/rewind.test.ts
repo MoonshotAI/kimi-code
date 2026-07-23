@@ -1,3 +1,10 @@
+/**
+ * Scenario: rewind validation and restoration across conversation-scoped models.
+ * Responsibility: AgentRewindService commits one undo and publishes restored observable state.
+ * Wiring: full TestAgentContext with real wire models and event bus.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/agent/rewind/rewind.test.ts
+ */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -109,11 +116,20 @@ describe('AgentRewindService', () => {
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.get(IAgentPlanService).enter('plan-x', false);
+    const restoredModes: boolean[] = [];
+    const subscription = ctx.get(IEventBus).subscribe('agent.status.updated', (event) => {
+      if (event.planMode !== undefined) restoredModes.push(event.planMode);
+    });
 
-    await rewind.rewind(1);
+    try {
+      await rewind.rewind(1);
 
-    expect(wire.getModel(PlanModel).current.active).toBe(false);
-    expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
+      expect(wire.getModel(PlanModel).current.active).toBe(false);
+      expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
+      expect(restoredModes).toEqual([false]);
+    } finally {
+      subscription.dispose();
+    }
   });
 
   it('does not roll back world-time turn bookkeeping', async () => {

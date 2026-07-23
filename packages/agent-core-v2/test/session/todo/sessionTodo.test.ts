@@ -1,3 +1,10 @@
+/**
+ * Scenario: session-shared Todo state, including rewind restoration.
+ * Responsibility: SessionTodoService exposes the main wire state and emits observable changes.
+ * Wiring: lightweight lifecycle/agent fakes with real event-bus behavior.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/session/todo/sessionTodo.test.ts
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
@@ -8,7 +15,10 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
@@ -27,6 +37,7 @@ interface FakeAgent {
   readonly registeredTools: string[];
   readonly registeredVariants: string[];
   readonly appended: RecordedTodoSet[];
+  readonly eventBus: EventBusService;
   readonly restore: (records: readonly WireRecord[]) => Promise<void>;
 }
 
@@ -34,6 +45,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
   const registeredTools: string[] = [];
   const registeredVariants: string[] = [];
   const appended: RecordedTodoSet[] = [];
+  const eventBus = new EventBusService();
 
   let todoState: readonly TodoItem[] = [];
 
@@ -108,6 +120,8 @@ function makeFakeAgent(agentId: string): FakeAgent {
       if (id === IInstantiationService) return instantiationStub as unknown as T;
       if (id === IAgentContextMemoryService) return memoryStub as unknown as T;
       if (id === IAgentProfileService) return profileStub as unknown as T;
+      if (id === IAgentToolPolicyService) return profileStub as unknown as T;
+      if (id === IEventBus) return eventBus as unknown as T;
       if (id === IWireService) return wireStub as unknown as T;
       throw new Error(`unexpected service request in fake agent: ${String(id)}`);
     },
@@ -125,6 +139,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
     registeredTools,
     registeredVariants,
     appended,
+    eventBus,
     restore,
   };
 }
@@ -203,6 +218,24 @@ describe('SessionTodoService', () => {
       [{ title: 'x', status: 'pending' }],
       [{ title: 'y', status: 'done' }],
     ]);
+  });
+
+  it('fires the restored list once when rewind changes the main wire state', async () => {
+    const main = makeFakeAgent('main');
+    const lifecycle = makeLifecycleStub([main.handle]);
+    const service = new SessionTodoService(lifecycle.service);
+    service.setTodos([{ title: 'doomed', status: 'in_progress' }]);
+
+    const seen: Array<readonly TodoItem[]> = [];
+    const subscription = service.onDidChange((todos) => seen.push(todos));
+    await main.restore([
+      { type: 'tools.update_store', key: 'todo', value: [{ title: 'kept', status: 'pending' }] },
+    ]);
+    main.eventBus.publish({ type: 'context.rewound', turns: 1 });
+    main.eventBus.publish({ type: 'context.rewound', turns: 1 });
+    subscription.dispose();
+
+    expect(seen).toEqual([[{ title: 'kept', status: 'pending' }]]);
   });
 
   it('appends a tools.update_store record to the main agent wire on setTodos', () => {

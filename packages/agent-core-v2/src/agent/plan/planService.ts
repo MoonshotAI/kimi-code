@@ -59,6 +59,10 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     this._register(
       eventBus.subscribe('context.rewound', () => {
         this.restoreTelemetryMode();
+        eventBus.publish({
+          type: 'agent.status.updated',
+          planMode: this.isActive,
+        });
       }),
     );
 

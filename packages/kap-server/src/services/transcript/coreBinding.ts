@@ -24,6 +24,7 @@ import {
   IEventBus,
   ISessionMetadata,
   ISessionInteractionService,
+  ISessionTodoService,
   MAIN_AGENT_ID,
   type AgentMeta,
   type IDisposable,
@@ -31,7 +32,13 @@ import {
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
+import type {
+  AgentDescriptor,
+  TranscriptChangeEvent,
+  TranscriptItem,
+  TranscriptStore,
+  TranscriptTurn,
+} from '@moonshot-ai/transcript';
 
 import { AgentTranscriptProjector, type ProjectorInteraction } from './coreEventMap';
 
@@ -75,6 +82,7 @@ export function bindSessionTranscript(
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
   const interactions = session.accessor.get(ISessionInteractionService);
+  const todos = session.accessor.get(ISessionTodoService);
   const disposables: IDisposable[] = [];
   /** Per-agent subscriptions (bus listeners capturing the agent's projector) — disposed with the agent. */
   const agentDisposables = new Map<string, IDisposable[]>();
@@ -147,6 +155,8 @@ export function bindSessionTranscript(
           const turn = view?.state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
+        rewoundTurnIds: (turns) =>
+          rewoundTurnIds(store.getAgent(agentId)?.getItems() ?? [], turns),
       });
       projectors.set(agentId, projector);
     }
@@ -236,6 +246,17 @@ export function bindSessionTranscript(
       subscribedAgents.delete(agentId);
       projectors.delete(agentId);
       store.markDisposed(agentId, new Date().toISOString());
+    }),
+  );
+
+  disposables.push(
+    todos.onDidChange((items) => {
+      applyOps(MAIN_AGENT_ID, [
+        {
+          op: 'todo.upsert',
+          todo: { todoId: 'todo', items, updatedAt: new Date().toISOString() },
+        },
+      ]);
     }),
   );
 
@@ -332,6 +353,42 @@ export function bindSessionTranscript(
       earlyResolves.clear();
     },
   };
+}
+
+function rewoundTurnIds(
+  items: readonly TranscriptItem[],
+  turns: number,
+): readonly string[] {
+  if (turns <= 0) return [];
+
+  let remaining = turns;
+  let boundary = 0;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind !== 'turn') continue;
+    if (!isUndoAnchorTurn(item)) continue;
+    remaining -= 1;
+    if (remaining === 0) {
+      boundary = index;
+      break;
+    }
+  }
+
+  return items
+    .slice(boundary)
+    .filter((item): item is TranscriptTurn => item.kind === 'turn')
+    .map((turn) => turn.turnId);
+}
+
+function isUndoAnchorTurn(turn: TranscriptTurn): boolean {
+  const payload = turn.origin.payload as
+    | { readonly kind?: unknown; readonly trigger?: unknown }
+    | undefined;
+  if (turn.origin.kind === 'user') return payload?.kind !== 'shell_command';
+  return (
+    (payload?.kind === 'skill_activation' || payload?.kind === 'plugin_command') &&
+    payload.trigger === 'user-slash'
+  );
 }
 
 export function descriptorFromMeta(agentId: string, meta: AgentMeta | undefined): AgentDescriptor {

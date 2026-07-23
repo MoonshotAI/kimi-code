@@ -14,6 +14,7 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '#/wire/wire';
 
@@ -31,6 +32,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   readonly onDidChange = this.onDidChangeEmitter.event;
 
   private readonly agentBindings = new Map<string, IDisposable[]>();
+  private lastKnownTodos: readonly TodoItem[] = [];
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -82,7 +84,9 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
     if (main === undefined) return;
     const wire = main.accessor.get(IWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));
-    this.onDidChangeEmitter.fire(wire.getModel(TodoModel).current);
+    const current = wire.getModel(TodoModel).current;
+    this.lastKnownTodos = current;
+    this.onDidChangeEmitter.fire(current);
   }
 
   private bindAgent(handle: IAgentScopeHandle): void {
@@ -90,6 +94,18 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
     this.trackAgentBinding(
       handle.id,
       injector.register(TODO_LIST_REMINDER_VARIANT, () => this.staleReminder(handle)),
+    );
+    if (handle.id !== MAIN_AGENT_ID) return;
+
+    this.lastKnownTodos = handle.accessor.get(IWireService).getModel(TodoModel).current;
+    this.trackAgentBinding(
+      handle.id,
+      handle.accessor.get(IEventBus).subscribe('context.rewound', () => {
+        const current = handle.accessor.get(IWireService).getModel(TodoModel).current;
+        if (todoItemsEqual(current, this.lastKnownTodos)) return;
+        this.lastKnownTodos = current;
+        this.onDidChangeEmitter.fire(current);
+      }),
     );
   }
 
@@ -119,7 +135,15 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
       disposable.dispose();
     }
     this.agentBindings.delete(agentId);
+    if (agentId === MAIN_AGENT_ID) this.lastKnownTodos = [];
   }
+}
+
+function todoItemsEqual(a: readonly TodoItem[], b: readonly TodoItem[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((item, index) => item.title === b[index]?.title && item.status === b[index]?.status)
+  );
 }
 
 registerScopedService(
