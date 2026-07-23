@@ -977,13 +977,30 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
   const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
+  const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
+  if (
+    appEvent.type === 'messageCreated' &&
+    appEvent.message.role === 'user' &&
+    appEvent.agentId !== undefined &&
+    Object.prototype.hasOwnProperty.call(
+      rawState.sideChatMessagesByAgent,
+      appEvent.agentId,
+    )
+  ) {
+    applyEvent(
+      { type: 'unknown', raw: { _noop: true } },
+      meta.sessionId,
+      meta.seq,
+    );
+    sideChat.reconcileSideChatUserMessage(appEvent.agentId, appEvent.message);
+    return;
+  }
   // meta carries wire-level seq/sessionId so the reducer can advance
   // lastSeqBySession[sessionId] = seq. Compaction completion appends a
   // persistent divider marker in the reducer (TUI parity: the scrollback
   // is kept, only a marker line records the compaction).
   applyEvent(appEvent, meta.sessionId, meta.seq);
 
-  const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
   if (sideTarget) {
     const { agentId } = sideTarget;
     const parentId = meta.sessionId;

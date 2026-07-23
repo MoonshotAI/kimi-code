@@ -144,6 +144,7 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
       listTasks: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
       listSkillsForWorkspace: vi.fn(async () => []),
+      startBtw: vi.fn(async () => ({ agentId: 'agent-btw-1' })),
       getFileUrl: (fileId) => `file:${fileId}`,
       connectEvents: vi.fn((nextHandlers) => {
         handlers = nextHandlers;
@@ -188,6 +189,45 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
       );
       expect(client.sessionsForView.value).not.toBe(sessionsBefore);
       expect(client.workspaceGroups.value).not.toBe(groupsBefore);
+
+      await client.openSideChat();
+      handlers!.onEvent(
+        {
+          type: 'messageCreated',
+          agentId: 'agent-btw-1',
+          message: {
+            id: 'message-btw-1',
+            sessionId,
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            createdAt: '2026-01-01T00:00:01.000Z',
+            promptId: 'prompt-btw-1',
+          },
+        },
+        { sessionId, seq: 13 },
+      );
+      expect(client.sideChatTurns.value).toEqual([
+        expect.objectContaining({ role: 'user', text: 'side question' }),
+      ]);
+      expect(client.turns.value.some((turn) => turn.text === 'side question')).toBe(false);
+
+      client.closeSideChat();
+      handlers!.onEvent(
+        {
+          type: 'messageCreated',
+          agentId: 'agent-btw-1',
+          message: {
+            id: 'message-btw-2',
+            sessionId,
+            role: 'user',
+            content: [{ type: 'text', text: 'late side question' }],
+            createdAt: '2026-01-01T00:00:02.000Z',
+            promptId: 'prompt-btw-2',
+          },
+        },
+        { sessionId, seq: 14 },
+      );
+      expect(client.turns.value.some((turn) => turn.text === 'late side question')).toBe(false);
     } finally {
       connection.close();
       vi.unstubAllGlobals();

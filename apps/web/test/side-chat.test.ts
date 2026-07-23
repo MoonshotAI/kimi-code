@@ -139,4 +139,102 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       expect.objectContaining({ model: 'kimi-code', thinking: 'low' }),
     );
   });
+
+  it('reconciles a WS-first prompt inside the side chat by server identity', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const state = createState();
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      resolveThinkingForPrompt: async () => 'high',
+    });
+    await sideChat.openSideChatOn('sess_1');
+
+    const pending = sideChat.sendSideChatPrompt('repeat');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    sideChat.reconcileSideChatUserMessage('agent_btw_1', {
+      id: 'message_btw_1',
+      sessionId: 'sess_1',
+      role: 'user',
+      content: [{ type: 'text', text: 'repeat' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      promptId: 'prompt_btw_1',
+    });
+
+    expect(
+      state.sideChatMessagesByAgent.agent_btw_1?.map((message) => message.id),
+    ).toEqual(['msg_opt_btw', 'message_btw_1']);
+    expect(state.sideChatUserMessageIdsBySession.sess_1).toEqual(['message_btw_1']);
+
+    resolveSubmit({
+      promptId: 'prompt_btw_1',
+      userMessageId: 'message_btw_1',
+    });
+    await pending;
+    expect(state.sideChatMessagesByAgent.agent_btw_1).toHaveLength(1);
+    expect(state.sideChatMessagesByAgent.agent_btw_1?.[0]).toMatchObject({
+      id: 'msg_opt_btw',
+      promptId: 'prompt_btw_1',
+      userMessageId: 'message_btw_1',
+    });
+  });
+
+  it('keeps consecutive equal-text side-chat submissions separate', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({
+        promptId: 'prompt_btw_1',
+        userMessageId: 'message_btw_1',
+      })
+      .mockResolvedValueOnce({
+        promptId: 'prompt_btw_2',
+        userMessageId: 'message_btw_2',
+      });
+    const state = createState();
+    let optimisticId = 0;
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => `msg_opt_btw_${++optimisticId}`,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      resolveThinkingForPrompt: async () => 'high',
+    });
+    await sideChat.openSideChatOn('sess_1');
+
+    await sideChat.sendSideChatPrompt('repeat');
+    sideChat.reconcileSideChatUserMessage('agent_btw_1', {
+      id: 'message_btw_1',
+      sessionId: 'sess_1',
+      role: 'user',
+      content: [{ type: 'text', text: 'repeat' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      promptId: 'prompt_btw_1',
+    });
+    await sideChat.sendSideChatPrompt('repeat');
+    sideChat.reconcileSideChatUserMessage('agent_btw_1', {
+      id: 'message_btw_2',
+      sessionId: 'sess_1',
+      role: 'user',
+      content: [{ type: 'text', text: 'repeat' }],
+      createdAt: '2026-01-01T00:00:01.000Z',
+      promptId: 'prompt_btw_2',
+    });
+
+    expect(
+      state.sideChatMessagesByAgent.agent_btw_1?.map((message) => message.userMessageId),
+    ).toEqual(['message_btw_1', 'message_btw_2']);
+  });
 });

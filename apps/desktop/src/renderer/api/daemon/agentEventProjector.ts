@@ -599,6 +599,26 @@ export function createAgentProjector(): AgentProjector {
     const frameAgentId: unknown = p?.agentId;
     if (typeof frameAgentId === 'string' && frameAgentId !== MAIN_AGENT_ID) {
       const isSideChannel = sideChannelAgents.has(frameAgentId);
+      if (rawType === 'prompt.submitted') {
+        if (!isSideChannel) return [];
+        const promptId: string | undefined = p?.promptId;
+        const userMessageId: string | undefined = p?.userMessageId;
+        if (!promptId || !userMessageId) return [];
+        const content = toAppPromptContent(p?.content);
+        if (content.length === 0) return [];
+        return [{
+          type: 'messageCreated',
+          agentId: frameAgentId,
+          message: {
+            id: userMessageId,
+            sessionId,
+            role: 'user',
+            content,
+            createdAt: typeof p?.createdAt === 'string' ? p.createdAt : new Date().toISOString(),
+            promptId,
+          },
+        }];
+      }
       // Side-channel agents (e.g. BTW side chat) stream text/thinking deltas and
       // a turn boundary over the parent session channel. Route them to the web
       // layer as agent-scoped events instead of dropping them or folding them
@@ -660,7 +680,11 @@ export function createAgentProjector(): AgentProjector {
           content,
           typeof p?.createdAt === 'string' ? p.createdAt : new Date().toISOString(),
         );
-        out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+        out.push({
+          type: 'messageCreated',
+          message: cloneMessage(msg),
+          ...(typeof frameAgentId === 'string' ? { agentId: frameAgentId } : {}),
+        });
         break;
       }
 

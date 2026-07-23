@@ -178,6 +178,58 @@ describe('cron.fired prompt id isolation', () => {
   });
 });
 
+describe('BTW prompt submission routing', () => {
+  it('emits an agent-scoped user confirmation without changing main prompt state', () => {
+    const projector = createAgentProjector();
+    projector.markSideChannelAgent('agent_btw_1');
+
+    expect(
+      projector.project(
+        'prompt.submitted',
+        {
+          agentId: 'agent_btw_1',
+          promptId: 'prompt_btw_1',
+          userMessageId: 'message_btw_1',
+          content: [{ type: 'text', text: 'side question' }],
+        },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'messageCreated',
+        agentId: 'agent_btw_1',
+        message: expect.objectContaining({
+          id: 'message_btw_1',
+          sessionId: 's1',
+          role: 'user',
+          promptId: 'prompt_btw_1',
+        }),
+      },
+    ]);
+
+    projector.project(
+      'turn.started',
+      { agentId: 'main', turnId: 1 },
+      's1',
+    );
+    const mainEvents = projector.project(
+      'turn.step.started',
+      { agentId: 'main', turnId: 1 },
+      's1',
+    );
+    const mainMessage = mainEvents.find((event) => event.type === 'messageCreated');
+    expect(mainMessage).toMatchObject({
+      type: 'messageCreated',
+      message: {
+        role: 'assistant',
+      },
+    });
+    if (mainMessage?.type === 'messageCreated') {
+      expect(mainMessage.message.promptId).not.toBe('prompt_btw_1');
+    }
+  });
+});
+
 describe('classifyFrame cron.fired', () => {
   it('routes both raw and event.-prefixed cron.fired to the agent projector', () => {
     const payload = { origin: { kind: 'cron_job' }, prompt: 'x' };

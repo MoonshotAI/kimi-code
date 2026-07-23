@@ -879,7 +879,13 @@ describe('mergeSnapshotMessages', () => {
     expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
   });
 
-  function optimisticUser(id: string, createdAt: string, text: string, promptId: string): AppMessage {
+  function optimisticUser(
+    id: string,
+    createdAt: string,
+    text: string,
+    promptId: string,
+    userMessageId: string,
+  ): AppMessage {
     return {
       id,
       sessionId: 's1',
@@ -887,29 +893,40 @@ describe('mergeSnapshotMessages', () => {
       content: [{ type: 'text', text }],
       createdAt,
       promptId,
+      userMessageId,
       metadata: { 'kimiWeb.optimisticUserMessage': true },
     };
   }
 
-  function realUser(id: string, createdAt: string, text: string): AppMessage {
+  function realUser(
+    id: string,
+    createdAt: string,
+    text: string,
+    promptId: string,
+  ): AppMessage {
     return {
       id,
       sessionId: 's1',
       role: 'user',
       content: [{ type: 'text', text }],
       createdAt,
+      promptId,
     };
   }
 
-  it('drops an optimistic user message when its promptId is the snapshot message id', () => {
-    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_9')];
-    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+  it('drops an optimistic user message when its server ids match the snapshot', () => {
+    const loaded = [
+      optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'pr_9', 'msg_9'),
+    ];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello', 'pr_9')];
     expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_9']);
   });
 
   it('keeps an optimistic user message when a different snapshot message repeats its content', () => {
-    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_8')];
-    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+    const loaded = [
+      optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'pr_8', 'msg_8'),
+    ];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello', 'pr_9')];
     expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_opt_1', 'msg_9']);
   });
 });

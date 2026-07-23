@@ -182,6 +182,9 @@ export interface AppMessage {
   content: AppMessageContent[];
   createdAt: string;
   promptId?: string;
+  /** Authoritative daemon id for a user message whose client-side optimistic
+      id is intentionally kept as `id` to avoid remounting the visible turn. */
+  userMessageId?: string;
   parentMessageId?: string;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
@@ -446,7 +449,13 @@ export type AppEvent =
   | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }
   | { type: 'compactionCancelled'; sessionId: string }
-  | { type: 'messageCreated'; message: AppMessage }
+  | {
+      type: 'messageCreated';
+      message: AppMessage;
+      /** Present for raw prompt.submitted frames so non-main prompts can be
+          routed to their agent-scoped transcript before touching main state. */
+      agentId?: string;
+    }
   | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error'; durationMs?: number }
   | { type: 'assistantDelta'; sessionId: string; messageId: string; contentIndex: number; delta: { text?: string; thinking?: string } }
   // Side-channel / non-main-agent streaming: carries text/thinking deltas for a

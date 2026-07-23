@@ -7,7 +7,7 @@ import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
-import { createInitialState } from '@moonshot-ai/web-core/api';
+import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
@@ -1602,7 +1602,10 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   beforeEach(() => {
     apiMock.submitPrompt.mockReset();
-    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+    apiMock.submitPrompt.mockResolvedValue({
+      promptId: 'prompt_new',
+      userMessageId: 'message_new',
+    });
     // Module-level flush failure budget must not leak between tests.
     forgetLocalTurnState('sess_1');
   });
@@ -1874,10 +1877,10 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   });
 
   it('rejects a snapshot requested while the local submit is still pending', async () => {
-    let resolveSubmit!: (value: { promptId: string }) => void;
+    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
     apiMock.submitPrompt.mockImplementation(
       () =>
-        new Promise<{ promptId: string }>((resolve) => {
+        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
           resolveSubmit = resolve;
         }),
     );
@@ -1892,10 +1895,216 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(retrySnapshot).not.toHaveBeenCalled();
 
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
-    resolveSubmit({ promptId: 'prompt_new' });
+    resolveSubmit({ promptId: 'prompt_new', userMessageId: 'message_new' });
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+
+  function createPromptMessageRig() {
+    const state = createState();
+    let optimisticId = 0;
+    const deps = promptDeps({
+      activity: computed(() => 'idle'),
+      nextOptimisticMsgId: () => `msg_opt_${++optimisticId}`,
+      updateSessionMessages: (sessionId, update) => {
+        state.messagesBySession = {
+          ...state.messagesBySession,
+          [sessionId]: update(state.messagesBySession[sessionId] ?? []),
+        };
+      },
+    });
+    return { state, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  function applyUserEcho(
+    state: ExtendedState,
+    input: { promptId: string; userMessageId: string; text: string; seq: number },
+  ): void {
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageCreated',
+        message: {
+          id: input.userMessageId,
+          sessionId: 'sess_1',
+          role: 'user',
+          content: [{ type: 'text', text: input.text }],
+          createdAt: `2026-01-01T00:00:0${input.seq}.000Z`,
+          promptId: input.promptId,
+        },
+      },
+      { sessionId: 'sess_1', seq: input.seq },
+    );
+    state.messagesBySession = next.messagesBySession;
+  }
+
+  it('reconciles the POST-first user echo by prompt and user-message ids', async () => {
+    const { state, workspaceState } = createPromptMessageRig();
+    apiMock.submitPrompt.mockResolvedValue({
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+    });
+
+    await workspaceState.submitPromptInternal('sess_1', 'hello');
+    applyUserEcho(state, {
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+      text: 'hello',
+      seq: 1,
+    });
+
+    expect(state.messagesBySession.sess_1).toHaveLength(1);
+    expect(state.messagesBySession.sess_1?.[0]).toMatchObject({
+      id: 'msg_opt_1',
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+    });
+  });
+
+  it('reconciles a WS-first user echo after the POST response supplies stable ids', async () => {
+    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const { state, workspaceState } = createPromptMessageRig();
+    const pending = workspaceState.submitPromptInternal('sess_1', 'hello');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    applyUserEcho(state, {
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+      text: 'server-resolved hello',
+      seq: 1,
+    });
+    expect(state.messagesBySession.sess_1?.map((message) => message.id)).toEqual([
+      'msg_opt_1',
+      'message_1',
+    ]);
+
+    resolveSubmit({ promptId: 'prompt_1', userMessageId: 'message_1' });
+    await pending;
+    expect(state.messagesBySession.sess_1).toHaveLength(1);
+    expect(state.messagesBySession.sess_1?.[0]).toMatchObject({
+      id: 'msg_opt_1',
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+      content: [{ type: 'text', text: 'server-resolved hello' }],
+    });
+  });
+
+  it('does not merge another client prompt into the local pending submission', async () => {
+    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const { state, workspaceState } = createPromptMessageRig();
+    const pending = workspaceState.submitPromptInternal('sess_1', 'local');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    applyUserEcho(state, {
+      promptId: 'prompt_remote',
+      userMessageId: 'message_remote',
+      text: 'remote',
+      seq: 1,
+    });
+    resolveSubmit({ promptId: 'prompt_local', userMessageId: 'message_local' });
+    await pending;
+
+    expect(state.messagesBySession.sess_1).toEqual([
+      expect.objectContaining({
+        id: 'msg_opt_1',
+        promptId: 'prompt_local',
+        userMessageId: 'message_local',
+        content: [{ type: 'text', text: 'local' }],
+      }),
+      expect.objectContaining({
+        id: 'message_remote',
+        promptId: 'prompt_remote',
+        content: [{ type: 'text', text: 'remote' }],
+      }),
+    ]);
+
+    applyUserEcho(state, {
+      promptId: 'prompt_local',
+      userMessageId: 'message_local',
+      text: 'server-resolved local',
+      seq: 2,
+    });
+    expect(state.messagesBySession.sess_1).toEqual([
+      expect.objectContaining({
+        id: 'msg_opt_1',
+        promptId: 'prompt_local',
+        userMessageId: 'message_local',
+        content: [{ type: 'text', text: 'server-resolved local' }],
+      }),
+      expect.objectContaining({
+        id: 'message_remote',
+        promptId: 'prompt_remote',
+      }),
+    ]);
+  });
+
+  it('keeps a WS-confirmed user message when the POST response is lost', async () => {
+    let rejectSubmit!: (error: unknown) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSubmit = reject;
+        }),
+    );
+    const { state, workspaceState } = createPromptMessageRig();
+    const pending = workspaceState.submitPromptInternal('sess_1', 'hello');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    applyUserEcho(state, {
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+      text: 'hello',
+      seq: 1,
+    });
+    rejectSubmit(new TypeError('response lost'));
+
+    await expect(pending).resolves.toBe('uncertain');
+    expect(state.messagesBySession.sess_1).toEqual([
+      expect.objectContaining({
+        id: 'message_1',
+        promptId: 'prompt_1',
+      }),
+    ]);
+  });
+
+  it('keeps consecutive equal-text submissions as two user messages', async () => {
+    const { state, workspaceState } = createPromptMessageRig();
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'prompt_1', userMessageId: 'message_1' })
+      .mockResolvedValueOnce({ promptId: 'prompt_2', userMessageId: 'message_2' });
+
+    await workspaceState.submitPromptInternal('sess_1', 'repeat');
+    applyUserEcho(state, {
+      promptId: 'prompt_1',
+      userMessageId: 'message_1',
+      text: 'repeat',
+      seq: 1,
+    });
+    await workspaceState.submitPromptInternal('sess_1', 'repeat');
+    applyUserEcho(state, {
+      promptId: 'prompt_2',
+      userMessageId: 'message_2',
+      text: 'repeat',
+      seq: 2,
+    });
+
+    expect(state.messagesBySession.sess_1?.map((message) => message.userMessageId)).toEqual([
+      'message_1',
+      'message_2',
+    ]);
   });
 
   it('maps attachments to the matching content parts on submit (file parts included)', async () => {

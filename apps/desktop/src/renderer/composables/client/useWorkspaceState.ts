@@ -320,6 +320,39 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       newer select started is stale and bails (see selectSession). */
   let selectSerial = 0;
 
+  function confirmOptimisticUserMessage(
+    sessionId: string,
+    optimisticId: string,
+    promptId: string,
+    userMessageId: string,
+  ): void {
+    updateSessionMessages(sessionId, (messages) => {
+      const optimisticIndex = messages.findIndex((message) => message.id === optimisticId);
+      if (optimisticIndex === -1) return messages;
+      const echoIndex = messages.findIndex(
+        (message, index) =>
+          index !== optimisticIndex &&
+          message.role === 'user' &&
+          (message.id === userMessageId ||
+            message.userMessageId === userMessageId ||
+            message.promptId === promptId),
+      );
+      const optimistic = messages[optimisticIndex]!;
+      const confirmed = echoIndex === -1 ? optimistic : messages[echoIndex]!;
+      return messages.flatMap((message, index) => {
+        if (index === echoIndex) return [];
+        if (index !== optimisticIndex) return [message];
+        return [{
+          ...confirmed,
+          id: optimistic.id,
+          promptId,
+          userMessageId,
+          metadata: { ...confirmed.metadata, ...optimistic.metadata },
+        }];
+      });
+    });
+  }
+
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
     const current = rawState.messagesBySession[sessionId];
@@ -1536,8 +1569,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
 
       // OPTIMISTICALLY add the user message to local state BEFORE awaiting the
-      // submit.  The real daemon does NOT emit a user-message event over WS, so
-      // without this the user's own text never appears in the transcript.
+      // submit so the user's text appears immediately. The later
+      // prompt.submitted confirmation reconciles into this same entry.
       const optimisticMsg: AppMessage = {
         id: tempId,
         sessionId: sid,
@@ -1606,13 +1639,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // so replacing msg_opt_* with userMessageId remounts the bubble and flickers.
       // If a daemon/stub later echoes the user message, the reducer merges it into
       // this optimistic entry instead of appending a duplicate.
-      updateSessionMessages(sid, (msgs) => {
-        const idx = msgs.findIndex((m) => m.id === tempId);
-        if (idx === -1) return msgs;
-        const updated = [...msgs];
-        updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
-        return updated;
-      });
+      confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
 
       // Bind the real daemon prompt_id into the event projector so the upcoming
       // turn.started stamps this turn's messages with it (instead of a synthetic
@@ -1636,7 +1663,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // ambiguous — the prompt may already sit in the server's queue.
       rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
       updateSessionMessages(sid, (msgs) =>
-        msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
+        msgs.some((m) => m.id === tempId)
+          ? msgs.filter(
+              (m) =>
+                m.id !== tempId ||
+                m.promptId !== undefined ||
+                m.userMessageId !== undefined,
+            )
+          : msgs,
       );
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
       return isDaemonApiError(err) ? 'rejected' : 'uncertain';
@@ -1723,7 +1757,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       return;
     }
 
-    // Optimistic transcript echo (the daemon emits no user-message WS event).
+    // Optimistic transcript echo while prompt.submitted round-trips.
     const content: import('../../api/types').AppMessageContent[] = [];
     if (merged) content.push({ type: 'text', text: merged });
     for (const att of mergedAttachments) {
@@ -1772,13 +1806,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // a steered prompt IS echoed back by the daemon as a messageCreated user
       // event; matching that echo by prompt_id (instead of content) is what keeps
       // an image steer from rendering two user bubbles.
-      updateSessionMessages(sid, (msgs) => {
-        const idx = msgs.findIndex((m) => m.id === tempId);
-        if (idx === -1) return msgs;
-        const updated = [...msgs];
-        updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
-        return updated;
-      });
+      confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
 
       if (result.status !== 'queued') {
         // The turn ended while the user was typing — the prompt started a turn
@@ -1797,7 +1825,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } catch (err) {
       // Submit failed: drop the optimistic echo so the transcript doesn't show
       // a delivered-looking message the daemon never received.
-      updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
+      updateSessionMessages(sid, (msgs) =>
+        msgs.filter(
+          (m) =>
+            m.id !== tempId ||
+            m.promptId !== undefined ||
+            m.userMessageId !== undefined,
+        ),
+      );
       // Restore the merged queue entries ONLY on a definitive daemon rejection
       // (a structured API error means nothing was accepted). On an ambiguous
       // failure — dropped response, network error — the merged prompt may

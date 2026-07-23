@@ -611,11 +611,7 @@ describe('reduceAppEvent messageCreated', () => {
     expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 
-  it('reconciles a resolved video echo into the optimistic user message', () => {
-    // The optimistic copy still carries the original `video` part (no promptId
-    // yet — the echo raced the submit response). The daemon echo carries the
-    // server-resolved `<video path=…></video>` text tag. They must collapse into
-    // one bubble, not render as a duplicate.
+  it('keeps an unidentified WS-first prompt separate from the optimistic submission', () => {
     const optimistic: AppMessage = {
       id: 'msg_opt_1',
       sessionId: 's-vid',
@@ -649,12 +645,116 @@ describe('reduceAppEvent messageCreated', () => {
       { sessionId: 's-vid', seq: 1 },
     );
     const msgs = next.messagesBySession['s-vid'] ?? [];
-    expect(msgs).toHaveLength(1);
-    // Keeps the optimistic id so the bubble doesn't remount…
-    expect(msgs[0]?.id).toBe('msg_opt_1');
-    // …but takes the daemon's resolved content (the video text tag).
-    expect(msgs[0]?.content).toEqual(echo.content);
-    expect(msgs[0]?.promptId).toBe('p1');
+    expect(msgs.map((message) => message.id)).toEqual(['msg_opt_1', 'msg_real']);
+    expect(msgs[1]?.content).toEqual(echo.content);
+    expect(msgs[1]?.promptId).toBe('p1');
+  });
+
+  it('uses POST-stamped ids instead of text to reconcile a later echo', () => {
+    const optimistic: AppMessage = {
+      id: 'msg_opt_1',
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'same text' }],
+      createdAt: '2026-06-01T12:00:00.000Z',
+      promptId: 'p1',
+      userMessageId: 'u1',
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+    const echo: AppMessage = {
+      id: 'u1',
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'server copy' }],
+      createdAt: '2026-06-01T12:00:00.100Z',
+      promptId: 'p1',
+    };
+    const next = reduceAppEvent(
+      {
+        ...createInitialState(),
+        messagesBySession: { s1: [optimistic] },
+      },
+      { type: 'messageCreated', message: echo },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.messagesBySession.s1).toHaveLength(1);
+    expect(next.messagesBySession.s1?.[0]).toMatchObject({
+      id: 'msg_opt_1',
+      userMessageId: 'u1',
+      promptId: 'p1',
+      content: echo.content,
+    });
+  });
+
+  it('keeps consecutive identical submissions as separate messages', () => {
+    const optimistic = (id: string, promptId?: string, userMessageId?: string): AppMessage => ({
+      id,
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'repeat' }],
+      createdAt: '2026-06-01T12:00:00.000Z',
+      promptId,
+      userMessageId,
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    });
+    const state = {
+      ...createInitialState(),
+      messagesBySession: {
+        s1: [
+          optimistic('msg_opt_1', 'p1', 'u1'),
+          optimistic('msg_opt_2', 'p2', 'u2'),
+        ],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageCreated',
+        message: {
+          id: 'u2',
+          sessionId: 's1',
+          role: 'user',
+          content: [{ type: 'text', text: 'repeat' }],
+          createdAt: '2026-06-01T12:00:01.000Z',
+          promptId: 'p2',
+        },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.messagesBySession.s1).toHaveLength(2);
+    expect(next.messagesBySession.s1?.map((message) => message.userMessageId)).toEqual([
+      'u1',
+      'u2',
+    ]);
+  });
+
+  it('does not merge equal text without a submission identity or pending slot', () => {
+    const existing: AppMessage = {
+      id: 'u1',
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'repeat' }],
+      createdAt: '2026-06-01T12:00:00.000Z',
+    };
+    const next = reduceAppEvent(
+      {
+        ...createInitialState(),
+        messagesBySession: { s1: [existing] },
+      },
+      {
+        type: 'messageCreated',
+        message: {
+          ...existing,
+          id: 'u2',
+          createdAt: '2026-06-01T12:00:01.000Z',
+        },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.messagesBySession.s1?.map((message) => message.id)).toEqual(['u1', 'u2']);
   });
 });
 

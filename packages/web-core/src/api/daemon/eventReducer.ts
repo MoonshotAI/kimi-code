@@ -231,46 +231,18 @@ function isCronOriginMessage(message: AppMessage): boolean {
   return origin?.kind === 'cron_job' || origin?.kind === 'cron_missed';
 }
 
-function sameMessageContent(a: AppMessage, b: AppMessage): boolean {
-  return JSON.stringify(a.content) === JSON.stringify(b.content);
-}
-
-/** Concatenated text + count of image/file parts — a serialization-independent
-    shape of a user message. The daemon's echo carries images as a resolved
-    URL/base64 while our optimistic copy carries `{kind:'file',fileId}`, so the
-    raw content never matches; comparing (text, image-count) does. */
-// Matches the self-contained media path tag the server substitutes for an
-// uploaded image/video/audio in a prompt (e.g. `<video path="/cache/f.mp4"></video>`).
-// A tag is its own text part, so anchoring keeps ordinary prose from matching.
-const MEDIA_PATH_TAG_SHAPE_RE = /^<(image|video|audio)\s+path="[^"]+"><\/\1>$/;
-
-function userMessageShape(m: AppMessage): { text: string; media: number } {
-  let text = '';
-  let media = 0;
-  for (const c of m.content) {
-    if (c.type === 'text') {
-      // A video/image upload reaches us (after the server resolves it) as a
-      // `<video path=…></video>` text tag, not a media part — count it as media
-      // and drop it from the text so the echo reconciles with our optimistic copy.
-      if (MEDIA_PATH_TAG_SHAPE_RE.test(c.text.trim())) media += 1;
-      else text += c.text;
-    } else if (c.type === 'image' || c.type === 'video' || c.type === 'file') media += 1;
-  }
-  return { text, media };
-}
-
-function sameUserMessageLoosely(a: AppMessage, b: AppMessage): boolean {
-  const sa = userMessageShape(a);
-  const sb = userMessageShape(b);
-  return sa.text === sb.text && sa.media === sb.media;
-}
-
 function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage): number {
-  // Prefer matching by prompt_id: image content serializes differently between
-  // our optimistic copy ({source:{kind:'file',fileId}}) and the daemon's echo
-  // (a resolved URL/base64), so content-equality alone lets an image steer's
-  // echo slip through as a duplicate. The submit response's prompt_id is stamped
-  // onto the optimistic message, so a shared prompt_id is the reliable match.
+  const userMessageId = message.userMessageId ?? message.id;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i]!;
+    if (
+      isOptimisticUserMessage(candidate) &&
+      candidate.userMessageId === userMessageId
+    ) {
+      return i;
+    }
+  }
+
   const promptId = message.promptId;
   if (promptId !== undefined) {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -280,24 +252,7 @@ function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage
       }
     }
   }
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const candidate = messages[i]!;
-    if (isOptimisticUserMessage(candidate) && sameMessageContent(candidate, message)) {
-      return i;
-    }
-  }
-  // Loose fallback for image steers: the daemon's messageCreated echo can arrive
-  // over the WS *before* submitPrompt resolves and stamps the prompt_id onto the
-  // optimistic copy, so neither the prompt_id nor the exact-content match fires —
-  // and because the image serializes differently, the echo used to slip through
-  // as a SECOND user bubble. Match on (text, image-count) instead so the echo
-  // still reconciles into the optimistic message.
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const candidate = messages[i]!;
-    if (isOptimisticUserMessage(candidate) && sameUserMessageLoosely(candidate, message)) {
-      return i;
-    }
-  }
+
   return -1;
 }
 
@@ -588,6 +543,7 @@ export function reduceAppEvent(
               ...event.message,
               id: optimistic.id,
               promptId: event.message.promptId ?? optimistic.promptId,
+              userMessageId: event.message.userMessageId ?? event.message.id,
               metadata: {
                 ...event.message.metadata,
                 ...optimistic.metadata,

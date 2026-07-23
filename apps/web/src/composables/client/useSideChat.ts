@@ -92,25 +92,79 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     updateSideChatMessages(agentId, (messages) => [...messages, message]);
   }
 
-  function removeLastSideChatUserMessage(agentId: string): void {
+  function removeSideChatUserMessage(agentId: string, messageId: string): void {
     updateSideChatMessages(agentId, (messages) => {
-      const idx = [...messages].reverse().findIndex((message) => message.role === 'user');
-      if (idx === -1) return messages;
-      const removeIndex = messages.length - 1 - idx;
-      return messages.filter((_, index) => index !== removeIndex);
+      const message = messages.find((candidate) => candidate.id === messageId);
+      if (
+        message?.promptId !== undefined ||
+        message?.userMessageId !== undefined
+      ) return messages;
+      return messages.filter((candidate) => candidate.id !== messageId);
     });
   }
 
-  function stampLastSideChatUserPrompt(agentId: string, promptId: string): void {
+  function rememberSideChatUserMessageId(sessionId: string, userMessageId: string): void {
+    const current = rawState.sideChatUserMessageIdsBySession[sessionId] ?? [];
+    if (current.includes(userMessageId)) return;
+    rawState.sideChatUserMessageIdsBySession = {
+      ...rawState.sideChatUserMessageIdsBySession,
+      [sessionId]: [...current, userMessageId],
+    };
+  }
+
+  function confirmSideChatUserMessage(
+    agentId: string,
+    messageId: string,
+    promptId: string,
+    userMessageId: string,
+  ): void {
     updateSideChatMessages(agentId, (messages) => {
+      const optimisticIndex = messages.findIndex((message) => message.id === messageId);
+      if (optimisticIndex === -1) return messages;
+      const echoIndex = messages.findIndex(
+        (message, index) =>
+          index !== optimisticIndex &&
+          message.role === 'user' &&
+          (message.id === userMessageId ||
+            message.userMessageId === userMessageId ||
+            message.promptId === promptId),
+      );
+      const optimistic = messages[optimisticIndex]!;
+      const confirmed = echoIndex === -1 ? optimistic : messages[echoIndex]!;
+      return messages.flatMap((message, index) => {
+        if (index === echoIndex) return [];
+        if (index !== optimisticIndex) return [message];
+        return [{
+          ...confirmed,
+          id: optimistic.id,
+          promptId,
+          userMessageId,
+          metadata: { ...confirmed.metadata, ...optimistic.metadata },
+        }];
+      });
+    });
+  }
+
+  function reconcileSideChatUserMessage(agentId: string, message: AppMessage): void {
+    rememberSideChatUserMessageId(message.sessionId, message.userMessageId ?? message.id);
+    updateSideChatMessages(agentId, (messages) => {
+      const index = messages.findIndex(
+        (candidate) =>
+          candidate.role === 'user' &&
+          (candidate.userMessageId === (message.userMessageId ?? message.id) ||
+            (candidate.promptId !== undefined && candidate.promptId === message.promptId)),
+      );
+      if (index === -1) return [...messages, message];
+      const optimistic = messages[index]!;
       const next = [...messages];
-      for (let i = next.length - 1; i >= 0; i -= 1) {
-        const message = next[i]!;
-        if (message.role !== 'user') continue;
-        next[i] = { ...message, promptId: message.promptId ?? promptId };
-        return next;
-      }
-      return messages;
+      next[index] = {
+        ...message,
+        id: optimistic.id,
+        promptId: message.promptId ?? optimistic.promptId,
+        userMessageId: message.userMessageId ?? message.id,
+        metadata: { ...message.metadata, ...optimistic.metadata },
+      };
+      return next;
     });
   }
 
@@ -201,8 +255,9 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     const sid = parent;
     const agentId = target.agentId;
     rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: true };
+    const tempId = nextOptimisticMsgId();
     const userMsg: AppMessage = {
-      id: nextOptimisticMsgId(),
+      id: tempId,
       sessionId: sid,
       role: 'user',
       content: [{ type: 'text', text: trimmed }],
@@ -234,14 +289,16 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
-      stampLastSideChatUserPrompt(agentId, result.promptId);
-      rawState.sideChatUserMessageIdsBySession = {
-        ...rawState.sideChatUserMessageIdsBySession,
-        [sid]: [...(rawState.sideChatUserMessageIdsBySession[sid] ?? []), result.userMessageId],
-      };
+      confirmSideChatUserMessage(
+        agentId,
+        tempId,
+        result.promptId,
+        result.userMessageId,
+      );
+      rememberSideChatUserMessageId(sid, result.userMessageId);
     } catch (err) {
       pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
-      removeLastSideChatUserMessage(agentId);
+      removeSideChatUserMessage(agentId, tempId);
       rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
     }
   }
@@ -282,6 +339,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     sideChatTurns,
     appendSideChatAssistantText,
     finishSideChatAgent,
+    reconcileSideChatUserMessage,
     openSideChat,
     openSideChatOn,
     closeSideChat,
