@@ -1,6 +1,6 @@
 <!-- apps/web/src/components/chat/ChatPane.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '../../types';
 import ToolCall from './ToolCall.vue';
@@ -467,6 +467,94 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
+// Overlong user text clamps to a fixed line count with a fade-out tail and an
+// expand/collapse toggle. Overflow is measured, never guessed from text length.
+const USER_TEXT_CLAMP_LINES = 10; // must match the .is-clamped CSS max-height
+
+const clampableUserTurns = reactive(new Set<string>());
+const expandedUserTurns = reactive(new Set<string>());
+
+const userTextEls = new Map<string, HTMLElement>();
+const userTextTurnIds = new WeakMap<HTMLElement, string>();
+const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+
+const userTextObserver = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const el = entry.target as HTMLElement;
+    const turnId = userTextTurnIds.get(el);
+    if (turnId !== undefined) measureUserText(turnId, el);
+  }
+});
+onUnmounted(() => userTextObserver.disconnect());
+
+function measureUserText(turnId: string, el: HTMLElement): void {
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+  // Trailing blank lines render empty and must not count toward the clamp.
+  const text = el.textContent ?? '';
+  const trailingBlanks = text.match(/\n+$/)?.[0].length ?? 0;
+  const contentHeight = el.scrollHeight - Math.max(0, trailingBlanks - 1) * lineHeight;
+  if (contentHeight > lineHeight * USER_TEXT_CLAMP_LINES + 1) {
+    clampableUserTurns.add(turnId);
+  } else {
+    clampableUserTurns.delete(turnId);
+  }
+}
+
+// Inline ref callbacks fire null→el on every re-render: bail on both so a
+// streaming transcript never re-measures settled bubbles.
+function registerUserTextEl(turnId: string, el: unknown): void {
+  if (!(el instanceof HTMLElement) || userTextEls.get(turnId) === el) return;
+  const prev = userTextEls.get(turnId);
+  if (prev !== undefined) userTextObserver.unobserve(prev);
+  userTextEls.set(turnId, el);
+  userTextTurnIds.set(el, turnId);
+  userTextObserver.observe(el);
+  measureUserText(turnId, el);
+}
+
+// Turns removed for real (e.g. undo) leave stale clamp state behind — prune it.
+watch(
+  () => props.turns,
+  (turns) => {
+    const ids = new Set(turns.map((t) => t.id));
+    for (const [id, el] of userTextEls) {
+      if (ids.has(id)) continue;
+      userTextObserver.unobserve(el);
+      userTextEls.delete(id);
+      clampableUserTurns.delete(id);
+      expandedUserTurns.delete(id);
+    }
+  },
+);
+
+// Clampable bubble text: skill/plugin args when a command card replaced the
+// raw input, otherwise the user's verbatim text.
+function userTextContent(turn: ChatTurn): string | null {
+  if (turn.skillActivation) return turn.skillActivation.args || null;
+  if (turn.pluginCommand) return turn.pluginCommand.args || null;
+  return turn.text || null;
+}
+
+function isCommandArgs(turn: ChatTurn): boolean {
+  return turn.skillActivation !== undefined || turn.pluginCommand !== undefined;
+}
+
+function isUserTextClamped(turnId: string): boolean {
+  return clampableUserTurns.has(turnId) && !expandedUserTurns.has(turnId);
+}
+
+function toggleUserText(turnId: string, event: MouseEvent): void {
+  const collapsing = expandedUserTurns.has(turnId);
+  // Collapsing removes height above the toggle: anchor it BEFORE the state
+  // change so the pin loop absorbs the jump. Expanding only grows downward.
+  if (collapsing && event.currentTarget instanceof HTMLElement) {
+    pinScroll(event.currentTarget);
+  }
+  if (collapsing) expandedUserTurns.delete(turnId);
+  else expandedUserTurns.add(turnId);
+}
+
 /** User-bubble attachments split two ways: images/videos render as text-free
     rounded thumbnails; every other kind keeps the AttachmentChip row. */
 function isMediaAttachment(att: TurnAttachment): boolean {
@@ -666,7 +754,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 <span class="skill-act-arrow">▶</span>
                 <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
               </div>
-              <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
             </div>
             <!-- Plugin command card (replaces expanded body) -->
             <div v-else-if="turn.pluginCommand" class="skill-act">
@@ -674,11 +761,34 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 <span class="skill-act-arrow">▶</span>
                 <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
               </div>
-              <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
             </div>
-            <!-- User input renders verbatim (pre-wrap), never through Markdown;
-                 skipped when empty so media-only messages hold no dead text div -->
-            <div v-else-if="turn.text" class="u-text">{{ turn.text }}</div>
+            <!-- User text — or skill/plugin args when a command card replaced
+                 the raw input — verbatim (pre-wrap), never Markdown; skipped
+                 when empty. Overlong content clamps with a fade + toggle. -->
+            <div
+              v-if="userTextContent(turn) !== null"
+              class="u-text-wrap"
+              :class="{ 'is-clamped': isUserTextClamped(turn.id), 'u-text-wrap-args': isCommandArgs(turn) }"
+            >
+              <div
+                :class="isCommandArgs(turn) ? 'skill-act-args' : 'u-text'"
+                :ref="(el) => registerUserTextEl(turn.id, el)"
+              >{{ userTextContent(turn) }}</div>
+              <button
+                v-if="clampableUserTurns.has(turn.id)"
+                type="button"
+                class="u-text-toggle"
+                :aria-expanded="!isUserTextClamped(turn.id)"
+                @click="toggleUserText(turn.id, $event)"
+              >
+                <span>{{
+                  isUserTextClamped(turn.id)
+                    ? t('conversation.userMessage.expand')
+                    : t('conversation.userMessage.collapse')
+                }}</span>
+                <Icon class="u-text-toggle-car" name="chevron-down" size="sm" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
@@ -994,6 +1104,70 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .u-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Overlong user text: clamp with a fade-out tail; the pill toggle expands/collapses it. */
+.u-text-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+/* Args render outside .skill-act so one wrapper clamps both; replaces the
+   card's head→args gap. */
+.u-text-wrap-args {
+  margin-top: var(--space-1);
+}
+/* Clamped: the floating toggle leaves the layout, so short-line messages need
+   a floor under the bubble width or the pill overflows both sides. */
+.u-text-wrap.is-clamped {
+  min-width: 120px;
+}
+.u-text-wrap.is-clamped .u-text,
+.u-text-wrap.is-clamped .skill-act-args {
+  max-height: calc(10 * 1lh);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
+}
+.u-text-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: center;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow var(--duration-base) var(--ease-out);
+}
+.u-text-toggle:hover {
+  box-shadow: var(--shadow-md);
+}
+.u-text-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+/* Clamped: the toggle floats over the dissolved (fully masked) tail. */
+.u-text-wrap.is-clamped .u-text-toggle {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0;
+}
+.u-text-toggle-car {
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.u-text-toggle[aria-expanded='true'] .u-text-toggle-car {
+  transform: rotate(180deg);
 }
 
 /* Undo/edit-and-resend affordance on the most recent user message. The trigger

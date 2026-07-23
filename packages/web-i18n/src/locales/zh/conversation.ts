@@ -40,4 +40,8 @@ export default {
     worked: '已工作 {duration}',
     workedUnknown: '工作过程',
   },
+  userMessage: {
+    expand: '展开',
+    collapse: '收起',
+  },
 } as const;

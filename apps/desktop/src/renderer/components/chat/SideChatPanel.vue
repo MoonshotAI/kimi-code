@@ -3,7 +3,7 @@
      It keeps the parent's context without creating a sidebar session. Reuses
      ChatPane for the transcript; its panel-open emits are no-ops here. -->
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import { Icon, MoonSpinner, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
@@ -55,6 +55,18 @@ function scrollToBottom(): void {
   if (!el) return;
   el.scrollTop = el.scrollHeight;
 }
+
+// ChatPane anchors the toggle when collapsing an overlong user message. The
+// ConversationPane pin machinery (follow state, transition chasing) doesn't
+// exist here; the collapse is instant, so a one-shot correction suffices.
+provide('pinScroll', (el: HTMLElement) => {
+  const scroller = bodyRef.value;
+  if (!scroller) return;
+  const top = el.getBoundingClientRect().top;
+  requestAnimationFrame(() => {
+    scroller.scrollTop += el.getBoundingClientRect().top - top;
+  });
+});
 
 const scrollKey = computed(() => {
   const t = props.turns;

@@ -136,8 +136,9 @@ function checkFile(abs) {
       if (/^@font-face\b/i.test(trimmed)) inFontFace = true;
 
       // no-gradient-text (a custom-property definition is never rendered text
-      // itself, so gradient tokens like --media-alpha-canvas don't count)
-      if (!gradientExempt && !isTokenDef && /\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
+      // itself, so gradient tokens like --media-alpha-canvas don't count;
+      // mask-image gradients are alpha masks, not rendered colour)
+      if (!gradientExempt && !isTokenDef && !/mask-image\s*:/i.test(raw) && /\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
         add('no-gradient-text', file, line, trimmed.slice(0, 80));
       }
 

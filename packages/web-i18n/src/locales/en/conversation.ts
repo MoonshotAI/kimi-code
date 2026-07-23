@@ -40,4 +40,8 @@ export default {
     worked: 'Worked {duration}',
     workedUnknown: 'Work details',
   },
+  userMessage: {
+    expand: 'Show more',
+    collapse: 'Show less',
+  },
 } as const;
