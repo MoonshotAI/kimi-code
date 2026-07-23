@@ -1,13 +1,13 @@
 /**
  * Scenario: plan-mode Harness constraints as an `onBeforeExecuteTool` veto
- * listener. Responsibilities: verify Write/Edit plan-file allow and vetoes,
+ * listener. Responsibilities: verify Write/Edit plan-file pass and vetoes,
  * TaskStop/Cron vetoes, abstention on unrelated tools, and every ExitPlanMode
  * review branch (approve with/without option, Reject and Exit, Revise,
  * dismiss, auto / no-plan / empty-plan / non-plan_review skips) with
  * telemetry.
  * Wiring: real wire and plan services against a fireable executor event
  * stub; a stand-in listener registered after the plan listener proves
- * whether the guard ended adjudication (veto/allow) or abstained;
+ * whether the guard vetoes, passes, or abstains;
  * `IAgentToolApprovalService` is a recording stub.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/plan/planGuard.test.ts`.
  */
@@ -231,7 +231,7 @@ describe('AgentPlanService plan-guard listener', () => {
 
   describe('guard', () => {
     it.each(['Write', 'Edit'] as const)(
-      'lets a %s that only targets the active plan file through without other adjudication',
+      'passes a %s that only targets the active plan file to later adjudication',
       async (toolName) => {
         await enterPlan();
         const decision = await run(
@@ -242,7 +242,7 @@ describe('AgentPlanService plan-guard listener', () => {
         );
 
         expect(decision).toBeUndefined();
-        expect(permissionRan).toBe(false);
+        expect(permissionRan).toBe(true);
       },
     );
 
@@ -259,7 +259,7 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision).toBeUndefined();
-      expect(permissionRan).toBe(false);
+      expect(permissionRan).toBe(true);
     });
 
     it.each(['Write', 'Edit'] as const)(
@@ -294,6 +294,29 @@ describe('AgentPlanService plan-guard listener', () => {
         expect(decision?.veto?.isError).toBe(true);
       }
       expect(permissionRan).toBe(false);
+    });
+
+    it('runs a later fencing adjudication for a plan-file write', async () => {
+      await enterPlan();
+      let fencingRan = false;
+      disposables.add(
+        executorEvents.executor.onBeforeExecuteTool((event) => {
+          fencingRan = true;
+          event.waitUntil(async () => ({
+            veto: { output: 'stale plan file', isError: true },
+          }));
+        }),
+      );
+
+      const decision = await executorEvents.fireBeforeExecute(
+        hookContext('Edit', {
+          args: { path: PLAN_PATH },
+          accesses: ToolAccesses.writeFile(PLAN_PATH),
+        }),
+      );
+
+      expect(fencingRan).toBe(true);
+      expect(decision?.veto).toEqual({ output: 'stale plan file', isError: true });
     });
 
     it('blocks mixed plan-file and non-plan-file write accesses', async () => {

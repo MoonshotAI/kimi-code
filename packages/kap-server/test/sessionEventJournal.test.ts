@@ -116,6 +116,32 @@ describe('SessionEventJournal', () => {
     await j2.close();
   });
 
+  it('inspects a corrupt journal without quarantining or truncating it', async () => {
+    const corrupt = 'this is not json\n';
+    await writeFile(filePath, corrupt, 'utf8');
+
+    const watermark = await SessionEventJournal.inspect(filePath);
+
+    expect(watermark).toEqual({ seq: 0, epoch: undefined });
+    expect(await readFile(filePath, 'utf8')).toBe(corrupt);
+    await expect(stat(filePath)).resolves.toBeDefined();
+  });
+
+  it('inspects a torn tail without repairing the owner journal', async () => {
+    const owner = await SessionEventJournal.open(filePath);
+    owner.append(owner.nextSeq(), envelope(1));
+    await owner.close();
+    const durable = await readFile(filePath, 'utf8');
+    const torn = `${durable}{"kind":"event"}`;
+    await writeFile(filePath, torn, 'utf8');
+
+    const watermark = await SessionEventJournal.inspect(filePath);
+
+    expect(watermark).toEqual({ seq: 1, epoch: owner.epoch });
+    expect(await readFile(filePath, 'utf8')).toBe(torn);
+    await owner.close();
+  });
+
   it('repairs a torn trailing line before appending the next event', async () => {
     const j1 = await SessionEventJournal.open(filePath);
     j1.append(j1.nextSeq(), envelope(1));

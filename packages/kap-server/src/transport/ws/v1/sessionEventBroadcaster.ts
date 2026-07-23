@@ -99,6 +99,7 @@ import { SubagentRosterTracker } from './subagentRosterTracker';
 import {
   type EventEnvelope,
   type JournalLogger,
+  type JournalWatermark,
   SessionEventJournal,
   sessionJournalPath,
 } from './sessionEventJournal';
@@ -719,24 +720,21 @@ export class SessionEventBroadcaster {
 
   /**
    * Watermark for a session that is not live in this process but exists on disk
-   * (carried over from a prior process, or created by v1). Opens the journal
-   * transiently — no agent/interaction listeners and not cached in
-   * `this.sessions` — so a later live activation still attaches subscriptions.
-   * The open is read-only (zero bytes written, no fabricated epoch).
+   * (carried over from a prior process, or created by v1). Inspects the journal
+   * transiently — no agent/interaction listeners, no repair/quarantine, and no
+   * cache entry in `this.sessions` — so a later live activation still attaches
+   * subscriptions without modifying a peer-owned file.
    * Returns `undefined` when the session is unknown to the index (truly absent).
    */
   private async readColdWatermark(
     sessionId: string,
-  ): Promise<{ seq: number; epoch: string | undefined } | undefined> {
+  ): Promise<JournalWatermark | undefined> {
     const summary = await this.opts.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
-    const journal = await SessionEventJournal.open(
+    return SessionEventJournal.inspect(
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
     );
-    const watermark = { seq: journal.seq, epoch: journal.epoch };
-    await journal.close();
-    return watermark;
   }
 
   async close(): Promise<void> {

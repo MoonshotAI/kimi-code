@@ -14,12 +14,12 @@
  * the Model's replayed per-id `revisionCount`, starting at 1. Also carries
  * the plan-mode Harness constraints as an `onBeforeExecuteTool` veto
  * listener: while a plan is active, Write/Edit calls targeting only the
- * current plan file are allowed outright (`allow()`, ending all other
- * adjudication), any other Write/Edit and every TaskStop/CronCreate/
- * CronDelete call is vetoed with a `toolApproval.formatDenyMessage`-
- * formatted reason, and an `ExitPlanMode` call outside `auto` mode defers
- * to a cold `waitUntil` factory running the `exitPlanModeReview` user
- * review. Bound at Agent scope.
+ * current plan file are passed to later adjudication (`pass()`), so the
+ * file-fencing listener can still reject a stale write; any other Write/Edit
+ * and every TaskStop/CronCreate/CronDelete call is vetoed with a
+ * `toolApproval.formatDenyMessage`-formatted reason, and an `ExitPlanMode`
+ * call outside `auto` mode defers to a cold `waitUntil` factory running the
+ * `exitPlanModeReview` user review. Bound at Agent scope.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -118,7 +118,9 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 
     if (toolName === 'Write' || toolName === 'Edit') {
       if (writesOnlyPlanFile(event, plan.path)) {
-        event.allow();
+        // Plan mode authorizes this target, but must not short-circuit the
+        // file-fencing waitUntil that checks the read/write baseline.
+        event.pass();
         return;
       }
       event.veto(

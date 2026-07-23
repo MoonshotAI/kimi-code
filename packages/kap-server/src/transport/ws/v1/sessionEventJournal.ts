@@ -110,6 +110,11 @@ export interface JournalEntry {
   envelope: EventEnvelope;
 }
 
+export interface JournalWatermark {
+  readonly seq: number;
+  readonly epoch: string | undefined;
+}
+
 /** Minimal logger surface — keeps the journal decoupled from the server logger. */
 export interface JournalLogger {
   warn(obj: unknown, msg: string): void;
@@ -171,62 +176,26 @@ export class SessionEventJournal {
 
   /**
    * Open (or create-on-first-append) the journal for `filePath`. Scans an
-   * existing file to recover `{epoch, lastSeq}`. This open is READ-ONLY: a
-   * missing file or an unreadable/missing header yields a journal with
-   * `epoch: undefined` and seq 0, writes nothing, and defers the fresh epoch
-   * to the first real `append()`. With several headers the last one wins.
+   * existing file to recover `{epoch, lastSeq}`. This is the owner open: a
+   * corrupt journal may be quarantined and a torn tail may be repaired before
+   * the next append. A missing file or an unreadable/missing header yields a
+   * journal with `epoch: undefined` and seq 0, and defers the fresh epoch to
+   * the first real `append()`. With several headers the last one wins.
    */
   static async open(
     filePath: string,
     logger: JournalLogger = noopLogger,
   ): Promise<SessionEventJournal> {
-    let epoch: string | undefined;
-    let lastSeq = 0;
-    let sawAnyLine = false;
-    let corrupt = false;
-    let segmentSeq = 0;
-    let tailRepair: JournalTailRepair | undefined;
+    const scan = await scanJournal(filePath);
+    let { epoch, lastSeq } = scan;
+    const { sawAnyLine, corrupt } = scan;
+    let tailRepair = scan.tailRepair;
 
-    try {
-      for await (const line of readLines(filePath)) {
-        const raw = line.raw;
-        if (raw.trim().length === 0) {
-          if (!line.terminated) tailRepair = { kind: 'truncate', byteLength: line.startOffset };
-          continue;
-        }
-        sawAnyLine = true;
-        const parsed = parseJournalLine(raw);
-        if (parsed === undefined) {
-          if (!line.terminated) {
-            tailRepair = { kind: 'truncate', byteLength: line.startOffset };
-            continue;
-          }
-          corrupt = true;
-          break;
-        }
-        if (!line.terminated) tailRepair = { kind: 'terminate' };
-        if (parsed.kind === 'journal_header') {
-          epoch = parsed.epoch; // last header wins
-          segmentSeq = 0;
-          lastSeq = 0;
-          continue;
-        }
-        if (epoch === undefined || parsed.seq !== segmentSeq + 1) {
-          corrupt = true;
-          break;
-        }
-        segmentSeq = parsed.seq;
-        lastSeq = segmentSeq;
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') {
-        corrupt = true;
-        logger.warn(
-          { filePath, err: String(error) },
-          'event journal unreadable; starting a fresh epoch on next append',
-        );
-      }
+    if (scan.readError !== undefined) {
+      logger.warn(
+        { filePath, err: String(scan.readError) },
+        'event journal unreadable; starting a fresh epoch on next append',
+      );
     }
 
     if (corrupt || (sawAnyLine && epoch === undefined)) {
@@ -246,6 +215,31 @@ export class SessionEventJournal {
       return new SessionEventJournal(filePath, logger, undefined, 0);
     }
     return new SessionEventJournal(filePath, logger, epoch, lastSeq, tailRepair);
+  }
+
+  /**
+   * Inspect a journal watermark without taking ownership of the file.
+   *
+   * Unlike {@link open}, this method never quarantines corrupt data, repairs a
+   * torn tail, creates a directory, or writes a header. It is the only journal
+   * API that a cold peer should use while another process may own the session.
+   * A missing file and a corrupt/unusable file both return no baseline; the
+   * latter is logged so callers do not mistake it for a valid empty journal.
+   */
+  static async inspect(
+    filePath: string,
+    logger: JournalLogger = noopLogger,
+  ): Promise<JournalWatermark | undefined> {
+    const scan = await scanJournal(filePath);
+    if (scan.missing) return undefined;
+    if (scan.corrupt || (scan.sawAnyLine && scan.epoch === undefined)) {
+      logger.warn(
+        { filePath, err: scan.readError === undefined ? undefined : String(scan.readError) },
+        'event journal inspection found no usable watermark; leaving the file untouched',
+      );
+      return { seq: 0, epoch: undefined };
+    }
+    return { seq: scan.lastSeq, epoch: scan.epoch };
   }
 
   /** Reserve the next durable seq. The caller must follow with `append()`. */
@@ -513,6 +507,16 @@ interface RawJournalLine {
   startOffset: number;
 }
 
+interface JournalScan {
+  epoch: string | undefined;
+  lastSeq: number;
+  sawAnyLine: boolean;
+  corrupt: boolean;
+  missing: boolean;
+  readError: unknown | undefined;
+  tailRepair: JournalTailRepair | undefined;
+}
+
 async function* readLines(filePath: string): AsyncIterable<RawJournalLine> {
   let buffered = '';
   let offset = 0;
@@ -529,6 +533,60 @@ async function* readLines(filePath: string): AsyncIterable<RawJournalLine> {
     }
   }
   if (buffered.length > 0) yield { raw: buffered, terminated: false, startOffset: offset };
+}
+
+async function scanJournal(filePath: string): Promise<JournalScan> {
+  let epoch: string | undefined;
+  let lastSeq = 0;
+  let sawAnyLine = false;
+  let corrupt = false;
+  let missing = false;
+  let readError: unknown | undefined;
+  let segmentSeq = 0;
+  let tailRepair: JournalTailRepair | undefined;
+
+  try {
+    for await (const line of readLines(filePath)) {
+      const raw = line.raw;
+      if (raw.trim().length === 0) {
+        if (!line.terminated) tailRepair = { kind: 'truncate', byteLength: line.startOffset };
+        continue;
+      }
+      sawAnyLine = true;
+      const parsed = parseJournalLine(raw);
+      if (parsed === undefined) {
+        if (!line.terminated) {
+          tailRepair = { kind: 'truncate', byteLength: line.startOffset };
+          continue;
+        }
+        corrupt = true;
+        break;
+      }
+      if (!line.terminated) tailRepair = { kind: 'terminate' };
+      if (parsed.kind === 'journal_header') {
+        epoch = parsed.epoch; // last header wins
+        segmentSeq = 0;
+        lastSeq = 0;
+        continue;
+      }
+      if (epoch === undefined || parsed.seq !== segmentSeq + 1) {
+        corrupt = true;
+        break;
+      }
+      segmentSeq = parsed.seq;
+      lastSeq = segmentSeq;
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      missing = true;
+    } else {
+      corrupt = true;
+      readError = error;
+    }
+  }
+
+  return { epoch, lastSeq, sawAnyLine, corrupt, missing, readError, tailRepair };
 }
 
 async function quarantineCorruptJournal(filePath: string, logger: JournalLogger): Promise<void> {
