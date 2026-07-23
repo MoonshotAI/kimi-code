@@ -568,6 +568,25 @@ describe('services config section env bindings', () => {
 
     disposables.dispose();
   });
+
+  it('clears the section on replace(undefined) even with env vars set', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+    });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    await config.replace(SERVICES_SECTION, undefined);
+
+    expect(config.inspect<ServicesConfig>(SERVICES_SECTION).userValue).toBeUndefined();
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch?.baseUrl).toBe(
+      'https://search-env.example/search',
+    );
+
+    disposables.dispose();
+  });
 });
 
 describe('skill config sections', () => {

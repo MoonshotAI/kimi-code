@@ -111,6 +111,7 @@ const stripMoonshotFetchEnv = stripEnvBoundFields(moonshotFetchEnvBindings);
  * env-derived `baseUrl` / `apiKey` back to `config.toml`.
  */
 export const stripServicesEnv: ConfigStripEnv<ServicesConfig> = (value, raw, getEnv) => {
+  if (!isPlainObject(value)) return value;
   let out: ServicesConfig | undefined;
   for (const [key, strip] of [
     ['moonshotSearch', stripMoonshotSearchEnv],
