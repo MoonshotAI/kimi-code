@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Make /undo consistent and safe.
+Fix /undo to restore conversation history, todo lists, plan mode, and task notifications consistently.
