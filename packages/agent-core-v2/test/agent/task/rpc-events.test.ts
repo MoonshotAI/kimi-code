@@ -25,6 +25,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentRewindService } from '#/agent/rewind/rewind';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -715,7 +716,7 @@ describe('AgentTaskService — notification delivery', () => {
     }
   });
 
-  it('re-delivers a terminal task notification removed by undo', async () => {
+  it('re-delivers a terminal task notification removed by undo when output is unavailable', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-undo-'));
     let fixture: TaskServiceFixture | undefined;
     try {
@@ -732,6 +733,9 @@ describe('AgentTaskService — notification delivery', () => {
       await vi.waitFor(() => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
+      vi.spyOn(manager, 'getOutputSnapshot').mockRejectedValueOnce(
+        new Error('output unavailable'),
+      );
 
       await ctx.get(IAgentRewindService).rewind(1);
 
@@ -742,6 +746,63 @@ describe('AgentTaskService — notification delivery', () => {
       ).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('re-delivers a queued notification cancelled by rewind before materialization', async () => {
+    const fixture = createAgentTaskService();
+    const { ctx, manager } = fixture;
+    const loop = ctx.get(IAgentLoopService);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-notification-rewind', async (hookCtx, next) => {
+      markStarted();
+      await new Promise<void>((_, reject) => {
+        hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });
+      });
+      await next();
+    });
+
+    try {
+      ctx.appendTurnExchange('kept prompt', 'kept answer');
+      const active = (
+        await loop.enqueue(
+          new MessageStepRequest(
+            {
+              role: 'user',
+              content: [{ type: 'text', text: 'remove me' }],
+              toolCalls: [],
+              origin: { kind: 'user' },
+            },
+            { admission: 'newTurn' },
+          ),
+        ).assigned
+      ).turn;
+      await started;
+      const taskId = registerProcess(manager, immediateProcess(0, 'done'), 'echo done', 'done');
+      await vi.waitFor(() => {
+        expect(manager.getTask(taskId)?.status).toBe('completed');
+        expect(loop.hasPendingRequests()).toBe(true);
+      });
+      expect(notifiedCount(ctx)).toBe(0);
+
+      await ctx.get(IAgentRewindService).rewind(1);
+
+      await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toEqual([
+        expect.objectContaining({
+          origin: expect.objectContaining({ taskId, status: 'completed' }),
+        }),
+      ]);
+      expect(notifiedCount(ctx)).toBe(1);
+    } finally {
+      hook.dispose();
+      await ctx.get(ISessionMetadata).ready;
+      await ctx.dispose();
     }
   });
 

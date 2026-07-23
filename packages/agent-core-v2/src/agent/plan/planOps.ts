@@ -1,48 +1,26 @@
 /**
- * `plan` domain (L4) — replayable plan-mode wire state.
+ * `plan` domain (L4) — persists plan-mode conversation state.
  *
- * Owns the persisted plan lifecycle state consumed by the Agent-scoped
- * `planService` and keeps it consistent with conversation undo.
+ * Keeps plan mode aligned with conversation undo through `contextMemory`'s
+ * checkpoint protocol and exposes the state consumed by the Agent-scope plan
+ * service.
  */
 
 import { z } from 'zod';
 
-import { isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
-import { defineModel } from '#/wire/model';
+import {
+  defineCheckpointedModel,
+  type Checkpointed,
+} from '#/agent/contextMemory/conversationTime';
 
 export interface PlanState {
   readonly active: boolean;
   readonly id?: string;
 }
 
-export interface PlanModelState {
-  readonly current: PlanState;
-  readonly checkpoints: readonly PlanState[];
-}
+export type PlanModelState = Checkpointed<PlanState>;
 
-export const PlanModel = defineModel<PlanModelState>('plan', () => ({
-  current: { active: false },
-  checkpoints: [],
-}), {
-  reducers: {
-    'context.append_message': (state, { message }) =>
-      isRealUserInput(message)
-        ? { ...state, checkpoints: [...state.checkpoints, state.current] }
-        : state,
-    'context.apply_compaction': (state) =>
-      state.checkpoints.length === 0 ? state : { ...state, checkpoints: [] },
-    'context.clear': (state) =>
-      state.checkpoints.length === 0 ? state : { ...state, checkpoints: [] },
-    'context.undo': (state, { count }) => {
-      if (count <= 0 || state.checkpoints.length < count) return state;
-      const checkpointIndex = state.checkpoints.length - count;
-      return {
-        current: state.checkpoints[checkpointIndex]!,
-        checkpoints: state.checkpoints.slice(0, checkpointIndex),
-      };
-    },
-  },
-});
+export const PlanModel = defineCheckpointedModel('plan', (): PlanState => ({ active: false }));
 
 export const planModeEnter = PlanModel.defineOp('plan_mode.enter', {
   schema: z.object({ id: z.string() }),

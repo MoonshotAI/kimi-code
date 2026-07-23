@@ -529,6 +529,53 @@ describe('Agent loop', () => {
     expect(ctx.llmCalls).toHaveLength(3);
   });
 
+  it('holds new admissions until the active turn is quiescent and the lease is released', async () => {
+    let started!: () => void;
+    const activeStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-quiescence', async (hookCtx, next) => {
+      started();
+      await new Promise<void>((_, reject) => {
+        hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });
+      });
+      await next();
+    });
+
+    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    await activeStarted;
+    const leasePromise = loop.acquireQuiescence();
+    const held = loop.enqueue(nextTurnMessage('held'));
+    let assigned = false;
+    void held.assigned.then(() => {
+      assigned = true;
+    });
+
+    const lease = await leasePromise;
+    await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+    await Promise.resolve();
+    expect(assigned).toBe(false);
+    expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: true });
+
+    hook.dispose();
+    ctx.mockNextResponse({ type: 'text', text: 'after rewind' });
+    lease.dispose();
+    const resumed = (await held.assigned).turn;
+    await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
+  });
+
+  it('can abort an admission while quiescence holds it', async () => {
+    const lease = await loop.acquireQuiescence();
+    const held = loop.enqueue(nextTurnMessage('held'));
+
+    expect(held.abort()).toBe(true);
+    await expect(held.assigned).rejects.toBeDefined();
+    expect(loop.hasPendingRequests()).toBe(false);
+
+    lease.dispose();
+    expect(loop.status().state).toBe('idle');
+  });
+
   it('cancels a running step without cancelling its turn and continues the next step', async () => {
     let releaseRunning!: () => void;
     const running = new Promise<void>((resolve) => {

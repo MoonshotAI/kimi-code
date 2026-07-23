@@ -14,9 +14,8 @@
  *   - `tool.call.delta` / `tool.progress` are NOT projected in v1 (argument and
  *     progress streaming are dropped; `tool.result` carries the terminal
  *     state). Known limitation.
- *   - `context.spliced` projects the visible undo marker; the later
- *     `context.rewound` correction removes the rewound turn suffix through a
- *     producer-store lookup while preserving world-time entities.
+ *   - `context.spliced` projects the visible undo marker. The session binding
+ *     handles `context.rewound` as a full conversation projection reset.
  *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
  *     enter a step.
  *   - No `swarm.*` / `plan.*` mode-transition events exist on the v2 bus today;
@@ -88,15 +87,11 @@ export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord |
  */
 export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
-/** Resolve the currently materialized turn ids removed by an undo. */
-export type ProjectorRewoundTurnLookup = (turns: number) => readonly string[];
-
 /** Optional producer-store lookups that let the projector adopt seeded state. */
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
-  readonly rewoundTurnIds?: ProjectorRewoundTurnLookup;
 }
 
 interface OpenTextFrame {
@@ -206,10 +201,8 @@ export class AgentTranscriptProjector {
         ];
       case 'context.spliced':
         return [this.markerOp('undo', restOf(event))];
-      case 'context.rewound': {
-        const ids = this.lookups?.rewoundTurnIds?.(event.turns) ?? [];
-        return ids.length === 0 ? [] : [{ op: 'items.remove', ids }];
-      }
+      case 'context.rewound':
+        return [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':

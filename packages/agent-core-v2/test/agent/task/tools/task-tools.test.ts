@@ -170,8 +170,6 @@ class FakeTaskService implements IAgentTaskService {
     return result;
   }
 
-  async reconcileNotificationDeliveryAfterUndo(): Promise<void> {}
-
   persistOutput(_taskId: string): void {}
 
   async getOutputSnapshot(

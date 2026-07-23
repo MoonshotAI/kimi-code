@@ -138,6 +138,15 @@ describe('granularity', () => {
     expect(turnGrade.items[1]?.kind).toBe('marker');
     expect(redactSnapshotForGrade('block', snapshot)).toBe(snapshot);
     expect(redactSnapshotForGrade('delta', snapshot)).toBe(snapshot);
+
+    const reset: TranscriptOperation = { op: 'reset', agentId: 'main', snapshot };
+    const filteredReset = filterOpsForGrade('turn', [reset])[0];
+    expect(filteredReset?.op).toBe('reset');
+    expect(
+      filteredReset?.op === 'reset' &&
+        filteredReset.snapshot.items[0]?.kind === 'turn' &&
+        filteredReset.snapshot.items[0].steps,
+    ).toEqual([]);
   });
 });
 
@@ -503,5 +512,62 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const taskTurn = snapshot.items[1];
     if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'b83rhswvs' });
+  });
+
+  it('uses persisted turn ids so retry turns and same-turn steers do not renumber history', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text' as const, text: 'u0' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text' as const, text: 'a0' }] },
+      { role: 'assistant', content: [{ type: 'text' as const, text: 'retry answer' }] },
+      { role: 'user', content: [{ type: 'text' as const, text: 'u2' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text' as const, text: 'before steer' }] },
+    ];
+    const snapshot = groupMessagesIntoSnapshot(messages, {
+      turnIds: [0, 0, 1, 2, 2],
+      turns: [
+        { turnId: 0, input: messages[0]!.content, origin: { kind: 'user' } },
+        { turnId: 1, input: [], origin: { kind: 'retry' } },
+        { turnId: 2, input: messages[3]!.content, origin: { kind: 'user' } },
+      ],
+    });
+
+    const turns = snapshot.items.filter((item) => item.kind === 'turn');
+    expect(turns.map((turn) => turn.turnId)).toEqual(['t0', 't1', 't2']);
+    expect(turns[1]?.prompt).toBeUndefined();
+    expect(turns[1]?.steps[0]?.frames[0]).toMatchObject({
+      kind: 'text',
+      text: 'retry answer',
+    });
+    expect(turns[2]?.steps).toHaveLength(1);
+    expect(turns[2]?.steps[0]?.frames[0]).toMatchObject({
+      kind: 'text',
+      text: 'before steer',
+    });
+  });
+
+  it('projects a legacy idle steer as its own stable turn', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text' as const, text: 'u0' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text' as const, text: 'a0' }] },
+      { role: 'user', content: [{ type: 'text' as const, text: 'u1' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text' as const, text: 'a1' }] },
+    ];
+    const snapshot = groupMessagesIntoSnapshot(messages, {
+      turnIds: [0, 0, 1, 1],
+      turns: [
+        { turnId: 0, input: messages[0]!.content, origin: { kind: 'user' } },
+        { turnId: 1, input: messages[2]!.content, origin: { kind: 'user' } },
+      ],
+    });
+
+    const turns = snapshot.items.filter((item) => item.kind === 'turn');
+    expect(turns.map((turn) => [turn.turnId, turn.prompt])).toEqual([
+      ['t0', 'u0'],
+      ['t1', 'u1'],
+    ]);
+    expect(turns.map((turn) => turn.steps[0]?.frames[0])).toMatchObject([
+      { kind: 'text', text: 'a0' },
+      { kind: 'text', text: 'a1' },
+    ]);
   });
 });

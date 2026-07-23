@@ -386,6 +386,8 @@ export * from '#/agent/contextMemory/contextMemory';
 export * from '#/agent/contextMemory/contextMemoryService';
 export * from '#/agent/contextMemory/contextOps';
 export * from '#/agent/contextMemory/compactionHandoff';
+export * from '#/agent/contextMemory/conversationReconciliation';
+export * from '#/agent/contextMemory/conversationTime';
 export * from '#/agent/contextMemory/loopEventFold';
 export * from '#/agent/contextMemory/messageId';
 export * from '#/agent/contextMemory/messageProjection';

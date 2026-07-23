@@ -12,6 +12,8 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
+  IAgentConversationReconciliationRegistry,
+  IAgentContextMemoryService,
   IAgentLoopService,
   IEventBus,
   ISessionIndex,
@@ -21,12 +23,14 @@ import {
   ISessionTodoService,
   SessionInteractionService,
   type DomainEvent,
+  type ContextMessage,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
   TranscriptStore,
+  groupMessagesIntoSnapshot,
   type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
@@ -35,7 +39,7 @@ import {
   type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
@@ -1012,7 +1016,39 @@ describe('bindSessionTranscript', () => {
   interface FakeAgentHandle {
     readonly id: string;
     readonly bus: FakeBus;
+    reconcile(phase: 'state' | 'projection'): Promise<void>;
     readonly accessor: { get: (token: unknown) => unknown };
+  }
+
+  class FakeReconciliationRegistry {
+    private readonly participants = new Map<
+      string,
+      {
+        readonly phase?: 'state' | 'projection';
+        reconcileAfterRewind(): Promise<void>;
+      }
+    >();
+    register(participant: {
+      readonly id: string;
+      readonly phase?: 'state' | 'projection';
+      reconcileAfterRewind(): Promise<void>;
+    }): { dispose: () => void } {
+      this.participants.set(participant.id, participant);
+      return {
+        dispose: () => {
+          if (this.participants.get(participant.id) === participant) {
+            this.participants.delete(participant.id);
+          }
+        },
+      };
+    }
+    async reconcile(phase: 'state' | 'projection'): Promise<void> {
+      await Promise.all(
+        [...this.participants.values()]
+          .filter((participant) => (participant.phase ?? 'state') === phase)
+          .map((participant) => participant.reconcileAfterRewind()),
+      );
+    }
   }
 
   class FakeAgents {
@@ -1033,16 +1069,25 @@ describe('bindSessionTranscript', () => {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: unknown }): FakeAgentHandle {
+    add(
+      id: string,
+      opts?: { loopStatus?: unknown; history?: readonly ContextMessage[] },
+    ): FakeAgentHandle {
       const bus = new FakeBus();
+      const reconciliation = new FakeReconciliationRegistry();
       const handle: FakeAgentHandle = {
         id,
         bus,
+        reconcile: (phase) => reconciliation.reconcile(phase),
         accessor: {
           get: (token: unknown) => {
             if (token === IEventBus) return bus;
+            if (token === IAgentConversationReconciliationRegistry) return reconciliation;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+            }
+            if (token === IAgentContextMemoryService) {
+              return { get: () => opts?.history ?? [] };
             }
             return undefined;
           },
@@ -1105,10 +1150,24 @@ describe('bindSessionTranscript', () => {
     } as unknown as ISessionScopeHandle;
   }
 
-  it('removes the rewound live turn suffix using real user-input anchors', () => {
+  it('resets conversation items from the authoritative post-rewind context', () => {
     const interactions = new SessionInteractionService();
     const agents = new FakeAgents();
-    const main = agents.add('main');
+    const main = agents.add('main', {
+      history: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'kept' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'answer' }],
+          toolCalls: [],
+        },
+      ],
+    });
     const store = new TranscriptStore('s1');
     store.ensureAgent('main').apply([
       {
@@ -1163,26 +1222,275 @@ describe('bindSessionTranscript', () => {
         .map((turn) => turn.turnId),
     ).toEqual(['t0']);
     expect(store.getAgent('main')?.getTask('task-1')).toMatchObject({ state: 'running' });
+    expect(store.getAgent('main')?.getItems().filter((item) => item.kind === 'marker')).toEqual([]);
+    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
+    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([]);
+    binding.dispose();
+  });
+
+  it('does not infer the rewind cut from the displayed turn count', () => {
+    const interactions = new SessionInteractionService();
+    const agents = new FakeAgents();
+    const main = agents.add('main', {
+      history: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'kept' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      ],
+    });
+    const store = new TranscriptStore('s1');
+    store.ensureAgent('main').apply([
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+        },
+      },
+    ]);
+    const ops: TranscriptOperation[] = [];
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(interactions, agents),
+      undefined,
+      (event) => ops.push(...event.ops),
+    );
+    main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    main.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    main.bus.emit(ev({ type: 'context.spliced', start: 0, deleteCount: 3, messages: [] }));
+    main.bus.emit(ev({ type: 'context.rewound', turns: 5 }));
+
     expect(
       store
         .getAgent('main')
         ?.getItems()
-        .filter((item) => item.kind === 'marker')
-        .map((marker) => marker.marker),
-    ).toEqual(['undo']);
-    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([
-      { op: 'items.remove', ids: ['t1', 't2', 't3', 't4'] },
+        .filter((item): item is TranscriptTurn => item.kind === 'turn')
+        .map((turn) => turn.turnId),
+    ).toEqual(['t0']);
+    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
+    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([]);
+    binding.dispose();
+  });
+
+  it('rebuilds the post-rewind projection from full journal history after compaction', async () => {
+    const interactions = new SessionInteractionService();
+    const agents = new FakeAgents();
+    const foldedHistory: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'before compaction' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'summary' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'surviving turn' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'surviving answer' }],
+        toolCalls: [],
+      },
+    ];
+    const main = agents.add('main', { history: foldedHistory });
+    const fullHistory: ContextMessage[] = [
+      foldedHistory[0]!,
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'checking old state' }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call-old',
+            name: 'Read',
+            arguments: '{"path":"/old"}',
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'old tool result' }],
+        toolCalls: [],
+        toolCallId: 'call-old',
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'old answer' }],
+        toolCalls: [],
+      },
+      ...foldedHistory.slice(1),
+    ];
+    const doomedHistory: ContextMessage[] = [
+      ...fullHistory,
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'undone turn' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'undone answer' }],
+        toolCalls: [],
+      },
+    ];
+    const store = new TranscriptStore('s1');
+    store.ensureAgent('main').apply([
+      {
+        op: 'reset',
+        agentId: 'main',
+        snapshot: groupMessagesIntoSnapshot(doomedHistory),
+      },
     ]);
+    const ops: TranscriptOperation[] = [];
+    let invalidations = 0;
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(interactions, agents),
+      undefined,
+      (event) => ops.push(...event.ops),
+      () => {
+        invalidations += 1;
+      },
+      async () => groupMessagesIntoSnapshot(fullHistory),
+    );
+    main.bus.emit(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-1',
+          kind: 'process',
+          description: 'build',
+          status: 'running',
+          detached: true,
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+
+    await main.reconcile('projection');
+    main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+
+    const transcript = store.getAgent('main');
+    const items = transcript?.getItems() ?? [];
+    const turns = items.filter((item): item is TranscriptTurn => item.kind === 'turn');
+    expect(turns.map((turn) => turn.prompt)).toEqual([
+      'before compaction',
+      'surviving turn',
+    ]);
+    expect(
+      turns[0]?.steps.flatMap((step) => step.frames).find((frame) => frame.kind === 'tool'),
+    ).toMatchObject({ output: 'old tool result' });
+    expect(items.filter((item) => item.kind === 'marker')).toHaveLength(1);
+    expect(items.some((item) => item.kind === 'turn' && item.prompt === 'undone turn')).toBe(false);
+    expect(transcript?.getTask('task-1')).toMatchObject({ state: 'running' });
+    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
+    expect(invalidations).toBe(1);
+    binding.dispose();
+  });
+
+  it('preserves surviving turn ids and world-time task refs across journal projection', async () => {
+    const interactions = new SessionInteractionService();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const survivingHistory: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'kept prompt' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'kept answer' }],
+        toolCalls: [],
+      },
+    ];
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(interactions, agents),
+      undefined,
+      undefined,
+      undefined,
+      async () =>
+        groupMessagesIntoSnapshot(survivingHistory, {
+          turnIds: [0, 0],
+          turns: [
+            { turnId: 0, input: survivingHistory[0]!.content, origin: { kind: 'user' } },
+            { turnId: 1, input: [], origin: { kind: 'retry' } },
+          ],
+        }),
+    );
+    const emitTurn = (turnId: number, origin: Record<string, unknown>): void => {
+      main.bus.emit(ev({ type: 'turn.started', turnId, origin }));
+      main.bus.emit(ev({ type: 'turn.ended', turnId, reason: 'completed' }));
+    };
+
+    emitTurn(0, { kind: 'user' });
+    emitTurn(1, { kind: 'retry' });
+    emitTurn(2, { kind: 'user' });
+    main.bus.emit(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-world-time',
+          kind: 'process',
+          description: 'background build',
+          status: 'running',
+          detached: true,
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+
+    await main.reconcile('projection');
+    main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+
+    const items = store.getAgent('main')?.getItems() ?? [];
+    expect(
+      items
+        .filter((item): item is TranscriptTurn => item.kind === 'turn')
+        .map((turn) => turn.turnId),
+    ).toEqual(['t0', 't1']);
+    expect(items).toContainEqual(
+      expect.objectContaining({ kind: 'taskref', taskId: 'task-world-time' }),
+    );
+    expect(store.getAgent('main')?.getTask('task-world-time')).toMatchObject({
+      state: 'running',
+    });
     binding.dispose();
   });
 
   it('projects session Todo changes into the main live transcript', () => {
     const todos = new FakeTodos();
+    todos.setTodos([{ title: 'pre-bind', status: 'pending' }]);
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
       fakeSession(new SessionInteractionService(), undefined, todos),
     );
+
+    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
+      { title: 'pre-bind', status: 'pending' },
+    ]);
 
     todos.setTodos([{ title: 'kept', status: 'pending' }]);
     expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
@@ -1587,6 +1895,62 @@ describe('bindSessionTranscript', () => {
         output: 'a.txt',
         display: { kind: 'command', command: 'ls' },
       });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a stale backfill that completes after a rewind reset', async () => {
+    const home = await seedWireHome();
+    try {
+      const history: ContextMessage[] = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'kept after rewind' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      ];
+      const agents = new FakeAgents();
+      const main = agents.add('main', { history });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
+      let markStarted!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(service, 'readColdSnapshot').mockImplementation(async () => {
+        markStarted();
+        await blocked;
+        return groupMessagesIntoSnapshot([
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'stale before rewind' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        ]);
+      });
+
+      const store = service.forSessionLive('s1');
+      await started;
+      main.bus.emit(ev({ type: 'context.rewound', turns: 1 }));
+      release();
+      await service.whenReady('s1');
+
+      const prompts = store
+        ?.getAgent('main')
+        ?.getItems()
+        .filter((item): item is TranscriptTurn => item.kind === 'turn')
+        .map((turn) => turn.prompt);
+      expect(prompts).toEqual(['kept after rewind']);
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

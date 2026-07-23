@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
+  reduceContextTranscript,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -168,6 +169,46 @@ describe('Agent resume', () => {
       turnId: 3,
       reason: 'completed',
     });
+  });
+
+  it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Historical prompt' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'historical-step', turnId: '0' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'historical-step', turnId: '0' },
+      },
+      { type: 'turn.cancel', turnId: 1, target: 'queued' },
+    ] as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
+    const transcript = reduceContextTranscript(persistence.records);
+    expect(transcript.turnIds).toEqual([0, 2, 2]);
+    expect(transcript.stableTurnIds).toBe(true);
   });
 
   it('projects restored pending tool results before later user messages', async () => {

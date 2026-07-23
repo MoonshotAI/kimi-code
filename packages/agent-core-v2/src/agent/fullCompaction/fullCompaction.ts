@@ -4,6 +4,7 @@ import type {
 } from './types';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { Event } from '#/_base/event';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Hooks } from '#/hooks';
 
 export interface FullCompactionInput {
@@ -24,12 +25,8 @@ export interface IAgentFullCompactionService {
 
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
-  /**
-   * Abort the in-flight compaction (if any) and wait for it to settle.
-   * A no-op when idle. Used by the rewind pipeline's quiesce step so a
-   * compaction can never apply a pre-rewind summary onto post-rewind context.
-   */
   cancel(): Promise<void>;
+  pauseLaunching(): IDisposable;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;

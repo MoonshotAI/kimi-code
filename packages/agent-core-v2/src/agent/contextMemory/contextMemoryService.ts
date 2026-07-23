@@ -2,8 +2,11 @@
  * `contextMemory` domain (L4) — `IAgentContextMemoryService` implementation.
  *
  * Owns per-agent conversation history through `wire`, maintains measurements
- * with `contextSize`, and broadcasts live mutations through `event`. Bound at
- * Agent scope.
+ * with `contextSize`, and broadcasts live mutations through `event`. Every
+ * splice-shaped mutation (`clear` / `applyCompaction` / `undo`) publishes
+ * `context.spliced` from the live path only — replay rebuilds silently — and
+ * `undo` additionally rebases the measured token prefix to an estimate when
+ * the cut truncates it. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

@@ -3,7 +3,10 @@
  *
  * Provides session-wide todo access through the main agent's `wire`, binds
  * todo capabilities into each agent, and publishes changes through its typed
- * event. Bound at Session scope.
+ * event. The main agent's wire owns the replayable state (including the
+ * undo-checkpointed `TodoModel`); this facade keeps no list copy of its own
+ * and there is deliberately no second session-level wire aggregate. Bound at
+ * Session scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';

@@ -10,12 +10,9 @@
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - interaction frames do not appear (approvals are not persisted as
  *    context messages);
- *  - persisted messages carry no turn ids, so turn ordinals are assigned by
- *    grouping — **0-based, matching the engine's live turn numbering** — and
- *    can drift from the engine's ids when hidden origins (e.g. retries) make
- *    the engine consume an ordinal that grouping cannot see. Alignment is
- *    what makes a rebuilt slice safe to merge into a live store (backfill):
- *    the engine's next turn continues at `t<turnCount>` without colliding.
+ *  - when the source supplies journal-recovered turn identity, it remains
+ *    authoritative across hidden retries and same-turn steers; callers with
+ *    only flat legacy messages use 0-based best-effort grouping.
  *
  * The input type is structural so the engine's `ContextMessage` is directly
  * assignable without a dependency from this package onto the engine.
@@ -60,6 +57,17 @@ export interface HistoryMessage {
   readonly origin?: { readonly kind: string };
 }
 
+export interface HistoryTurnSeed {
+  readonly turnId: number;
+  readonly input: readonly HistoryContentPart[];
+  readonly origin: { readonly kind: string };
+}
+
+export interface HistoryGroupingOptions {
+  readonly turnIds: readonly (number | undefined)[];
+  readonly turns: readonly HistoryTurnSeed[];
+}
+
 interface TurnDraft {
   turnId: string;
   ordinal: number;
@@ -99,7 +107,11 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  options?: HistoryGroupingOptions,
 ): AgentTranscriptSnapshot {
+  if (options !== undefined && options.turns.length > 0) {
+    return groupMessagesByStableTurn(messages, options);
+  }
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
@@ -256,7 +268,164 @@ export function groupMessagesIntoSnapshot(
   return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
 }
 
+function groupMessagesByStableTurn(
+  messages: readonly HistoryMessage[],
+  options: HistoryGroupingOptions,
+): AgentTranscriptSnapshot {
+  const attachments: TranscriptAttachment[] = [];
+  const drafts = new Map<number, TurnDraft>();
+  const markers = new Map<number | undefined, TranscriptMarker[]>();
+  let markerCount = 0;
+  let lastTurnId: number | undefined;
+
+  const ensureDraft = (turnId: number, message?: HistoryMessage): TurnDraft => {
+    let draft = drafts.get(turnId);
+    if (draft !== undefined) return draft;
+    draft = {
+      turnId: `t${turnId}`,
+      ordinal: turnId,
+      origin: message === undefined ? FALLBACK_ORIGIN : mapOrigin(message),
+      prompt: message === undefined || isHiddenPrompt(message) ? undefined : textOf(message),
+      steps: [],
+    };
+    drafts.set(turnId, draft);
+    return draft;
+  };
+
+  for (const seed of options.turns) {
+    const message: HistoryMessage = {
+      role: 'user',
+      content: seed.input,
+      origin: seed.origin,
+    };
+    ensureDraft(seed.turnId, message);
+  }
+
+  const collectAttachments = (message: HistoryMessage): string[] | undefined => {
+    const ids: string[] = [];
+    for (const part of message.content ?? []) {
+      if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
+        if (!('source' in part) || part.source === undefined) continue;
+        const source = part.source as HistoryMediaSource;
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: source.kind === 'base64' ? source.media_type : `${part.type}/*`,
+          source:
+            source.kind === 'url'
+              ? { kind: 'url', url: source.url }
+              : source.kind === 'file'
+                ? { kind: 'file', fileId: source.file_id }
+                : undefined,
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      } else if (part.type === 'file' && 'file_id' in part) {
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: part.media_type as string,
+          name: part.name as string,
+          size: part.size as number,
+          source: { kind: 'file', fileId: part.file_id as string },
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      }
+    }
+    return ids.length > 0 ? ids : undefined;
+  };
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'system') continue;
+    const assignedTurnId = options.turnIds[index] ?? lastTurnId;
+    if (assignedTurnId !== undefined) lastTurnId = assignedTurnId;
+    const draft = assignedTurnId === undefined ? undefined : ensureDraft(assignedTurnId);
+    const originKind = message.origin?.kind;
+
+    if (message.role === 'user') {
+      const markerKey = originKind === undefined ? undefined : MARKER_USER_ORIGINS[originKind];
+      if (markerKey !== undefined) {
+        const list = markers.get(assignedTurnId) ?? [];
+        markerCount += 1;
+        list.push({
+          kind: 'marker',
+          markerId: `m${markerCount}`,
+          marker: markerKey,
+          payload: { text: textOf(message), origin: message.origin },
+        });
+        markers.set(assignedTurnId, list);
+      }
+      if (draft !== undefined && draft.attachmentIds === undefined) {
+        draft.attachmentIds = collectAttachments(message);
+      }
+      continue;
+    }
+
+    if (message.role === 'assistant' && draft !== undefined) {
+      const stepOrdinal = draft.steps.length + 1;
+      const step: StepDraft = {
+        stepId: `${draft.turnId}.${stepOrdinal}`,
+        ordinal: stepOrdinal,
+        frames: [],
+      };
+      draft.steps.push(step);
+      let frameCount = 0;
+      const nextFrameId = (): string => `${step.stepId}.f${++frameCount}`;
+      for (const part of message.content ?? []) {
+        if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
+          step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
+        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0) {
+          step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
+        }
+      }
+      for (const call of message.toolCalls ?? []) {
+        step.frames.push({
+          kind: 'tool',
+          frameId: `${step.stepId}.${call.id}`,
+          toolCallId: call.id,
+          name: call.name,
+          state: 'running',
+          input: parseArguments(call.arguments),
+        });
+      }
+      continue;
+    }
+
+    if (message.role === 'tool' && draft !== undefined) {
+      const frame = currentTurnToolFrame(draft, message.toolCallId);
+      if (frame?.kind !== 'tool') continue;
+      const output = textOf(message);
+      replaceToolFrame(draft, message.toolCallId!, {
+        ...frame,
+        state: message.isError ? 'error' : 'done',
+        output,
+        error: message.isError ? output : undefined,
+      });
+    }
+  }
+
+  const items: TranscriptItem[] = [...(markers.get(undefined) ?? [])];
+  const emittedMarkerOrdinals = new Set<number>();
+  for (const draft of [...drafts.values()].toSorted((a, b) => a.ordinal - b.ordinal)) {
+    items.push(draftToTurnItem(draft), ...(markers.get(draft.ordinal) ?? []));
+    emittedMarkerOrdinals.add(draft.ordinal);
+  }
+  for (const [ordinal, entries] of [...markers.entries()].toSorted(([a], [b]) => {
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    return a - b;
+  })) {
+    if (ordinal === undefined || emittedMarkerOrdinals.has(ordinal)) continue;
+    items.push(...entries);
+  }
+  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
+}
+
 // ---------------------------------------------------------------- helpers
+
+function isHiddenPrompt(message: HistoryMessage): boolean {
+  const kind = message.origin?.kind;
+  return kind !== undefined && HIDDEN_USER_ORIGINS.has(kind);
+}
 
 /** Whether a hidden-origin user message opened its own engine turn. */
 function opensOwnTurn(message: HistoryMessage): boolean {

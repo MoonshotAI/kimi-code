@@ -1,33 +1,9 @@
 /**
- * `contextMemory` transcript reducer — rebuilds the FULL message history of an
- * agent from its `context.*` wire records for UI display (snapshot / messages).
+ * `contextMemory` domain (L4) — rebuilds display history from the wire journal.
  *
- * The live `ContextModel` (`ContextMemoryService`) rewrites the model-facing
- * context on `context.apply_compaction` into `[...keptUserMessages,
- * compaction_summary]`, so reading the live context after a compaction loses
- * everything before the fold. The wire log keeps every record, though, so this
- * reducer re-reduces the `context.*` records with the same semantics as the
- * live `ContextMemory` restore, EXCEPT that `context.apply_compaction` KEEPS
- * the full history and appends a user-role summary marker — the same view the
- * v1 transcript / TUI shows after resume. `foldedLength` tracks what the live
- * (folded) `context.history.length` would be, so a caller can detect and
- * append an unflushed live tail.
- *
- * Mirrors v1 `reduceWireRecords`
- * (`packages/agent-core/src/services/message/transcript.ts`):
- *   - `context.append_message`    → append (deferred while a tool exchange is open)
- *   - `context.append_loop_event` → step.begin/content.part/tool.call mutate the
- *                                   open assistant; tool.result appends a tool
- *                                   message with the raw output; settling a step
- *                                   (at its end or at the next begin) drops an
- *                                   output-free assistant, mirroring the live fold
- *   - `context.apply_compaction`  → keep the full history, append the user-role
- *                                   summary marker, recover `foldedLength` from
- *                                   the recorded kept-count fields
- *   - `context.undo`              → remove tail messages (skip injections, stop
- *                                   at compaction summaries / clear floor)
- *   - `context.clear`             → keep prior transcript entries but reset the
- *                                   folded view
+ * Supplies message and transcript consumers with full pre-compaction history,
+ * folded-context length, and stable turn identity while preserving live
+ * undo/clear semantics. Scope-agnostic.
  */
 
 import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
@@ -36,11 +12,11 @@ import type { WireRecord } from '#/wire/record';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
-  isRealUserInput,
   selectRecentUserMessages,
 } from './compactionHandoff';
+import { isUndoAnchor } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextMessage, PromptOrigin } from './types';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -49,7 +25,17 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
 export interface ContextTranscript {
   readonly entries: readonly ContextMessage[];
   readonly times: readonly (number | undefined)[];
+  readonly turnIds: readonly (number | undefined)[];
+  readonly turns: readonly ContextTranscriptTurn[];
+  readonly stableTurnIds: boolean;
   readonly foldedLength: number;
+}
+
+export interface ContextTranscriptTurn {
+  readonly turnId: number;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly time?: number;
 }
 
 export interface ContextTranscriptReducer {
@@ -70,7 +56,31 @@ interface MutableMessage {
 interface MutableEntry {
   message: MutableMessage;
   time?: number;
+  turnId?: number;
+  opensTurn: boolean;
+  order: number;
 }
+
+interface MutableTurn extends ContextTranscriptTurn {
+  readonly order: number;
+}
+
+interface PendingSteerBase {
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly time?: number;
+  readonly order: number;
+  readonly expectsMessage: boolean;
+}
+
+type PendingSteer =
+  | (PendingSteerBase & { readonly state: 'recorded' })
+  | (PendingSteerBase & { readonly state: 'message-bound'; readonly entry: MutableEntry })
+  | (PendingSteerBase & {
+      readonly state: 'turn-bound';
+      readonly turnId: number;
+      readonly opensTurn: boolean;
+    });
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
   const reducer = createContextTranscriptReducer();
@@ -86,6 +96,15 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const pendingToolResultIds = new Set<string>();
   let deferred: MutableEntry[] = [];
   let lastOpenStepUuid: string | undefined;
+  let turns: MutableTurn[] = [];
+  let nextTurnId = 0;
+  let currentTurnId: number | undefined;
+  const cancelledTurnIds = new Set<number>();
+  let pendingPromptAnchor: { readonly turnId: number } | undefined;
+  let pendingSteers: PendingSteer[] = [];
+  let stableTurnIds = true;
+  let recordOrder = 0;
+  const toolTurnIds = new Map<string, number | undefined>();
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
@@ -109,16 +128,25 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
           isError: true,
         },
         time,
+        turnId: toolTurnIds.get(toolCallId),
+        opensTurn: false,
+        order: recordOrder,
       });
       pendingToolResultIds.delete(toolCallId);
+      toolTurnIds.delete(toolCallId);
     }
     flushDeferredIfToolExchangeClosed();
   };
-  const resetOpenState = (): void => {
+  const resetOpenState = (clearPendingInput = true): void => {
     openSteps.clear();
     pendingToolResultIds.clear();
     deferred = [];
     lastOpenStepUuid = undefined;
+    toolTurnIds.clear();
+    if (clearPendingInput) {
+      pendingPromptAnchor = undefined;
+      pendingSteers = [];
+    }
   };
   const settleStep = (uuid: string): void => {
     const entry = openSteps.get(uuid);
@@ -133,6 +161,21 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   };
 
   const applyLoopEvent = (event: LoopRecordedEvent, time: number | undefined): void => {
+    const observedTurnId = readLoopTurnId(event);
+    if (observedTurnId !== undefined) {
+      resolvePendingSteers(observedTurnId);
+      currentTurnId = observedTurnId;
+      nextTurnId = Math.max(nextTurnId, observedTurnId + 1);
+      if (!turns.some((turn) => turn.turnId === observedTurnId)) {
+        turns.push({
+          turnId: observedTurnId,
+          input: [],
+          origin: { kind: 'retry' },
+          time,
+          order: recordOrder,
+        });
+      }
+    }
     switch (event.type) {
       case 'step.begin': {
         closePendingToolResults(time);
@@ -140,6 +183,9 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         const entry: MutableEntry = {
           message: { role: 'assistant', content: [], toolCalls: [] },
           time,
+          turnId: observedTurnId ?? currentTurnId,
+          opensTurn: false,
+          order: recordOrder,
         };
         push(entry);
         openSteps.set(event.uuid, entry);
@@ -168,6 +214,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         };
         openStep.message.toolCalls.push(call);
         pendingToolResultIds.add(event.toolCallId);
+        toolTurnIds.set(event.toolCallId, openStep.turnId);
         return;
       }
       case 'tool.result': {
@@ -181,8 +228,12 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             isError: event.result.isError,
           },
           time,
+          turnId: toolTurnIds.get(event.toolCallId),
+          opensTurn: false,
+          order: recordOrder,
         });
         pendingToolResultIds.delete(event.toolCallId);
+        toolTurnIds.delete(event.toolCallId);
         flushDeferredIfToolExchangeClosed();
         return;
       }
@@ -192,24 +243,146 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
+    let cutEntry: MutableEntry | undefined;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
-      const message = transcript[i]!.message;
+      const entry = transcript[i]!;
+      const message = entry.message;
       if (message.origin?.kind === 'injection') continue;
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isRealUserInput(message)) {
+      if (isUndoAnchor(message)) {
         removedUserCount++;
-        if (removedUserCount >= count) break;
+        if (removedUserCount >= count) {
+          cutEntry = entry;
+          break;
+        }
       }
+    }
+    if (cutEntry !== undefined) {
+      turns = turns.filter(
+        (turn) =>
+          turn.order < cutEntry.order &&
+          (!cutEntry.opensTurn || turn.turnId !== cutEntry.turnId),
+      );
     }
     resetOpenState();
   };
 
   const add = (record: WireRecord): void => {
+    recordOrder += 1;
     switch (record.type) {
+      case 'turn.prompt': {
+        if (pendingSteers.length > 0) stableTurnIds = false;
+        const input = readTurnInput(record);
+        const origin = readTurnOrigin(record);
+        while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+        const turnId = nextTurnId;
+        nextTurnId += 1;
+        currentTurnId = turnId;
+        turns.push({ turnId, input, origin, time: record.time, order: recordOrder });
+        pendingSteers = [];
+        pendingPromptAnchor =
+          input.length > 0 &&
+          isUndoAnchor({ role: 'user', content: [...input], toolCalls: [], origin })
+            ? { turnId }
+            : undefined;
+        break;
+      }
+      case 'turn.steer': {
+        const input = readTurnInput(record);
+        const origin = readTurnOrigin(record);
+        pendingSteers.push({
+          state: 'recorded',
+          input,
+          origin,
+          time: record.time,
+          order: recordOrder,
+          expectsMessage: input.length > 0,
+        });
+        break;
+      }
+      case 'turn.cancel': {
+        const turnId = readTurnCancelId(record);
+        const target = readTurnCancelTarget(record);
+        if (target === 'queued') {
+          if (turnId !== undefined && turnId >= nextTurnId) {
+            cancelledTurnIds.add(turnId);
+          }
+          break;
+        }
+        if (target === undefined) {
+          stableTurnIds = false;
+          pendingSteers = [];
+          pendingPromptAnchor = undefined;
+          break;
+        }
+        if (pendingSteers.length === 0) {
+          if (turnId !== undefined && turnId >= nextTurnId) cancelledTurnIds.add(turnId);
+          pendingPromptAnchor = undefined;
+          break;
+        }
+        if (
+          turnId === undefined ||
+          (turnId !== currentTurnId && turnId !== nextTurnId)
+        ) {
+          stableTurnIds = false;
+          pendingSteers = [];
+        } else {
+          resolvePendingSteers(turnId, true);
+          currentTurnId = turnId;
+          nextTurnId = Math.max(nextTurnId, turnId + 1);
+          if (!turns.some((turn) => turn.turnId === turnId)) {
+            turns.push({
+              turnId,
+              input: [],
+              origin: { kind: 'retry' },
+              time: record.time,
+              order: recordOrder,
+            });
+          }
+        }
+        pendingPromptAnchor = undefined;
+        break;
+      }
       case 'context.append_message': {
-        const entry = toMutableEntry(record['message'] as ContextMessage, record.time);
+        const message = record['message'] as ContextMessage;
+        const entry = toMutableEntry(
+          message,
+          record.time,
+          currentTurnId,
+          false,
+          recordOrder,
+        );
+        if (isUndoAnchor(message) && pendingPromptAnchor !== undefined) {
+          entry.turnId = pendingPromptAnchor.turnId;
+          entry.opensTurn = true;
+          pendingPromptAnchor = undefined;
+          const redundantSteer = pendingSteers.findIndex(
+            (steer) =>
+              steer.state !== 'message-bound' &&
+              steer.expectsMessage &&
+              hasSameOriginKind(steer.origin, message.origin),
+          );
+          if (redundantSteer >= 0) pendingSteers.splice(redundantSteer, 1);
+        } else {
+          const steerIndex = pendingSteers.findIndex(
+            (candidate) =>
+              candidate.state !== 'message-bound' &&
+              candidate.expectsMessage &&
+              hasSameOriginKind(candidate.origin, message.origin),
+          );
+          const steer = pendingSteers[steerIndex];
+          if (steer !== undefined) {
+            if (steer.state === 'turn-bound') {
+              entry.turnId = steer.turnId;
+              entry.opensTurn = steer.opensTurn;
+              pendingSteers.splice(steerIndex, 1);
+            } else {
+              pendingSteers[steerIndex] = { ...steer, state: 'message-bound', entry };
+            }
+          }
+        }
         if (pendingToolResultIds.size > 0) deferred.push(entry);
         else push(entry);
         break;
@@ -226,9 +399,12 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             origin: { kind: 'compaction_summary' },
           },
           time: record.time,
+          turnId: currentTurnId,
+          opensTurn: false,
+          order: recordOrder,
         });
         foldedLength = recoverFoldedLength(record, transcript, clearFloor, foldedLength);
-        resetOpenState();
+        resetOpenState(false);
         break;
       }
       case 'context.undo':
@@ -249,12 +425,58 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     result: () => ({
       entries: transcript.map((e) => e.message),
       times: transcript.map((e) => e.time),
+      turnIds: transcript.map((e) => e.turnId),
+      turns: turns
+        .toSorted((a, b) => a.turnId - b.turnId)
+        .map(({ order: _order, ...turn }) => turn),
+      stableTurnIds,
       foldedLength,
     }),
   };
+
+  function resolvePendingSteers(observedTurnId: number, settleUnbound = false): void {
+    const unresolved = pendingSteers.filter(
+      (steer) => steer.state !== 'turn-bound' && steer.expectsMessage,
+    );
+    const opensNewTurn =
+      unresolved.length > 0 &&
+      (currentTurnId === undefined || observedTurnId !== currentTurnId);
+    if (opensNewTurn) {
+      const opener = unresolved[0]!;
+      if (!turns.some((turn) => turn.turnId === observedTurnId)) {
+        turns.push({
+          turnId: observedTurnId,
+          input: opener.input,
+          origin: opener.origin,
+          time: opener.time,
+          order: opener.order,
+        });
+      }
+    }
+    let unresolvedIndex = 0;
+    pendingSteers = pendingSteers.flatMap((steer) => {
+      if (steer.state === 'turn-bound') return settleUnbound ? [] : [steer];
+      if (!steer.expectsMessage) return [];
+      const opensTurn = opensNewTurn && unresolvedIndex === 0;
+      unresolvedIndex += 1;
+      if (steer.state === 'message-bound') {
+        steer.entry.turnId = observedTurnId;
+        steer.entry.opensTurn = opensTurn;
+        return [];
+      }
+      if (settleUnbound) return [];
+      return [{ ...steer, state: 'turn-bound', turnId: observedTurnId, opensTurn }];
+    });
+  }
 }
 
-function toMutableEntry(message: ContextMessage, time: number | undefined): MutableEntry {
+function toMutableEntry(
+  message: ContextMessage,
+  time: number | undefined,
+  turnId: number | undefined,
+  opensTurn: boolean,
+  order: number,
+): MutableEntry {
   return {
     message: {
       ...(message.id !== undefined ? { id: message.id } : {}),
@@ -266,7 +488,48 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
     },
     time,
+    turnId,
+    opensTurn,
+    order,
   };
+}
+
+function readLoopTurnId(event: LoopRecordedEvent): number | undefined {
+  if (!('turnId' in event) || event.turnId === undefined) return undefined;
+  const value = Number.parseInt(event.turnId, 10);
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function readTurnInput(record: WireRecord): readonly ContentPart[] {
+  const input = record['input'];
+  return Array.isArray(input) ? (input as readonly ContentPart[]) : [];
+}
+
+function readTurnOrigin(record: WireRecord): PromptOrigin {
+  const origin = record['origin'];
+  if (origin !== null && typeof origin === 'object' && 'kind' in origin) {
+    return origin as PromptOrigin;
+  }
+  return { kind: 'user' };
+}
+
+function readTurnCancelId(record: WireRecord): number | undefined {
+  const turnId = record['turnId'];
+  return typeof turnId === 'number' && Number.isInteger(turnId) && turnId >= 0
+    ? turnId
+    : undefined;
+}
+
+function readTurnCancelTarget(record: WireRecord): 'active' | 'queued' | undefined {
+  const target = record['target'];
+  return target === 'active' || target === 'queued' ? target : undefined;
+}
+
+function hasSameOriginKind(
+  left: PromptOrigin,
+  right: ContextMessage['origin'],
+): boolean {
+  return left.kind === (right?.kind ?? 'user');
 }
 
 function recoverFoldedLength(

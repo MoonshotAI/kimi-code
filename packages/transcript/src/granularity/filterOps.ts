@@ -22,7 +22,16 @@ export function filterOpsForGrade(
 ): TranscriptOperation[] {
   const rank = GRADE_RANK[grade];
   if (rank === 0) return [];
-  return ops.filter((op) => admits(grade, op));
+  const filtered: TranscriptOperation[] = [];
+  for (const op of ops) {
+    if (!admits(grade, op)) continue;
+    filtered.push(
+      op.op === 'reset'
+        ? { ...op, snapshot: redactSnapshotForGrade(grade, op.snapshot) }
+        : op,
+    );
+  }
+  return filtered;
 }
 
 function admits(grade: TranscriptGrade, op: TranscriptOperation): boolean {

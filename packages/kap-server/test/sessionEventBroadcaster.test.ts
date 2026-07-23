@@ -10,6 +10,7 @@ import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
   ContextSizeModel,
   IAgentActivityView,
+  IAgentConversationReconciliationRegistry,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -18,6 +19,7 @@ import {
   IEventService,
   ISessionInteractionService,
   ISessionLifecycleService,
+  ISessionTodoService,
   IWireService,
   ISessionMetadata,
   SessionInteractionService,
@@ -78,6 +80,9 @@ class FakeAgentHandle {
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
     this.services.set(IEventBus, this.bus);
+    this.services.set(IAgentConversationReconciliationRegistry, {
+      register: () => ({ dispose: () => {} }),
+    });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
     };
@@ -191,6 +196,13 @@ function makeCore(
                 if (t === ISessionInteractionService) return lifecycle.interactions;
                 // Minimal metadata read for the transcript binding's descriptor pass.
                 if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
+                // Minimal todo facade for the transcript binding's change projection.
+                if (t === ISessionTodoService) {
+                  return {
+                    onDidChange: () => ({ dispose: () => {} }),
+                    getTodos: () => [],
+                  };
+                }
                 return undefined;
               },
             };

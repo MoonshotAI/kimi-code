@@ -16,6 +16,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
@@ -348,6 +349,7 @@ interface ResumeStateSnapshot {
   readonly context: {
     readonly history: readonly ContextMessage[];
   };
+  readonly checkpointedModels: Readonly<Record<string, unknown>>;
   readonly permission: Omit<ReturnType<IAgentPermissionGate['data']>, 'rules'>;
   readonly usage: Omit<ReturnType<IAgentUsageService['status']>, 'currentTurn'>;
 }
@@ -2128,6 +2130,12 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   return {
     config: configStateSnapshot(ctx),
     context: resumeContextSnapshot(ctx),
+    checkpointedModels: Object.fromEntries(
+      CHECKPOINTED_MODELS.map((model) => [
+        model.name,
+        (ctx.get(IWireService).getModel(model) as Checkpointed<unknown>).current,
+      ]),
+    ),
     permission: permissionData,
     usage: usageStatus,
   };

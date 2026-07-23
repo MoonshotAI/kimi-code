@@ -101,6 +101,7 @@ export class TranscriptService {
   private readonly opsListeners = new Map<string, Set<(event: TranscriptChangeEvent) => void>>();
   /** Debounced post-turn heals: `${sessionId}:${agentId}` → pending ordinals + timer. */
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly projectionGenerations = new Map<string, number>();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     // Live entries must not outlive their session: once it closes or archives,
@@ -130,8 +131,13 @@ export class TranscriptService {
     const store = new TranscriptStore(sessionId);
     let binding: TranscriptBinding;
     try {
-      binding = bindSessionTranscript(store, session, this.deps.logger, (event) =>
-        this.handleLiveOps(sessionId, event),
+      binding = bindSessionTranscript(
+        store,
+        session,
+        this.deps.logger,
+        (event) => this.handleLiveOps(sessionId, event),
+        (agentId) => this.invalidateAgentProjection(sessionId, agentId),
+        (agentId) => this.readColdSnapshot(sessionId, agentId),
       );
     } catch (error) {
       // The session's core scope can be disposed mid-bind during shutdown
@@ -221,6 +227,7 @@ export class TranscriptService {
    * without colliding.
    */
   private async backfillAgent(sessionId: string, store: TranscriptStore, agentId: string): Promise<void> {
+    const generation = this.projectionGeneration(sessionId, agentId);
     let snapshot: AgentTranscriptSnapshot | undefined;
     try {
       snapshot = await this.readColdSnapshot(sessionId, agentId);
@@ -231,7 +238,10 @@ export class TranscriptService {
       );
     }
     // The entry may have been dropped (session closed) while reading from disk.
-    if (this.live.get(sessionId)?.store !== store) return;
+    if (
+      this.live.get(sessionId)?.store !== store ||
+      this.projectionGeneration(sessionId, agentId) !== generation
+    ) return;
     const transcript = store.ensureAgent(agentId);
     if (snapshot !== undefined) {
       // Turns merge live-first (`healTurnOps`): ops the projector landed
@@ -341,6 +351,20 @@ export class TranscriptService {
     this.healTimers.set(key, { ordinals, timer });
   }
 
+  private projectionGeneration(sessionId: string, agentId: string): number {
+    return this.projectionGenerations.get(`${sessionId}:${agentId}`) ?? 0;
+  }
+
+  private invalidateAgentProjection(sessionId: string, agentId: string): void {
+    const key = `${sessionId}:${agentId}`;
+    this.projectionGenerations.set(key, this.projectionGeneration(sessionId, agentId) + 1);
+    const heal = this.healTimers.get(key);
+    if (heal !== undefined) {
+      clearTimeout(heal.timer);
+      this.healTimers.delete(key);
+    }
+  }
+
   /**
    * A backfill rebuilds every turn as 'completed' — the cold grouping cannot
    * see in-flight work. When the agent's loop is actually mid-turn, re-assert
@@ -394,6 +418,7 @@ export class TranscriptService {
   ): Promise<void> {
     const entry = this.live.get(sessionId);
     if (entry === undefined) return;
+    const generation = this.projectionGeneration(sessionId, agentId);
     let snapshot: AgentTranscriptSnapshot | undefined;
     try {
       snapshot = await this.readColdSnapshot(sessionId, agentId);
@@ -405,7 +430,11 @@ export class TranscriptService {
       return;
     }
     // The entry may have been dropped (session closed) while reading from disk.
-    if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
+    if (
+      snapshot === undefined ||
+      this.live.get(sessionId)?.store !== entry.store ||
+      this.projectionGeneration(sessionId, agentId) !== generation
+    ) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
     const ops: TranscriptOperation[] = [];
@@ -480,8 +509,13 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
-    return groupMessagesIntoSnapshot(messages);
+    const transcript = reduceContextTranscript(records);
+    return groupMessagesIntoSnapshot(
+      transcript.entries,
+      transcript.stableTurnIds
+        ? { turnIds: transcript.turnIds, turns: transcript.turns }
+        : undefined,
+    );
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */
@@ -492,6 +526,9 @@ export class TranscriptService {
         clearTimeout(pending.timer);
         this.healTimers.delete(key);
       }
+    }
+    for (const key of this.projectionGenerations.keys()) {
+      if (key.startsWith(`${sessionId}:`)) this.projectionGenerations.delete(key);
     }
     const entry = this.live.get(sessionId);
     if (entry === undefined) return;

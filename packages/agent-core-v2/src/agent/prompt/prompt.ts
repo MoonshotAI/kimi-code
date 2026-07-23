@@ -57,13 +57,6 @@ export interface IAgentPromptService {
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
   clear(): void;
-  /**
-   * Suspend launching queued prompts until the returned handle is disposed
-   * (launching resumes, draining the queue, on the last release). The rewind
-   * pipeline holds this across its quiesce→cut window so an aborted active
-   * turn cannot auto-start the next queued prompt mid-rewind. Pending prompts
-   * stay queued.
-   */
   pauseLaunching(): IDisposable;
   readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
 }

@@ -130,8 +130,6 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   async undoHistory(payload: UndoHistoryPayload): Promise<number> {
-    // The rewind service owns the operation end-to-end (quiesce, cut,
-    // reconcile, telemetry) — this is a thin pass-through.
     return this.rewind.rewind(payload.count);
   }
 

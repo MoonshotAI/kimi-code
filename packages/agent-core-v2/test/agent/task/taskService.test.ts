@@ -13,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { ILogService } from '#/_base/log/log';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentConversationReconciliationRegistry } from '#/agent/contextMemory/conversationReconciliation';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
@@ -45,6 +47,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { ITaskService } from '#/app/task/task';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
+import { stubLog } from '../../_base/log/stubs';
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import type { TaskServiceTestManager } from './stubs';
@@ -87,6 +90,11 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     eventBus = disposables.add(new EventBusService());
     injectionProviders = new Map();
+    ix.stub(ILogService, stubLog());
+    ix.stub(IAgentConversationReconciliationRegistry, {
+      register: () => toDisposable(() => {}),
+      list: () => [],
+    });
     ix.stub(IWireService, stubWireService());
     ix.stub(IEventBus, eventBus);
     ix.stub(IAgentContextInjectorService, {
@@ -393,6 +401,11 @@ describe('AgentTaskService', () => {
     captureRestoreHook?: (hook: RestoreHook) => void,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IAgentConversationReconciliationRegistry, {
+      register: () => toDisposable(() => {}),
+      list: () => [],
+    });
     ix.stub(IWireService, stubWireService(captureRestoreHook));
     ix.stub(IEventBus, disposables.add(new EventBusService()));
     ix.stub(IAgentContextInjectorService, {
