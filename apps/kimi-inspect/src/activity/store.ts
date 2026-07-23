@@ -87,7 +87,10 @@ export class SessionActivityHub {
   constructor(opts: SessionActivityHubOptions) {
     this.baseUrl = opts.url.replace(/\/$/, '');
     this.token = opts.token;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Bind the default: `this.fetchImpl(...)` is a member call, and the
+    // browser's `fetch` throws Illegal invocation when its receiver is not
+    // the global object (Node's undici fetch does not care).
+    this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
     this.ws = new GlobalEventsWs({
       url: opts.url,
       token: opts.token,
