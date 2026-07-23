@@ -1,3 +1,9 @@
+/**
+ * Scenario: ACP session/prompt terminal failure mapping.
+ * Responsibilities: map terminal outcomes and expose only safe JSON-RPC error data.
+ * Wiring: real ACP connections over in-memory NDJSON; scripted SDK Session boundary.
+ * Run: pnpm exec vitest run packages/acp-adapter/test/error-mapping.test.ts
+ */
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -23,7 +29,6 @@ import {
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { turnEndReasonToStopReason } from '../src/events-map';
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
@@ -59,11 +64,8 @@ interface ScriptedSession {
 }
 
 /**
- * Build a fake `Session` whose `prompt()` either rejects with a
- * caller-supplied error OR fans out a pre-recorded event sequence
- * through any subscribed listener — covering the two distinct error
- * paths that {@link AcpSession.prompt} routes through
- * `mapPromptError` / `authRequiredFromPayload`.
+ * Build the SDK boundary used by the wire-level tests. Its prompt either
+ * rejects or emits a caller-supplied event sequence to active subscribers.
  */
 function makeScriptedSession(
   sessionId: string,
@@ -102,175 +104,149 @@ function makeHarnessWithSession(session: Session): KimiHarness {
   } as unknown as KimiHarness;
 }
 
-describe('AcpServer error mapping', () => {
-  it('maps a turn.ended failed event with auth.login_required to authRequired (-32000)', async () => {
-    const sessionId = 'sess-auth-payload';
-    const errorPayload: KimiErrorPayload = {
-      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
-      message: 'Login required',
+function connectToSession(
+  session: Session,
+): readonly [AgentSideConnection, ClientSideConnection] {
+  const { agentStream, clientStream } = makeInMemoryStreamPair();
+  const agent = new AgentSideConnection(
+    (connection) => new AcpServer(makeHarnessWithSession(session), connection),
+    agentStream,
+  );
+  const client = new ClientSideConnection(() => new StubClient(), clientStream);
+  return [agent, client];
+}
+
+function makeFailedSession(
+  sessionId: string,
+  error?: KimiErrorPayload,
+): ScriptedSession {
+  return makeScriptedSession(sessionId, {
+    script: [
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        reason: 'failed',
+        error,
+      } as Event,
+    ],
+  });
+}
+
+async function capturePromptError(
+  client: ClientSideConnection,
+  sessionId: string,
+  text = 'hi',
+): Promise<unknown> {
+  try {
+    await client.prompt({ sessionId, prompt: [textBlock(text)] });
+  } catch (error) {
+    return error;
+  }
+  throw new Error('Expected session/prompt to reject');
+}
+
+function exposedError(error: unknown): string | undefined {
+  return error instanceof Error
+    ? JSON.stringify({
+        message: error.message,
+        data: (error as Error & { data?: unknown }).data,
+      })
+    : JSON.stringify(error);
+}
+
+describe('ACP prompt failure mapping (terminal outcomes and safe error data)', () => {
+  it.each([
+    [ErrorCodes.AUTH_LOGIN_REQUIRED, 'Login required'],
+    [ErrorCodes.PROVIDER_AUTH_ERROR, 'Provider returned 401'],
+  ] as const)('rejects with authRequired when a failed event carries %s', async (code, message) => {
+    const sessionId = `sess-${code}`;
+    const { session } = makeFailedSession(sessionId, {
+      code,
+      message,
       retryable: false,
-    };
-    const { session } = makeScriptedSession(sessionId, {
-      script: [
-        {
-          type: 'turn.ended',
-          sessionId,
-          agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
-        } as Event,
-      ],
     });
 
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+    const [, client] = connectToSession(session);
 
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     await expect(
       client.prompt({ sessionId, prompt: [textBlock('hi')] }),
-    ).rejects.toMatchObject({ code: -32000 });
+    ).rejects.toMatchObject({ code: -32000, data: undefined });
   });
 
-  it('maps a turn.ended failed event with provider.auth_error to authRequired (-32000)', async () => {
-    const sessionId = 'sess-provider-auth';
-    const errorPayload: KimiErrorPayload = {
-      code: ErrorCodes.PROVIDER_AUTH_ERROR,
-      message: 'Provider returned 401',
-      retryable: false,
-    };
-    const { session } = makeScriptedSession(sessionId, {
-      script: [
-        {
-          type: 'turn.ended',
-          sessionId,
-          agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
-        } as Event,
-      ],
-    });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await expect(
-      client.prompt({ sessionId, prompt: [textBlock('hi')] }),
-    ).rejects.toMatchObject({ code: -32000 });
-  });
-
-  it('resolves with end_turn when turn.ended fails with a non-auth code (log-only path)', async () => {
-    // Non-auth failures stay on the existing log-and-resolve path so
-    // the client is unblocked. The error appears in the agent log;
-    // `stopReason` does not signal it (ACP spec discourages errors-via-stopReason).
+  it('rejects with safe machine-readable data when a turn has a known non-auth failure', async () => {
     const sessionId = 'sess-context-overflow';
     const errorPayload: KimiErrorPayload = {
       code: ErrorCodes.CONTEXT_OVERFLOW,
       message: 'Context window exceeded',
       retryable: true,
     };
-    const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
-      script: [
-        {
-          type: 'turn.ended',
-          sessionId,
-          agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
-        } as Event,
-      ],
-    });
+    const { session } = makeFailedSession(sessionId, errorPayload);
 
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+    const [, client] = connectToSession(session);
 
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
-    expect(response.stopReason).toBe('end_turn');
+    const caught = await capturePromptError(client, sessionId);
+
+    expect(caught).toMatchObject({ code: -32603 });
+    expect((caught as { data?: unknown }).data).toEqual({
+      code: ErrorCodes.CONTEXT_OVERFLOW,
+      retryable: true,
+    });
+  });
+
+  it('settles a new prompt after the previous prompt ends with a failure', async () => {
+    const sessionId = 'sess-consecutive-failures';
+    const { session } = makeFailedSession(sessionId, {
+      code: ErrorCodes.CONTEXT_OVERFLOW,
+      message: 'Context window exceeded',
+      retryable: true,
+    });
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await capturePromptError(client, sessionId);
+    await expect(capturePromptError(client, sessionId, 'try again')).resolves.toMatchObject({
+      code: -32603,
+    });
+  });
+
+  it('unsubscribes from SDK events when a failed turn settles', async () => {
+    const sessionId = 'sess-failure-cleanup';
+    const { session, unsubscribeCount } = makeFailedSession(sessionId, {
+      code: ErrorCodes.CONTEXT_OVERFLOW,
+      message: 'Context window exceeded',
+      retryable: true,
+    });
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await capturePromptError(client, sessionId);
+
     expect(unsubscribeCount()).toBe(1);
   });
 
-  it('maps a synchronous session.prompt rejection carrying an auth code to authRequired (-32000)', async () => {
-    const sessionId = 'sess-prompt-rejects-auth';
-    const { session } = makeScriptedSession(sessionId, {
-      rejectWith: new KimiError(ErrorCodes.PROVIDER_AUTH_ERROR, 'Provider 401'),
+  it('rejects a failed turn without inventing data when the SDK payload is missing', async () => {
+    const sessionId = 'sess-failed-without-payload';
+    const { session } = makeFailedSession(sessionId);
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await expect(capturePromptError(client, sessionId)).resolves.toMatchObject({
+      code: -32603,
+      data: undefined,
     });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await expect(
-      client.prompt({ sessionId, prompt: [textBlock('hi')] }),
-    ).rejects.toMatchObject({ code: -32000 });
   });
 
-  it('maps a generic session.prompt rejection to internalError (-32603) without leaking the stack', async () => {
-    const sessionId = 'sess-generic-error';
-    const stackTip = 'super-secret-stack-frame-do-not-leak';
-    const generic = new Error('boom internal');
-    generic.stack = `Error: boom internal\n    at ${stackTip} (secret.ts:1:1)`;
-    const { session } = makeScriptedSession(sessionId, { rejectWith: generic });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-
-    let captured: unknown;
-    try {
-      await client.prompt({ sessionId, prompt: [textBlock('hi')] });
-    } catch (err) {
-      captured = err;
-    }
-    expect(captured).toMatchObject({ code: -32603 });
-    // Privacy guarantee: the JSON-RPC error response carries only the
-    // `code` (and optionally a structured `data`); neither the
-    // original stack nor the raw message crosses the wire. We assert
-    // negatively rather than on the canonical message because the
-    // ACP SDK strips the message from the deserialized client-side
-    // error and only retains the code.
-    const serialized = JSON.stringify(captured);
-    expect(serialized).not.toContain(stackTip);
-    expect(serialized).not.toContain('boom internal');
-  });
-
-  it('still maps reason: cancelled to stop_reason: cancelled (Phase 3/4 regression guard)', async () => {
-    const sessionId = 'sess-cancel-regression';
+  it('omits error data when a failed event carries an unrecognized code', async () => {
+    const sessionId = 'sess-unknown-error-code';
+    const privateMessage = 'unknown-error-message-must-not-cross-the-wire';
     const { session } = makeScriptedSession(sessionId, {
-      script: [
-        { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
-      ],
-    });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
-    expect(response.stopReason).toBe('cancelled');
-  });
-
-  it('maps blocked turn-end reasons to ACP stopReason refusal', () => {
-    // ACP has a native `refusal` stop reason that matches a provider safety
-    // block or prompt-hook block; mapping either to anything else (e.g.
-    // end_turn) would let the client mistake the block for a clean turn.
-    expect(turnEndReasonToStopReason('failed', { code: 'provider.filtered' })).toBe('refusal');
-    expect(turnEndReasonToStopReason('blocked')).toBe('refusal');
-  });
-
-  it('resolves with refusal when turn.ended fails with provider.filtered', async () => {
-    const sessionId = 'sess-filtered';
-    const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
       script: [
         {
           type: 'turn.ended',
@@ -279,22 +255,217 @@ describe('AcpServer error mapping', () => {
           turnId: 1,
           reason: 'failed',
           error: {
-            code: 'provider.filtered',
-            message: 'Provider safety policy blocked the response.',
-            name: 'ProviderFilteredError',
+            code: 'validation.failed',
+            message: privateMessage,
             retryable: false,
           },
         } as Event,
       ],
     });
 
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const caught = await capturePromptError(client, sessionId);
+
+    expect(caught).toMatchObject({ code: -32603, data: undefined });
+    const exposed = exposedError(caught);
+    expect(exposed).not.toContain(privateMessage);
+    expect(exposed).not.toContain('validation.failed');
+  });
+
+  it.each(['failed event', 'prompt rejection'] as const)(
+    'omits private Kimi error codes and messages when delivered as a %s',
+    async (delivery) => {
+      const sessionId = `sess-private-kimi-error-${delivery.replace(' ', '-')}`;
+      const privateMessage = 'private-kimi-error-message-must-not-cross-the-wire';
+      const { session } =
+        delivery === 'failed event'
+          ? makeFailedSession(sessionId, {
+              code: ErrorCodes.SESSION_INIT_FAILED,
+              message: privateMessage,
+              retryable: false,
+            })
+          : makeScriptedSession(sessionId, {
+              rejectWith: new KimiError(ErrorCodes.SESSION_INIT_FAILED, privateMessage),
+            });
+
+      const [, client] = connectToSession(session);
+
+      await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+      const caught = await capturePromptError(client, sessionId);
+
+      expect(caught).toMatchObject({ code: -32603, data: undefined });
+      const exposed = exposedError(caught);
+      expect(exposed).not.toContain(ErrorCodes.SESSION_INIT_FAILED);
+      expect(exposed).not.toContain(privateMessage);
+    },
+  );
+
+  it.each(['failed event', 'prompt rejection'] as const)(
+    'exposes the same canonical safe data when a provider failure arrives as a %s',
+    async (delivery) => {
+      const sessionId = `sess-provider-api-error-${delivery.replace(' ', '-')}`;
+      const privateMessage = 'provider-response-body-must-not-cross-the-wire';
+      const privateRequestId = 'request-id-must-not-cross-the-wire';
+      const details = {
+        statusCode: 403,
+        requestId: privateRequestId,
+        providerBody: { account: 'private-account-data' },
+      };
+      const { session } =
+        delivery === 'failed event'
+          ? makeFailedSession(sessionId, {
+              code: ErrorCodes.PROVIDER_API_ERROR,
+              message: privateMessage,
+              name: 'PrivateProviderErrorName',
+              details,
+              retryable: true,
+            })
+          : makeScriptedSession(sessionId, {
+              rejectWith: new KimiError(ErrorCodes.PROVIDER_API_ERROR, privateMessage, { details }),
+            });
+
+      const [, client] = connectToSession(session);
+
+      await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+      const caught = await capturePromptError(client, sessionId);
+
+      expect(caught).toMatchObject({ code: -32603 });
+      expect((caught as { data?: unknown }).data).toEqual({
+        code: ErrorCodes.PROVIDER_API_ERROR,
+        retryable: false,
+        statusCode: 403,
+      });
+      const exposed = exposedError(caught);
+      expect(exposed).not.toContain(privateMessage);
+      expect(exposed).not.toContain(privateRequestId);
+      expect(exposed).not.toContain('PrivateProviderErrorName');
+      expect(exposed).not.toContain('private-account-data');
+    },
+  );
+
+  it.each([99, 600, 403.5, '403', Number.NaN])(
+    'omits statusCode when provider status %j is not a valid HTTP status',
+    async (statusCode) => {
+      const sessionId = 'sess-invalid-provider-status';
+      const { session } = makeFailedSession(sessionId, {
+        code: ErrorCodes.PROVIDER_API_ERROR,
+        message: 'Provider request failed',
+        details: { statusCode },
+        retryable: false,
+      });
+
+      const [, client] = connectToSession(session);
+
+      await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+      const caught = await capturePromptError(client, sessionId);
+
+      expect(caught).toMatchObject({ code: -32603 });
+      expect((caught as { data?: unknown }).data).toEqual({
+        code: ErrorCodes.PROVIDER_API_ERROR,
+        retryable: false,
+      });
+    },
+  );
+
+  it('rejects with authRequired when session.prompt rejects with an auth code', async () => {
+    const sessionId = 'sess-prompt-rejects-auth';
+    const { session } = makeScriptedSession(sessionId, {
+      rejectWith: new KimiError(ErrorCodes.PROVIDER_AUTH_ERROR, 'Provider 401'),
+    });
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await expect(
+      client.prompt({ sessionId, prompt: [textBlock('hi')] }),
+    ).rejects.toMatchObject({ code: -32000, data: undefined });
+  });
+
+  it('rejects without internal details when session.prompt throws a generic error', async () => {
+    const sessionId = 'sess-generic-error';
+    const stackTip = 'super-secret-stack-frame-do-not-leak';
+    const generic = new Error('boom internal');
+    generic.stack = `Error: boom internal\n    at ${stackTip} (secret.ts:1:1)`;
+    const { session } = makeScriptedSession(sessionId, { rejectWith: generic });
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    const captured = await capturePromptError(client, sessionId);
+    expect(captured).toMatchObject({
+      code: -32603,
+      data: undefined,
+      message: 'Internal error: session prompt failed',
+    });
+    // Error.message is non-enumerable, so JSON.stringify(error) alone would
+    // miss a leak. Reconstruct the observable wire fields explicitly.
+    const exposed = exposedError(captured);
+    expect(exposed).not.toContain(stackTip);
+    expect(exposed).not.toContain('boom internal');
+  });
+
+  it('returns cancelled when the turn ends after cancellation', async () => {
+    const sessionId = 'sess-cancel-regression';
+    const { session } = makeScriptedSession(sessionId, {
+      script: [
+        { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      ],
+    });
+
+    const [, client] = connectToSession(session);
 
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
-    expect(response.stopReason).toBe('refusal');
-    expect(unsubscribeCount()).toBe(1);
+    expect(response.stopReason).toBe('cancelled');
   });
+
+  it('returns refusal when a prompt hook blocks the turn', async () => {
+    const sessionId = 'sess-blocked';
+    const { session } = makeScriptedSession(sessionId, {
+      script: [
+        {
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 1,
+          reason: 'blocked',
+        } as Event,
+      ],
+    });
+
+    const [, client] = connectToSession(session);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+
+    expect(response.stopReason).toBe('refusal');
+  });
+
+  it.each(['failed event', 'prompt rejection'] as const)(
+    'returns refusal when provider filtering arrives as a %s',
+    async (delivery) => {
+      const sessionId = `sess-filtered-${delivery.replace(' ', '-')}`;
+      const message = 'Provider safety policy blocked the response.';
+      const { session } =
+        delivery === 'failed event'
+          ? makeFailedSession(sessionId, {
+              code: ErrorCodes.PROVIDER_FILTERED,
+              message,
+              name: 'ProviderFilteredError',
+              retryable: false,
+            })
+          : makeScriptedSession(sessionId, {
+              rejectWith: new KimiError(ErrorCodes.PROVIDER_FILTERED, message),
+            });
+
+      const [, client] = connectToSession(session);
+
+      await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+      const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+      expect(response.stopReason).toBe('refusal');
+    },
+  );
 });
