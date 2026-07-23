@@ -14,7 +14,6 @@ import {
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
-import { createHooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -28,6 +27,7 @@ import {
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -298,7 +298,6 @@ function sessionToolPolicyStub(): ISessionToolPolicy {
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
@@ -474,6 +473,10 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
+      stubPair(ISessionSecondaryModelWarningService, {
+        _serviceBrand: undefined,
+        getSecondaryModelWarning: () => undefined,
+      } as ISessionSecondaryModelWarningService),
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),

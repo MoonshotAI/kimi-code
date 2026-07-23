@@ -205,6 +205,8 @@ effort = "low"
 
 `model` / `effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
 
+会话启动时会校验该配置：`model` 无法解析，或 `effort` 不在模型声明的 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子代理时失败，派生错误中同样附带配置来源提示。
+
 ## `thinking`
 
 `thinking` 设置 Thinking 模式的全局默认行为。

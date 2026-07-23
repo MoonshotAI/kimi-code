@@ -44,7 +44,12 @@ import {
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
-import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import {
+  SECONDARY_MODEL_EFFORT_ENV,
+  SECONDARY_MODEL_ENV,
+  SECONDARY_MODEL_SECTION,
+  THINKING_SECTION,
+} from '#/app/kosongConfig/configSection';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -57,6 +62,7 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
+  resolveSecondaryModel,
   resolveSubagentBinding,
   resolveSubagentTimeoutMs,
   SUBAGENT_SECTION,
@@ -80,14 +86,7 @@ import {
   McpSectionSchema,
   type McpSection,
 } from '#/agent/mcp/configSection';
-import '#/kosong/model/secondaryModel';
-import {
-  resolveSecondaryModel,
-  SECONDARY_MODEL_EFFORT_ENV,
-  SECONDARY_MODEL_ENV,
-  SECONDARY_MODEL_SECTION,
-  type SecondaryModelConfig,
-} from '#/kosong/model/secondaryModel';
+import { type SecondaryModelConfig } from '#/kosong/model/secondaryModel';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';

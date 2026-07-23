@@ -142,7 +142,6 @@ function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): Lifecycl
 
   const service: IAgentLifecycleService = {
     _serviceBrand: undefined,
-    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: onDidCreate.event,
     onDidDispose: onDidDispose.event,
     get: (id: string) => byId.get(id),

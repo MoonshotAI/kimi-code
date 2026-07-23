@@ -14,20 +14,17 @@
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
- * exist. Session-owned restore participants run before wire replay and fail
- * creation when their preparation cannot complete. Caller-facing
- * orchestration (record mirroring, hooks, telemetry, prompt prefixes) lives
- * with the callers — driving turns on an agent is the `subagent` domain
- * (`ISessionSubagentService`); the session's shared MCP subsystem is the
- * `sessionMcp` domain (`ISessionMcpService`), which this service awaits during
- * creation.
+ * exist. Caller-facing orchestration (record mirroring, hooks, telemetry,
+ * prompt prefixes) lives with the callers — driving turns on an agent is the
+ * `subagent` domain (`ISessionSubagentService`); the session's shared MCP
+ * subsystem is the `sessionMcp` domain (`ISessionMcpService`), which this
+ * service awaits during creation.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { createHooks } from '#/hooks';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
@@ -72,7 +69,6 @@ import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
-  type AgentLifecycleHooks,
   type AgentListFilter,
   type CreateAgentOptions,
   type ForkAgentOptions,
@@ -84,14 +80,9 @@ let nextAgentId = 0;
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly handles = new Map<string, IAgentScopeHandle>();
-  readonly hooks = createHooks<AgentLifecycleHooks, keyof AgentLifecycleHooks>([
-    'onWillRestore',
-  ]);
   private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
-  private readonly pendingAutoAgentIds = new Set<string>();
-  private autoIdAllocation: Promise<void> = Promise.resolve();
   /** In-flight creation promises, keyed by agent id. Concurrent creations of
    *  the same id join the in-flight one (never a duplicate scope), so a caller
    *  always receives a fully-bootstrapped handle. */
@@ -151,7 +142,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       const existing = this.handles.get(opts.agentId);
       if (existing !== undefined) return existing;
     }
-    const autoMinted = opts.agentId === undefined;
     const agentId = opts.agentId ?? (await this.nextAvailableAgentId());
     const promise = this.doCreate(agentId, opts);
     this.creating.set(agentId, promise);
@@ -159,38 +149,21 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       return await promise;
     } finally {
       this.creating.delete(agentId);
-      if (autoMinted) this.pendingAutoAgentIds.delete(agentId);
     }
   }
 
   private async nextAvailableAgentId(): Promise<string> {
-    const previous = this.autoIdAllocation;
-    let release!: () => void;
-    this.autoIdAllocation = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-
-    try {
-      let maxSuffix = -1;
-      const consider = (id: string): void => {
-        const match = /^agent-(\d+)$/.exec(id);
-        if (match !== null) maxSuffix = Math.max(maxSuffix, Number(match[1]));
-      };
-      for (const id of this.handles.keys()) consider(id);
-      for (const id of this.creating.keys()) consider(id);
-      for (const id of this.pendingAutoAgentIds) consider(id);
-      const persisted = (await this.sessionMetadata.read()).agents ?? {};
-      for (const id of Object.keys(persisted)) consider(id);
-      let candidate = Math.max(maxSuffix + 1, nextAgentId);
-      while (this.pendingAutoAgentIds.has(`agent-${String(candidate)}`)) candidate += 1;
-      nextAgentId = candidate + 1;
-      const agentId = `agent-${String(candidate)}`;
-      this.pendingAutoAgentIds.add(agentId);
-      return agentId;
-    } finally {
-      release();
-    }
+    let maxSuffix = -1;
+    const consider = (id: string): void => {
+      const match = /^agent-(\d+)$/.exec(id);
+      if (match !== null) maxSuffix = Math.max(maxSuffix, Number(match[1]));
+    };
+    for (const id of this.handles.keys()) consider(id);
+    const persisted = (await this.sessionMetadata.read()).agents ?? {};
+    for (const id of Object.keys(persisted)) consider(id);
+    const candidate = Math.max(maxSuffix + 1, nextAgentId);
+    nextAgentId = candidate + 1;
+    return `agent-${String(candidate)}`;
   }
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
@@ -220,14 +193,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         ],
       },
     ) as IAgentScopeHandle;
+    this.handles.set(agentId, handle);
     try {
       const wire = handle.accessor.get(IWireService);
       await wire.seal();
-      this.igniteEagerServices(handle);
-      await mcpReady;
-      await this.hooks.onWillRestore.run(handle);
-      await wire.restore();
-      await this.bindBootstrap(handle, opts);
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
@@ -235,15 +204,22 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         forkedFrom: opts.forkedFrom,
         labels: opts.labels,
       });
+      this.onDidCreateEmitter.fire(handle);
+      this.igniteEagerServices(handle);
+      await mcpReady;
+      await wire.restore();
+      await this.bindBootstrap(handle, opts);
+      return handle;
     } catch (error) {
+      // Startup failed: drop the half-built agent so the next `create` starts
+      // fresh instead of returning a handle that can never admit turns.
+      if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
       try {
         handle.dispose();
       } catch { }
+      this.onDidDisposeEmitter.fire(agentId);
       throw error;
     }
-    this.handles.set(agentId, handle);
-    this.onDidCreateEmitter.fire(handle);
-    return handle;
   }
 
   // Force-instantiate the agent-scope observer/registrar services before the

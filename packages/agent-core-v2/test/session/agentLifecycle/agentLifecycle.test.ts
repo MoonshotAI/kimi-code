@@ -44,10 +44,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import {
-  type AgentMeta,
-  ISessionMetadata,
-} from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -59,7 +56,6 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
@@ -152,7 +148,6 @@ describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
-  let registeredAgents: Record<string, AgentMeta>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
@@ -169,10 +164,7 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
-    registeredAgents = {};
-    registerAgent = vi.fn<ISessionMetadata['registerAgent']>(async (agentId, meta) => {
-      registeredAgents[agentId] = meta;
-    });
+    registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
     ix.stub(ISessionContext, {
       _serviceBrand: undefined,
@@ -185,14 +177,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       onDidChangeMetadata: () => ({ dispose: () => {} }),
-      read: () =>
-        Promise.resolve({
-          id: 'sess_test',
-          createdAt: 0,
-          updatedAt: 0,
-          archived: false,
-          agents: registeredAgents,
-        }),
+      read: () => Promise.resolve({ id: 'sess_test', createdAt: 0, updatedAt: 0, archived: false }),
       update: () => Promise.resolve(),
       setTitle: () => Promise.resolve(),
       setArchived: () => Promise.resolve(),
@@ -315,10 +300,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
-      get: (name: string) =>
-        name === 'valid'
-          ? { name: 'valid', tools: [], systemPrompt: () => '' }
-          : undefined,
+      get: () => undefined,
       getDefault: () => {
         throw new Error('catalog resolution is not expected');
       },
@@ -327,12 +309,6 @@ describe('AgentLifecycleService', () => {
       reload: () => Promise.resolve(),
       onDidChange: Event.None,
     } as unknown as ISessionAgentProfileCatalog);
-    ix.stub(IModelCatalog, {
-      _serviceBrand: undefined,
-      get: (modelAlias: string) => {
-        throw new Error(`model "${modelAlias}" does not exist`);
-      },
-    } as unknown as IModelCatalog);
     ix.stub(ISessionSkillCatalog, {
       _serviceBrand: undefined,
       catalog: { skills: [] },
@@ -505,32 +481,6 @@ describe('AgentLifecycleService', () => {
     const a = await svc.create({});
     const b = await svc.create({});
     expect(a.id).not.toBe(b.id);
-  });
-
-  it('keeps auto-minted ids unique while creates overlap', async () => {
-    let releaseRegister!: () => void;
-    let registerStarted!: () => void;
-    const registerCalled = new Promise<void>((resolve) => {
-      registerStarted = resolve;
-    });
-    registerAgent.mockImplementationOnce(async (agentId, meta) => {
-      registeredAgents[agentId] = meta;
-      registerStarted();
-      await new Promise<void>((resolve) => {
-        releaseRegister = resolve;
-      });
-    });
-    const svc = ix.get(IAgentLifecycleService);
-
-    const first = svc.create({});
-    await registerCalled;
-    const second = svc.create({});
-    const secondHandle = await second;
-    releaseRegister();
-    const firstHandle = await first;
-
-    expect(firstHandle.id).not.toBe(secondHandle.id);
-    expect(svc.list()).toEqual(expect.arrayContaining([firstHandle, secondHandle]));
   });
 
   it('persists complete agent metadata when creating a child', async () => {
@@ -746,7 +696,7 @@ describe('AgentLifecycleService', () => {
     expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the in-flight handle private while concurrent creates join it', async () => {
+  it('exposes the in-flight handle and joins it after bootstrap', async () => {
     let releaseRegister!: () => void;
     let registerStarted!: () => void;
     const registerCalled = new Promise<void>((resolve) => {
@@ -759,92 +709,19 @@ describe('AgentLifecycleService', () => {
       });
     });
     const svc = ix.get(IAgentLifecycleService);
-    const preparing: string[] = [];
-    const created: string[] = [];
-    disposables.add(
-      svc.hooks.onWillRestore.register('test-visibility', async (handle, next) => {
-        preparing.push(handle.id);
-        await next();
-      }),
-    );
-    disposables.add(svc.onDidCreate((handle) => created.push(handle.id)));
     const create = svc.create({ agentId: 'main' });
 
-    expect(svc.get('main')).toBeUndefined();
+    const early = svc.get('main');
+    expect(early).toBeDefined();
 
     const joined = svc.create({ agentId: 'main' });
+    // doCreate awaits the wire-log seal before registerAgent, so the mock is
+    // invoked a few microtasks after create() — wait for the actual call.
     await registerCalled;
-    expect(svc.get('main')).toBeUndefined();
-    expect(preparing).toEqual(['main']);
-    expect(created).toEqual([]);
     releaseRegister();
-    const [handle, joinedHandle] = await Promise.all([create, joined]);
-    expect(joinedHandle).toBe(handle);
-    expect(svc.get('main')).toBe(handle);
-    expect(created).toEqual(['main']);
-  });
-
-  it('waits for async restore participation before registering the agent', async () => {
-    let participantEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      participantEntered = resolve;
-    });
-    let releaseParticipant!: () => void;
-    const participantGate = new Promise<void>((resolve) => {
-      releaseParticipant = resolve;
-    });
-    const svc = ix.get(IAgentLifecycleService);
-    disposables.add(
-      svc.hooks.onWillRestore.register('test-async-wait', async (_handle, next) => {
-        participantEntered();
-        await participantGate;
-        await next();
-      }),
-    );
-    let settled = false;
-    const create = svc.create({ agentId: 'main' }).then((handle) => {
-      settled = true;
-      return handle;
-    });
-
-    await entered;
-    expect(settled).toBe(false);
-    expect(registerAgent).not.toHaveBeenCalled();
-
-    releaseParticipant();
-    await expect(create).resolves.toMatchObject({ id: 'main' });
-    expect(registerAgent).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects creation when a restore participant throws synchronously', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    disposables.add(
-      svc.hooks.onWillRestore.register('test-sync-failure', () => {
-        throw new Error('restore preparation failed');
-      }),
-    );
-
-    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
-      'restore preparation failed',
-    );
-    expect(registerAgent).not.toHaveBeenCalled();
-    expect(svc.get('main')).toBeUndefined();
-  });
-
-  it('rejects creation when a restore participant rejects asynchronously', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    disposables.add(
-      svc.hooks.onWillRestore.register('test-async-failure', async () => {
-        await Promise.resolve();
-        throw new Error('async restore preparation failed');
-      }),
-    );
-
-    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
-      'async restore preparation failed',
-    );
-    expect(registerAgent).not.toHaveBeenCalled();
-    expect(svc.get('main')).toBeUndefined();
+    const handle = await joined;
+    await create;
+    expect(handle).toBe(early);
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {
@@ -874,52 +751,6 @@ describe('AgentLifecycleService', () => {
 
     const main = await svc.create({ agentId: 'main' });
     expect(main.id).toBe('main');
-  });
-
-  it('does not persist an agent when profile binding fails', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    const created: string[] = [];
-    const disposed: string[] = [];
-    disposables.add(svc.onDidCreate((handle) => created.push(handle.id)));
-    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
-
-    await expect(
-      svc.create({
-        agentId: 'child',
-        binding: { profile: 'missing', model: 'provider/bad' },
-      }),
-    ).rejects.toThrow('Unknown agent profile: "missing"');
-
-    await expect(ix.get(ISessionMetadata).read()).resolves.not.toMatchObject({
-      agents: { child: expect.anything() },
-    });
-    expect(registerAgent).not.toHaveBeenCalled();
-    expect(svc.get('child')).toBeUndefined();
-    expect(created).toEqual([]);
-    expect(disposed).toEqual([]);
-  });
-
-  it('does not persist an agent when model binding fails', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    const created: string[] = [];
-    const disposed: string[] = [];
-    disposables.add(svc.onDidCreate((handle) => created.push(handle.id)));
-    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
-
-    await expect(
-      svc.create({
-        agentId: 'child',
-        binding: { profile: 'valid', model: 'missing-model' },
-      }),
-    ).rejects.toThrow('model "missing-model" does not exist');
-
-    await expect(ix.get(ISessionMetadata).read()).resolves.not.toMatchObject({
-      agents: { child: expect.anything() },
-    });
-    expect(registerAgent).not.toHaveBeenCalled();
-    expect(svc.get('child')).toBeUndefined();
-    expect(created).toEqual([]);
-    expect(disposed).toEqual([]);
   });
 
   it('fork throws when the source agent does not exist', async () => {

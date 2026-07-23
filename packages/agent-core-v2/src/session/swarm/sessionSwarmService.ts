@@ -12,13 +12,15 @@
  * `agentLifecycle` wrapper helper `mirrorAgentRun`; the lifecycle registry
  * itself stays flat. Spawn tasks may carry a concrete `binding` resolved by
  * the caller (the `AgentSwarm` tool via `resolveSubagentBinding`); without
- * one, spawns inherit the caller agent's model and thinking level. Resumed
- * agents keep the model recorded in their own wire journal — with
+ * one, spawns inherit the caller agent's model and thinking level. Spawn
+ * bindings are resolved through the model catalog before lifecycle allocation.
+ * Resumed agents keep the model recorded in their own wire journal — with
  * per-subagent models there is no "child follows the parent's current model"
  * invariant to enforce. Bound at Session scope.
  */
 
 import type { TokenUsage } from '#/kosong/contract/usage';
+import { IModelCatalog } from '#/kosong/model/catalog';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -88,6 +90,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
   async getSwarmItem(args: {
@@ -156,6 +159,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     };
     let child: IAgentScopeHandle;
     try {
+      this.modelCatalog.get(binding.model);
       child = await this.lifecycle.create({
         binding: {
           profile: profile.name,

@@ -72,7 +72,6 @@ describe('RestGateway', () => {
     };
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
-      hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
       onDidCreate: () => ({ dispose: () => {} }),
       onDidDispose: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(agentHandle),

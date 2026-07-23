@@ -15,6 +15,7 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -905,6 +906,19 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: (alias: string) => {
+        if (alias === 'provider/bad') {
+          throw new Error2(
+            ConfigErrors.codes.CONFIG_INVALID,
+            'Model "provider/bad" is not configured in config.toml.',
+            { details: { model: 'provider/bad' } },
+          );
+        }
+        return { id: alias } as Model;
+      },
+    } as IModelCatalog);
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -1119,13 +1133,6 @@ describe('SessionSwarmService metadata compatibility', () => {
   });
 
   it('points at the secondary model config when a spawn task binding is invalid', async () => {
-    createAgent.mockRejectedValueOnce(
-      new Error2(
-        ConfigErrors.codes.CONFIG_INVALID,
-        'Model "provider/bad" is not configured in config.toml.',
-        { details: { model: 'provider/bad' } },
-      ),
-    );
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
@@ -1144,6 +1151,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
       },
     ]);
+    expect(createAgent).not.toHaveBeenCalled();
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1279,7 +1287,6 @@ function lifecycleStub(
 ): IAgentLifecycleService {
   const lifecycle = {
     _serviceBrand: undefined,
-    hooks: createHooks(['onWillRestore']) as IAgentLifecycleService['hooks'],
     onDidCreate: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {

@@ -19,12 +19,7 @@
  *   domain branches on it.
  * - Creation is single-flight per explicit agent id (concurrent creations
  *   join), an already-created agent is returned as-is, and a failed bootstrap
- *   drops the incomplete handle. The registry exposes only fully bootstrapped,
- *   metadata-registered agents.
- * - Restore participants receive a provisional handle before wire replay,
- *   run in registration order, and may complete asynchronously. A participant
- *   failure aborts creation; committed lifecycle visibility begins at
- *   `onDidCreate`.
+ *   drops the incomplete handle.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */
@@ -32,7 +27,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
-import type { Hooks } from '#/hooks';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
 
@@ -56,14 +50,9 @@ export interface AgentListFilter {
   readonly prefix?: string;
 }
 
-export type AgentLifecycleHooks = {
-  readonly onWillRestore: IAgentScopeHandle;
-};
-
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
-  readonly hooks: Hooks<AgentLifecycleHooks>;
   /** Fires after an agent is created and registered, with its scope handle. */
   readonly onDidCreate: Event<IAgentScopeHandle>;
   /** Fires after an agent is removed, with its agent id. */
@@ -88,6 +77,7 @@ export interface IAgentLifecycleService {
    */
   fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle>;
 
+  /** Look up a live agent by id. The handle is visible while its creation is still in flight. */
   get(agentId: string): IAgentScopeHandle | undefined;
   list(filter?: AgentListFilter): readonly IAgentScopeHandle[];
   /**

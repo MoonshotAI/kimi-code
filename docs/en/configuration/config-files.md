@@ -205,6 +205,8 @@ effort = "low"
 
 `model` / `effort` can be overridden by the `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` environment variables, which take higher priority than `config.toml`.
 
+The configured pair is validated when a session starts: an unresolvable `model`, or an `effort` the model does not list, produces a startup warning (also returned by the session-warnings API). The check is advisory — a broken secondary model still fails at spawn time, with the same source hint attached to the spawn error.
+
 ## `thinking`
 
 `thinking` sets the global default behavior for Thinking mode.

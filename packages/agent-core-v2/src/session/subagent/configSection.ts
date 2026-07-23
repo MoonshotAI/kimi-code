@@ -11,13 +11,14 @@
  * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
  * and render the timeout message with `formatSubagentTimeoutDescription`.
  *
- * The model half of the spawn binding is the secondary model, owned by
- * `kosong/model/secondaryModel` (`[secondary_model]` on disk): when set,
- * newly spawned subagents bind to it by default instead of inheriting the
- * caller's model, and the `Agent`/`AgentSwarm` tools let the parent model
- * pick per spawn via their `model` parameter. When unset, spawning behavior
- * is unchanged (subagents inherit the caller's model). Both tools resolve
- * spawn bindings through `resolveSubagentBinding`, advertise the pair via
+ * The model half of the spawn binding is the secondary model (the type in
+ * `kosong/model/secondaryModel`, the section in `app/kosongConfig` —
+ * `[secondary_model]` on disk): when set, newly spawned subagents bind to it
+ * by default instead of inheriting the caller's model, and the
+ * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
+ * `model` parameter. When unset, spawning behavior is unchanged (subagents
+ * inherit the caller's model). Both tools resolve spawn bindings through
+ * `resolveSubagentBinding`, advertise the pair via
  * `buildSubagentModelDescriptions`, and wrap spawn failures with
  * `wrapSubagentModelError`. Self-registered at module load via
  * `registerConfigSection`, so the `config` domain never imports this
@@ -30,8 +31,9 @@ import { Error2, ErrorCodes, isError2 } from '#/errors';
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   SECONDARY_MODEL_ENV,
-  resolveSecondaryModel,
-} from '#/kosong/model/secondaryModel';
+  SECONDARY_MODEL_SECTION,
+} from '#/app/kosongConfig/configSection';
+import { type SecondaryModelConfig } from '#/kosong/model/secondaryModel';
 import {
   type EnvBindings,
   envBindings,
@@ -87,6 +89,12 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
 }
 
 export type SubagentModelChoice = AgentModelPreference;
+
+export function resolveSecondaryModel(
+  config: IConfigService,
+): SecondaryModelConfig | undefined {
+  return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+}
 
 export function resolveSubagentBinding(
   config: IConfigService,

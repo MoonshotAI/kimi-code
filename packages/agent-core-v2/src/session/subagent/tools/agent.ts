@@ -12,9 +12,11 @@
  *
  * Spawn bindings use an explicit tool choice first, then the target profile's
  * symbolic model preference, before `resolveSubagentBinding` falls back to the
- * configured secondary model or the caller's model. A resumed agent keeps the
- * model recorded in its own wire journal — with per-subagent models there is
- * no "child follows the parent's current model" invariant to enforce.
+ * configured secondary model or the caller's model. The selected alias is
+ * resolved through the model catalog before lifecycle allocation. A resumed
+ * agent keeps the model recorded in its own wire journal — with per-subagent
+ * models there is no "child follows the parent's current model" invariant to
+ * enforce.
  *
  * Registered via the module-level `registerTool(AgentTool)` at the bottom of
  * this file — the same "import = register" pattern used by every builtin tool.
@@ -62,6 +64,7 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -182,6 +185,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
@@ -303,6 +307,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       );
       let created: IAgentScopeHandle;
       try {
+        this.modelCatalog.get(binding.model);
         created = await this.lifecycle.create({
           binding: {
             profile: profile.name,

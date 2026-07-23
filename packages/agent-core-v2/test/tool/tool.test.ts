@@ -11,6 +11,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -65,6 +66,7 @@ import {
   execEnvServices,
   externalHookServices,
   homeDirServices,
+  modelProviderServices,
   sessionService,
   swarmServices,
   type TestAgentContext,
@@ -173,6 +175,23 @@ function profileCatalogWithPreference(
   };
 }
 
+function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
+  return {
+    _serviceBrand: undefined,
+    get: (alias: string) => {
+      if (!aliases.includes(alias)) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `Model "${alias}" is not configured in config.toml.`,
+          { details: { model: alias } },
+        );
+      }
+      return { id: alias } as Model;
+    },
+    notifyConfigChanged: () => {},
+  } as unknown as IModelCatalog;
+}
+
 interface AgentLifecycleStubOptions {
   readonly createAgentIds?: readonly string[];
   readonly runCompletion?: (
@@ -184,9 +203,7 @@ interface AgentLifecycleStubOptions {
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
 
-type AgentLifecycleStub = Omit<IAgentLifecycleService, 'hooks'> &
-  Omit<ISessionSubagentService, 'hooks'> & {
-  readonly hooks: IAgentLifecycleService['hooks'] & ISessionSubagentService['hooks'];
+interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentService {
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
@@ -195,7 +212,7 @@ type AgentLifecycleStub = Omit<IAgentLifecycleService, 'hooks'> &
     profileName: string,
     services?: ReadonlyMap<unknown, unknown>,
   ): void;
-};
+}
 
 function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): AgentLifecycleStub {
   let lifecycle: AgentLifecycleStub;
@@ -281,7 +298,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   lifecycle = {
     _serviceBrand: undefined,
     hooks: {
-      onWillRestore: hookSlot(),
       onWillStartAgentTask: hookSlot(),
     },
     onDidStopAgentTask: Event.None as KimiEvent<AgentTaskStopHookContext>,
@@ -705,6 +721,7 @@ describe('Agent tool execution contract', () => {
       sessionService(IAgentLifecycleService, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/secondary')),
       ...extra,
     );
     lifecycle.addHandle('main', 'agent');
@@ -1008,13 +1025,7 @@ describe('Agent tool execution contract', () => {
   });
 
   it('points at the secondary model config when the configured alias is invalid', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createError: new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        'Model "provider/bad" is not configured in config.toml.',
-        { details: { model: 'provider/bad' } },
-      ),
-    });
+    const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, {
       initialConfig: { secondaryModel: { model: 'provider/bad' } },
     });
@@ -1027,6 +1038,7 @@ describe('Agent tool execution contract', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Model "provider/bad" is not configured in config.toml.');
     expect(result.output).toContain('comes from [secondary_model].model / KIMI_SECONDARY_MODEL');
+    expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
   it('does not rewrite spawn failures unrelated to the model config', async () => {
@@ -1040,6 +1052,7 @@ describe('Agent tool execution contract', () => {
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
+      model: 'primary',
     });
 
     expect(result.isError).toBe(true);
