@@ -1,4 +1,4 @@
-export const zh = {
+﻿export const zh = {
   errors: {
     configInvalid: '配置无效',
     sessionNotFound: '未找到会话',
@@ -164,6 +164,14 @@ export const zh = {
     nativeToolsDesc: '对 Read、Write、Edit、Grep、Glob 和 Bash 工具使用 Rust 原生实现。',
     rpcMicrotaskTitle: 'RPC 微任务调度',
     rpcMicrotaskDesc: '对进程内 RPC 模拟使用 queueMicrotask 而非 setTimeout(0)，降低每次调用的延迟。',
+  },
+  toolsV2: {
+    abort: {
+      abortedByUser: '被用户中断',
+    },
+  },
+  v2Errors: {
+    mainAgentNotFound: '未找到主 Agent',
   },
 } as const;
 

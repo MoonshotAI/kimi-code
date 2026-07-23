@@ -165,6 +165,14 @@ export const en = {
     rpcMicrotaskTitle: 'RPC microtask scheduling',
     rpcMicrotaskDesc: 'Use queueMicrotask instead of setTimeout(0) for in-process RPC simulation, reducing per-call latency.',
   },
+  toolsV2: {
+    abort: {
+      abortedByUser: 'Interrupted by user',
+    },
+  },
+  v2Errors: {
+    mainAgentNotFound: 'Main agent was not found',
+  },
 } as const;
 
 export default en;
