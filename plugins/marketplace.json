@@ -27,6 +27,16 @@
       "homepage": "https://vercel.com/docs/agent-resources/vercel-plugin",
       "keywords": ["vercel", "deployment", "nextjs", "skills", "agents"],
       "source": "https://github.com/vercel/vercel-plugin"
+    },
+    {
+      "id": "you",
+      "tier": "curated",
+      "displayName": "You.com",
+      "version": "0.1.0",
+      "description": "You.com skills for search, contents, research, finance, and integration discovery.",
+      "homepage": "https://docs.you.com",
+      "keywords": ["you.com", "mcp", "web-search", "research", "finance", "ard"],
+      "source": "https://github.com/youdotcom-oss/agent-skills/tree/main"
     }
   ]
 }
