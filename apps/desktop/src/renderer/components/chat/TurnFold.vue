@@ -31,6 +31,7 @@ import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityRun from './ActivityRun.vue';
 import ToolCall from './ToolCall.vue';
+import NotificationCard from './NotificationCard.vue';
 import { formatDuration, renderBlockKey, turnWorkMs } from '../chatTurnRendering';
 import type { AssistantRenderBlock } from '../chatTurnRendering';
 import type { FilePreviewRequest, ToolMedia } from '../../types';
@@ -246,6 +247,7 @@ function isRunStreaming(block: { items: { sourceIndex: number; kind?: string; du
             @open-file="emit('openFile', $event)"
             @open-agent="emit('openAgent', $event)"
           />
+          <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
       </div>
     </div>

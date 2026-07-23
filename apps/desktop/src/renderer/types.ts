@@ -203,6 +203,28 @@ export interface CronTurnData {
   missedCount?: number;
 }
 
+/** A parsed `<notification>` block from a hidden task-notification user
+    message (origin kind 'task_notification'), rendered as a notification card
+    inside the assistant turn it landed in. See lib/notificationXml.ts. */
+export interface TaskNotification {
+  id: string;
+  category: string;
+  /** Raw type, e.g. 'task.completed'. */
+  type: string;
+  /** 'background_task' | 'subagent' | … (drives the card's kind label). */
+  sourceKind: string;
+  sourceId: string;
+  agentId?: string;
+  title: string;
+  severity: string;
+  body: string;
+  outputFile?: { path: string; bytes?: number };
+  /** The verbatim XML block, shown in the raw-payload disclosure. */
+  raw: string;
+  /** Server `created_at` of the carrying message. */
+  createdAt?: string;
+}
+
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
  * OR a tool card. Built in call order so every piece renders inline where it
  * happened (a turn can think → act → think again — nothing is hoisted).
@@ -220,7 +242,8 @@ export type TurnBlock =
       startedAt?: string;
       durationMs?: number;
     }
-  | { kind: 'tool'; tool: ToolCall };
+  | { kind: 'tool'; tool: ToolCall }
+  | { kind: 'notification'; notification: TaskNotification };
 
 /** One attachment on a user turn: an uploaded file, image or video. Images
     and pasted media carry no name; the chip falls back to a generic label.

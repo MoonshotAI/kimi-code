@@ -6,6 +6,7 @@ import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedProm
 import ToolCall from './ToolCall.vue';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
+import NotificationCard from './NotificationCard.vue';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
@@ -906,6 +907,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             @open-agent="emit('openAgent', $event)"
           />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
+          <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>

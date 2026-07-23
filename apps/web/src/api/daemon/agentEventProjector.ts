@@ -1194,6 +1194,49 @@ export function createAgentProjector(): AgentProjector {
         break;
       }
 
+      // -----------------------------------------------------------------------
+      case 'task.notified': {
+        // A background task's settlement notification IS broadcast (unlike the
+        // persisted <notification> message, which only lands on reload).
+        // Rebuild the XML block and synthesize the hidden user message so the
+        // notification card shows live — mid-turn included, on the same parse
+        // path as the snapshot copy. The id derives from sourceId + status so
+        // a replay dedupes by id in the reducer.
+        const notificationType = stringField(p ?? {}, 'notificationType');
+        const sourceKind = stringField(p ?? {}, 'sourceKind');
+        const sourceId = stringField(p ?? {}, 'sourceId');
+        if (!notificationType || !sourceKind || !sourceId) break;
+        const status = notificationType.startsWith('task.')
+          ? notificationType.slice('task.'.length)
+          : notificationType;
+        const notificationId = `task:${sourceId}:${status}`;
+        const escapeXml = (v: string) =>
+          v.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+        const title = stringField(p ?? {}, 'title') ?? '';
+        const severity = stringField(p ?? {}, 'severity') ?? '';
+        const body = stringField(p ?? {}, 'body') ?? '';
+        const text =
+          `<notification id="${notificationId}" category="task" type="${escapeXml(notificationType)}" source_kind="${escapeXml(sourceKind)}" source_id="${escapeXml(sourceId)}">\n` +
+          (title !== '' ? `Title: ${escapeXml(title)}\n` : '') +
+          (severity !== '' ? `Severity: ${escapeXml(severity)}\n` : '') +
+          (body !== '' ? `${escapeXml(body)}\n` : '') +
+          `</notification>`;
+        const msg: AppMessage = {
+          id: `task_ntf_${notificationId}`,
+          sessionId,
+          role: 'user',
+          content: [{ type: 'text', text }],
+          createdAt: new Date().toISOString(),
+          metadata: {
+            origin: { kind: 'task', taskId: sourceId, status, notificationId },
+          },
+        };
+        s.messages.push(msg);
+        out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+        break;
+      }
+
+      // -----------------------------------------------------------------------
       case 'warning': {
         out.push({
           type: 'unknown',

@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后台任务通知 · 状态通知卡 UI 方案（高保真原型 v2）</title>
+<style>
+/* ===========================================================================
+   Tokens —— 与 packages/web-ui/src/style.css 的 v2 token 层一一对应。
+   字体在真实应用中是自托管 Schibsted Grotesk + Noto Sans SC Variable，
+   原型退回系统字体栈（仅影响字腔，不影响节奏/颜色/层级）。
+   =========================================================================== */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #fafbfc;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-surface-sunken: #f3f5f8;
+  --color-well: #f3f5f8;
+  --color-surface-deep: #fafbfc;
+  --color-sidebar-bg: #fbfaf9;
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9aa3af;
+  --color-line: #e7eaee;
+  --color-subtle: #f1f4f8;
+  --color-line-strong: #d4d9e0;
+  --color-selected: #00000014;
+  --color-hover: #0000000d;
+  --color-accent: #1783ff;
+  --color-accent-hover: #0f6fe0;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: #cfe6ff;
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-xl: 16px; --radius-full: 999px;
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-menu: 0 6px 18px lch(0% 0 0 / 0.02), 0 3px 9px lch(0% 0 0 / 0.04), 0 1px 1px lch(0% 0 0 / 0.04);
+  --shadow-input: 0 1px 2px rgba(0, 0, 0, 0.04), 0 3px 12px rgba(0, 0, 0, 0.045);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+
+  --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px;
+  --leading-tight: 1.25; --leading-normal: 1.5; --leading-prose: 1.6;
+  --weight-regular: 400; --weight-option-label: 475; --weight-medium: 500;
+
+  --font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, monospace;
+
+  --p-content-max: 760px;
+}
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0d1117;
+  --color-surface: #13181e;
+  --color-surface-raised: #1c2128;
+  --color-surface-overlay: #22272e;
+  --color-surface-sunken: #0d1117;
+  --color-well: #13181e;
+  --color-surface-deep: #0a0d12;
+  --color-sidebar-bg: #0a0d12;
+  --color-text: #e8eaed;
+  --color-text-muted: #9aa0a8;
+  --color-text-faint: #6b7280;
+  --color-line: #2d333b;
+  --color-subtle: #22272e;
+  --color-line-strong: #3d444d;
+  --color-selected: #ffffff14;
+  --color-hover: #ffffff0d;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --color-accent-bd: rgba(88, 166, 255, 0.28);
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --shadow-input: 0 1px 2px rgba(0, 0, 0, 0.22), 0 3px 12px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-prose);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  transition: background var(--duration-base) var(--ease-in-out), color var(--duration-base) var(--ease-in-out);
+}
+button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; }
+code, pre, .mono { font-family: var(--font-mono); font-feature-settings: "liga" 0, "calt" 0; font-variant-ligatures: none; }
+::selection { background: rgba(23, 131, 255, 0.18); }
+svg.ic { display: inline-block; flex: none; }
+
+@keyframes kimi-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes p-pulse { 0% { box-shadow: 0 0 0 0 rgba(23,131,255,.4); } 100% { box-shadow: 0 0 0 6px rgba(23,131,255,0); } }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ============================= 应用骨架 ============================= */
+.shell { display: flex; height: 100vh; }
+
+.sidebar {
+  width: 232px; flex: none; background: var(--color-sidebar-bg);
+  border-right: 0.5px solid var(--color-line);
+  display: flex; flex-direction: column; padding: var(--space-3) var(--space-2);
+  gap: 2px; user-select: none;
+}
+.sb-brand { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-3); }
+.sb-logo { width: 22px; height: 22px; border-radius: 6px; background: var(--color-accent); display: grid; place-items: center; }
+.sb-name { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.sb-ws { font-size: var(--text-xs); color: var(--color-text-faint); padding: var(--space-2) var(--space-2) var(--space-1); }
+.sb-row {
+  display: flex; align-items: center; gap: var(--space-2); padding: 5px var(--space-2);
+  border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-text-muted);
+  cursor: pointer;
+}
+.sb-row:hover { background: var(--color-hover); }
+.sb-row.active { background: var(--color-selected); color: var(--color-text); }
+.sb-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-row .time { font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.chat-header {
+  height: 49px; flex: none; display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-4); border-bottom: 0.5px solid var(--color-line);
+  user-select: none;
+}
+.chat-header .crumb { font-size: var(--text-sm); color: var(--color-text-faint); }
+.chat-header .title { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.chat-header .sp { flex: 1; }
+
+.demo-bar { display: flex; align-items: center; gap: var(--space-2); }
+.demo-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 var(--space-3);
+  border-radius: var(--radius-full); border: 0.5px solid var(--color-line-strong);
+  background: var(--color-surface-raised); font-size: var(--text-xs); color: var(--color-text-muted);
+  transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.demo-btn:hover { color: var(--color-text); border-color: var(--color-text-faint); }
+.demo-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.demo-btn.primary:hover { background: var(--color-accent-hover); }
+.demo-btn.on { color: var(--color-accent); border-color: var(--color-accent-bd); background: var(--color-accent-soft); }
+
+.chat-scroll { flex: 1; overflow-y: auto; }
+.chat-col { max-width: var(--p-content-max); margin: 0 auto; padding: var(--space-6) var(--space-6) 140px; }
+
+/* ============================= 消息流既有元素 ============================= */
+.u-turn { display: flex; justify-content: flex-end; margin: var(--space-6) 0 var(--space-4); }
+.u-bub {
+  max-width: 85%; background: var(--color-accent-soft); border: 0.5px solid var(--color-accent-bd);
+  border-radius: var(--radius-xl); padding: var(--space-2) var(--space-4);
+  font-size: var(--text-base); line-height: var(--leading-prose);
+}
+.a-msg { margin: var(--space-3) 0; }
+.a-msg .msg { font-size: var(--text-base); line-height: var(--leading-prose); }
+.a-msg .msg p { margin: 0 0 var(--space-2); }
+.a-msg code.ic { font-size: var(--text-sm); background: var(--color-surface-sunken); border-radius: var(--radius-xs); padding: 1px 5px; }
+html[data-color-scheme="dark"] .a-msg code.ic { background: #ffffff1a; }
+
+/* tool line —— 现行安静行语法（§04），作对照 */
+.tl {
+  position: relative; display: flex; align-items: center; gap: 4px;
+  padding: 4px 0; border-radius: 6px; cursor: pointer;
+  font-size: var(--text-sm); line-height: 1; color: var(--color-text);
+  user-select: none;
+}
+.tl .ic { width: 14px; height: 14px; color: var(--color-text-faint); }
+.tl .name { font-weight: var(--weight-regular); color: var(--color-text-muted); flex: none; }
+.tl .target { font-weight: var(--weight-regular); color: var(--color-text); flex: none; }
+.tl .mono { font-family: var(--font-mono); font-size: var(--text-xs); line-height: normal; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tl .faint { color: var(--color-text-faint); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tl .tail { margin-left: auto; color: var(--color-text-faint); font-size: var(--text-xs); flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--color-text-faint); }
+.dot.done { background: var(--color-success); }
+.dot.error { background: var(--color-danger); }
+.dot.warn { background: var(--color-warning); }
+.dot.running { background: var(--color-accent); animation: p-pulse 1.4s ease-out infinite; }
+
+/* turn fold 行 */
+.fold-row {
+  display: flex; align-items: center; gap: 4px; padding: 4px 0; cursor: pointer;
+  font-size: var(--text-sm); line-height: 1; color: var(--color-text-faint); user-select: none;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.fold-row:hover { color: var(--color-text); }
+.fold-row .car { width: 14px; height: 14px; transition: transform var(--duration-base) var(--ease-out); }
+.fold-row.open .car { transform: rotate(90deg); }
+
+/* cron 通知（参考样式，仅在对照区展示） */
+.cn { margin: var(--space-4) 0; align-self: flex-end; max-width: 78%; display: flex; flex-direction: column; align-items: flex-end; }
+.cn-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); padding: 0 var(--space-1); color: var(--color-text-faint); font-size: var(--text-sm); }
+.cn-bubble {
+  max-width: 100%; padding: 8px 14px; background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-bd); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  box-shadow: var(--shadow-xs); color: var(--color-text); font-size: var(--text-base); line-height: var(--leading-normal);
+}
+.cn-meta { margin-top: var(--space-1); padding: 0 var(--space-1); color: var(--color-text-faint); font-size: var(--text-xs); }
+
+/* compaction 分隔条（参考样式） */
+.compact-divider { display: flex; align-items: center; gap: 10px; width: 100%; margin: var(--space-6) 0; }
+.cd-line { flex: 1; height: 1px; background: var(--color-line); }
+.cd-label { flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--color-text-muted); white-space: nowrap; }
+.cd-label .cd-view { color: var(--color-accent); cursor: pointer; }
+
+/* ============================= ★ 通知卡（本方案 v2） =============================
+   参考 cron 的「来源标签 + 气泡」与 toast/attention 的状态语义色：
+   - 卡片用设计系统现成的状态 token 对（*-soft 底 + *-bd 0.5px 边），
+     completed→success、failed/timed_out→danger、killed→warning、info→中性 surface。
+   - 头行 = 28px 状态图标 chip（raised 底 + 状态色图标，沿用 sub-agent 卡的 pa-ic 语言）
+     + 标题（事件名，text 色 medium）+ 副标题（任务描述，mono xs muted 截断）
+     + 右侧 状态词 · 时间 + chevron。
+   - 体部 = 字段区 / 正文 / 输出文件行 / 原始 payload，0.5px 状态边色分隔。
+=============================================================================== */
+.ntf {
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-lg);
+  border: 0.5px solid var(--color-line);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  animation: kimi-card-in var(--duration-slow) var(--ease-out);
+}
+.ntf.ok   { background: var(--color-success-soft); border-color: var(--color-success-bd); }
+.ntf.err  { background: var(--color-danger-soft);  border-color: var(--color-danger-bd); }
+.ntf.warn { background: var(--color-warning-soft); border-color: var(--color-warning-bd); }
+
+.ntf-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; padding: var(--space-2) var(--space-3);
+  text-align: left; cursor: pointer; user-select: none;
+}
+.ntf-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--radius-md);
+  background: var(--color-surface-raised); flex: none;
+  box-shadow: var(--shadow-xs);
+}
+.ntf-chip .ic { width: 14px; height: 14px; }
+.ntf.ok .ntf-chip .ic   { color: var(--color-success); }
+.ntf.err .ntf-chip .ic  { color: var(--color-danger); }
+.ntf.warn .ntf-chip .ic { color: var(--color-warning); }
+.ntf.info .ntf-chip .ic { color: var(--color-text-muted); }
+
+.ntf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ntf-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-text); line-height: 1.4; display: flex; align-items: center; gap: 6px; }
+.ntf-sub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ntf-side { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--color-text-faint); }
+.ntf-side .st { font-weight: var(--weight-medium); }
+.ntf.ok .st   { color: var(--color-success); }
+.ntf.err .st  { color: var(--color-danger); }
+.ntf.warn .st { color: var(--color-warning); }
+.ntf-head .car { width: 14px; height: 14px; color: var(--color-text-faint); transition: transform var(--duration-base) var(--ease-out); }
+.ntf.open > .ntf-head .car { transform: rotate(90deg); }
+
+.ntf-body { display: none; }
+.ntf.open > .ntf-body { display: block; }
+.ntf-body-in {
+  margin: 0 var(--space-3) var(--space-3); padding: var(--space-3) 0 0;
+  border-top: 0.5px solid var(--color-line);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.ntf.ok .ntf-body-in   { border-top-color: var(--color-success-bd); }
+.ntf.err .ntf-body-in  { border-top-color: var(--color-danger-bd); }
+.ntf.warn .ntf-body-in { border-top-color: var(--color-warning-bd); }
+
+.nd-fields { display: grid; grid-template-columns: auto 1fr; gap: 3px var(--space-3); }
+.nd-fields .k { color: var(--color-text-faint); font-size: var(--text-xs); }
+.nd-fields .v { color: var(--color-text-muted); font-size: var(--text-xs); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nd-body { color: var(--color-text-muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.nd-out {
+  display: flex; align-items: center; gap: var(--space-2);
+  background: var(--color-surface-raised); border-radius: var(--radius-md);
+  padding: 6px var(--space-2); box-shadow: var(--shadow-xs);
+}
+.nd-out .path { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.nd-act {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 var(--space-2);
+  border-radius: var(--radius-full); font-size: var(--text-xs); color: var(--color-text-muted);
+  border: 0.5px solid var(--color-line-strong); background: var(--color-surface-raised); flex: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.nd-act:hover { color: var(--color-text); }
+.nd-act.accent { color: var(--color-accent); border-color: var(--color-accent-bd); }
+.nd-raw summary {
+  list-style: none; display: flex; align-items: center; gap: 4px; cursor: pointer;
+  color: var(--color-text-faint); font-size: var(--text-xs); user-select: none;
+}
+.nd-raw summary::-webkit-details-marker { display: none; }
+.nd-raw summary:hover { color: var(--color-text); }
+.nd-raw summary .car { width: 12px; height: 12px; transition: transform var(--duration-base) var(--ease-out); }
+.nd-raw[open] summary .car { transform: rotate(90deg); }
+.nd-raw pre {
+  margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-raised); border-radius: var(--radius-sm);
+  font-size: var(--text-xs); line-height: 1.55; color: var(--color-text-muted);
+  overflow-x: auto; white-space: pre; box-shadow: var(--shadow-xs);
+}
+
+/* 通知组卡：连续 ≥2 条并入一张卡，头行「N 条通知」，体内逐条紧凑行 */
+.ntf-group-card {
+  margin: var(--space-3) 0; border-radius: var(--radius-lg);
+  border: 0.5px solid var(--color-line); background: var(--color-surface);
+  box-shadow: var(--shadow-xs); overflow: hidden;
+  animation: kimi-card-in var(--duration-slow) var(--ease-out);
+}
+.ntf-group-card > .ntf-head .ntf-chip .ic { color: var(--color-text-muted); }
+.ng-list { display: none; flex-direction: column; }
+.ntf-group-card.open > .ng-list { display: flex; }
+.ng-item { border-top: 0.5px solid var(--color-subtle); }
+.ng-item > .ntf-head { padding: 6px var(--space-3); }
+.ng-item .ntf-chip { width: 22px; height: 22px; border-radius: var(--radius-sm); box-shadow: none; background: transparent; }
+.ng-item .ntf-chip .ic { width: 13px; height: 13px; }
+.ng-item.ok .ntf-chip .ic   { color: var(--color-success); }
+.ng-item.err .ntf-chip .ic  { color: var(--color-danger); }
+.ng-item.warn .ntf-chip .ic { color: var(--color-warning); }
+.ng-item .ntf-title { font-weight: var(--weight-regular); color: var(--color-text-muted); }
+.ng-item.open .ntf-title { color: var(--color-text); }
+.ng-item > .ntf-head .car { transform: none; }
+.ng-item.open > .ntf-head .car { transform: rotate(90deg); }
+.ng-item .ntf-body { display: none; }
+.ng-item.open .ntf-body { display: block; }
+/* 组头状态点串 */
+.ng-dots { display: inline-flex; gap: 3px; }
+
+/* 调试模式下的 injection 行 */
+.inj-row {
+  display: flex; align-items: center; gap: 4px; padding: 4px 0;
+  font-size: var(--text-sm); line-height: 1; color: var(--color-text-faint); user-select: none;
+}
+.inj-row .ic { width: 14px; height: 14px; }
+.inj-row .mono { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ============================= composer ============================= */
+.composer-dock {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 0 var(--space-6) var(--space-4);
+  background: linear-gradient(to top, var(--color-bg) 62%, transparent);
+  pointer-events: none;
+}
+.composer {
+  pointer-events: auto; max-width: var(--p-content-max); margin: 0 auto;
+  background: var(--color-surface-raised); border: 0.5px solid var(--color-line-strong);
+  border-radius: 24px; box-shadow: var(--shadow-input);
+  padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2);
+}
+.composer .ph { color: var(--color-text-faint); font-size: var(--text-base); user-select: none; }
+.composer .bar { display: flex; align-items: center; gap: var(--space-2); }
+.workbar { max-width: var(--p-content-max); margin: 0 auto var(--space-2); display: flex; gap: var(--space-2); pointer-events: auto; }
+.wpill {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 var(--space-4);
+  border-radius: var(--radius-full); background: var(--color-surface);
+  border: 0.5px solid var(--color-line-strong); font-size: var(--text-xs); color: var(--color-text-muted);
+  cursor: pointer; user-select: none;
+}
+.wpill .n { font-family: var(--font-mono); }
+.wpill.flash { animation: pill-flash 1.2s var(--ease-out) 2; }
+@keyframes pill-flash { 0%,100% { border-color: var(--color-line-strong); } 50% { border-color: var(--color-success); box-shadow: 0 0 0 3px var(--color-success-soft); } }
+
+/* ============================= 右侧面板 ============================= */
+.panel-backdrop { position: fixed; inset: 0; z-index: 290; opacity: 0; pointer-events: none; transition: opacity var(--duration-base); }
+.panel-backdrop.on { opacity: 1; pointer-events: auto; }
+.side-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 92vw); z-index: 300;
+  background: var(--color-surface-raised); border-left: 0.5px solid var(--color-line);
+  box-shadow: var(--shadow-xl); transform: translateX(102%);
+  transition: transform var(--duration-slow) var(--ease-out);
+  display: flex; flex-direction: column;
+}
+.side-panel.on { transform: translateX(0); }
+.sp-head { display: flex; align-items: center; gap: var(--space-2); height: 49px; padding: 0 var(--space-4); border-bottom: 0.5px solid var(--color-line); }
+.sp-head .t { font-size: var(--text-sm); font-weight: var(--weight-medium); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-x { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--color-text-muted); }
+.sp-x:hover { background: var(--color-hover); color: var(--color-text); }
+.sp-meta { padding: var(--space-3) var(--space-4); border-bottom: 0.5px solid var(--color-subtle); display: flex; gap: var(--space-4); font-size: var(--text-xs); color: var(--color-text-faint); flex-wrap: wrap; }
+.sp-body { flex: 1; overflow: auto; padding: var(--space-4); }
+.sp-body pre { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; color: var(--color-text-muted); white-space: pre-wrap; word-break: break-all; }
+
+/* ============================= 设计说明区 ============================= */
+.doc-wrap { position: absolute; inset: 0; overflow-y: auto; background: var(--color-bg); z-index: 200; display: none; }
+.doc-wrap.on { display: block; }
+.doc { max-width: 760px; margin: 0 auto; padding: 48px 24px 120px; font-size: var(--text-base); line-height: var(--leading-prose); }
+.doc h1 { font-size: 22px; font-weight: 600; margin: 0 0 var(--space-2); }
+.doc h2 { font-size: var(--text-lg); font-weight: 600; margin: var(--space-8) 0 var(--space-2); }
+.doc p { margin: 0 0 var(--space-3); color: var(--color-text-muted); }
+.doc p b, .doc li b { color: var(--color-text); font-weight: var(--weight-medium); }
+.doc ul { margin: 0 0 var(--space-3); padding-left: 20px; color: var(--color-text-muted); }
+.doc li { margin-bottom: 6px; }
+.doc table { width: 100%; border-collapse: collapse; margin: 0 0 var(--space-4); font-size: var(--text-sm); }
+.doc th, .doc td { text-align: left; padding: 8px 12px; border-bottom: 0.5px solid var(--color-line); vertical-align: top; }
+.doc th { color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); }
+.doc td { color: var(--color-text-muted); }
+.doc td:first-child { font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; }
+.doc code { font-size: var(--text-sm); background: var(--color-surface-sunken); border-radius: var(--radius-xs); padding: 1px 5px; }
+html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
+.doc .back { margin-bottom: var(--space-6); }
+.doc .rev { font-size: var(--text-xs); color: var(--color-text-faint); }
+
+/* ============================= 状态陈列页 ============================= */
+.gal-wrap { position: absolute; inset: 0; overflow-y: auto; background: var(--color-bg); z-index: 210; display: none; }
+.gal-wrap.on { display: block; }
+.gal { max-width: 760px; margin: 0 auto; padding: 48px 24px 120px; }
+.gal h1 { font-size: 22px; font-weight: 600; margin: 0 0 var(--space-1); }
+.gal .gal-sub { font-size: var(--text-sm); color: var(--color-text-faint); margin: 0 0 var(--space-4); }
+.gal-bar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-6); }
+.gal-sec { margin: var(--space-8) 0 0; }
+.gal-sec > .gs-label {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--color-text-faint);
+  text-transform: none; margin-bottom: var(--space-2);
+}
+.gal-sec > .gs-label .n { font-family: var(--font-mono); color: var(--color-accent); }
+.gal-sec > .gs-desc { font-size: var(--text-xs); color: var(--color-text-faint); margin: -4px 0 var(--space-2); }
+.gal .demo-stage { border: 0.5px dashed var(--color-line-strong); border-radius: var(--radius-lg); padding: var(--space-4); }
+
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- ============ 侧栏 ============ -->
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <span class="sb-logo"><svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="5" y="9" width="4" height="7" rx="2"/><rect x="15" y="9" width="4" height="7" rx="2"/></svg></span>
+      <span class="sb-name">Kimi Code</span>
+    </div>
+    <div class="sb-ws">kimi-code-app2</div>
+    <div class="sb-row active"><span class="t">调研 desktop 通知链路</span><span class="time">13:02</span></div>
+    <div class="sb-row"><span class="t">composer 工作区选择器</span><span class="time">11:47</span></div>
+    <div class="sb-row"><span class="t">release: v0.3.2 changeset</span><span class="time">10:15</span></div>
+    <div class="sb-ws">kimi-code</div>
+    <div class="sb-row"><span class="t">agent-core task service</span><span class="time">昨天</span></div>
+    <div class="sb-row"><span class="t">fix: ws reconnect backoff</span><span class="time">昨天</span></div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <div class="main">
+    <header class="chat-header">
+      <span class="crumb">kimi-code-app2 /</span>
+      <span class="title">调研 desktop 通知链路</span>
+      <span class="sp"></span>
+      <div class="demo-bar">
+        <button class="demo-btn" id="btn-gallery" title="全部样式状态一览">全部状态</button>
+        <button class="demo-btn" id="btn-doc" title="查看设计说明">设计说明</button>
+        <button class="demo-btn" id="btn-theme" title="切换亮/暗">◐ 主题</button>
+        <button class="demo-btn" id="btn-debug" title="显示 injection（system-reminder）调试行">调试注入</button>
+        <button class="demo-btn primary" id="btn-play" title="从头播放完整演示">▶ 播放演示</button>
+      </div>
+    </header>
+
+    <div class="chat-scroll" id="scroll">
+      <div class="chat-col" id="col">
+
+        <!-- 用户消息 -->
+        <div class="u-turn"><div class="u-bub">帮我把 desktop dev 跑起来（放后台），然后调研一下 notification 的处理链路。</div></div>
+
+        <!-- turn 1：进行中（演示通知到达） -->
+        <div id="turn-live">
+          <div class="a-msg"><div class="msg"><p>我先把 dev server 起在后台，趁编译的时间看代码。</p></div></div>
+
+          <div class="tl">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7zm0 4h10v2H7v-2zm0 4h6v2H7v-2z"/></svg>
+            <span class="name">Bash</span>
+            <span class="mono">pnpm dev:desktop</span>
+            <span class="tail"><span class="dot running"></span><span>后台运行中 · 2m41s</span></span>
+          </div>
+          <div class="tl">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2h16v20l-2-1-2 1-2 1-2-1-2 1-2-1-2 1V2zm3 5h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/></svg>
+            <span class="name">Read</span>
+            <span class="target">messagesToTurns.ts</span>
+            <span class="faint">— turn 分组与隐藏注入</span>
+          </div>
+          <div class="tl">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.3 14l5.4 5.3 1.4-1.4-5.3-5.4A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
+            <span class="name">Grep</span>
+            <span class="mono">task_notification</span>
+            <span class="faint">kimi-code/packages</span>
+            <span class="tail">1 match</span>
+          </div>
+
+          <!-- ★ 通知卡插入点 -->
+          <div id="live-slot"></div>
+
+          <div class="a-msg" id="react-msg" style="display:none"><div class="msg">
+            <p>好，dev server 已经在后台跑起来了（renderer HMR + 内嵌 server）。代码这边也读完了，结论是 <code class="ic">task_notification</code> 这类消息目前在 UI 上完全不可见……</p>
+          </div></div>
+        </div>
+
+        <!-- 参照物：cron 通知 + compaction 分隔条（对照视觉权重用） -->
+        <div id="refs" style="display:none">
+          <div class="compact-divider"><span class="cd-line"></span><span class="cd-label">参照：cron 触发与 compaction 分隔条的视觉权重</span><span class="cd-line"></span></div>
+          <div style="display:flex;flex-direction:column">
+            <div class="cn">
+              <div class="cn-head"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 22a10 10 0 110-20 10 10 0 010 20zm0-2a8 8 0 100-16 8 8 0 000 16zm1-13v5.6l4.2 2.5-.8 1.3L11 13.6V7h2z"/></svg><span>定时任务触发 · 57 8 * * * · 单次</span></div>
+              <div class="cn-bubble">明天早上跑一下 smoke test</div>
+              <div class="cn-meta">08:57</div>
+            </div>
+          </div>
+          <div class="compact-divider"><span class="cd-line"></span><span class="cd-label">Context compacted · 128.4k → 32.1k tokens <span class="cd-view">查看摘要</span></span><span class="cd-line"></span></div>
+        </div>
+
+        <!-- turn 2：已落定（演示 fold 规则） -->
+        <div id="turn-settled" style="display:none">
+          <div class="fold-row" id="fold-head">
+            <svg class="car" viewBox="0 0 24 24" fill="currentColor"><path d="M9.707 5.293L16.414 12l-6.707 6.707-1.414-1.414L13.586 12 8.293 6.707z"/></svg>
+            <span id="fold-label">Worked 4m57s</span>
+          </div>
+          <div class="fold-body" id="fold-body" style="display:none">
+            <div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7zm0 4h10v2H7v-2z"/></svg><span class="name">Bash</span><span class="mono">pnpm --filter kimi-code-app run build</span><span class="tail"><span class="dot done"></span></span></div>
+            <div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2h16v20l-2-1-2 1-2 1-2-1-2 1-2-1-2 1V2zm3 5h10v2H7V7z"/></svg><span class="name">Read</span><span class="target">taskService.ts</span></div>
+            <div id="folded-ntf-slot"></div>
+          </div>
+          <!-- error 级通知在 fold 外保持可见（规则 ③） -->
+          <div id="pinned-slot"></div>
+          <div class="a-msg"><div class="msg"><p>构建通过了。有个后台任务失败了——上面的通知里有失败原因和输出路径，我顺手修一下。</p></div></div>
+        </div>
+
+        <!-- 调试注入行容器 -->
+        <div id="inj-slot" style="display:none">
+          <div class="inj-row">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l10 5-10 5L2 7l10-5zm0 7.7L20.4 5 12 2.3 3.6 5 12 9.7zM2 12l10 5 10-5v2l-10 5-10-5v-2zm0 5l10 5 10-5v2l-10 5-10-5v-2z"/></svg>
+            <span class="mono">&lt;system-reminder&gt; TodoList 长时间未更新…（origin: injection · todo_reminder）— 仅调试模式可见</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- composer -->
+    <div class="composer-dock">
+      <div class="workbar">
+        <span class="wpill" id="wpill"><span class="dot running" id="wpill-dot"></span>后台任务 <span class="n" id="wpill-n">1</span></span>
+      </div>
+      <div class="composer">
+        <div class="ph">发消息、/ 命令或 @ 文件…</div>
+        <div class="bar">
+          <span class="wpill" style="height:28px;border:none;background:transparent;padding:0 8px">⛶ 工作区</span>
+          <span style="flex:1"></span>
+          <span class="wpill" style="height:28px;padding:0 12px">kimi-for-coding ▾</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 右侧输出面板 ============ -->
+<div class="panel-backdrop" id="bd"></div>
+<aside class="side-panel" id="panel">
+  <div class="sp-head">
+    <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color:var(--color-text-faint)"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg>
+    <span class="t" id="panel-title">output.log</span>
+    <button class="sp-x" id="panel-close" title="关闭 (Esc)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6.4 5L5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/></svg></button>
+  </div>
+  <div class="sp-meta" id="panel-meta"></div>
+  <div class="sp-body"><pre id="panel-log"></pre></div>
+</aside>
+
+<!-- ============ 状态陈列页 ============ -->
+<div class="gal-wrap" id="gal">
+  <div class="gal">
+    <div class="gal-bar">
+      <button class="demo-btn back" id="gal-close">← 返回演示</button>
+      <span style="flex:1"></span>
+      <button class="demo-btn" id="gal-theme">◐ 主题</button>
+    </div>
+    <h1>通知卡 · 全部样式状态</h1>
+    <p class="gal-sub">所有状态均由与演示相同的构建函数渲染，非静态截图；切换主题可查看暗色。</p>
+    <div id="gal-body"></div>
+  </div>
+</div>
+
+<!-- ============ 设计说明 ============ -->
+<div class="doc-wrap" id="doc">
+  <div class="doc">
+    <button class="demo-btn back" id="doc-close">← 返回演示</button>
+    <h1>后台任务通知 · 状态通知卡（Notification card）</h1>
+    <p class="rev">v2 —— v1 的「安静行」方案视觉权重过低（与 tool line 无法区分），改为参考 cron 通知与 toast/attention 卡的状态语义色。</p>
+    <p>针对 <code>&lt;notification&gt;</code>（origin kind = <code>task_notification</code>）目前被 <code>messagesToTurns.ts</code> 整条跳过、用户完全无感知的问题，把它渲染为聊天流中的一张<b>状态通知卡</b>。</p>
+
+    <h2>视觉谱系：三种系统事件各就各位</h2>
+    <table>
+      <tr><th>事件</th><th>形态</th><th>语义</th></tr>
+      <tr><td>cron 触发</td><td>右对齐来源标签 + accent 气泡</td><td>「代替用户发言」，站在用户侧，权重 = 一条用户消息</td></tr>
+      <tr><td><b>后台任务通知（本方案）</b></td><td><b>左对齐状态通知卡（soft 底 + bd 边 + 状态图标 chip）</b></td><td>「agent 收到的系统事件」，站在助手侧，权重低于消息、高于工具行</td></tr>
+      <tr><td>compaction</td><td>全宽 hairline 分隔条</td><td>「上下文断裂」，是边界不是事件</td></tr>
+    </table>
+
+    <h2>卡片结构</h2>
+    <ul>
+      <li><b>头行</b>：28px 状态图标 chip（raised 底 + 状态色图标，沿用 sub-agent 卡的 pa-ic 语言）＋ 标题「后台任务完成 / 失败 / 超时 / 已终止」（text 色，medium）＋ 副标题（任务描述，mono 12px muted 截断）＋ 右侧状态词 · 时间 + chevron。整行可点，展开/收起。</li>
+      <li><b>状态着色</b>：completed → <code>--color-success-soft/-bd</code>；failed / timed_out / lost → <code>danger</code> 对；killed → <code>warning</code> 对；纯 info → 中性 <code>--color-surface</code>。全部取设计系统现成的状态 token 对（toast / qcard 同款），不新增色值。</li>
+      <li><b>体部</b>（默认收起）：字段区（type / source / severity，mono xs）、通知正文、输出文件行（raised 行 +「查看输出 → 右侧面板」「复制路径」）、「原始 payload」折叠块展示 <code>&lt;notification&gt;</code> XML 本体。</li>
+    </ul>
+
+    <h2>XML → UI 映射</h2>
+    <table>
+      <tr><th>notification 字段</th><th>UI</th></tr>
+      <tr><td><code>type</code> + <code>severity</code></td><td>卡片变体（ok / err / warn / info）+ 头行图标与标题动词</td></tr>
+      <tr><td><code>title</code></td><td>头行副标题（mono 12px 截断）</td></tr>
+      <tr><td><code>category</code> / <code>source_kind</code></td><td>标题主语：「后台任务」/「子代理」；体部字段</td></tr>
+      <tr><td>body / <code>&lt;output-file&gt;</code></td><td>体部正文 + 输出文件行</td></tr>
+      <tr><td>原始 XML</td><td>体部「原始 payload」折叠块</td></tr>
+      <tr><td><code>id</code> / <code>source_id</code> / <code>agent_id</code></td><td>仅体部字段区</td></tr>
+    </table>
+
+    <h2>行为规则</h2>
+    <ul>
+      <li><b>① 到达即所见</b>：turn 流式期间，通知卡 inline 插入真实到达位置（<code>kimi-card-in</code> 入场），不自动展开，不是 turn 边界——<code>messagesToTurns.ts</code> 的 <code>continue</code> 分支改为产出 <code>TurnBlock{kind:'notification'}</code>。</li>
+      <li><b>② 连续并卡</b>：相邻 ≥2 条通知（中间无 prose）并入一张中性组卡「N 条通知」，头行带每条的状态点串；展开后逐条紧凑行（22px 图标、0.5px subtle 分隔），每条可再展开自己的详情。</li>
+      <li><b>③ 落定归档</b>：turn settle 后，info/success 级卡随其他块折进「Worked Ns」；<b>warning / error 级卡在 fold 外保持可见</b>（需要人看的东西不进折叠），fold 行尾部追加一个 danger 点作线索。</li>
+      <li><b>④ injection 仍隐藏</b>：<code>origin: injection</code>（todo 提醒等 system-reminder）保持跳过，仅调试开关「显示注入的系统消息」下以 faint 行显示（演示里的「调试注入」按钮）。</li>
+      <li><b>⑤ 联动</b>：通知到达时 composer workbar 的后台任务 pill 计数 −1 并闪烁一次；「查看输出」打开右侧面板（复用 file-preview 轨道）。系统级 Web Notification 逻辑不变：通知卡管可追溯，系统通知管人不在时喊一声。</li>
+    </ul>
+
+    <h2>为什么不选这些</h2>
+    <table>
+      <tr><th>备选</th><th>否决理由</th></tr>
+      <tr><td>安静行（v1，tool line 语言）</td><td>权重过低：与工具行同节奏同色彩，事件被当成过程噪音一扫而过，失败通知尤其不该这么轻。</td></tr>
+      <tr><td>用户气泡 / 助手 prose</td><td>机器生成的上下文，冒充任何一方发言都会污染对话语义，且会错误地成为 turn 边界。</td></tr>
+      <tr><td>compaction 式分隔条</td><td>分隔条表达「上下文断裂」，语义过重；通知是事件不是边界，多条通知会把流切碎。</td></tr>
+      <tr><td>仅 toast</td><td>短暂、不可回溯，解决不了历史断裂；失败通知也不该自动消失。</td></tr>
+      <tr><td>通知中心（铃铛面板）</td><td>与托盘 attention + workbar pill 职责重叠；把事件抽离时间线，追溯时要在两处对照。可作为后续增强，不替代流内卡。</td></tr>
+    </table>
+
+    <h2>边界情况</h2>
+    <ul>
+      <li><b>coalesced 通知</b>（<code>coalescedCount &gt; 1</code>）：单卡展示，状态词改「完成（合并 N 次）」，体部说明。</li>
+      <li><b>无输出文件</b>：隐藏输出行，只留字段与正文。</li>
+      <li><b>子代理通知</b>（带 <code>agent_id</code>）：图标换 sub-agent 语义，标题主语「子代理」，详情可跳 sub-agent 面板。</li>
+      <li><b>a11y / 动效</b>：头行是 bare <code>&lt;button aria-expanded&gt;</code>；<code>prefers-reduced-motion</code> 关闭入场动画；亮暗双主题全部走 token。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+/* ============================== 数据与模板 ============================== */
+const ICONS = {
+  completed: '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1.2 14.2l-4-4 1.4-1.4 2.6 2.6 6-6 1.4 1.4-7.4 7.4z"/></svg>',
+  failed:    '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg>',
+  timed_out: '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6.4l4.6 2.7 1-1.6-3.6-2.2V7z"/></svg>',
+  killed:    '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM7 11h10v2H7v-2z"/></svg>',
+  bell:      '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 22a2.5 2.5 0 002.5-2.5h-5A2.5 2.5 0 0012 22zm7-6v-5a7 7 0 00-5-6.7V4a2 2 0 10-4 0v.3A7 7 0 005 11v5l-2 2v1h18v-1l-2-2z"/></svg>',
+  term:      '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 3l4 4-4 4 1.4 1.4L11.8 12 6.4 6.6 5 8zm7 8h6v2h-6v-2z"/></svg>',
+};
+const ICON_CAR = '<svg class="car" viewBox="0 0 24 24" fill="currentColor"><path d="M9.707 5.293L16.414 12l-6.707 6.707-1.414-1.414L13.586 12 8.293 6.707z"/></svg>';
+
+const KIND_LABEL = { background_task: '后台任务', subagent: '子代理' };
+const STATUS = {
+  completed: { variant: 'ok',   word: '完成',   titleVerb: '完成'   },
+  failed:    { variant: 'err',  word: '失败',   titleVerb: '失败'   },
+  timed_out: { variant: 'err',  word: '超时',   titleVerb: '超时'   },
+  killed:    { variant: 'warn', word: '已终止', titleVerb: '被终止' },
+  info:      { variant: 'info', word: '信息',   titleVerb: '通知'   },
+};
+
+let seq = 0;
+const arrived = [];   // live-slot 里的通知 {d, node}
+let groupCard = null;
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+function ntfXml(d){
+  return `<notification id="${d.id}" category="task" type="task.${d.status}" source_kind="${d.kind}" source_id="${d.id}">\n`
+    + `Title: ${d.title}\nSeverity: ${d.severity}\n${d.body}\n`
+    + `<output-file path="${d.out}" bytes="${d.bytes}">\nRead the output file to retrieve the result: ${d.out}\n</output-file>\n</notification>`;
+}
+
+function detailHtml(d){
+  return `
+    <div class="ntf-body"><div class="ntf-body-in">
+      <div class="nd-fields">
+        <span class="k">type</span><span class="v">task.${d.status}</span>
+        <span class="k">source</span><span class="v">${d.kind} · ${d.id}</span>
+        <span class="k">severity</span><span class="v">${d.severity}</span>
+      </div>
+      <div class="nd-body">${esc(d.body)}</div>
+      <div class="nd-out">
+        <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color:var(--color-text-faint);flex:none"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg>
+        <span class="path" title="${esc(d.out)}">${esc(d.out)}</span>
+        <button class="nd-act accent" data-act="open">查看输出</button>
+        <button class="nd-act" data-act="copy">复制路径</button>
+      </div>
+      <details class="nd-raw">
+        <summary>${ICON_CAR}<span>原始 payload</span></summary>
+        <pre>${esc(ntfXml(d))}</pre>
+      </details>
+    </div></div>`;
+}
+
+function bindDetail(el, d){
+  el.querySelector('[data-act="open"]').addEventListener('click', (e) => { e.stopPropagation(); openPanel(d); });
+  el.querySelector('[data-act="copy"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(d.out);
+    e.target.textContent = '已复制';
+    setTimeout(() => e.target.textContent = '复制路径', 1200);
+  });
+}
+
+/* 单条通知卡 */
+function ntfCard(d){
+  const st = STATUS[d.status];
+  const el = document.createElement('div');
+  el.className = `ntf ${st.variant}`;
+  el.innerHTML = `
+    <button class="ntf-head" aria-expanded="false">
+      <span class="ntf-chip">${ICONS[d.status] || ICONS.bell}</span>
+      <span class="ntf-main">
+        <span class="ntf-title">${KIND_LABEL[d.kind]}${st.titleVerb}${d.badge ? `（${d.badge}）` : ''}</span>
+        <span class="ntf-sub">${esc(d.title)}</span>
+      </span>
+      <span class="ntf-side"><span class="st">${st.word}</span><span>·</span><span>${d.time}</span>${ICON_CAR}</span>
+    </button>
+    ${detailHtml(d)}`;
+  el.querySelector('.ntf-head').addEventListener('click', () => {
+    const open = el.classList.toggle('open');
+    el.querySelector('.ntf-head').setAttribute('aria-expanded', String(open));
+  });
+  bindDetail(el, d);
+  return el;
+}
+
+/* 组卡内的紧凑条目 */
+function ngItem(d){
+  const st = STATUS[d.status];
+  const el = document.createElement('div');
+  el.className = `ng-item ${st.variant}`;
+  el.innerHTML = `
+    <button class="ntf-head" aria-expanded="false">
+      <span class="ntf-chip">${ICONS[d.status] || ICONS.bell}</span>
+      <span class="ntf-main">
+        <span class="ntf-title">${KIND_LABEL[d.kind]}${st.titleVerb}${d.badge ? `（${d.badge}）` : ''}</span>
+        <span class="ntf-sub">${esc(d.title)}</span>
+      </span>
+      <span class="ntf-side"><span class="st">${st.word}</span><span>·</span><span>${d.time}</span>${ICON_CAR}</span>
+    </button>
+    ${detailHtml(d)}`;
+  el.querySelector('.ntf-head').addEventListener('click', () => {
+    const open = el.classList.toggle('open');
+    el.querySelector('.ntf-head').setAttribute('aria-expanded', String(open));
+  });
+  bindDetail(el, d);
+  return el;
+}
+
+/* ============================== 到达与并卡 ============================== */
+const liveSlot = document.getElementById('live-slot');
+
+function arrive(d){
+  d.id = d.id || ('task:bash-x' + (++seq).toString(36));
+  if (groupCard) { addToGroup(d); afterArrive(d); return; }
+  arrived.push({ d });
+  liveSlot.appendChild(ntfCard(d));
+  if (arrived.length === 2) foldIntoGroup();
+  afterArrive(d);
+}
+
+function foldIntoGroup(){
+  groupCard = document.createElement('div');
+  groupCard.className = 'ntf-group-card';
+  groupCard.innerHTML = `
+    <button class="ntf-head" aria-expanded="false">
+      <span class="ntf-chip">${ICONS.bell}</span>
+      <span class="ntf-main">
+        <span class="ntf-title g-title"></span>
+        <span class="ntf-sub g-sub"></span>
+      </span>
+      <span class="ntf-side"><span class="ng-dots"></span>${ICON_CAR}</span>
+    </button>
+    <div class="ng-list"></div>`;
+  liveSlot.appendChild(groupCard);
+  // 把已到的两张单卡换成组内条目
+  const firstCards = liveSlot.querySelectorAll(':scope > .ntf');
+  firstCards.forEach(c => c.remove());
+  const list = groupCard.querySelector('.ng-list');
+  for (const a of arrived) list.appendChild(ngItem(a.d));
+  groupCard.querySelector(':scope > .ntf-head').addEventListener('click', () => {
+    const open = groupCard.classList.toggle('open');
+    groupCard.querySelector(':scope > .ntf-head').setAttribute('aria-expanded', String(open));
+  });
+  refreshGroupHead();
+}
+
+function addToGroup(d){
+  arrived.push({ d });
+  groupCard.querySelector('.ng-list').appendChild(ngItem(d));
+  refreshGroupHead();
+}
+
+function refreshGroupHead(){
+  const n = arrived.length;
+  groupCard.querySelector('.g-title').textContent = `${n} 条后台通知`;
+  groupCard.querySelector('.g-sub').textContent = arrived.map(a => a.d.title).join(' · ');
+  groupCard.querySelector('.ng-dots').innerHTML = arrived.map(a =>
+    `<span class="dot ${STATUS[a.d.status].variant === 'ok' ? 'done' : STATUS[a.d.status].variant === 'err' ? 'error' : 'warn'}"></span>`).join('');
+}
+
+/* ============================== 联动 ============================== */
+function afterArrive(d){
+  const pill = document.getElementById('wpill');
+  pill.classList.remove('flash'); void pill.offsetWidth; pill.classList.add('flash');
+  document.getElementById('wpill-n').textContent = '0';
+  document.getElementById('wpill-dot').className = 'dot ' + (STATUS[d.status].variant === 'ok' ? 'done' : STATUS[d.status].variant === 'err' ? 'error' : 'warn');
+  if (d.status === 'completed') document.getElementById('react-msg').style.display = '';
+  scrollBottom();
+}
+
+function scrollBottom(){
+  const s = document.getElementById('scroll');
+  s.scrollTo({ top: s.scrollHeight, behavior: 'smooth' });
+}
+
+/* ============================== 右侧面板 ============================== */
+const panel = document.getElementById('panel'), bd = document.getElementById('bd');
+function openPanel(d){
+  document.getElementById('panel-title').textContent = d.out.split('/').pop();
+  document.getElementById('panel-meta').innerHTML =
+    `<span>任务 <span class="mono">${d.id}</span></span><span>状态 <b style="color:var(--color-${STATUS[d.status].variant === 'ok' ? 'success' : STATUS[d.status].variant === 'err' ? 'danger' : 'warning'})">${STATUS[d.status].word}</b></span><span>${(d.bytes/1024/1024).toFixed(1)} MB</span>`;
+  document.getElementById('panel-log').textContent = d.log;
+  panel.classList.add('on'); bd.classList.add('on');
+}
+function closePanel(){ panel.classList.remove('on'); bd.classList.remove('on'); }
+document.getElementById('panel-close').addEventListener('click', closePanel);
+bd.addEventListener('click', closePanel);
+addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+
+/* ============================== 演示脚本 ============================== */
+const DEMO_OK = {
+  kind: 'background_task', status: 'completed', severity: 'info',
+  title: 'desktop dev（renderer HMR + 内嵌 server）', time: '13:04',
+  body: 'Background process completed.',
+  out: '~/.kimi-code/sessions/wd_kimi-code-app2/agents/main/tasks/bash-lo9yv9ch/output.log', bytes: 2157599,
+  log: `[13:02:11] renderer dev server ready → http://127.0.0.1:5174\n[13:02:11] embedded server listening on 127.0.0.1:58231\n[13:02:12] main process booted, window created (1440×900)\n[13:02:12] pet window skipped (disabled in settings)\n…\n[13:04:52] electron main exited (code 0)\nprocess completed successfully.`
+};
+const DEMO_FAIL = {
+  kind: 'background_task', status: 'failed', severity: 'error',
+  title: 'pnpm --filter kimi-code-app run build', time: '13:06',
+  body: 'Background process failed with exit code 1.',
+  out: '~/.kimi-code/sessions/wd_kimi-code-app2/agents/main/tasks/bash-m4k2p9/output.log', bytes: 184320,
+  log: `> kimi-code-app@0.3.2 build\n> tsdown && electron-builder\n\nsrc/main/updater.ts(148,7): error TS2322: Type 'string | undefined' is not assignable to type 'string'.\n  Type 'undefined' is not assignable to type 'string'.\n\n ELIFECYCLE  Command failed with exit code 1.`
+};
+const DEMO_TIMEOUT = {
+  kind: 'background_task', status: 'timed_out', severity: 'warning',
+  title: 'e2e: desktop smoke (playwright)', time: '13:07',
+  body: 'Task exceeded its 600s timeout and was terminated.',
+  out: '~/.kimi-code/sessions/wd_kimi-code-app2/agents/main/tasks/bash-zq71dd/output.log', bytes: 524288,
+  log: `running 3 tests\ntest/app.spec.ts:12 › launches main window … ok (8.2s)\ntest/app.spec.ts:30 › pet window toggle … stalled\ntask timed out after 600s, terminated.`
+};
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let playing = false;
+
+async function play(){
+  if (playing) return;
+  playing = true; reset();
+  await sleep(900);
+  arrive({ ...DEMO_OK });
+  await sleep(1500);
+  arrive({ ...DEMO_FAIL });
+  await sleep(1500);
+  arrive({ ...DEMO_TIMEOUT });
+  await sleep(1300);
+  settleTurn();
+  playing = false;
+}
+
+/* turn 落定：success 卡收进 fold，warn/err 卡留在外面 */
+function settleTurn(){
+  const settled = document.getElementById('turn-settled');
+  settled.style.display = '';
+  document.getElementById('refs').style.display = '';
+  const foldedSlot = document.getElementById('folded-ntf-slot');
+  const pinnedSlot = document.getElementById('pinned-slot');
+  // 清掉 live 区（单卡或组卡）
+  liveSlot.innerHTML = '';
+  let hasErr = false;
+  for (const { d } of arrived) {
+    if (STATUS[d.status].variant === 'ok') foldedSlot.appendChild(ntfCard(d));
+    else { pinnedSlot.appendChild(ntfCard(d)); hasErr = true; }
+  }
+  if (hasErr) {
+    document.getElementById('fold-label').innerHTML =
+      `Worked 4m57s <span class="dot error" style="margin-left:4px"></span><span style="margin-left:2px">含失败通知</span>`;
+  }
+  scrollBottom();
+}
+
+function reset(){
+  liveSlot.innerHTML = '';
+  document.getElementById('folded-ntf-slot').innerHTML = '';
+  document.getElementById('pinned-slot').innerHTML = '';
+  document.getElementById('fold-label').textContent = 'Worked 4m57s';
+  document.getElementById('turn-settled').style.display = 'none';
+  document.getElementById('refs').style.display = 'none';
+  document.getElementById('react-msg').style.display = 'none';
+  document.getElementById('wpill-n').textContent = '1';
+  document.getElementById('wpill-dot').className = 'dot running';
+  arrived.length = 0; groupCard = null;
+  closePanel();
+}
+
+document.getElementById('btn-play').addEventListener('click', play);
+document.getElementById('fold-head').addEventListener('click', () => {
+  const head = document.getElementById('fold-head');
+  const body = document.getElementById('fold-body');
+  const open = head.classList.toggle('open');
+  body.style.display = open ? '' : 'none';
+});
+
+document.getElementById('btn-theme').addEventListener('click', () => {
+  const h = document.documentElement;
+  h.dataset.colorScheme = h.dataset.colorScheme === 'light' ? 'dark' : 'light';
+});
+
+document.getElementById('btn-debug').addEventListener('click', (e) => {
+  const slot = document.getElementById('inj-slot');
+  const on = slot.style.display === 'none';
+  slot.style.display = on ? '' : 'none';
+  e.currentTarget.classList.toggle('on', on);
+});
+
+document.getElementById('btn-doc').addEventListener('click', () => document.getElementById('doc').classList.add('on'));
+document.getElementById('doc-close').addEventListener('click', () => document.getElementById('doc').classList.remove('on'));
+
+/* 初始：静态放一张成功卡 + 一张失败卡 + 一张超时卡（组卡形态），首屏即有方案形态 */
+arrive({ ...DEMO_OK });
+arrive({ ...DEMO_FAIL });
+document.getElementById('react-msg').style.display = '';
+
+/* ============================== 状态陈列页 ============================== */
+function buildGroupCard(ds){
+  const g = document.createElement('div');
+  g.className = 'ntf-group-card';
+  const dots = ds.map(d => {
+    const v = STATUS[d.status].variant;
+    return `<span class="dot ${v === 'ok' ? 'done' : v === 'err' ? 'error' : v === 'warn' ? 'warn' : ''}"></span>`;
+  }).join('');
+  g.innerHTML = `
+    <button class="ntf-head" aria-expanded="false">
+      <span class="ntf-chip">${ICONS.bell}</span>
+      <span class="ntf-main">
+        <span class="ntf-title">${ds.length} 条后台通知</span>
+        <span class="ntf-sub">${esc(ds.map(d => d.title).join(' · '))}</span>
+      </span>
+      <span class="ntf-side"><span class="ng-dots">${dots}</span>${ICON_CAR}</span>
+    </button>
+    <div class="ng-list"></div>`;
+  const list = g.querySelector('.ng-list');
+  for (const d of ds) list.appendChild(ngItem(d));
+  g.querySelector(':scope > .ntf-head').addEventListener('click', () => {
+    const open = g.classList.toggle('open');
+    g.querySelector(':scope > .ntf-head').setAttribute('aria-expanded', String(open));
+  });
+  return g;
+}
+
+function galSec(n, title, desc, nodes){
+  const sec = document.createElement('div');
+  sec.className = 'gal-sec';
+  sec.innerHTML = `<div class="gs-label"><span class="n">${n}</span><span>${title}</span></div>` +
+    (desc ? `<div class="gs-desc">${desc}</div>` : '');
+  const stage = document.createElement('div');
+  stage.className = 'demo-stage';
+  for (const node of nodes) stage.appendChild(node);
+  sec.appendChild(stage);
+  return sec;
+}
+
+function foldDemoRow(label, open){
+  const row = document.createElement('div');
+  row.className = 'fold-row' + (open ? ' open' : '');
+  row.innerHTML = `${ICON_CAR}<span>${label}</span>`;
+  return row;
+}
+
+function populateGallery(){
+  const body = document.getElementById('gal-body');
+  body.innerHTML = '';
+  const ok = { ...DEMO_OK, id: 'task:bash-a1' };
+  const fail = { ...DEMO_FAIL, id: 'task:bash-b2' };
+  const timeout = { ...DEMO_TIMEOUT, id: 'task:bash-c3' };
+  const killed = { ...DEMO_FAIL, id: 'task:bash-d4', status: 'killed', severity: 'warning',
+    title: 'pnpm test:watch（手动停止）', body: 'Task was killed by the user.', time: '13:09' };
+  const info = { ...DEMO_OK, id: 'task:bash-e5', status: 'info', severity: 'info',
+    title: 'desktop dev（renderer HMR + 内嵌 server）', body: 'Background process is still running; output so far is available.', time: '13:10' };
+  const coalesced = { ...DEMO_OK, id: 'task:bash-f6', badge: '合并 3 次', time: '13:11' };
+  const sub = { ...DEMO_OK, id: 'task:agent-g7', kind: 'subagent', title: '调研 notification 链路（explore）', time: '13:12' };
+
+  // ①–⑤ 单卡四态 + 中性
+  body.appendChild(galSec('01', '单卡 · 完成（success 对）', 'task.completed / severity info —— 收起（默认到达形态）', [ntfCard(ok)]));
+  body.appendChild(galSec('02', '单卡 · 失败（danger 对）', 'task.failed / severity error —— 收起', [ntfCard(fail)]));
+  body.appendChild(galSec('03', '单卡 · 超时（danger 对）', 'task.timed_out / severity warning —— 收起', [ntfCard(timeout)]));
+  body.appendChild(galSec('04', '单卡 · 已终止（warning 对）', 'task.killed / severity warning —— 收起', [ntfCard(killed)]));
+  body.appendChild(galSec('05', '单卡 · 纯信息（中性 surface）', '无状态语义时的兜底：--color-surface + --color-line', [ntfCard(info)]));
+
+  // ⑥–⑦ 展开
+  const openCard = ntfCard(fail); openCard.classList.add('open');
+  body.appendChild(galSec('06', '单卡 · 展开详情', '字段区 / 正文 / 输出文件行（查看输出 → 右侧面板；复制路径）', [openCard]));
+  const rawCard = ntfCard(fail); rawCard.classList.add('open');
+  rawCard.querySelector('.nd-raw').setAttribute('open', '');
+  body.appendChild(galSec('07', '单卡 · 展开原始 payload', '体部底部折叠块展示 <notification> XML 本体（透明度 / 排障）', [rawCard]));
+
+  // ⑧–⑨ 特殊形态
+  body.appendChild(galSec('08', '单卡 · 合并通知（coalesced）', 'coalescedCount > 1：标题追加「合并 N 次」徽注', [ntfCard(coalesced)]));
+  body.appendChild(galSec('09', '单卡 · 子代理通知', '带 agent_id：主语「子代理」，详情可跳 sub-agent 面板', [ntfCard(sub)]));
+
+  // ⑩–⑪ 组卡
+  body.appendChild(galSec('10', '组卡 · 收起', '相邻 ≥2 条并入中性组卡；头行 = 计数 + 标题串 + 每条状态点', [buildGroupCard([ok, fail, timeout])]));
+  const gOpen = buildGroupCard([ok, fail, timeout]); gOpen.classList.add('open');
+  gOpen.querySelectorAll('.ng-item')[1].classList.add('open');
+  body.appendChild(galSec('11', '组卡 · 展开（条目可再展开）', '紧凑条目（22px 图标、0.5px subtle 分隔），每条可独立展开详情', [gOpen]));
+
+  // ⑫–⑬ 落定归档
+  const foldWrap = document.createElement('div');
+  foldWrap.appendChild(foldDemoRow('Worked 4m57s', true));
+  const foldBody = document.createElement('div');
+  foldBody.className = 'fold-body';
+  foldBody.appendChild(ntfCard(ok));
+  foldWrap.appendChild(foldBody);
+  body.appendChild(galSec('12', '落定 · success 折进 Worked 行', 'turn settle 后 info/success 卡随其他块归档（图示为 fold 展开态）', [foldWrap]));
+  const pinWrap = document.createElement('div');
+  pinWrap.appendChild(foldDemoRow('Worked 4m57s ● 含失败通知', false));
+  pinWrap.appendChild(ntfCard(fail));
+  body.appendChild(galSec('13', '落定 · warn/error 滞留 fold 外', '需要人看的东西不进折叠；fold 行尾红点 +「含失败通知」作线索', [pinWrap]));
+
+  // ⑭ workbar pill 三态
+  const pills = document.createElement('div');
+  pills.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+  pills.innerHTML = `
+    <span class="wpill"><span class="dot running"></span>后台任务 <span class="n">1</span></span>
+    <span class="wpill flash"><span class="dot done"></span>后台任务 <span class="n">0</span></span>
+    <span class="wpill"><span class="dot error"></span>后台任务 <span class="n">0</span></span>`;
+  body.appendChild(galSec('14', '联动 · composer workbar pill', '运行中 → 通知到达时闪烁一次并计数 −1 → 失败终态红点', [pills]));
+
+  // ⑮ 调试 injection 行
+  const inj = document.createElement('div');
+  inj.innerHTML = `<div class="inj-row">
+    <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l10 5-10 5L2 7l10-5zm0 7.7L20.4 5 12 2.3 3.6 5 12 9.7zM2 12l10 5 10-5v2l-10 5-10-5v-2zm0 5l10 5 10-5v2l-10 5-10-5v-2z"/></svg>
+    <span class="mono">&lt;system-reminder&gt; TodoList 长时间未更新…（origin: injection · todo_reminder）— 仅调试模式可见</span>
+  </div>`;
+  body.appendChild(galSec('15', '调试 · injection 行（默认隐藏）', 'origin: injection 的 system-reminder 不渲染，仅调试开关下以 faint 行显示', [inj]));
+}
+
+document.getElementById('btn-gallery').addEventListener('click', () => {
+  populateGallery();
+  document.getElementById('gal').classList.add('on');
+});
+document.getElementById('gal-close').addEventListener('click', () => document.getElementById('gal').classList.remove('on'));
+document.getElementById('gal-theme').addEventListener('click', () => {
+  const h = document.documentElement;
+  h.dataset.colorScheme = h.dataset.colorScheme === 'light' ? 'dark' : 'light';
+});
+</script>
+</body>
+</html>

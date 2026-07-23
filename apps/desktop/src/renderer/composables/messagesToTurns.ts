@@ -12,6 +12,7 @@
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 import { detectShellDanger } from '../lib/shellDanger';
+import { parseTaskNotifications } from '../lib/notificationXml';
 import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffViewLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 
@@ -751,21 +752,58 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       const cronKind = cronOriginKind(msg);
-      // Hidden injections (todo-list reminders, background-task status and
-      // completion notifications) are stream noise, NOT turn boundaries: they
-      // land mid-turn between assistant messages, so flushing on them would
-      // fragment one agent turn into several chat turns (visible as repeated
-      // folded rows with nothing in between). Only these origin kinds are
-      // noise — every other hidden user message (hook results, retries,
-      // system triggers, …) keeps its boundary. Cron injections become their
-      // own turn below.
       const userOriginKind = (
         msg.metadata?.['origin'] as { kind?: string } | undefined
       )?.kind;
+      // Hidden injections (todo-list reminders …) are stream noise, NOT turn
+      // boundaries: they land mid-turn between assistant messages, so flushing
+      // on them would fragment one agent turn into several chat turns (visible
+      // as repeated folded rows with nothing in between). Only this origin
+      // kind is skipped — every other hidden user message (hook results,
+      // retries, system triggers, …) keeps its boundary. Cron injections
+      // become their own turn below.
+      if (cronKind === undefined && userOriginKind === 'injection') {
+        continue;
+      }
+      // Task notifications are the same mid-turn noise boundary-wise, but they
+      // DO render: each <notification> block becomes a notification block in
+      // the pending assistant group — a notification that opens a new turn
+      // seeds a group of its own, and the next assistant message merges in via
+      // the missing-promptId rule. Text with no well-formed block keeps the
+      // old hidden behaviour. The origin kind is 'task' (current; the legacy
+      // spellings are 'background_task' and the step-request kind
+      // 'task_notification').
       if (
         cronKind === undefined &&
-        (userOriginKind === 'injection' || userOriginKind === 'task_notification')
+        (userOriginKind === 'task' ||
+          userOriginKind === 'background_task' ||
+          userOriginKind === 'task_notification')
       ) {
+        const text = msg.content
+          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+          .map((c) => c.text)
+          .join('\n');
+        const notifications = parseTaskNotifications(text);
+        if (notifications.length > 0) {
+          pendingGroup ??= {
+            id: msg.id,
+            promptId: undefined,
+            textParts: [],
+            thinkingParts: [],
+            tools: [],
+            blocks: [],
+            approval: undefined,
+            approvalId: undefined,
+            seenSigs: new Set<string>(),
+            createdAt: msg.createdAt,
+          };
+          for (const notification of notifications) {
+            pendingGroup.blocks.push({
+              kind: 'notification',
+              notification: { ...notification, createdAt: msg.createdAt },
+            });
+          }
+        }
         continue;
       }
       // A cron injection always renders as its own standalone turn: agent-core

@@ -2,7 +2,7 @@
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
-import type { ChatTurn, TurnBlock } from '../types';
+import type { ChatTurn, TaskNotification, TurnBlock } from '../types';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.
@@ -51,7 +51,8 @@ export type AssistantRenderBlock =
   | { kind: 'thinking'; thinking: string; startedAt?: string; durationMs?: number; sourceIndex: number }
   | { kind: 'text'; text: string; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number }
-  | { kind: 'activity-run'; items: ActivityItem[] };
+  | { kind: 'activity-run'; items: ActivityItem[] }
+  | { kind: 'notification'; items: TaskNotification[]; sourceIndex: number };
 
 export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
   return !(block.tool.status === 'ok' && block.tool.media);
@@ -70,6 +71,10 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const blocks = turnBlocks(turn);
   const rendered: AssistantRenderBlock[] = [];
   let run: ActivityItem[] = [];
+  // Consecutive notification blocks merge into ONE render block (a single
+  // notification renders as a lone card; ≥2 as a group card). Anything that
+  // is not a notification — text included — breaks the grouping.
+  let pending: { items: TaskNotification[]; sourceIndex: number } | null = null;
 
   // A run of one item carries no summary value over the plain quiet line —
   // emit it as the standalone thinking / tool block it always was.
@@ -82,8 +87,19 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
     }
     run = [];
   };
+  const flushNotifications = () => {
+    if (pending) rendered.push({ kind: 'notification', items: pending.items, sourceIndex: pending.sourceIndex });
+    pending = null;
+  };
 
   blocks.forEach((block, sourceIndex) => {
+    if (block.kind === 'notification') {
+      flushRun();
+      if (pending) pending.items.push(block.notification);
+      else pending = { items: [block.notification], sourceIndex };
+      return;
+    }
+    flushNotifications();
     if (block.kind === 'thinking') {
       run.push({
         kind: 'thinking',
@@ -108,6 +124,7 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   });
 
   flushRun();
+  flushNotifications();
   return rendered;
 }
 
@@ -138,18 +155,37 @@ export function splitAssistantFold(turn: ChatTurn): AssistantFold {
   if (splitAt === -1) {
     // No text block: the successful-media tools ARE the turn's output, so the
     // split lands before the FIRST one — every media result stays visible,
-    // not just the last. Anything else without text (e.g. interrupted) folds
-    // wholesale.
+    // not just the last. A notification card gets the same treatment: it is
+    // an event worth seeing, not process noise. Anything else without text
+    // (e.g. interrupted) folds wholesale.
     for (let i = 0; i < rendered.length; i++) {
       const block = rendered[i];
       if (block?.kind === 'tool' && !rendersToolCard(block)) {
         splitAt = i;
         break;
       }
+      if (block?.kind === 'notification') {
+        splitAt = i;
+        break;
+      }
     }
     if (splitAt === -1) return { folded: rendered, visible: [] };
   }
-  return { folded: rendered.slice(0, splitAt), visible: rendered.slice(splitAt) };
+  const folded = rendered.slice(0, splitAt);
+  const visible = rendered.slice(splitAt);
+  // Notification cards never fold: they are events the user must be able to
+  // notice (a completed/failed background task), not process noise — folding
+  // them behind "Worked Ns" would defeat the point of rendering them at all.
+  // They leave the folded prefix and render right after the fold row, in
+  // order.
+  const punched = folded.filter((b) => b.kind === 'notification');
+  if (punched.length > 0) {
+    return {
+      folded: folded.filter((b) => b.kind !== 'notification'),
+      visible: [...punched, ...visible],
+    };
+  }
+  return { folded, visible };
 }
 
 /** Earliest thinking-block streaming-open stamp across the turn (renderer-
@@ -227,6 +263,13 @@ export function turnToMarkdown(turn: ChatTurn): string {
     } else if (blk.kind === 'tool' && blk.tool.output && blk.tool.output.length > 0) {
       const output = blk.tool.output.join('\n');
       parts.push(`\`\`\`\n[${blk.tool.name}]\n${output}\n\`\`\``);
+    } else if (blk.kind === 'notification') {
+      // A visible card must not vanish from transcript copies: quote its
+      // title/type and EVERY body line, mirroring the thinking-block
+      // treatment (a naive join would let later body lines escape the quote).
+      const n = blk.notification;
+      const lines = [n.title, n.type, ...n.body.split('\n')].filter((s) => s !== '');
+      if (lines.length > 0) parts.push(`> **Notification**\n> ${lines.join('\n> ')}`);
     }
   }
   return parts.join('\n\n');

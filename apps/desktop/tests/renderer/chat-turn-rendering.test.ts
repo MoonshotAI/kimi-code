@@ -27,6 +27,23 @@ function assistantTurn(blocks: TurnBlock[], over: Partial<ChatTurn> = {}): ChatT
   return { id: 't1', role: 'assistant', no: 1, text: '', blocks, ...over };
 }
 
+function ntfBlock(id: string, type = 'task.completed'): Extract<TurnBlock, { kind: 'notification' }> {
+  return {
+    kind: 'notification',
+    notification: {
+      id,
+      category: 'task',
+      type,
+      sourceKind: 'background_task',
+      sourceId: id,
+      title: `task ${id}`,
+      severity: 'info',
+      body: 'done',
+      raw: `<notification id="${id}"></notification>`,
+    },
+  };
+}
+
 describe('formatTokens', () => {
   // Units are 1024-based: context sizes are powers of two, so a 256k context
   // must render as "256k", never "262k" (see src/lib/formatTokens.ts).
@@ -256,6 +273,25 @@ describe('turnToMarkdown', () => {
       ['> **Thinking**\n> line1\n> line2', 'hello', '```\n[bash]\nout1\nout2\n```'].join('\n\n'),
     );
   });
+
+  it('serializes notification blocks so copies keep the visible context', () => {
+    const turn = assistantTurn([
+      { kind: 'text', text: 'restarting dev' },
+      ntfBlock('n1'),
+    ]);
+    expect(turnToMarkdown(turn)).toBe(
+      ['restarting dev', '> **Notification**\n> task n1\n> task.completed\n> done'].join('\n\n'),
+    );
+  });
+
+  it('quotes EVERY line of a multi-line notification body', () => {
+    const turn = assistantTurn([ntfBlock('n1')]);
+    const block = turn.blocks?.[0];
+    if (block?.kind === 'notification') block.notification = { ...block.notification, body: 'line one\nline two' };
+    expect(turnToMarkdown(turn)).toBe(
+      '> **Notification**\n> task n1\n> task.completed\n> line one\n> line two',
+    );
+  });
 });
 
 describe('renderBlockKey', () => {
@@ -366,6 +402,56 @@ describe('splitAssistantFold', () => {
     const { folded, visible } = splitAssistantFold(assistantTurn([]));
     expect(folded).toEqual([]);
     expect(visible).toEqual([]);
+  });
+});
+
+describe('notification render blocks', () => {
+  it('merges consecutive notifications into ONE render block, in order', () => {
+    const rendered = assistantRenderBlocks(assistantTurn([ntfBlock('a'), ntfBlock('b')]));
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0]).toMatchObject({ kind: 'notification', sourceIndex: 0 });
+    if (rendered[0]?.kind === 'notification') {
+      expect(rendered[0].items.map((n) => n.id)).toEqual(['a', 'b']);
+    }
+  });
+
+  it('breaks notification grouping on any non-notification block', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([ntfBlock('a'), { kind: 'text', text: 'x' }, ntfBlock('b')]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['notification', 'text', 'notification']);
+    for (const b of rendered) {
+      if (b.kind === 'notification') expect(b.items).toHaveLength(1);
+    }
+  });
+
+  it('breaks the activity run on both sides of a notification', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('a'), toolBlock('b'), ntfBlock('n'), toolBlock('c'), toolBlock('d')]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['activity-run', 'notification', 'activity-run']);
+  });
+
+  it('never folds a notification — it punches through to just after the fold row', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([toolBlock('a'), toolBlock('b'), ntfBlock('n'), { kind: 'text', text: 'final' }]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['activity-run']);
+    expect(visible.map((b) => b.kind)).toEqual(['notification', 'text']);
+  });
+
+  it('keeps a notification visible in a no-text turn (the card is the turn output)', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([toolBlock('a'), ntfBlock('n')]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['tool']);
+    expect(visible.map((b) => b.kind)).toEqual(['notification']);
+  });
+
+  it('renders a notification-only turn without a fold row', () => {
+    const { folded, visible } = splitAssistantFold(assistantTurn([ntfBlock('n')]));
+    expect(folded).toEqual([]);
+    expect(visible.map((b) => b.kind)).toEqual(['notification']);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppMessage, AppMessageContent } from '../../src/renderer/api/types';
 import { messagesToTurns } from '../../src/renderer/composables/messagesToTurns';
-import { assistantRenderBlocks } from '../../src/renderer/components/chatTurnRendering';
+import { assistantRenderBlocks, splitAssistantFold } from '../../src/renderer/components/chatTurnRendering';
 
 function message(
   id: string,
@@ -25,6 +25,29 @@ function injection(id: string, kind = 'injection'): AppMessage {
     metadata: { origin: { kind, variant: 'todo_list_reminder' } },
   });
 }
+
+/** A hidden task-notification injection carrying real `<notification>` XML. */
+/** A hidden task-notification injection carrying real `<notification>` XML,
+    with the origin shape the daemon actually persists (kind 'task'). */
+function taskNtf(id: string, xml: string, kind = 'task'): AppMessage {
+  return message(id, 'user', [{ type: 'text', text: xml }], {
+    metadata: {
+      origin: { kind, taskId: 'bash-1', status: 'completed', notificationId: 'task:bash-1:completed' },
+    },
+  });
+}
+
+const NTF_COMPLETED = `<notification id="task:bash-1:completed" category="task" type="task.completed" source_kind="background_task" source_id="bash-1">
+Title: desktop dev
+Severity: info
+Background process completed.
+</notification>`;
+
+const NTF_FAILED = `<notification id="task:bash-2:failed" category="task" type="task.failed" source_kind="background_task" source_id="bash-2">
+Title: pnpm build
+Severity: error
+Background process failed with exit code 1.
+</notification>`;
 
 // Hidden user-role injections land mid-turn between assistant messages. They
 // are not rendered (isDisplayableUserMessage hides them) and must NOT split
@@ -122,6 +145,107 @@ describe('messagesToTurns hidden injections', () => {
       false,
     );
     expect(turns.map((t) => t.role)).toEqual(['assistant', 'cron', 'assistant']);
+  });
+});
+
+describe('messagesToTurns task notifications', () => {
+  it('renders a mid-turn notification as a block without splitting the turn', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } },
+        ]),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'tool-1', output: 'x' }]),
+        taskNtf('ntf-1', NTF_COMPLETED),
+        message('a2', 'assistant', [{ type: 'text', text: 'server is up' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    const rendered = assistantRenderBlocks(turns[0]!);
+    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'notification', 'text']);
+    expect(rendered[1]).toMatchObject({
+      kind: 'notification',
+      items: [{ id: 'task:bash-1:completed', title: 'desktop dev', createdAt: '2026-01-01T00:00:00.000Z' }],
+    });
+  });
+
+  it('merges consecutive notifications (one message or several) into one group block', () => {
+    const turns = messagesToTurns(
+      [
+        taskNtf('ntf-1', `${NTF_COMPLETED}\n\n${NTF_FAILED}`),
+        taskNtf('ntf-2', NTF_COMPLETED.replace('bash-1', 'bash-3')),
+        message('a1', 'assistant', [{ type: 'text', text: 'both noted' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    // The notifications open ONE turn; the assistant reply merges into it.
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.role).toBe('assistant');
+    const rendered = assistantRenderBlocks(turns[0]!);
+    expect(rendered.map((b) => b.kind)).toEqual(['notification', 'text']);
+    if (rendered[0]?.kind === 'notification') {
+      expect(rendered[0].items.map((n) => n.id)).toEqual([
+        'task:bash-1:completed',
+        'task:bash-2:failed',
+        'task:bash-3:completed',
+      ]);
+    }
+  });
+
+  it('attaches a trailing notification to the open turn (still no boundary)', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'text', text: 'working' }]),
+        taskNtf('ntf-1', NTF_FAILED),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    const { folded, visible } = splitAssistantFold(turns[0]!);
+    expect(visible.map((b) => b.kind)).toEqual(['text', 'notification']);
+    expect(folded).toEqual([]);
+  });
+
+  it('renders a lone notification turn without a fold row', () => {
+    const turns = messagesToTurns([taskNtf('ntf-1', NTF_FAILED)], [], undefined, false);
+    expect(turns.map((t) => t.role)).toEqual(['assistant']);
+    const { folded, visible } = splitAssistantFold(turns[0]!);
+    expect(folded).toEqual([]);
+    expect(visible.map((b) => b.kind)).toEqual(['notification']);
+  });
+
+  it('keeps notification text with no well-formed block hidden (old behaviour)', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'text', text: 'one' }]),
+        taskNtf('ntf-1', '<notification id="broken">unclosed'),
+        message('a2', 'assistant', [{ type: 'text', text: 'two' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.blocks?.some((b) => b.kind === 'notification')).toBe(false);
+  });
+
+  it('accepts the legacy origin spellings too', () => {
+    for (const kind of ['task_notification', 'background_task']) {
+      const turns = messagesToTurns(
+        [taskNtf('ntf-1', NTF_COMPLETED, kind), message('a1', 'assistant', [{ type: 'text', text: 'ok' }])],
+        [],
+        undefined,
+        false,
+      );
+      expect(turns[0]?.blocks?.some((b) => b.kind === 'notification')).toBe(true);
+    }
   });
 });
 
