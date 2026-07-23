@@ -168,7 +168,7 @@ describe('SessionInitService', () => {
     }));
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.SESSION_INIT_FAILED);
     expect((error as Error2).message).toContain('coder exploded');
@@ -181,7 +181,7 @@ describe('SessionInitService', () => {
     lifecycle.get.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.AGENT_NOT_FOUND);
   });
@@ -202,11 +202,12 @@ describe('SessionInitService', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalled());
     svc.cancelInit();
 
-    const error = await pending.catch((e) => e);
+    const error = await pending.catch((error) => error);
     // Surfaces as a user cancellation (TUI resets quietly on isAbortError),
-    // never as SESSION_INIT_FAILED, and without a subagent.failed event.
+    // never as SESSION_INIT_FAILED. The started child still publishes a
+    // terminal lifecycle event so reconnecting clients cannot retain it.
     expect(error).toBeInstanceOf(UserCancellationError);
-    expect(events).not.toContainEqual(
+    expect(events).toContainEqual(
       expect.objectContaining({ type: 'subagent.failed', subagentId: 'agent-0' }),
     );
   });

@@ -19,4 +19,5 @@ export default {
   openDetail: 'Open',
   collapse: 'Collapse',
   expand: 'Expand',
+  settleInterruptedWithTurn: 'Interrupted with the main turn.',
 } as const;

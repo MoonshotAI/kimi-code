@@ -24,6 +24,7 @@ import type {
   CompactionMarkerMetadata,
 } from '../types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../types';
+import { settleStaleForegroundSubagents } from '../../lib/taskMerge';
 import { i18n } from '../../i18n';
 
 const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
@@ -660,6 +661,9 @@ export function reduceAppEvent(
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,
           runInBackground: event.task.runInBackground ?? previous.runInBackground,
+          mainTurnIndependent:
+            event.task.mainTurnIndependent ?? previous.mainTurnIndependent,
+          rosterOwned: event.task.rosterOwned ?? previous.rosterOwned,
           backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
         };
         next.tasksBySession[sid] = patched;
@@ -746,7 +750,10 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     // Prompt-level lifecycle events drive the web layer's in-flight cleanup
     // (see useKimiWebClient.processEvent), not reducer state. Advance seq
-    // silently.
+    // silently. They must NOT settle stale subagent rows: a prompt aborted
+    // while still QUEUED emits `promptAborted` while the active turn — and
+    // its foreground subagents — legitimately keep running (issue #1963).
+    // The main-turn boundary below is the safe settle signal.
     case 'promptCompleted':
     case 'promptAborted':
       break;
@@ -762,6 +769,24 @@ export function reduceAppEvent(
         next.turnActiveBySession[event.sessionId] = true;
       } else {
         delete next.turnActiveBySession[event.sessionId];
+        // The MAIN turn boundary is the single source of truth for "the main
+        // conversation has a turn in flight" (see types.ts). A foreground
+        // subagent cannot outlive the boundary: on normal completion remove
+        // a row with a missed terminal event rather than inventing a failure;
+        // on interruption retain the failure backstop. Snapshot resync covers
+        // clients that miss this boundary as well.
+        const list = next.tasksBySession[event.sessionId];
+        if (list !== undefined) {
+          next.tasksBySession[event.sessionId] = settleStaleForegroundSubagents(
+            list,
+            event.reason === 'completed'
+              ? { kind: 'completed' }
+              : {
+                  kind: 'interrupted',
+                  reason: i18n.global.t('tasks.settleInterruptedWithTurn'),
+                },
+          );
+        }
       }
       break;
     }

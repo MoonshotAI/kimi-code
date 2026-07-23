@@ -115,6 +115,14 @@ export class SessionSwarmService implements ISessionSwarmService {
           reason: event.reason,
         });
       },
+      failed: (event) => {
+        const caller = this.lifecycle.get(callerAgentId);
+        caller?.accessor.get(IEventBus)?.publish({
+          type: 'subagent.failed',
+          subagentId: event.agentId,
+          error: event.error,
+        });
+      },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
     const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
@@ -222,7 +230,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const mirrored = mirrorAgentRun(caller, run, {
       profileName,
       prompt: request.kind === 'prompt' ? request.prompt : undefined,
-      suppressRateLimitFailureEvent: options.suppressRateLimitFailureEvent,
+      suppressRateLimitFailureEvent: true,
       signal: options.signal,
     });
     return {

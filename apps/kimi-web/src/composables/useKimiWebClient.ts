@@ -1419,12 +1419,18 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // Seed the live subagent roster so swarm cards survive a page refresh
     // (their member rows otherwise only exist from non-replayed WS events).
     // loadTasksForSession's keepLiveSubagents preserves these across REST
-    // reloads; the roster stays authoritative until then.
+    // reloads; the roster stays authoritative until then. Missing roster-owned
+    // rows are removed, while an inactive main turn also proves any older,
+    // unclassified foreground row is stale. The persisted transcript drives
+    // final display instead of a guessed state.
+    const snapMainTurnActive =
+      snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
     rawState.tasksBySession = {
       ...rawState.tasksBySession,
       [sessionId]: mergeSnapshotSubagents(
         snap.subagents,
         rawState.tasksBySession[sessionId] ?? [],
+        { mainTurnActive: snapMainTurnActive },
       ),
     };
     rawState.messagesHasMoreBySession = {
@@ -1476,9 +1482,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // busy read is the reconciler, so a dead turn never relights the moon.
     {
       const next = { ...rawState.turnActiveBySession };
-      const mainTurnActive =
-        snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
-      if (mainTurnActive) next[sessionId] = true;
+      if (snapMainTurnActive) next[sessionId] = true;
       else delete next[sessionId];
       rawState.turnActiveBySession = next;
     }

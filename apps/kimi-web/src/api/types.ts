@@ -332,6 +332,12 @@ export interface AppTask {
    *  the dock: the dock lists background subagents, while foreground subagents
    *  render inline in the message flow as the `Agent` tool card. */
   runInBackground?: boolean;
+  /** True when this subagent belongs to work that can outlive the main turn,
+   *  including foreground descendants of a background agent. */
+  mainTurnIndependent?: boolean;
+  /** True when the snapshot subagent roster, rather than REST `/tasks`, owns
+   *  this row's live/terminal reconciliation. */
+  rosterOwned?: boolean;
   /** The id this same subagent has in the server's background-task store
    *  (REST `/tasks`), learned from the `task.started` registration event. The
    *  WS event stream keys the agent by agent id while REST keys it by task id;
@@ -526,8 +532,8 @@ export interface AppSessionSnapshot {
   messages: AppMessage[];
   hasMoreMessages: boolean;
   inFlightTurn: AppInFlightTurn | null;
-  /** Live subagent roster at the watermark — rebuilds swarm cards on refresh. */
-  subagents: AppTask[];
+  /** Live subagent roster at the watermark — absent on older servers. */
+  subagents?: AppTask[];
   pendingApprovals: AppApprovalRequest[];
   pendingQuestions: AppQuestionRequest[];
 }

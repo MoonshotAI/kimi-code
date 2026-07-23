@@ -19,6 +19,12 @@
  * completed / failed` and telemetry still tracks `subagent_created` so existing
  * session recordings and dashboards stay valid. Rename lives on a separate
  * wire-cleanup PR.
+ *
+ * The wire lifecycle is keyed by subagent id rather than provider attempt.
+ * Direct runs announce every non-success, including aborts and hook
+ * rejections, as `subagent.failed`. The swarm scheduler suppresses a
+ * retryable provider-rate-limit attempt because it retains the logical member
+ * through `subagent.suspended` and owns that member's eventual terminal event.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -28,7 +34,6 @@ import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventBus } from '#/app/event/eventBus';
-import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
@@ -126,26 +131,26 @@ export async function mirrorAgentRun(
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
   eventBus?.publish({ type: 'subagent.started', subagentId: run.agentId });
-  if (options.prompt !== undefined) {
-    const cancelAndRethrow = (reason: unknown): never => {
-      options.cancel?.(reason);
-      void run.completion.catch(() => {});
-      throw reason;
-    };
-    try {
-      await subagents?.hooks.onWillStartAgentTask.run({
-        agentName: options.profileName,
-        prompt: options.prompt,
-        signal: options.signal,
-      });
-    } catch (error) {
-      cancelAndRethrow(error);
-    }
-    if (options.signal.aborted) {
-      cancelAndRethrow(options.signal.reason ?? userCancellationReason());
-    }
-  }
   try {
+    if (options.prompt !== undefined) {
+      const cancelAndRethrow = (reason: unknown): never => {
+        options.cancel?.(reason);
+        void run.completion.catch(() => {});
+        throw reason;
+      };
+      try {
+        await subagents?.hooks.onWillStartAgentTask.run({
+          agentName: options.profileName,
+          prompt: options.prompt,
+          signal: options.signal,
+        });
+      } catch (error) {
+        cancelAndRethrow(error);
+      }
+      if (options.signal.aborted) {
+        cancelAndRethrow(options.signal.reason ?? userCancellationReason());
+      }
+    }
     const result = await run.completion;
     const contextTokens = childContextTokens(agentLifecycle, run.agentId);
     eventBus?.publish({
@@ -161,7 +166,7 @@ export async function mirrorAgentRun(
     });
     return result;
   } catch (error) {
-    if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
+    if (!shouldSuppressFailure(options, error)) {
       eventBus?.publish({
         type: 'subagent.failed',
         subagentId: run.agentId,
@@ -173,9 +178,7 @@ export async function mirrorAgentRun(
 }
 
 function shouldSuppressFailure(options: MirrorAgentRunOptions, error: unknown): boolean {
-  if (options.suppressRateLimitFailureEvent !== true) return false;
-  if (isProviderRateLimitError(error)) return true;
-  return isAbortError(error) || options.signal.aborted;
+  return options.suppressRateLimitFailureEvent === true && isProviderRateLimitError(error);
 }
 
 function errorMessage(error: unknown): string {

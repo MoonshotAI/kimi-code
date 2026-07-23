@@ -907,6 +907,55 @@ describe('Agent tool execution contract', () => {
     });
   });
 
+  it('publishes subagent.failed when the run is aborted', async () => {
+    // An aborted subagent is finished, not running: the terminal event is what
+    // lets the roster / transcript / web UI settle the entry instead of
+    // keeping it `running` forever (issue #1963).
+    const lifecycle = createAgentLifecycleStub();
+    const events: DomainEvent[] = [];
+    const eventBus = {
+      _serviceBrand: undefined,
+      publish: vi.fn((event: DomainEvent) => {
+        events.push(event);
+      }),
+      subscribe: vi.fn(() => noopDisposable()),
+    } as IEventBus;
+    lifecycle.addHandle('agent-child', 'explore');
+    const requester = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: ((serviceId: unknown) => {
+          if (serviceId === IEventBus) return eventBus;
+          if (serviceId === IAgentLifecycleService) return lifecycle;
+          if (serviceId === ITelemetryService) return noopTelemetryService;
+          return undefined;
+        }) as IAgentScopeHandle['accessor']['get'],
+      },
+      dispose: () => {},
+    } satisfies IAgentScopeHandle;
+
+    const reason = userCancellationReason();
+    const error = await mirrorAgentRun(
+      requester,
+      {
+        agentId: 'agent-child',
+        turn: {} as AgentRunHandle['turn'],
+        completion: Promise.reject(reason),
+      },
+      {
+        profileName: 'explore',
+        signal,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(error).toBe(reason);
+    expect(events.find((event) => event.type === 'subagent.failed')).toMatchObject({
+      subagentId: 'agent-child',
+      error: reason.message,
+    });
+  });
+
   it('inherits parent user tools when spawning a subagent', async () => {
     const lookupTool: UserToolRegistration = {
       name: 'Lookup',

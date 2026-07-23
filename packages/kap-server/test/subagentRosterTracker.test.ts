@@ -53,10 +53,43 @@ describe('SubagentRosterTracker', () => {
     expect(t.get(SID)[0]?.parent_tool_call_id).toBeUndefined();
   });
 
-  it('skips background subagents — REST /tasks already serves them after a refresh', () => {
+  it('skips main-owned background subagents — REST /tasks serves them after a refresh', () => {
     const t = new SubagentRosterTracker();
-    t.apply(SID, spawn('agent-1', { runInBackground: true }));
+    expect(t.apply(SID, spawn('agent-1', { runInBackground: true }))).toEqual({
+      mainTurnIndependent: true,
+    });
     expect(t.get(SID)).toEqual([]);
+  });
+
+  it('keeps nested background subagents because REST /tasks cannot reach their owner', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1', { agentId: 'agent-parent', runInBackground: true }));
+
+    expect(t.get(SID)[0]).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      run_in_background: true,
+      main_turn_independent: true,
+    });
+  });
+
+  it('keeps foreground descendants of a background agent across main-turn boundaries', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-parent', { runInBackground: true }));
+
+    expect(t.apply(SID, spawn('agent-child', { agentId: 'agent-parent' }))).toEqual({
+      mainTurnIndependent: true,
+    });
+    expect(t.get(SID)[0]).toMatchObject({
+      id: 'agent-child',
+      run_in_background: false,
+      main_turn_independent: true,
+    });
+
+    t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' }));
+    t.apply(SID, ev({ type: 'turn.started', agentId: 'main', turnId: 2 }));
+
+    expect(t.get(SID)[0]).toMatchObject({ id: 'agent-child', status: 'running' });
   });
 
   it('drops the entry when a foreground subagent detaches into a background task', () => {
@@ -85,6 +118,31 @@ describe('SubagentRosterTracker', () => {
     // The detach transition hands the subagent to REST /tasks — drop the row.
     t.apply(SID, taskStarted(true));
     expect(t.get(SID)).toEqual([]);
+  });
+
+  it('keeps a nested subagent that detaches because its task store is not REST-visible', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1', { agentId: 'agent-parent' }));
+
+    t.apply(
+      SID,
+      ev({
+        type: 'task.started',
+        agentId: 'agent-parent',
+        info: {
+          taskId: 'task_1',
+          kind: 'agent',
+          agentId: 'agent-1',
+          detached: true,
+          description: 'task agent-1',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      }),
+    );
+
+    expect(t.get(SID)[0]).toMatchObject({ id: 'agent-1', run_in_background: true });
   });
 
   it('follows the subagent phase transitions', () => {
@@ -132,7 +190,7 @@ describe('SubagentRosterTracker', () => {
     });
   });
 
-  it('clears the roster on the next MAIN turn.started, not on any turn.ended', () => {
+  it('clears foreground roster entries on the next MAIN turn.started, not on any turn.ended', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
 
@@ -152,14 +210,25 @@ describe('SubagentRosterTracker', () => {
     expect(t.get(SID)).toEqual([]);
   });
 
+  it('keeps live nested background entries across main-turn boundaries', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1', { agentId: 'agent-parent', runInBackground: true }));
+
+    t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' }));
+    expect(t.get(SID)[0]).toMatchObject({ id: 'agent-1', status: 'running' });
+
+    t.apply(SID, ev({ type: 'turn.started', agentId: 'main', turnId: 2 }));
+    expect(t.get(SID)[0]).toMatchObject({ id: 'agent-1', status: 'running' });
+  });
+
   it('finalizes still-live entries when the main turn aborts', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
     t.apply(SID, spawn('agent-2'));
     t.apply(SID, ev({ type: 'subagent.completed', subagentId: 'agent-2', resultSummary: 'done' }));
 
-    // The abort path suppresses the members' own subagent.failed events, so
-    // the tracker must settle them itself.
+    // The turn boundary remains a backstop if an individual terminal event is
+    // absent from the stream.
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' }));
 
     const entries = t.get(SID);
