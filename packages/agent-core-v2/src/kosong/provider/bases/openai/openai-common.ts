@@ -87,15 +87,49 @@ export type OpenAIToolParam = {
   };
 };
 
+/**
+ * Convert a kosong `Tool` to OpenAI tool format.
+ *
+ * OpenAI-compatible relays that forward to Moonshot backends validate tool
+ * parameters as Moonshot-flavored JSON Schema. Ensure `required` is always an
+ * array on object schemas so those gateways do not reject the request with:
+ * `required must be an array`.
+ */
 export function toolToOpenAI(tool: Tool): OpenAIToolParam {
   return {
     type: 'function',
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      parameters: ensureObjectRequiredArrays(tool.parameters),
     },
   };
+}
+
+/**
+ * Walk a JSON Schema and force `required` to `[]` when a node has
+ * `type: "object"` but `required` is missing or not an array.
+ */
+export function ensureObjectRequiredArrays(
+  schema: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (schema === undefined) return undefined;
+  const cloned = structuredClone(schema) as unknown;
+  walkEnsureRequired(cloned);
+  return cloned as Record<string, unknown>;
+}
+
+function walkEnsureRequired(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const child of node) walkEnsureRequired(child);
+    return;
+  }
+  if (typeof node !== 'object' || node === null) return;
+  const obj = node as Record<string, unknown>;
+  if (obj['type'] === 'object' && !Array.isArray(obj['required'])) {
+    obj['required'] = [];
+  }
+  for (const child of Object.values(obj)) walkEnsureRequired(child);
 }
 
 export function convertOpenAIError(error: unknown): ChatProviderError {
