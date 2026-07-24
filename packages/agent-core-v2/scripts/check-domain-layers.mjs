@@ -102,6 +102,12 @@ const DOMAIN_LAYER = new Map([
   // Depends only on `_base`; sits in L1 beside the other program-control
   // layer substrates.
   ['task', 1],
+  // `state` is the per-scope keyed state container (`IStateService` /
+  // `ISessionStateService` / `IAgentStateService`, one per scope tier under
+  // `app/state`, `session/state`, `agent/state` — all resolve to this domain).
+  // It wraps the `_base` `StateRegistry` and depends on nothing else, so any
+  // domain may hold its plain-data state through it; sits in L1 beside `event`.
+  ['state', 1],
   // persistence/ and os/ — the two-level scopes. `interface` holds contracts
   // (same layer as the old domains they replace); `backends` holds
   // implementations that may depend on cross-domain services at various layers.
