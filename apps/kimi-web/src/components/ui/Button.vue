@@ -105,7 +105,7 @@ withDefaults(defineProps<{
 
 .ui-button--danger {
   background: var(--color-danger);
-  color: var(--color-text-on-accent);
+  color: var(--surface-light);
   border-color: var(--color-danger);
   box-shadow: var(--shadow-xs);
 }
@@ -116,7 +116,7 @@ withDefaults(defineProps<{
   color: var(--color-danger);
   border-color: var(--color-danger-bd);
 }
-.ui-button--danger-soft:not(:disabled):hover { background: var(--color-danger); color: var(--color-text-on-accent); border-color: var(--color-danger); }
+.ui-button--danger-soft:not(:disabled):hover { background: var(--color-danger); color: var(--surface-light); border-color: var(--color-danger); }
 
 .ui-button.is-loading .ui-button__content { opacity: 0.7; }
 .ui-button .ui-button__spinner { flex: none; color: inherit; }
