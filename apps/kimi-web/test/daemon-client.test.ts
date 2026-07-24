@@ -1,6 +1,7 @@
 // apps/kimi-web/test/daemon-client.test.ts
 // DaemonKimiWebApi public REST adapter: session export binary/error contracts,
-// getSessionGoal wire → app mapping, and raw stream-coordinate delivery.
+// getSessionGoal wire → app mapping, raw stream-coordinate delivery, and
+// roster-only projector reconciliation.
 // Wiring: real client/projector; fetch or WebSocket is stubbed at the network boundary.
 // Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/daemon-client.test.ts
 
@@ -176,6 +177,62 @@ describe('DaemonKimiWebApi.exportSession', () => {
   });
 });
 
+describe('DaemonKimiWebApi.getSessionSnapshot', () => {
+  const wireSnapshot = {
+    as_of_seq: 1,
+    epoch: 'epoch-1',
+    session: {
+      id: 'session-1',
+      title: 'Session',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      busy: false,
+      archived: false,
+      metadata: { cwd: '/workspace' },
+      agent_config: { model: 'model-1' },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_cost_usd: 0,
+        context_tokens: 0,
+        context_limit: 0,
+        turn_count: 0,
+      },
+      permission_rules: [],
+      message_count: 0,
+      last_seq: 1,
+    },
+    messages: { items: [], has_more: false },
+    in_flight_turn: null,
+    pending_approvals: [],
+    pending_questions: [],
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('location', { search: '' });
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('distinguishes an omitted legacy roster from an authoritative empty roster', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope(wireSnapshot))
+      .mockResolvedValueOnce(envelope({ ...wireSnapshot, subagents: [] }));
+
+    const api = createApi();
+    const legacy = await api.getSessionSnapshot('session-1');
+    const current = await api.getSessionSnapshot('session-1');
+
+    expect(legacy.subagents).toBeUndefined();
+    expect(current.subagents).toEqual([]);
+  });
+});
+
 describe('DaemonKimiWebApi.getSessionGoal', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -294,6 +351,46 @@ describe('DaemonKimiWebApi.connectEvents', () => {
         stream: { turnId: 7, offset: 0, kind: 'thinking' },
       },
     });
+  });
+
+  it('reconciles an authoritative roster without resetting the connection', () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+    const received: AppEvent[] = [];
+    connection = createApi().connectEvents({
+      onEvent(event) {
+        received.push(event);
+      },
+      onResync() {},
+      onError() {},
+      onConnectionChange() {},
+    });
+    const socket = FakeWebSocket.instances[0]!;
+
+    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
+    socket.emit({
+      type: 'subagent.spawned',
+      seq: 1,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        subagentId: 'sub-1',
+        description: 'Explore repo',
+        runInBackground: false,
+      },
+    });
+    received.length = 0;
+
+    connection.reconcileSubagents('session-1', []);
+    socket.emit({
+      type: 'assistant.delta',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { agentId: 'sub-1', delta: 'late' },
+    });
+
+    expect(received).toEqual([]);
   });
 
   it('projects list-level work facts from the global session event', () => {

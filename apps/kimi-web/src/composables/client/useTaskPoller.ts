@@ -22,6 +22,7 @@ export interface UseTaskPoller {
 export function useTaskPoller(
   rawState: ExtendedState,
   activeAppTasks: ComputedRef<AppTask[]>,
+  onTaskListLoaded?: (sessionId: string) => void,
 ): UseTaskPoller {
   let taskOutputPollTimer: ReturnType<typeof setInterval> | null = null;
   let lastPolledSessionId: string | undefined;
@@ -36,6 +37,7 @@ export function useTaskPoller(
         // Keep WS-delivered swarm subagents that REST /tasks omits (see keepLiveSubagents).
         [sessionId]: keepLiveSubagents(taskList, rawState.tasksBySession[sessionId] ?? []),
       };
+      onTaskListLoaded?.(sessionId);
       // Completed tasks may have real terminal output that never streamed over
       // WS. Fetch it once now so the rows are expandable when the session opens.
       await fetchTerminalTaskOutputs(sessionId, taskList);
@@ -186,6 +188,7 @@ export function useTaskPoller(
       // Keep WS-delivered swarm subagents that REST /tasks omits (see keepLiveSubagents).
       [sessionId]: keepLiveSubagents(refreshed, existing),
     };
+    onTaskListLoaded?.(sessionId);
   }
 
   function startTaskOutputPolling(sessionId: string): void {

@@ -580,3 +580,468 @@ describe('background subagent task registration', () => {
     ]);
   });
 });
+
+describe('subagent terminal stickiness', () => {
+  function spawn(projector: ReturnType<typeof createAgentProjector>): void {
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'sub-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+  }
+
+  function spawnAndComplete(projector: ReturnType<typeof createAgentProjector>): void {
+    spawn(projector);
+    projector.project(
+      'subagent.completed',
+      { subagentId: 'sub-1', resultSummary: 'done' },
+      's1',
+    );
+  }
+
+  it('a late assistant.delta after completion keeps the row terminal', () => {
+    const projector = createAgentProjector();
+    spawnAndComplete(projector);
+
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1');
+
+    // The progress chunk is still forwarded (it may be legitimate trailing
+    // output), but no running-stamped taskCreated may resurrect the row.
+    expect(events.filter((e) => e.type === 'taskCreated')).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'taskProgress', taskId: 'sub-1', outputChunk: 'late' }),
+    );
+  });
+
+  it('a late tool.call.started after completion keeps the row terminal', () => {
+    const projector = createAgentProjector();
+    spawnAndComplete(projector);
+
+    const events = projector.project(
+      'tool.call.started',
+      { agentId: 'sub-1', turnId: 1, toolCallId: 'tc-1', name: 'Read', args: { path: '/x' } },
+      's1',
+    );
+
+    expect(events.filter((e) => e.type === 'taskCreated')).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'taskProgress', taskId: 'sub-1' }));
+  });
+
+  it('an explicit subagent.started (resume) still re-opens a completed row', () => {
+    const projector = createAgentProjector();
+    spawnAndComplete(projector);
+
+    const resumed = projector.project('subagent.started', { subagentId: 'sub-1' }, 's1');
+    expect(resumed).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-1', status: 'running' }),
+      }),
+    );
+
+    // Progress during the resumed run is projected normally again.
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'again' }, 's1');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-1', status: 'running' }),
+      }),
+    );
+  });
+
+  it('a roster seed after a resync reset keeps the terminal knowledge', () => {
+    const projector = createAgentProjector();
+    spawnAndComplete(projector);
+
+    // Resync/snapshot rebuild: the reset wipes subagentMeta; the snapshot's
+    // roster must restore it, or a late progress frame resurrects the row.
+    projector.reset('s1');
+    projector.seedSubagents('s1', [
+      {
+        id: 'sub-1',
+        sessionId: 's1',
+        kind: 'subagent',
+        description: 'Explore repo',
+        status: 'completed',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        subagentPhase: 'completed',
+      },
+    ]);
+
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1');
+    expect(events.filter((e) => e.type === 'taskCreated')).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'taskProgress', taskId: 'sub-1', outputChunk: 'late' }),
+    );
+  });
+
+  it('an omitted roster seed (older server) still keeps terminal knowledge across the reset', () => {
+    const projector = createAgentProjector();
+    spawnAndComplete(projector);
+    projector.reset('s1');
+    projector.seedSubagents('s1', undefined);
+
+    // The roster cannot re-seed terminal meta on an older server, so reset
+    // itself retains it: a late progress frame must not resurrect the row.
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1');
+    expect(events.filter((e) => e.type === 'taskCreated')).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'taskProgress', taskId: 'sub-1', outputChunk: 'late' }),
+    );
+  });
+
+  it('an omitted legacy roster lets live progress recreate a running row after reset', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+
+    projector.reset('s1');
+    projector.seedSubagents('s1', undefined);
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'live' }, 's1');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-1', status: 'running' }),
+      }),
+    );
+  });
+
+  it('a later authoritative empty roster still tombstones a row after a legacy omission', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.reset('s1');
+    projector.seedSubagents('s1', undefined);
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1');
+
+    expect(events).toEqual([]);
+  });
+
+  it('an authoritative foreground roster omission keeps a background subagent live', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'sub-1', description: 'Background work', runInBackground: true },
+      's1',
+    );
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project(
+      'assistant.delta',
+      { agentId: 'sub-1', delta: 'still running' },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({
+          id: 'sub-1',
+          status: 'running',
+          runInBackground: true,
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskProgress',
+        taskId: 'sub-1',
+        outputChunk: 'still running',
+      }),
+    );
+  });
+
+  it('an authoritative foreground roster omission keeps a detached subagent live', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-1',
+          kind: 'agent',
+          agentId: 'sub-1',
+          detached: true,
+          description: 'Detached work',
+        },
+      },
+      's1',
+    );
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project(
+      'assistant.delta',
+      { agentId: 'sub-1', delta: 'still detached' },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({
+          id: 'sub-1',
+          status: 'running',
+          runInBackground: true,
+          backgroundTaskId: 'task-1',
+        }),
+      }),
+    );
+  });
+
+  it('an authoritative foreground roster omission keeps side-channel tool progress live', () => {
+    const projector = createAgentProjector();
+    projector.markSideChannelAgent('btw-1');
+    projector.project(
+      'tool.call.started',
+      {
+        agentId: 'btw-1',
+        turnId: 1,
+        toolCallId: 'tc-1',
+        name: 'Read',
+        args: { path: '/before' },
+      },
+      's1',
+    );
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project(
+      'tool.call.started',
+      {
+        agentId: 'btw-1',
+        turnId: 2,
+        toolCallId: 'tc-2',
+        name: 'Read',
+        args: { path: '/after' },
+      },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'btw-1', status: 'running' }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskProgress',
+        taskId: 'btw-1',
+        outputChunk: expect.stringContaining('/after'),
+      }),
+    );
+  });
+
+  it('an authoritative roster omission prevents late progress from recreating a running row', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.reset('s1');
+    // A resync reset can be followed by another reset while applying its
+    // snapshot; the pending authoritative-absence decision must survive both.
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1');
+
+    expect(events.filter((event) => event.type === 'taskCreated')).toEqual([]);
+  });
+
+  it('an authoritative roster omission tombstones a live row without a reset', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.seedSubagents('s1', []);
+
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1'),
+    ).toEqual([]);
+  });
+
+  it('an in-flight seed tombstones a running row omitted from its authoritative roster', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.seedInFlight('s1', {
+      turnId: 2,
+      assistantText: '',
+      thinkingText: '',
+      runningTools: [],
+      promptId: 'prompt-2',
+    });
+    projector.seedSubagents('s1', []);
+
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-1', delta: 'late' }, 's1'),
+    ).toEqual([]);
+  });
+
+  it('bounds terminal metadata retained across resets', () => {
+    const projector = createAgentProjector();
+    for (let index = 0; index < 257; index += 1) {
+      const subagentId = `sub-${String(index)}`;
+      projector.project(
+        'subagent.spawned',
+        { subagentId, description: 'Explore repo', runInBackground: false },
+        's1',
+      );
+      projector.project(
+        'subagent.completed',
+        { subagentId, resultSummary: 'done' },
+        's1',
+      );
+    }
+
+    projector.reset('s1');
+
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-0', delta: 'old' }, 's1'),
+    ).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-0', status: 'running' }),
+      }),
+    );
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-256', delta: 'recent' }, 's1'),
+    ).not.toContainEqual(expect.objectContaining({ type: 'taskCreated' }));
+  });
+
+  it('bounds authoritative-absence tombstones retained across resets', () => {
+    const projector = createAgentProjector();
+    for (let index = 0; index < 257; index += 1) {
+      const subagentId = `sub-${String(index)}`;
+      projector.project(
+        'subagent.spawned',
+        { subagentId, description: 'Explore repo', runInBackground: false },
+        's1',
+      );
+      projector.reset('s1');
+      projector.seedSubagents('s1', []);
+    }
+
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-0', delta: 'old' }, 's1'),
+    ).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-0', status: 'running' }),
+      }),
+    );
+    expect(
+      projector.project('assistant.delta', { agentId: 'sub-256', delta: 'recent' }, 's1'),
+    ).toEqual([]);
+  });
+
+  it('a background registration reopens a roster tombstone for later progress', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-1',
+          kind: 'agent',
+          agentId: 'sub-1',
+          detached: true,
+          description: 'Detached work',
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'assistant.delta',
+      { agentId: 'sub-1', delta: 'detached' },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({
+          id: 'sub-1',
+          status: 'running',
+          backgroundTaskId: 'task-1',
+        }),
+      }),
+    );
+  });
+
+  it('a later authoritative roster entry reopens an earlier absence tombstone', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+    projector.reset('s1');
+    projector.seedSubagents('s1', [
+      {
+        id: 'sub-1',
+        sessionId: 's1',
+        kind: 'subagent',
+        description: 'Explore repo',
+        status: 'running',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        subagentPhase: 'working',
+      },
+    ]);
+
+    const events = projector.project(
+      'assistant.delta',
+      { agentId: 'sub-1', delta: 'resumed' },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({ id: 'sub-1', status: 'running' }),
+      }),
+    );
+  });
+
+  it.each(['subagent.spawned', 'subagent.started'] as const)(
+    '%s explicitly reopens an authoritative-roster tombstone for later progress',
+    (lifecycleType) => {
+      const projector = createAgentProjector();
+      spawn(projector);
+      projector.reset('s1');
+      projector.seedSubagents('s1', []);
+      projector.project(
+        lifecycleType,
+        { subagentId: 'sub-1', description: 'Explore repo', runInBackground: false },
+        's1',
+      );
+
+      const events = projector.project(
+        'assistant.delta',
+        { agentId: 'sub-1', delta: 'resumed' },
+        's1',
+      );
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'taskCreated',
+          task: expect.objectContaining({ id: 'sub-1', status: 'running' }),
+        }),
+      );
+    },
+  );
+
+  it('a suspended lifecycle cannot reopen an authoritative-roster tombstone', () => {
+    const projector = createAgentProjector();
+    spawn(projector);
+    projector.reset('s1');
+    projector.seedSubagents('s1', []);
+
+    const events = projector.project(
+      'subagent.suspended',
+      { subagentId: 'sub-1', reason: 'waiting' },
+      's1',
+    );
+
+    expect(events.filter((event) => event.type === 'taskCreated')).toEqual([]);
+  });
+});

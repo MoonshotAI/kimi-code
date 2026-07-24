@@ -9,7 +9,11 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
-import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
+import {
+  isLiveForegroundSubagent,
+  keepLiveSubagents,
+  mergeSnapshotSubagents,
+} from '../src/lib/taskMerge';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
@@ -747,9 +751,61 @@ describe('mergeSnapshotSubagents', () => {
     expect(merged.map((t) => t.id)).toEqual(['a1', 'bash-1']);
   });
 
-  it('returns the existing list untouched when the roster is empty', () => {
+  it('returns the existing list untouched when an older server omits the roster', () => {
     const existing = [subagent('a1')];
-    expect(mergeSnapshotSubagents([], existing)).toBe(existing);
+    expect(mergeSnapshotSubagents(undefined, existing)).toBe(existing);
+  });
+
+  it('uses the authoritative roster terminal state for an existing live row', () => {
+    const existing = [subagent('a1', { status: 'running', subagentPhase: 'working' })];
+    const roster = [subagent('a1', { status: 'completed', subagentPhase: 'completed' })];
+
+    expect(mergeSnapshotSubagents(roster, existing)[0]).toMatchObject({
+      id: 'a1',
+      status: 'completed',
+      subagentPhase: 'completed',
+    });
+  });
+
+  it('removes stale live foreground rows when an authoritative roster omits them', () => {
+    const existing = [
+      subagent('a1', { status: 'running', subagentPhase: 'working' }),
+      subagent('a2', { status: 'running', subagentPhase: 'suspended' }),
+      subagent('a3', { status: 'running', runInBackground: true }),
+      subagent('a4', { status: 'running', backgroundTaskId: 'task-1' }),
+      subagent('a5', { status: 'completed', subagentPhase: 'completed' }),
+    ];
+    const merged = mergeSnapshotSubagents([], existing);
+
+    expect(merged.map((task) => task.id)).toEqual(['a3', 'a4', 'a5']);
+  });
+
+  it('keeps a roster-unowned side-channel row when the authoritative roster omits it', () => {
+    const sideChannel = subagent('btw-1', {
+      status: 'running',
+      subagentPhase: 'working',
+    });
+
+    expect(mergeSnapshotSubagents([], [sideChannel], 'btw-1')).toEqual([sideChannel]);
+  });
+});
+
+describe('isLiveForegroundSubagent', () => {
+  const task = (overrides: Partial<AppTask> = {}): AppTask => ({
+    id: 'agent-1',
+    sessionId: 's1',
+    kind: 'subagent',
+    description: 'Explore',
+    status: 'running',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('selects only running foreground rows for turn-end reconciliation', () => {
+    expect(isLiveForegroundSubagent(task())).toBe(true);
+    expect(isLiveForegroundSubagent(task({ runInBackground: true }))).toBe(false);
+    expect(isLiveForegroundSubagent(task({ backgroundTaskId: 'task-1' }))).toBe(false);
+    expect(isLiveForegroundSubagent(task({ status: 'completed' }))).toBe(false);
   });
 });
 

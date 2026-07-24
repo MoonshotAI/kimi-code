@@ -61,14 +61,31 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
   return [...rest, ...merged];
 }
 
+/** True for a still-live foreground row that only the event stream/roster owns. */
+export function isLiveForegroundSubagent(t: AppTask): boolean {
+  return (
+    t.kind === 'subagent' &&
+    t.status === 'running' &&
+    t.runInBackground !== true &&
+    t.backgroundTaskId === undefined
+  );
+}
+
 /**
  * Seed the task store from the snapshot's subagent roster. The roster is
  * authoritative for identity/status/phase; keep reducer-owned accumulated
  * output (outputLines/text) from any already-live task, and keep tasks the
- * roster does not know about (background bash tasks from REST).
+ * roster does not own (background tasks from REST and terminal history).
+ * Older servers omit the roster; only a present roster, including `[]`, may
+ * remove a stale live foreground row. A side-channel agent id is also outside
+ * roster ownership and survives an authoritative merge.
  */
-export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): AppTask[] {
-  if (roster.length === 0) return existing;
+export function mergeSnapshotSubagents(
+  roster: AppTask[] | undefined,
+  existing: AppTask[],
+  sideChannelAgentId?: string,
+): AppTask[] {
+  if (roster === undefined) return existing;
   const existingById = new Map(existing.map((t) => [t.id, t] as const));
   const rosterIds = new Set(roster.map((t) => t.id));
   const merged = roster.map((task) => {
@@ -76,6 +93,11 @@ export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): 
     if (!live) return task;
     return { ...task, outputLines: live.outputLines, text: live.text };
   });
-  const kept = existing.filter((t) => !rosterIds.has(t.id));
+  const kept = existing.filter(
+    (task) =>
+      !rosterIds.has(task.id) &&
+      (task.id === sideChannelAgentId || !isLiveForegroundSubagent(task)),
+  );
+  if (merged.length === 0 && kept.length === existing.length) return existing;
   return kept.length === 0 ? merged : [...merged, ...kept];
 }

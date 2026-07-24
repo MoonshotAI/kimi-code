@@ -16,7 +16,7 @@ import {
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
-import { mergeSnapshotSubagents } from '../lib/taskMerge';
+import { isLiveForegroundSubagent, mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -603,6 +603,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
   sessionsRequiringSnapshot.delete(sessionId);
+  pendingSubagentReconciles.delete(sessionId);
   sessionsRetryingStaleSnapshot.delete(sessionId);
   sessionsKnownEmpty.delete(sessionId);
   // In-flight / queued prompt state: drop these too so a queued follow-up
@@ -892,11 +893,15 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
   const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
+  const tasksBeforeEvent = rawState.tasksBySession[meta.sessionId] ?? [];
   // meta carries wire-level seq/sessionId so the reducer can advance
   // lastSeqBySession[sessionId] = seq. Compaction completion appends a
   // persistent divider marker in the reducer (TUI parity: the scrollback
   // is kept, only a marker line records the compaction).
   applyEvent(appEvent, meta.sessionId, meta.seq);
+  if (appEventAdvancesSubagentRoster(appEvent, meta.sessionId, tasksBeforeEvent)) {
+    advancePendingSubagentReconcile(meta.sessionId, meta.seq);
+  }
 
   const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
   if (sideTarget) {
@@ -961,6 +966,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
       reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
       wasMainTurnActive,
     );
+    requestSubagentReconcileIfNeeded(appEvent.sessionId, meta.seq);
   }
 
   if (
@@ -970,6 +976,13 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     meta.seq > prevSeq
   ) {
     clearWorkingFlags(appEvent.sessionId);
+    // Same lost-turn.ended fallback as above: the turn boundary is the moment
+    // a stale foreground subagent row must be reconciled, so the quiet signal
+    // requests the same authoritative snapshot. A legacy quiet event still
+    // clears optimistic working flags when turn.started was missed, but only a
+    // previously-active main turn may request reconciliation — otherwise the
+    // normal turn-end path could request it twice.
+    if (wasMainTurnActive) requestSubagentReconcileIfNeeded(appEvent.sessionId, meta.seq);
   }
 
   // A prompt that never produced a turn gets no turn.ended and no session
@@ -1111,6 +1124,20 @@ const epochBySession: Record<string, string> = {};
 // onResync resets the event projector, so that path must apply a snapshot even
 // if a newer global event advances the local cursor while the GET is in flight.
 const sessionsRequiringSnapshot = new Set<string>();
+interface PendingSubagentReconcile {
+  /** Snapshot watermark that must include every roster-affecting event seen locally. */
+  requiredSeq: number;
+  /** One immediate catch-up is allowed for each required watermark. */
+  immediateRetrySeq?: number;
+  /** A later task-list refresh may retry this watermark without a tight loop. */
+  deferredRetrySeq?: number;
+}
+// Foreground roster convergence has its own watermark. Background/BTW events
+// may advance the session-wide cursor without making an older full snapshot's
+// roster stale; in that case only the roster is applied. A genuinely older
+// roster stays pending and retries once immediately, then on the existing
+// one-second task-poll cadence.
+const pendingSubagentReconciles = new Map<string, PendingSubagentReconcile>();
 // A normal foreground refresh may race one newer event. Retry once with a
 // fresh snapshot so volatile text missed during sleep is still restored.
 const sessionsRetryingStaleSnapshot = new Set<string>();
@@ -1373,9 +1400,11 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     enqueueEvent.flush();
 
     // Do not let an old snapshot overwrite state that moved forward while the
-    // request was in flight. Retry once to recover volatile text at a fresh
-    // cursor; resync/LRU rebuilds must always apply because their projector or
-    // subscription was deliberately reset.
+    // request was in flight. A normal refresh retries once. A turn-boundary
+    // reconcile can still apply just its authoritative roster when that roster
+    // covers every relevant event, even if unrelated background/BTW events
+    // moved the session-wide cursor. Resync/LRU rebuilds must always apply
+    // because their projector or subscription was deliberately reset.
     const currentSeq = rawState.lastSeqBySession[sessionId] ?? 0;
     const knownEpoch = epochBySession[sessionId];
     const mustApplySnapshot =
@@ -1386,6 +1415,24 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       knownEpoch === snap.epoch &&
       currentSeq > snap.asOfSeq
     ) {
+      const pendingReconcile = pendingSubagentReconciles.get(sessionId);
+      if (pendingReconcile !== undefined) {
+        if (!hasSubagentReconcileCandidate(sessionId) || snap.subagents === undefined) {
+          pendingSubagentReconciles.delete(sessionId);
+        } else if (snap.asOfSeq >= pendingReconcile.requiredSeq) {
+          applySnapshotSubagentRoster(sessionId, snap.subagents);
+          pendingSubagentReconciles.delete(sessionId);
+          return 'ok';
+        } else if (pendingReconcile.immediateRetrySeq !== pendingReconcile.requiredSeq) {
+          pendingReconcile.immediateRetrySeq = pendingReconcile.requiredSeq;
+          pendingReconcile.deferredRetrySeq = undefined;
+          snapshotSyncRunner.request(sessionId);
+          return 'ok';
+        } else {
+          pendingReconcile.deferredRetrySeq = pendingReconcile.requiredSeq;
+          return 'ok';
+        }
+      }
       if (sessionsRetryingStaleSnapshot.delete(sessionId)) return 'ok';
       sessionsRetryingStaleSnapshot.add(sessionId);
       snapshotSyncRunner.request(sessionId);
@@ -1419,12 +1466,14 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // Seed the live subagent roster so swarm cards survive a page refresh
     // (their member rows otherwise only exist from non-replayed WS events).
     // loadTasksForSession's keepLiveSubagents preserves these across REST
-    // reloads; the roster stays authoritative until then.
+    // reloads. A present roster is authoritative for live foreground rows;
+    // older servers omit it, while an empty roster clears stale rows.
     rawState.tasksBySession = {
       ...rawState.tasksBySession,
       [sessionId]: mergeSnapshotSubagents(
         snap.subagents,
         rawState.tasksBySession[sessionId] ?? [],
+        sideChat.sideChatTargetBySession.value[sessionId]?.agentId,
       ),
     };
     rawState.messagesHasMoreBySession = {
@@ -1459,6 +1508,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     };
     epochBySession[sessionId] = snap.epoch;
     sessionsRequiringSnapshot.delete(sessionId);
+    pendingSubagentReconciles.delete(sessionId);
     sessionsRetryingStaleSnapshot.delete(sessionId);
 
     // Resync replaces the missed event stream, so a terminal snapshot must
@@ -1505,6 +1555,10 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       await handleSessionNotFound(sessionId);
       return 'not-found';
     }
+    const pendingReconcile = pendingSubagentReconciles.get(sessionId);
+    if (pendingReconcile !== undefined) {
+      pendingReconcile.deferredRetrySeq = pendingReconcile.requiredSeq;
+    }
     pushOperationFailure('getSessionSnapshot', err, {
       title: i18n.global.t('warnings.sessionSnapshotTitle'),
       message: i18n.global.t('warnings.sessionSnapshotMessage'),
@@ -1515,6 +1569,109 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
 }
 
 const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
+
+/**
+ * Request an authoritative snapshot when a still-live foreground subagent row
+ * exists at a turn boundary — the moment such a row must converge. Called on
+ * the main turn.ended and on the quiet sessionWorkChanged fallback (the
+ * lost-turn.ended path); the roster then completes or removes the stale row.
+ */
+function hasSubagentReconcileCandidate(sessionId: string): boolean {
+  const sideChannelAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
+  return (rawState.tasksBySession[sessionId] ?? []).some(
+    (task) => task.id !== sideChannelAgentId && isLiveForegroundSubagent(task),
+  );
+}
+
+function appEventAdvancesSubagentRoster(
+  event: AppEvent,
+  sessionId: string,
+  tasksBeforeEvent: AppTask[],
+): boolean {
+  if (event.type === 'turnActiveChanged') return true;
+  const taskId =
+    event.type === 'taskCreated'
+      ? event.task.id
+      : event.type === 'taskCompleted'
+        ? event.taskId
+        : undefined;
+  if (taskId === undefined) return false;
+  const sideChannelAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
+  if (taskId === sideChannelAgentId) return false;
+  const previous = tasksBeforeEvent.find((task) => task.id === taskId);
+  const current = (rawState.tasksBySession[sessionId] ?? []).find((task) => task.id === taskId);
+  if (current?.kind !== 'subagent') return false;
+  if (previous === undefined) return isLiveForegroundSubagent(current);
+  const wasLiveForeground = isLiveForegroundSubagent(previous);
+  const isLiveForeground = isLiveForegroundSubagent(current);
+  if (!wasLiveForeground && !isLiveForeground) return false;
+  return (
+    previous.description !== current.description ||
+    previous.status !== current.status ||
+    previous.subagentPhase !== current.subagentPhase ||
+    previous.subagentType !== current.subagentType ||
+    previous.parentToolCallId !== current.parentToolCallId ||
+    previous.swarmIndex !== current.swarmIndex ||
+    previous.runInBackground !== current.runInBackground ||
+    previous.backgroundTaskId !== current.backgroundTaskId ||
+    previous.suspendedReason !== current.suspendedReason ||
+    previous.startedAt !== current.startedAt ||
+    previous.outputPreview !== current.outputPreview ||
+    previous.outputBytes !== current.outputBytes ||
+    previous.completedAt !== current.completedAt
+  );
+}
+
+function advancePendingSubagentReconcile(sessionId: string, seq: number): void {
+  const pending = pendingSubagentReconciles.get(sessionId);
+  if (pending === undefined || seq <= pending.requiredSeq) return;
+  if (!hasSubagentReconcileCandidate(sessionId)) {
+    pendingSubagentReconciles.delete(sessionId);
+    return;
+  }
+  pending.requiredSeq = seq;
+  pending.immediateRetrySeq = undefined;
+  pending.deferredRetrySeq = undefined;
+  snapshotSyncRunner.request(sessionId);
+}
+
+function applySnapshotSubagentRoster(sessionId: string, roster: AppTask[]): void {
+  rawState.tasksBySession = {
+    ...rawState.tasksBySession,
+    [sessionId]: mergeSnapshotSubagents(
+      roster,
+      rawState.tasksBySession[sessionId] ?? [],
+      sideChat.sideChatTargetBySession.value[sessionId]?.agentId,
+    ),
+  };
+  eventConn?.reconcileSubagents(sessionId, roster);
+}
+
+function requestSubagentReconcileIfNeeded(sessionId: string, requiredSeq: number): void {
+  if (!hasSubagentReconcileCandidate(sessionId)) return;
+  const pending = pendingSubagentReconciles.get(sessionId);
+  if (pending === undefined) {
+    pendingSubagentReconciles.set(sessionId, { requiredSeq });
+  } else if (requiredSeq > pending.requiredSeq) {
+    pending.requiredSeq = requiredSeq;
+    pending.immediateRetrySeq = undefined;
+    pending.deferredRetrySeq = undefined;
+  }
+  snapshotSyncRunner.request(sessionId);
+}
+
+function retryPendingSubagentReconcile(sessionId: string): void {
+  const pending = pendingSubagentReconciles.get(sessionId);
+  if (pending === undefined || pending.deferredRetrySeq !== pending.requiredSeq) {
+    return;
+  }
+  if (!hasSubagentReconcileCandidate(sessionId)) {
+    pendingSubagentReconciles.delete(sessionId);
+    return;
+  }
+  pending.deferredRetrySeq = undefined;
+  snapshotSyncRunner.request(sessionId);
+}
 
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
@@ -1959,7 +2116,11 @@ const activeAppTasks = computed<AppTask[]>(() => {
   return (rawState.tasksBySession[sid] ?? []).filter((task) => task.id !== hiddenBtwAgentId);
 });
 
-const taskPoller = useTaskPoller(rawState, activeAppTasks);
+const taskPoller = useTaskPoller(
+  rawState,
+  activeAppTasks,
+  retryPendingSubagentReconcile,
+);
 
 const turns = computed<ChatTurn[]>(() => {
   const sid = rawState.activeSessionId;

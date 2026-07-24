@@ -1,7 +1,8 @@
 // Scenario: terminal-output backfill for background tasks (useTaskPoller).
 // Responsibilities: folded background-subagent rows must receive the output
-// fetched under their REST task id, and a transient getTask failure must not
-// permanently suppress later backfills.
+// fetched under their REST task id, a transient getTask failure must not
+// permanently suppress later backfills, and successful list loads notify the
+// consumer that delayed reconciliation may retry.
 // Wiring: the composable is real; daemon requests are stubbed.
 // Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/task-poller.test.ts
 
@@ -117,5 +118,27 @@ describe('useTaskPoller terminal-output backfill', () => {
     await poller.loadTasksForSession('sess_1');
     expect(apiMock.getTask).toHaveBeenCalledTimes(2);
     expect(state.tasksBySession['sess_1']?.[0]?.outputPreview).toBe('final result');
+  });
+
+  it('notifies the consumer after the task list loads successfully', async () => {
+    const state = createState([]);
+    const onTaskListLoaded = vi.fn();
+    apiMock.listTasks.mockResolvedValue([]);
+
+    const poller = useTaskPoller(state, computed(() => []), onTaskListLoaded);
+    await poller.loadTasksForSession('sess_1');
+
+    expect(onTaskListLoaded).toHaveBeenCalledWith('sess_1');
+  });
+
+  it('does not notify the consumer when the task list request fails', async () => {
+    const state = createState([]);
+    const onTaskListLoaded = vi.fn();
+    apiMock.listTasks.mockRejectedValue(new Error('offline'));
+
+    const poller = useTaskPoller(state, computed(() => []), onTaskListLoaded);
+    await poller.loadTasksForSession('sess_1');
+
+    expect(onTaskListLoaded).not.toHaveBeenCalled();
   });
 });

@@ -526,8 +526,8 @@ export interface AppSessionSnapshot {
   messages: AppMessage[];
   hasMoreMessages: boolean;
   inFlightTurn: AppInFlightTurn | null;
-  /** Live subagent roster at the watermark — rebuilds swarm cards on refresh. */
-  subagents: AppTask[];
+  /** Live subagent roster at the watermark — absent on older servers. */
+  subagents?: AppTask[];
   pendingApprovals: AppApprovalRequest[];
   pendingQuestions: AppQuestionRequest[];
 }
@@ -569,6 +569,11 @@ export interface KimiEventConnection {
    * state first — call BEFORE subscribe(), with the snapshot's cursor.
    */
   seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void;
+  /**
+   * Reconcile only the foreground-subagent roster from a snapshot that is
+   * fresh for roster state but stale for unrelated session events.
+   */
+  reconcileSubagents(sessionId: string, roster: AppTask[]): void;
   abort(sessionId: string, promptId: string): void;
   terminalAttach(sessionId: string, terminalId: string, sinceSeq?: number): void;
   terminalInput(sessionId: string, terminalId: string, data: string): void;

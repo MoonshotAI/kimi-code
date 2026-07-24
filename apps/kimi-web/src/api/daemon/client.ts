@@ -558,8 +558,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
               },
         pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
         pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
-        // Older servers omit the roster entirely; treat as an empty roster.
-        subagents: (data.subagents ?? []).map(toAppTask),
+        // Preserve `undefined`: older servers omit the roster, while an empty
+        // array from a newer server authoritatively means no live subagents.
+        subagents: data.subagents?.map(toAppTask),
       };
       traceKeyEvent('session:snapshot:accepted', {
         sessionId,
@@ -1500,12 +1501,21 @@ export class DaemonKimiWebApi implements KimiWebApi {
         // message list.
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
+          // Seed the roster AFTER the reset so the projector's subagentMeta and
+          // the reducer's task rows come from the same snapshot — otherwise a
+          // roster-completed row forgets its terminal status here and a late
+          // progress frame would resurrect it as running.
+          projector.seedSubagents(sessionId, snapshot.subagents);
           return;
         }
         const appEvents = projector.seedInFlight(sessionId, snapshot.inFlightTurn);
+        projector.seedSubagents(sessionId, snapshot.subagents);
         for (const appEvent of appEvents) {
           handlers.onEvent(appEvent, { sessionId, seq: snapshot.asOfSeq });
         }
+      },
+      reconcileSubagents(sessionId: string, roster: AppTask[]): void {
+        projector.seedSubagents(sessionId, roster);
       },
       bindNextPromptId(sessionId: string, promptId: string): void {
         // Wire the real daemon prompt_id into the projector so turn.started

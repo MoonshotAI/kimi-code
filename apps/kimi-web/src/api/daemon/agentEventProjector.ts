@@ -26,6 +26,7 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
+import { isLiveForegroundSubagent } from '../../lib/taskMerge';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
 import { toAppMessageContent } from './mappers';
 import type { WireMessageContent } from './wire';
@@ -60,6 +61,7 @@ const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'prompt.aborted',
   'error',
 ]);
+const MAX_RETAINED_SUBAGENT_HISTORY = 256;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -127,6 +129,11 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
+  // Live foreground ids seen before reset, awaiting the next snapshot roster.
+  subagentResetCandidates: Set<string>;
+  // Ids authoritatively absent from a present roster. Bare progress must not
+  // recreate them; an explicit spawn/start lifecycle event re-opens them.
+  subagentTombstones: Set<string>;
 
   // Bubble cleared by turn.step.retrying, to be reused by the retried
   // step.started (same turn) instead of stacking a new bubble.
@@ -151,6 +158,8 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
+    subagentResetCandidates: new Set(),
+    subagentTombstones: new Set(),
     retryReuseMsgId: undefined,
   };
 }
@@ -207,6 +216,7 @@ function patchSubagent(
   patch: Partial<AppTask>,
 ): AppTask | null {
   if (typeof subagentId !== 'string' || subagentId.length === 0) return null;
+  state.subagentResetCandidates.delete(subagentId);
   const prev = state.subagentMeta.get(subagentId) ?? {
     id: subagentId,
     sessionId,
@@ -269,6 +279,30 @@ function toolArgSummary(name: string, args: unknown): string {
   return toolSummary(name, arg);
 }
 
+/** Statuses a bare progress frame must never downgrade back to 'running'. A
+ *  late/replayed subagent-scoped frame arriving after the lifecycle terminal
+ *  would otherwise resurrect the row (and its elapsed timer) permanently — no
+ *  later event corrects it. Explicit lifecycle events (`subagent.started` on a
+ *  resume) still re-open the row through their own projector cases. */
+function isTerminalSubagentStatus(status: AppTask['status'] | undefined): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function trimRetainedSubagentHistory(state: SessionState): void {
+  const terminalIds: string[] = [];
+  for (const [id, task] of state.subagentMeta) {
+    if (isTerminalSubagentStatus(task.status)) terminalIds.push(id);
+  }
+  for (let index = 0; index < terminalIds.length - MAX_RETAINED_SUBAGENT_HISTORY; index += 1) {
+    state.subagentMeta.delete(terminalIds[index]!);
+  }
+  while (state.subagentTombstones.size > MAX_RETAINED_SUBAGENT_HISTORY) {
+    const oldest = state.subagentTombstones.values().next().value;
+    if (oldest === undefined) break;
+    state.subagentTombstones.delete(oldest);
+  }
+}
+
 function projectSubagentProgress(
   state: SessionState,
   sessionId: string,
@@ -280,7 +314,9 @@ function projectSubagentProgress(
   // Side-channel agents (e.g. BTW side chat) stream their own transcript via
   // agentDelta events; don't pollute the main task output with generic step
   // placeholders like "Started a step".
-  if (sideChannelAgents.has(subagentId) && rawType === 'turn.step.started') return [];
+  const isSideChannel = sideChannelAgents.has(subagentId);
+  if (isSideChannel && rawType === 'turn.step.started') return [];
+  if (!isSideChannel && state.subagentTombstones.has(subagentId)) return [];
 
   // The subagent's own streamed text: forward each delta as a `text`-kind
   // progress chunk so the reducer concatenates it into `AppTask.text`, letting
@@ -295,13 +331,15 @@ function projectSubagentProgress(
     // taskProgress to existing tasks — without this, the deltas are dropped and
     // the live detail stays blank until a non-text frame recreates the task.
     const previous = state.subagentMeta.get(subagentId);
-    const task = patchSubagent(state, sessionId, subagentId, {
-      status: 'running',
-      subagentPhase: 'working',
-      startedAt: previous?.startedAt ?? new Date().toISOString(),
-    });
     const out: AppEvent[] = [];
-    if (task) out.push({ type: 'taskCreated', sessionId, task });
+    if (!isTerminalSubagentStatus(previous?.status)) {
+      const task = patchSubagent(state, sessionId, subagentId, {
+        status: 'running',
+        subagentPhase: 'working',
+        startedAt: previous?.startedAt ?? new Date().toISOString(),
+      });
+      if (task) out.push({ type: 'taskCreated', sessionId, task });
+    }
     out.push({
       type: 'taskProgress',
       sessionId,
@@ -316,13 +354,15 @@ function projectSubagentProgress(
   const text = subagentProgressText(rawType, payload);
   if (text === null || text.length === 0) return [];
   const previous = state.subagentMeta.get(subagentId);
-  const task = patchSubagent(state, sessionId, subagentId, {
-    status: 'running',
-    subagentPhase: 'working',
-    startedAt: previous?.startedAt ?? new Date().toISOString(),
-  });
   const out: AppEvent[] = [];
-  if (task) out.push({ type: 'taskCreated', sessionId, task });
+  if (!isTerminalSubagentStatus(previous?.status)) {
+    const task = patchSubagent(state, sessionId, subagentId, {
+      status: 'running',
+      subagentPhase: 'working',
+      startedAt: previous?.startedAt ?? new Date().toISOString(),
+    });
+    if (task) out.push({ type: 'taskCreated', sessionId, task });
+  }
   out.push({ type: 'taskProgress', sessionId, taskId: subagentId, outputChunk: text, stream: 'stdout' });
   return out;
 }
@@ -514,7 +554,21 @@ export interface AgentProjector {
    * snapshot's `session.status` is the authoritative value.
    */
   seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
-  /** Reset all per-session state (call on re-subscribe / resync). */
+  /**
+   * Seed `subagentMeta` from a session snapshot's subagent roster (v2 sync).
+   * Call after `reset` / `seedInFlight`, or independently when only the roster
+   * is fresh enough to reconcile. This keeps the reducer's task rows and the
+   * projector's meta aligned: a roster-completed row stays terminal, and a
+   * present roster tombstones live foreground ids that it omits. `undefined`
+   * preserves the pending decision for a future authoritative roster.
+   */
+  seedSubagents(sessionId: string, roster: AppTask[] | undefined): void;
+  /**
+   * Reset all per-session state (call on re-subscribe / resync). Recent
+   * terminal, background, and side-channel subagent meta is retained, while
+   * live foreground ids wait for the snapshot roster to decide whether they
+   * remain live or become absence tombstones.
+   */
   reset(sessionId: string): void;
   /**
    * Mark an agent id as a side-channel (e.g. BTW side chat) rather than a
@@ -538,11 +592,64 @@ export function createAgentProjector(): AgentProjector {
   }
 
   function reset(sessionId: string): void {
-    sessions.set(sessionId, createSessionState());
+    const previous = sessions.get(sessionId);
+    const fresh = createSessionState();
+    if (previous !== undefined) {
+      for (const id of previous.subagentResetCandidates) {
+        if (!sideChannelAgents.has(id)) fresh.subagentResetCandidates.add(id);
+      }
+      for (const id of previous.subagentTombstones) {
+        if (!sideChannelAgents.has(id)) fresh.subagentTombstones.add(id);
+      }
+      // Retain terminal knowledge so roster-less servers cannot let a late
+      // progress frame resurrect a finished row. Background and side-channel
+      // entries also stay: the foreground-only roster never owns them. Only
+      // live foreground ids wait for the next present roster to decide whether
+      // they still exist.
+      for (const [id, task] of previous.subagentMeta) {
+        if (sideChannelAgents.has(id) || isTerminalSubagentStatus(task.status)) {
+          fresh.subagentResetCandidates.delete(id);
+          fresh.subagentTombstones.delete(id);
+          fresh.subagentMeta.set(id, task);
+        } else if (isLiveForegroundSubagent(task)) {
+          fresh.subagentResetCandidates.add(id);
+        } else {
+          fresh.subagentResetCandidates.delete(id);
+          fresh.subagentMeta.set(id, task);
+        }
+      }
+      trimRetainedSubagentHistory(fresh);
+    }
+    sessions.set(sessionId, fresh);
+  }
+
+  function seedSubagents(sessionId: string, roster: AppTask[] | undefined): void {
+    const s = getOrCreate(sessionId);
+    if (roster === undefined) return;
+    const rosterIds = new Set(roster.map((task) => task.id));
+    for (const [id, task] of s.subagentMeta) {
+      if (isLiveForegroundSubagent(task)) s.subagentResetCandidates.add(id);
+    }
+    for (const id of s.subagentResetCandidates) {
+      if (!sideChannelAgents.has(id) && !rosterIds.has(id)) {
+        s.subagentMeta.delete(id);
+        s.subagentTombstones.add(id);
+      }
+    }
+    s.subagentResetCandidates.clear();
+    for (const task of roster) {
+      s.subagentTombstones.delete(task.id);
+      s.subagentMeta.set(task.id, { ...task });
+    }
+    trimRetainedSubagentHistory(s);
   }
 
   function markSideChannelAgent(agentId: string): void {
     sideChannelAgents.add(agentId);
+    for (const state of sessions.values()) {
+      state.subagentResetCandidates.delete(agentId);
+      state.subagentTombstones.delete(agentId);
+    }
   }
 
   function bindNextPromptId(sessionId: string, promptId: string): void {
@@ -1093,6 +1200,8 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'subagent.spawned': {
         const taskId = typeof p?.subagentId === 'string' && p.subagentId.length > 0 ? p.subagentId : ulid('task_');
+        s.subagentResetCandidates.delete(taskId);
+        s.subagentTombstones.delete(taskId);
         const task: AppTask = {
           id: taskId,
           sessionId,
@@ -1116,6 +1225,7 @@ export function createAgentProjector(): AgentProjector {
       }
 
       case 'subagent.started': {
+        if (typeof p?.subagentId === 'string') s.subagentTombstones.delete(p.subagentId);
         const task = patchSubagent(s, sessionId, p?.subagentId, {
           subagentPhase: 'working',
           status: 'running',
@@ -1126,6 +1236,12 @@ export function createAgentProjector(): AgentProjector {
       }
 
       case 'subagent.suspended': {
+        if (
+          typeof p?.subagentId === 'string' &&
+          s.subagentTombstones.has(p.subagentId)
+        ) {
+          break;
+        }
         const task = patchSubagent(s, sessionId, p?.subagentId, {
           subagentPhase: 'suspended',
           status: 'running',
@@ -1236,6 +1352,7 @@ export function createAgentProjector(): AgentProjector {
             // client (subscribed late): later agent-scoped progress frames are
             // routed by agent id, and seeding subagentMeta here keeps them on
             // this one row instead of synthesizing a second one.
+            s.subagentTombstones.delete(agentId);
             const task = patchSubagent(s, sessionId, agentId, {
               description,
               backgroundTaskId: taskId,
@@ -1406,7 +1523,7 @@ export function createAgentProjector(): AgentProjector {
     return out;
   }
 
-  return { project, bindNextPromptId, seedInFlight, reset, markSideChannelAgent };
+  return { project, bindNextPromptId, seedInFlight, seedSubagents, reset, markSideChannelAgent };
 }
 
 // ---------------------------------------------------------------------------
