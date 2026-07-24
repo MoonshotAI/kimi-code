@@ -359,6 +359,7 @@ describe('KimiChatProvider', () => {
                   prefixItems: [{ enum: ['left', 'right'], type: 'string' }],
                 },
               },
+              required: [],
             },
           },
         },

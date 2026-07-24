@@ -2,8 +2,9 @@
  * `kosong/provider` domain (L2) — Kimi tool-schema dialect normalization.
  *
  * Pure functions: dereference local `$ref` pointers by inlining definitions,
- * then complete missing `type` fields from enum/const values or structural
- * keys — the schema dialect the Kimi tool endpoint accepts.
+ * complete missing `type` fields from enum/const values or structural keys,
+ * and add missing `required` arrays to object nodes — the schema dialect the
+ * Kimi tool endpoint accepts.
  *
  * Circular references are detected and left as `$ref` to avoid infinite
  * recursion; in that case the referenced definition bucket is preserved so the
@@ -225,6 +226,10 @@ function parseJsonPointerArrayIndex(part: string): number | null {
 function recurseSchema(node: unknown): void {
   if (!isRecord(node)) {
     return;
+  }
+
+  if (node['type'] === 'object' && !hasOwn(node, 'required')) {
+    node['required'] = [];
   }
 
   visitChildSchemas(node, normalizeProperty);

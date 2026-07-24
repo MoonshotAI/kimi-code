@@ -70,6 +70,44 @@ describe('kimiOpenAITrait.convertTool', () => {
       },
     });
   });
+
+  it('adds required arrays to root and nested object schemas', () => {
+    const tool: Tool = {
+      name: 'read_file',
+      description: 'read',
+      parameters: {
+        type: 'object',
+        properties: {
+          options: {
+            type: 'object',
+            properties: { encoding: { type: 'string' } },
+          },
+          path: { type: 'string' },
+        },
+        required: ['path'],
+      },
+    };
+
+    expect(convertKimiTool(tool)).toEqual({
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: 'read',
+        parameters: {
+          type: 'object',
+          properties: {
+            options: {
+              type: 'object',
+              properties: { encoding: { type: 'string' } },
+              required: [],
+            },
+            path: { type: 'string' },
+          },
+          required: ['path'],
+        },
+      },
+    });
+  });
 });
 
 describe('kimiOpenAITrait.convertMessage', () => {
