@@ -203,8 +203,23 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
     });
   });
 
-  it('provisions SDK config using an existing Kimi OAuth token', async () => {
+  it('switches an API default when logging in with an existing Kimi OAuth token', async () => {
     await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "api-provider/api-model"
+
+[providers.api-provider]
+type = "kimi"
+api_key = "YOUR_API_KEY"
+
+[models."api-provider/api-model"]
+provider = "api-provider"
+model = "api-model"
+max_context_size = 262144
+`,
+    );
     const fetchMock = vi.fn<FetchMock>(
       async (_input, _init) =>
         new Response(
@@ -257,6 +272,10 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
       type: 'kimi',
       apiKey: '',
       oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    });
+    expect(config.providers['api-provider']).toMatchObject({ apiKey: 'YOUR_API_KEY' });
+    expect(config.models?.['api-provider/api-model']).toMatchObject({
+      provider: 'api-provider',
     });
     expect(config.services?.moonshotSearch?.oauth).toEqual({
       storage: 'file',

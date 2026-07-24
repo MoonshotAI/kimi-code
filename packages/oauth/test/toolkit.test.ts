@@ -332,6 +332,47 @@ describe('KimiOAuthToolkit', () => {
     expect(write).toHaveBeenCalledWith(config);
   });
 
+  it('replaces an existing API default during login', async () => {
+    const storage = new MemoryTokenStorage();
+    const fetchImpl = vi.fn(async () => managedModelsResponse()) as unknown as typeof fetch;
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'api-provider': {
+          type: 'kimi',
+          apiKey: 'YOUR_API_KEY',
+        },
+      },
+      defaultModel: 'api-provider/api-model',
+      models: {
+        'api-provider/api-model': {
+          provider: 'api-provider',
+          model: 'api-model',
+          maxContextSize: 262144,
+        },
+      },
+    };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+      fetchImpl,
+      configAdapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    storage.tokens.set('kimi-code', token('access-1'));
+    await expect(toolkit.login()).resolves.toMatchObject({
+      provision: {
+        defaultModel: 'kimi-code/kimi-for-coding',
+      },
+    });
+    expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
+  });
+
   it.each([401, 402])(
     'force-refreshes a stored token when managed model provisioning rejects cached auth with HTTP %i',
     async (status) => {

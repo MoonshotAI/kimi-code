@@ -1023,6 +1023,7 @@ describe('supports_thinking_type', () => {
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
       preserveDefaultModel: true,
+      preserveNonManagedDefaultModel: false,
       adapter: {
         read: () => config,
         write: vi.fn(),
