@@ -215,7 +215,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
     inputMode: 'prompt',
-    swarmMode: false,
+    swarmMode: input.cliOptions.swarm,
     thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
@@ -383,6 +383,7 @@ export class KimiTUI {
         yolo: startupInput.cliOptions.yolo,
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
+        swarm: startupInput.cliOptions.swarm,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
       },
@@ -691,7 +692,7 @@ export class KimiTUI {
     }
     if (shouldReplayHistory) {
       await this.sessionReplay.hydrateFromReplay(this.requireSession());
-      this.applyStartupPermissionAndPlanToAppState();
+      this.applyStartupPermissionPlanAndSwarmToAppState();
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -820,8 +821,9 @@ export class KimiTUI {
       throw new Error('Startup session was not initialized.');
     }
     await this.setSession(session);
+    await this.applyStartupSwarmToSessionIfNeeded(session);
     await this.syncRuntimeState(session);
-    this.applyStartupPermissionAndPlanToAppState();
+    this.applyStartupPermissionPlanAndSwarmToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
   }
@@ -1587,10 +1589,17 @@ export class KimiTUI {
     }
   }
 
+  // Apply --swarm to a newly attached session. Entering swarm mode is idempotent,
+  // so this is safe for both fresh and resumed sessions.
+  private async applyStartupSwarmToSessionIfNeeded(session: Session): Promise<void> {
+    if (!this.options.startup.swarm) return;
+    await session.setSwarmMode(true, 'manual');
+  }
+
   // Re-apply startup flags that the user explicitly passed on the command line.
   // syncRuntimeState and session-replay hydration can both read stale persisted
   // values, so this guarantees the footer reflects the CLI intent.
-  private applyStartupPermissionAndPlanToAppState(): void {
+  private applyStartupPermissionPlanAndSwarmToAppState(): void {
     const { startup } = this.options;
     if (startup.auto) {
       this.setAppState({ permissionMode: 'auto' });
@@ -1599,6 +1608,10 @@ export class KimiTUI {
     }
     if (startup.plan) {
       this.setAppState({ planMode: true });
+    }
+    if (startup.swarm) {
+      this.setAppState({ swarmMode: true });
+      this.state.swarmModeEntry = 'manual';
     }
   }
 
@@ -2971,7 +2984,8 @@ export class KimiTUI {
     if (!switched) return;
     if (applyStartupModes) {
       await this.applyStartupModesToResumedSession(this.requireSession());
-      this.applyStartupPermissionAndPlanToAppState();
+      await this.applyStartupSwarmToSessionIfNeeded(this.requireSession());
+      this.applyStartupPermissionPlanAndSwarmToAppState();
     }
     this.hideSessionPicker();
   }

@@ -43,6 +43,7 @@ describe('createTUIState', () => {
         yolo: false,
         auto: false,
         plan: false,
+        swarm: false,
       },
     };
     const state = createTUIState(opts);

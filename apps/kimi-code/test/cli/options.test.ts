@@ -35,6 +35,7 @@ describe('CLI options parsing', () => {
       const opts = parse([]);
       expect(opts.yolo).toBe(false);
       expect(opts.plan).toBe(false);
+      expect(opts.swarm).toBe(false);
       expect(opts.continue).toBe(false);
       expect(opts.session).toBeUndefined();
       expect(opts.model).toBeUndefined();
@@ -171,6 +172,32 @@ describe('CLI options parsing', () => {
   describe('--plan', () => {
     it('sets plan mode flag', () => {
       expect(parse(['--plan']).plan).toBe(true);
+    });
+  });
+
+  describe('--swarm', () => {
+    it('sets swarm mode flag', () => {
+      expect(parse(['--swarm']).swarm).toBe(true);
+    });
+
+    it('allows --swarm with --continue', () => {
+      const opts = parse(['--swarm', '--continue']);
+      expect(opts.swarm).toBe(true);
+      expect(opts.continue).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --swarm with an explicit session id', () => {
+      const opts = parse(['--swarm', '--session', 'ses_123']);
+      expect(opts.swarm).toBe(true);
+      expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('rejects prompt mode with --swarm', () => {
+      const opts = parse(['-p', 'run this', '--swarm']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --prompt with --swarm.');
     });
   });
 

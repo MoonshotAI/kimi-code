@@ -81,6 +81,7 @@ function makeStartupInput(
       yolo: false,
       auto: false,
       plan: false,
+      swarm: false,
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,
@@ -122,6 +123,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
+    setSwarmMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
@@ -407,6 +409,74 @@ describe('KimiTUI startup', () => {
 
     expect(session.setPlanMode).not.toHaveBeenCalled();
     expect(driver.state.appState.planMode).toBe(true);
+  });
+
+  it('applies --swarm mode when creating a fresh session', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({ swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
+  it('applies --swarm mode when resuming a session via --continue', async () => {
+    const session = makeSession({
+      id: 'ses-latest',
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true, swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
+  it('keeps --swarm in the footer after session replay hydration', async () => {
+    const session = makeSession({
+      id: 'ses-latest',
+      getResumeState: vi.fn(() => createResumeState({ permissionMode: 'manual', planMode: false })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true, swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+    await (
+      driver as unknown as {
+        finishStartup(shouldReplayHistory: boolean): Promise<void>;
+      }
+    ).finishStartup(true);
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
+    expect(driver.state.appState.swarmMode).toBe(true);
   });
 
   it('forces footer state to reflect --auto even if getStatus lags behind', async () => {

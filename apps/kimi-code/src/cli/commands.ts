@@ -111,7 +111,8 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
-    .option('--plan', 'Start in plan mode.', false);
+    .option('--plan', 'Start in plan mode.', false)
+    .option('--swarm', 'Start in swarm mode.', false);
 
   registerExportCommand(program);
   registerProviderCommand(program);
@@ -156,6 +157,7 @@ export function createProgram(
       yolo: yoloValue,
       auto: autoValue,
       plan: raw['plan'] as boolean,
+      swarm: raw['swarm'] as boolean,
       model: raw['model'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
