@@ -1,5 +1,7 @@
 import type { McpRemoteServerConfig, McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
+import { createProxyDispatcher } from '#/utils/proxy';
+import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 export function buildMcpRemoteHeaders(
   config: McpRemoteServerConfig,
@@ -29,4 +31,44 @@ export function buildMcpRemoteHeaders(
 
 export function isRemoteMcpConfig(config: McpServerConfig): config is McpRemoteServerConfig {
   return config.transport === 'http' || config.transport === 'sse';
+}
+
+// Node's global fetch negotiates HTTP/2 (undici `allowH2` defaults to true).
+// When the MCP SDK's streamable-HTTP transport then opens its standalone SSE
+// GET stream on that H2 connection, undici queues every later stream-bodied
+// POST behind the in-flight GET and never dispatches it (undici client-h2
+// `busy()` guard; nodejs/undici#5524, fixed but not yet released). The GET
+// stream never ends, so `tools/list` hangs until the startup handshake times
+// out. Pinning remote MCP traffic to HTTP/1.1 puts the stream and the POSTs
+// on separate connections, which every spec-compliant server handles.
+//
+// The pin must also reach proxy dispatchers: undici's EnvHttpProxyAgent /
+// ProxyAgent negotiate H2 to the origin after the CONNECT tunnel as well.
+// (The SOCKS path builds its own Agent with a plain connector — HTTP/1.1 by
+// construction — so only the HTTP-proxy factory needs the flag.)
+let sharedMcpDispatcher: Dispatcher | undefined;
+
+function getMcpDispatcher(): Dispatcher {
+  if (sharedMcpDispatcher === undefined) {
+    sharedMcpDispatcher =
+      createProxyDispatcher(process.env, {
+        makeHttpAgent: ({ httpProxy, httpsProxy, noProxy }) =>
+          new EnvHttpProxyAgent({ httpProxy, httpsProxy, noProxy, allowH2: false }),
+      }) ?? new Agent({ allowH2: false });
+  }
+  return sharedMcpDispatcher;
+}
+
+/**
+ * `fetch` for remote MCP transports, pinned to HTTP/1.1 for direct
+ * connections (see above). Tests can inject their own fetch via the client
+ * options, or a custom dispatcher here, e.g. an H2-capable agent to
+ * reproduce the stall this works around.
+ */
+export function createMcpFetch(dispatcher: Dispatcher = getMcpDispatcher()): typeof fetch {
+  return ((input: unknown, init?: object) =>
+    undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+      ...init,
+      dispatcher,
+    })) as unknown as typeof fetch;
 }

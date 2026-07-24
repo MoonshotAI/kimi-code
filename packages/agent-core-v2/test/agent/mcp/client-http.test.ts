@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { Agent } from 'undici';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { buildMcpHttpHeaders, HttpMcpClient, isTerminalTransportError } from '#/agent/mcp/client-http';
+import { createMcpFetch } from '#/agent/mcp/client-remote';
 
-import { startInProcessHttpMcpServer } from './stubs';
+import { startInProcessHttpMcpServer, startStallingH2McpServer } from './stubs';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -197,4 +199,38 @@ describe('HttpMcpClient', () => {
       await client.close();
     }
   }, 15000);
+});
+
+describe('HTTP/1.1 pinning (createMcpFetch)', () => {
+  it('hangs over HTTP/2 and succeeds over the pinned HTTP/1.1 fetch', async () => {
+    const server = await startStallingH2McpServer();
+    cleanups.push(server.close);
+
+    const config = { transport: 'http' as const, url: server.url };
+
+    const h2Agent = new Agent({ allowH2: true, connect: { rejectUnauthorized: false } });
+    cleanups.push(() => h2Agent.destroy());
+    const h2Client = new HttpMcpClient(config, { fetch: createMcpFetch(h2Agent) });
+    try {
+      await h2Client.connect();
+      const stalled = await Promise.race([
+        h2Client.listTools().then(() => 'resolved' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 3000)),
+      ]);
+      expect(stalled).toBe('timeout');
+    } finally {
+      await h2Client.close();
+    }
+
+    const h1Agent = new Agent({ allowH2: false, connect: { rejectUnauthorized: false } });
+    cleanups.push(() => h1Agent.destroy());
+    const h1Client = new HttpMcpClient(config, { fetch: createMcpFetch(h1Agent) });
+    try {
+      await h1Client.connect();
+      const tools = await h1Client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(['echo']);
+    } finally {
+      await h1Client.close();
+    }
+  }, 30000);
 });

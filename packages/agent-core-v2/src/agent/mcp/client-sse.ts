@@ -13,7 +13,7 @@ import {
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
-import { buildMcpRemoteHeaders } from './client-remote';
+import { buildMcpRemoteHeaders, createMcpFetch } from './client-remote';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export interface SseMcpClientOptions {
@@ -46,7 +46,7 @@ export class SseMcpClient implements MCPClient {
 
     this.transport = new SSEClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      fetch: options.fetch ?? createMcpFetch(),
       authProvider: options.oauthProvider,
     });
     this.client = new Client({
