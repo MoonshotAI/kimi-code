@@ -12,27 +12,20 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  IAgentConversationUndoReconciliationRegistry,
-  IAgentContextMemoryService,
   IAgentLoopService,
   IEventBus,
   ISessionIndex,
   ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
-  ISessionTodoService,
   SessionInteractionService,
-  reduceContextTranscript,
   type DomainEvent,
-  type ContextMessage,
   type ISessionScopeHandle,
   type Scope,
-  type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
   TranscriptStore,
-  groupMessagesIntoSnapshot,
   type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
@@ -42,7 +35,7 @@ import {
   type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
@@ -1152,7 +1145,6 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
     feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
-    feed(ev({ type: 'context.undone', turns: 1 }));
 
     const markers = tx
       .getItems()
@@ -1733,39 +1725,7 @@ describe('bindSessionTranscript', () => {
   interface FakeAgentHandle {
     readonly id: string;
     readonly bus: FakeBus;
-    reconcile(phase: 'state' | 'projection'): Promise<void>;
     readonly accessor: { get: (token: unknown) => unknown };
-  }
-
-  class FakeReconciliationRegistry {
-    private readonly participants = new Map<
-      string,
-      {
-        readonly phase?: 'state' | 'projection';
-        reconcileAfterUndo(): Promise<void>;
-      }
-    >();
-    register(participant: {
-      readonly id: string;
-      readonly phase?: 'state' | 'projection';
-      reconcileAfterUndo(): Promise<void>;
-    }): { dispose: () => void } {
-      this.participants.set(participant.id, participant);
-      return {
-        dispose: () => {
-          if (this.participants.get(participant.id) === participant) {
-            this.participants.delete(participant.id);
-          }
-        },
-      };
-    }
-    async reconcile(phase: 'state' | 'projection'): Promise<void> {
-      await Promise.all(
-        [...this.participants.values()]
-          .filter((participant) => (participant.phase ?? 'state') === phase)
-          .map((participant) => participant.reconcileAfterUndo()),
-      );
-    }
   }
 
   class FakeAgents {
@@ -1786,25 +1746,16 @@ describe('bindSessionTranscript', () => {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
-    add(
-      id: string,
-      opts?: { loopStatus?: unknown; history?: readonly ContextMessage[] },
-    ): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: unknown }): FakeAgentHandle {
       const bus = new FakeBus();
-      const reconciliation = new FakeReconciliationRegistry();
       const handle: FakeAgentHandle = {
         id,
         bus,
-        reconcile: (phase) => reconciliation.reconcile(phase),
         accessor: {
           get: (token: unknown) => {
             if (token === IEventBus) return bus;
-            if (token === IAgentConversationUndoReconciliationRegistry) return reconciliation;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
-            }
-            if (token === IAgentContextMemoryService) {
-              return { get: () => opts?.history ?? [] };
             }
             return undefined;
           },
@@ -1820,31 +1771,9 @@ describe('bindSessionTranscript', () => {
     }
   }
 
-  class FakeTodos {
-    private readonly handlers = new Set<(items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]) => void>();
-    private current: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[] = [];
-    readonly onDidChange = (
-      handler: (items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]) => void,
-    ): { dispose: () => void } => {
-      this.handlers.add(handler);
-      return { dispose: () => this.handlers.delete(handler) };
-    };
-    getTodos(): readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[] {
-      return this.current;
-    }
-    setTodos(items: readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]): void {
-      this.current = items;
-      for (const handler of this.handlers) handler(items);
-    }
-    clear(): void {
-      this.setTodos([]);
-    }
-  }
-
   function fakeSession(
     interactions: SessionInteractionService,
     agents?: FakeAgents,
-    todos = new FakeTodos(),
   ): ISessionScopeHandle {
     return {
       accessor: {
@@ -1859,550 +1788,12 @@ describe('bindSessionTranscript', () => {
             );
           }
           if (token === ISessionInteractionService) return interactions;
-          if (token === ISessionTodoService) return todos;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },
       },
     } as unknown as ISessionScopeHandle;
   }
-
-  it('resets conversation items from the authoritative post-undo context', () => {
-    const interactions = new SessionInteractionService();
-    const agents = new FakeAgents();
-    const main = agents.add('main', {
-      history: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'kept' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-        {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'answer' }],
-          toolCalls: [],
-        },
-      ],
-    });
-    const store = new TranscriptStore('s1');
-    store.ensureAgent('main').apply([
-      {
-        op: 'turn.upsert',
-        turn: {
-          kind: 'turn',
-          turnId: 't0',
-          ordinal: 0,
-          state: 'completed',
-          origin: { kind: 'user' },
-        },
-      },
-    ]);
-    const ops: TranscriptOperation[] = [];
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(interactions, agents),
-      undefined,
-      (event) => ops.push(...event.ops),
-    );
-    const emitTurn = (turnId: number, origin: Record<string, unknown>): void => {
-      main.bus.emit(ev({ type: 'turn.started', turnId, origin }));
-      main.bus.emit(ev({ type: 'turn.ended', turnId, reason: 'completed' }));
-    };
-
-    emitTurn(1, { kind: 'skill_activation', skillName: 'review', trigger: 'user-slash' });
-    emitTurn(2, { kind: 'shell_command' });
-    emitTurn(3, { kind: 'plugin_command', pluginId: 'p', commandName: 'c', trigger: 'user-slash' });
-    emitTurn(4, { kind: 'task', taskId: 'task-1' });
-    main.bus.emit(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-1',
-          kind: 'process',
-          description: 'build',
-          status: 'running',
-          detached: true,
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-    main.bus.emit(ev({ type: 'context.spliced', start: 1, deleteCount: 4, messages: [] }));
-    main.bus.emit(ev({ type: 'context.undone', turns: 2 }));
-
-    expect(
-      store
-        .getAgent('main')
-        ?.getItems()
-        .filter((item): item is TranscriptTurn => item.kind === 'turn')
-        .map((turn) => turn.turnId),
-    ).toEqual(['t0']);
-    expect(store.getAgent('main')?.getTask('task-1')).toMatchObject({ state: 'running' });
-    expect(store.getAgent('main')?.getItems().filter((item) => item.kind === 'marker')).toEqual([]);
-    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
-    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([]);
-    binding.dispose();
-  });
-
-  it('does not infer the undo cut from the displayed turn count', () => {
-    const interactions = new SessionInteractionService();
-    const agents = new FakeAgents();
-    const main = agents.add('main', {
-      history: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'kept' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-      ],
-    });
-    const store = new TranscriptStore('s1');
-    store.ensureAgent('main').apply([
-      {
-        op: 'turn.upsert',
-        turn: {
-          kind: 'turn',
-          turnId: 't0',
-          ordinal: 0,
-          state: 'completed',
-          origin: { kind: 'user' },
-        },
-      },
-    ]);
-    const ops: TranscriptOperation[] = [];
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(interactions, agents),
-      undefined,
-      (event) => ops.push(...event.ops),
-    );
-    main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-    main.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-
-    main.bus.emit(ev({ type: 'context.spliced', start: 0, deleteCount: 3, messages: [] }));
-    main.bus.emit(ev({ type: 'context.undone', turns: 5 }));
-
-    expect(
-      store
-        .getAgent('main')
-        ?.getItems()
-        .filter((item): item is TranscriptTurn => item.kind === 'turn')
-        .map((turn) => turn.turnId),
-    ).toEqual(['t0']);
-    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
-    expect(ops.filter((op) => op.op === 'items.remove')).toEqual([]);
-    binding.dispose();
-  });
-
-  it('rebuilds the post-undo projection from full journal history after compaction', async () => {
-    const interactions = new SessionInteractionService();
-    const agents = new FakeAgents();
-    const foldedHistory: ContextMessage[] = [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'before compaction' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'summary' }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
-      },
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'surviving turn' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'surviving answer' }],
-        toolCalls: [],
-      },
-    ];
-    const main = agents.add('main', { history: foldedHistory });
-    const fullHistory: ContextMessage[] = [
-      foldedHistory[0]!,
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'checking old state' }],
-        toolCalls: [
-          {
-            type: 'function',
-            id: 'call-old',
-            name: 'Read',
-            arguments: '{"path":"/old"}',
-          },
-        ],
-      },
-      {
-        role: 'tool',
-        content: [{ type: 'text', text: 'old tool result' }],
-        toolCalls: [],
-        toolCallId: 'call-old',
-      },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'old answer' }],
-        toolCalls: [],
-      },
-      ...foldedHistory.slice(1),
-    ];
-    const doomedHistory: ContextMessage[] = [
-      ...fullHistory,
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'undone turn' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'undone answer' }],
-        toolCalls: [],
-      },
-    ];
-    const store = new TranscriptStore('s1');
-    store.ensureAgent('main').apply([
-      {
-        op: 'reset',
-        agentId: 'main',
-        snapshot: groupMessagesIntoSnapshot(doomedHistory),
-      },
-    ]);
-    const ops: TranscriptOperation[] = [];
-    let invalidations = 0;
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(interactions, agents),
-      undefined,
-      (event) => ops.push(...event.ops),
-      () => {
-        invalidations += 1;
-      },
-      async () => groupMessagesIntoSnapshot(fullHistory),
-    );
-    main.bus.emit(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-1',
-          kind: 'process',
-          description: 'build',
-          status: 'running',
-          detached: true,
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-
-    await main.reconcile('projection');
-    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
-
-    const transcript = store.getAgent('main');
-    const items = transcript?.getItems() ?? [];
-    const turns = items.filter((item): item is TranscriptTurn => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual([
-      'before compaction',
-      'surviving turn',
-    ]);
-    expect(
-      turns[0]?.steps.flatMap((step) => step.frames).find((frame) => frame.kind === 'tool'),
-    ).toMatchObject({ output: 'old tool result' });
-    expect(items.filter((item) => item.kind === 'marker')).toHaveLength(1);
-    expect(items.some((item) => item.kind === 'turn' && item.prompt === 'undone turn')).toBe(false);
-    expect(transcript?.getTask('task-1')).toMatchObject({ state: 'running' });
-    expect(ops.filter((op) => op.op === 'reset')).toHaveLength(1);
-    expect(invalidations).toBe(1);
-    binding.dispose();
-  });
-
-  it('keeps only interactions anchored to surviving tool calls after undo', async () => {
-    const interactions = new SessionInteractionService();
-    const agents = new FakeAgents();
-    const main = agents.add('main');
-    const survivingHistory: ContextMessage[] = [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'kept prompt' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          {
-            type: 'function',
-            id: 'call-kept',
-            name: 'Read',
-            arguments: '{"path":"/kept"}',
-          },
-        ],
-      },
-      {
-        role: 'tool',
-        content: [{ type: 'text', text: 'kept result' }],
-        toolCalls: [],
-        toolCallId: 'call-kept',
-      },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'kept answer' }],
-        toolCalls: [],
-      },
-    ];
-    const doomedHistory: ContextMessage[] = [
-      ...survivingHistory,
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'undone prompt' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          {
-            type: 'function',
-            id: 'call-undone-resolved',
-            name: 'Write',
-            arguments: '{"path":"/undone"}',
-          },
-          {
-            type: 'function',
-            id: 'call-undone-pending',
-            name: 'Bash',
-            arguments: '{"command":"false"}',
-          },
-        ],
-      },
-    ];
-    const store = new TranscriptStore('s1');
-    store.ensureAgent('main').apply([
-      {
-        op: 'reset',
-        agentId: 'main',
-        snapshot: groupMessagesIntoSnapshot(doomedHistory),
-      },
-      {
-        op: 'interaction.upsert',
-        interaction: {
-          interactionId: 'approval-kept',
-          interactionKind: 'approval',
-          toolCallId: 'call-kept',
-          state: 'approved',
-          response: { decision: 'approved' },
-        },
-      },
-      {
-        op: 'interaction.upsert',
-        interaction: {
-          interactionId: 'approval-undone',
-          interactionKind: 'approval',
-          toolCallId: 'call-undone-resolved',
-          state: 'approved',
-          response: { decision: 'approved' },
-        },
-      },
-      {
-        op: 'interaction.upsert',
-        interaction: {
-          interactionId: 'question-undone',
-          interactionKind: 'question',
-          toolCallId: 'call-undone-pending',
-          state: 'pending',
-          request: { questions: [{ question: 'Continue?', options: [] }] },
-        },
-      },
-    ]);
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(interactions, agents),
-      undefined,
-      undefined,
-      undefined,
-      async () => groupMessagesIntoSnapshot(survivingHistory),
-    );
-
-    await main.reconcile('projection');
-    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
-
-    const transcript = store.getAgent('main');
-    expect([...transcript!.getInteractions().keys()]).toEqual(['approval-kept']);
-    expect(transcript?.getInteraction('approval-kept')).toMatchObject({
-      toolCallId: 'call-kept',
-      state: 'approved',
-    });
-    expect(transcript?.getInteraction('approval-undone')).toBeUndefined();
-    expect(transcript?.listPendingInteractions()).toEqual([]);
-    binding.dispose();
-  });
-
-  it('preserves surviving turn ids and world-time task refs across journal projection', async () => {
-    const interactions = new SessionInteractionService();
-    const agents = new FakeAgents();
-    const main = agents.add('main');
-    const survivingHistory: ContextMessage[] = [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'kept prompt' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'kept answer' }],
-        toolCalls: [],
-      },
-    ];
-    const store = new TranscriptStore('s1');
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(interactions, agents),
-      undefined,
-      undefined,
-      undefined,
-      async () =>
-        groupMessagesIntoSnapshot(survivingHistory, {
-          turnIds: [0, 0],
-          turns: [
-            { turnId: 0, input: survivingHistory[0]!.content, origin: { kind: 'user' } },
-            { turnId: 1, input: [], origin: { kind: 'retry' } },
-          ],
-        }),
-    );
-    const emitTurn = (turnId: number, origin: Record<string, unknown>): void => {
-      main.bus.emit(ev({ type: 'turn.started', turnId, origin }));
-      main.bus.emit(ev({ type: 'turn.ended', turnId, reason: 'completed' }));
-    };
-
-    emitTurn(0, { kind: 'user' });
-    emitTurn(1, { kind: 'retry' });
-    emitTurn(2, { kind: 'user' });
-    main.bus.emit(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-world-time',
-          kind: 'process',
-          description: 'background build',
-          status: 'running',
-          detached: true,
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-
-    await main.reconcile('projection');
-    main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
-
-    const items = store.getAgent('main')?.getItems() ?? [];
-    expect(
-      items
-        .filter((item): item is TranscriptTurn => item.kind === 'turn')
-        .map((turn) => turn.turnId),
-    ).toEqual(['t0', 't1']);
-    expect(items).toContainEqual(
-      expect.objectContaining({ kind: 'taskref', taskId: 'task-world-time' }),
-    );
-    expect(store.getAgent('main')?.getTask('task-world-time')).toMatchObject({
-      state: 'running',
-    });
-    binding.dispose();
-  });
-
-  it('omits a phantom turn when undo is followed by a restored task notification', () => {
-    const records: WireRecord[] = [
-      {
-        type: 'turn.prompt',
-        input: [{ type: 'text', text: 'kept prompt' }],
-        origin: { kind: 'user' },
-      },
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: 'kept prompt' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-      },
-      {
-        type: 'turn.prompt',
-        input: [{ type: 'text', text: 'undone prompt' }],
-        origin: { kind: 'user' },
-      },
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: 'undone prompt' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-      },
-      { type: 'context.undo', count: 1 },
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: 'background task completed' }],
-          toolCalls: [],
-          origin: {
-            kind: 'task',
-            taskId: 'bash-001',
-            status: 'completed',
-            notificationId: 'task:bash-001:completed',
-          },
-        },
-      },
-    ];
-    const transcript = reduceContextTranscript(records);
-
-    const snapshot = groupMessagesIntoSnapshot(transcript.entries, {
-      turnIds: transcript.turnIds,
-      turns: transcript.turns,
-    });
-
-    expect(
-      snapshot.items
-        .filter((item): item is TranscriptTurn => item.kind === 'turn')
-        .map((turn) => ({ turnId: turn.turnId, prompt: turn.prompt })),
-    ).toEqual([{ turnId: 't0', prompt: 'kept prompt' }]);
-  });
-
-  it('projects session Todo changes into the main live transcript', () => {
-    const todos = new FakeTodos();
-    todos.setTodos([{ title: 'pre-bind', status: 'pending' }]);
-    const store = new TranscriptStore('s1');
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(new SessionInteractionService(), undefined, todos),
-    );
-
-    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
-      { title: 'pre-bind', status: 'pending' },
-    ]);
-
-    todos.setTodos([{ title: 'kept', status: 'pending' }]);
-    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
-      { title: 'kept', status: 'pending' },
-    ]);
-
-    binding.dispose();
-    todos.setTodos([{ title: 'ignored after dispose', status: 'done' }]);
-    expect(store.getAgent('main')?.getTodo('todo')?.items).toEqual([
-      { title: 'kept', status: 'pending' },
-    ]);
-  });
 
   it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
     const interactions = new SessionInteractionService();
@@ -2792,62 +2183,6 @@ describe('bindSessionTranscript', () => {
         output: 'a.txt',
         display: { kind: 'command', command: 'ls' },
       });
-      service.dropSession('s1');
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it('drops a stale backfill that completes after an undo reset', async () => {
-    const home = await seedWireHome();
-    try {
-      const history: ContextMessage[] = [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'kept after undo' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-      ];
-      const agents = new FakeAgents();
-      const main = agents.add('main', { history });
-      const service = new TranscriptService({
-        homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
-      });
-      let markStarted!: () => void;
-      let release!: () => void;
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
-      const blocked = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      vi.spyOn(service, 'readColdSnapshot').mockImplementation(async () => {
-        markStarted();
-        await blocked;
-        return groupMessagesIntoSnapshot([
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'stale before undo' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-        ]);
-      });
-
-      const store = service.forSessionLive('s1');
-      await started;
-      main.bus.emit(ev({ type: 'context.undone', turns: 1 }));
-      release();
-      await service.whenReady('s1');
-
-      const prompts = store
-        ?.getAgent('main')
-        ?.getItems()
-        .filter((item): item is TranscriptTurn => item.kind === 'turn')
-        .map((turn) => turn.prompt);
-      expect(prompts).toEqual(['kept after undo']);
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

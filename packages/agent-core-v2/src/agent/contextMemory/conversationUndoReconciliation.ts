@@ -1,8 +1,8 @@
 /**
  * `contextMemory` domain (L4) — Agent-scoped post-undo reconciliation registry.
  *
- * Hosts state-repair and derived-projection participants for the undo
- * coordinator. Bound at Agent scope.
+ * Hosts state-repair participants for the undo coordinator. Bound at Agent
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -12,11 +12,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 export interface AgentConversationUndoReconciliationParticipant {
   readonly id: string;
-  readonly phase?: AgentConversationUndoReconciliationPhase;
   reconcileAfterUndo(): Promise<void>;
 }
-
-export type AgentConversationUndoReconciliationPhase = 'state' | 'projection';
 
 export interface IAgentConversationUndoReconciliationRegistry {
   readonly _serviceBrand: undefined;

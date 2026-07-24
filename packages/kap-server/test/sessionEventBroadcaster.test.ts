@@ -17,7 +17,6 @@ import type {
 import {
   ContextSizeModel,
   IAgentActivityView,
-  IAgentConversationUndoReconciliationRegistry,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -27,7 +26,6 @@ import {
   ISessionActivityView,
   ISessionInteractionService,
   ISessionLifecycleService,
-  ISessionTodoService,
   IWireService,
   ISessionMetadata,
   MAIN_AGENT_ID,
@@ -111,9 +109,6 @@ class FakeAgentHandle {
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
     this.services.set(IEventBus, this.bus);
-    this.services.set(IAgentConversationUndoReconciliationRegistry, {
-      register: () => ({ dispose: () => {} }),
-    });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
     };
@@ -364,13 +359,6 @@ function makeCore(
                 if (t === ISessionActivityView) return lifecycle.workView;
                 // Minimal metadata read for the transcript binding's descriptor pass.
                 if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
-                // Minimal todo facade for the transcript binding's change projection.
-                if (t === ISessionTodoService) {
-                  return {
-                    onDidChange: () => ({ dispose: () => {} }),
-                    getTodos: () => [],
-                  };
-                }
                 return undefined;
               },
             };

@@ -255,7 +255,7 @@ describe('AgentConversationUndoService', () => {
     expect(wire.getModel(TurnModel).nextTurnId).toBe(2);
   });
 
-  it('flushes state reconciliation before rebuilding projections', async () => {
+  it('flushes state reconciliation before publishing undo', async () => {
     setup();
     const wire = ctx.get(IWireService);
     const order: string[] = [];
@@ -272,13 +272,6 @@ describe('AgentConversationUndoService', () => {
         order.push('state');
       },
     });
-    participants.register({
-      id: 'test.projection',
-      phase: 'projection',
-      reconcileAfterUndo: async () => {
-        order.push('projection');
-      },
-    });
     const subscription = ctx.get(IEventBus).subscribe('context.undone', () => {
       order.push('context.undone');
     });
@@ -287,14 +280,7 @@ describe('AgentConversationUndoService', () => {
     try {
       await ctx.get(IAgentConversationUndoService).undo(1);
 
-      expect(order).toEqual([
-        'flush',
-        'state',
-        'flush',
-        'projection',
-        'flush',
-        'context.undone',
-      ]);
+      expect(order).toEqual(['flush', 'state', 'flush', 'context.undone']);
     } finally {
       subscription.dispose();
       flush.mockRestore();
@@ -304,7 +290,6 @@ describe('AgentConversationUndoService', () => {
   it.each([
     [1, []],
     [2, ['state']],
-    [3, ['state', 'projection']],
   ] as const)(
     'rejects the committed undo when post-cut flush %i fails',
     async (failureCall, expectedReconciled) => {
@@ -326,13 +311,6 @@ describe('AgentConversationUndoService', () => {
           reconciled.push('state');
         },
       });
-      participants.register({
-        id: 'test.flush-failure-projection',
-        phase: 'projection',
-        reconcileAfterUndo: async () => {
-          reconciled.push('projection');
-        },
-      });
       const undone: number[] = [];
       const subscription = ctx.get(IEventBus).subscribe('context.undone', ({ turns }) => {
         undone.push(turns);
@@ -352,7 +330,7 @@ describe('AgentConversationUndoService', () => {
     },
   );
 
-  it('serializes concurrent undos through projection reconciliation', async () => {
+  it('serializes concurrent undos through state reconciliation', async () => {
     setup();
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
@@ -368,8 +346,7 @@ describe('AgentConversationUndoService', () => {
     let active = 0;
     let maxActive = 0;
     ctx.get(IAgentConversationUndoReconciliationRegistry).register({
-      id: 'test.serial-projection',
-      phase: 'projection',
+      id: 'test.serial-state',
       reconcileAfterUndo: async () => {
         calls += 1;
         active += 1;

@@ -21,12 +21,9 @@
 import {
   IAgentLifecycleService,
   IAgentActivityView,
-  IAgentConversationUndoReconciliationRegistry,
-  IAgentContextMemoryService,
   IEventBus,
   ISessionMetadata,
   ISessionInteractionService,
-  ISessionTodoService,
   MAIN_AGENT_ID,
   type AgentMeta,
   type IDisposable,
@@ -34,14 +31,7 @@ import {
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
-import type {
-  AgentTranscriptSnapshot,
-  AgentDescriptor,
-  TranscriptItem,
-  TranscriptChangeEvent,
-  TranscriptStore,
-} from '@moonshot-ai/transcript';
-import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
+import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
 import { AgentTranscriptProjector, type ProjectorInteraction } from './coreEventMap';
 
@@ -82,12 +72,9 @@ export function bindSessionTranscript(
    * state-style/idempotent, so replaying a locally-unchanged upsert is safe.
    */
   onOps?: (event: TranscriptChangeEvent) => void,
-  onUndo?: (agentId: string) => void,
-  loadPostUndoSnapshot?: (agentId: string) => Promise<AgentTranscriptSnapshot | undefined>,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
   const interactions = session.accessor.get(ISessionInteractionService);
-  const todos = session.accessor.get(ISessionTodoService);
   const disposables: IDisposable[] = [];
   /** Per-agent subscriptions (bus listeners capturing the agent's projector) — disposed with the agent. */
   const agentDisposables = new Map<string, IDisposable[]>();
@@ -107,8 +94,6 @@ export function bindSessionTranscript(
   const earlyResolves = new Map<string, { agentId: string; response: unknown }>();
   /** Agents whose pendings may announce live (their backfill+seed has run). */
   const seededAgents = new Set<string>();
-  /** Projection outcomes waiting for their matching `context.undone` event. */
-  const undoProjections = new Map<string, boolean[]>();
   let seededAll = false;
   const isSeeded = (agentId: string): boolean => seededAll || seededAgents.has(agentId);
 
@@ -180,70 +165,9 @@ export function bindSessionTranscript(
     // Agent-scoped, so this sees only this agent's events. The subscription is
     // tracked per agent and disposed with it — the listener captures the
     // projector, so a dead agent must not keep projecting into the store.
-    const list = agentDisposables.get(handle.id) ?? [];
-    if (loadPostUndoSnapshot !== undefined) {
-      const reconciliation = handle.accessor.get(IAgentConversationUndoReconciliationRegistry);
-      list.push(
-        reconciliation.register({
-          id: 'transcript.projection',
-          phase: 'projection',
-          reconcileAfterUndo: async () => {
-            onUndo?.(handle.id);
-            let projected = false;
-            try {
-              const rebuilt = await loadPostUndoSnapshot(handle.id);
-              if (rebuilt !== undefined) {
-                const transcript = store.ensureAgent(handle.id);
-                applyOps(handle.id, [
-                  {
-                    op: 'reset',
-                    agentId: handle.id,
-                    snapshot: conversationResetSnapshot(rebuilt, transcript.snapshot()),
-                  },
-                ]);
-                projected = true;
-              }
-            } catch (error) {
-              logger?.warn(
-                {
-                  sessionId: store.sessionId,
-                  agentId: handle.id,
-                  err: error instanceof Error ? error.message : error,
-                },
-                'transcript: post-undo projection failed, falling back to live context',
-              );
-            } finally {
-              const outcomes = undoProjections.get(handle.id) ?? [];
-              outcomes.push(projected);
-              undoProjections.set(handle.id, outcomes);
-            }
-          },
-        }),
-      );
-    }
     const bus = handle.accessor.get(IEventBus);
-    const busD = bus.subscribe((event) => {
-      if (event.type === 'context.undone') {
-        const outcomes = undoProjections.get(handle.id);
-        const projected = outcomes?.shift();
-        if (outcomes?.length === 0) undoProjections.delete(handle.id);
-        if (projected === true) return;
-        if (projected === undefined) onUndo?.(handle.id);
-        const transcript = store.ensureAgent(handle.id);
-        const rebuilt = groupMessagesIntoSnapshot(
-          handle.accessor.get(IAgentContextMemoryService).get(),
-        );
-        applyOps(handle.id, [
-          {
-            op: 'reset',
-            agentId: handle.id,
-            snapshot: conversationResetSnapshot(rebuilt, transcript.snapshot()),
-          },
-        ]);
-        return;
-      }
-      applyOps(handle.id, projector.map(event));
-    });
+    const busD = bus.subscribe((event) => applyOps(handle.id, projector.map(event)));
+    const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);
   };
@@ -311,22 +235,9 @@ export function bindSessionTranscript(
       agentDisposables.delete(agentId);
       subscribedAgents.delete(agentId);
       projectors.delete(agentId);
-      undoProjections.delete(agentId);
       store.markDisposed(agentId, new Date().toISOString());
     }),
   );
-
-  const projectTodos = (items: ReturnType<typeof todos.getTodos>): void => {
-    applyOps(MAIN_AGENT_ID, [
-      {
-        op: 'todo.upsert',
-        todo: { todoId: 'todo', items, updatedAt: new Date().toISOString() },
-      },
-    ]);
-  };
-  disposables.push(todos.onDidChange(projectTodos));
-  const initialTodos = todos.getTodos();
-  if (initialTodos.length > 0) projectTodos(initialTodos);
 
   // Interactions already pending at bind time are REGISTERED without
   // announcing (ownership must exist immediately so a resolve arriving before
@@ -419,60 +330,8 @@ export function bindSessionTranscript(
       knownInteractions.clear();
       unseeded.clear();
       earlyResolves.clear();
-      undoProjections.clear();
     },
   };
-}
-
-function conversationResetSnapshot(
-  rebuilt: AgentTranscriptSnapshot,
-  current: AgentTranscriptSnapshot,
-): AgentTranscriptSnapshot {
-  const survivingToolCallIds = new Set<string>();
-  for (const item of rebuilt.items) {
-    if (item.kind !== 'turn') continue;
-    for (const step of item.steps) {
-      for (const frame of step.frames) {
-        if (frame.kind === 'tool') survivingToolCallIds.add(frame.toolCallId);
-      }
-    }
-  }
-  const attachments = new Map(
-    rebuilt.attachments.map((attachment) => [attachment.attachmentId, attachment]),
-  );
-  for (const attachment of current.attachments) {
-    attachments.set(attachment.attachmentId, attachment);
-  }
-  return {
-    ...rebuilt,
-    items: preserveTaskRefs(rebuilt.items, current.items),
-    tasks: current.tasks,
-    interactions: current.interactions.filter(
-      (interaction) =>
-        interaction.toolCallId !== undefined &&
-        survivingToolCallIds.has(interaction.toolCallId),
-    ),
-    attachments: [...attachments.values()],
-    todos: current.todos,
-    meta: current.meta,
-  };
-}
-
-function preserveTaskRefs(
-  rebuilt: readonly TranscriptItem[],
-  current: readonly TranscriptItem[],
-): readonly TranscriptItem[] {
-  const ids = new Set(rebuilt.map(transcriptItemId));
-  const taskRefs = current.filter(
-    (item) => item.kind === 'taskref' && !ids.has(item.refId),
-  );
-  return taskRefs.length === 0 ? rebuilt : [...rebuilt, ...taskRefs];
-}
-
-function transcriptItemId(item: TranscriptItem): string {
-  if (item.kind === 'turn') return item.turnId;
-  if (item.kind === 'marker') return item.markerId;
-  return item.refId;
 }
 
 export function descriptorFromMeta(agentId: string, meta: AgentMeta | undefined): AgentDescriptor {

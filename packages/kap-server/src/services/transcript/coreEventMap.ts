@@ -43,9 +43,8 @@
  *     terminal events synthesize a minimal entity when submitted was missed.
  *   - `hook.result` becomes a 'hook' marker with the raw payload.
  *   - `context.spliced` (undo/clear) is projected as a bare 'undo' marker with
- *     the raw payload — no `items.remove` reconstruction in v1. The session
- *     binding handles `context.undone` as a full conversation projection
- *     reset. Known limitation.
+ *     the raw payload — no `items.remove` reconstruction in v1. Known
+ *     limitation.
  *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
  *     enter a step.
  *   - `swarm.*` / plan-mode transition events do not exist on the v2 bus;
@@ -283,9 +282,9 @@ export class AgentTranscriptProjector {
           }),
         ];
       case 'context.spliced':
+        // Known limitation: undo/clear projects as a bare 'undo' marker (raw
+        // payload attached); no `items.remove` reconstruction in v1.
         return [this.markerOp('undo', restOf(event))];
-      case 'context.undone':
-        return [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':

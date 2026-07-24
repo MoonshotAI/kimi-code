@@ -11,7 +11,6 @@ import {
 import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
-  reduceContextTranscript,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -210,9 +209,6 @@ describe('Agent resume', () => {
     await ctx.untilTurnEnd();
 
     expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
-    const transcript = reduceContextTranscript(persistence.records);
-    expect(transcript.turnIds).toEqual([0, 2, 2]);
-    expect(transcript.stableTurnIds).toBe(true);
   });
 
   it('projects restored pending tool results before later user messages', async () => {

@@ -12,10 +12,7 @@ import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import {
-  IAgentConversationUndoReconciliationRegistry,
-  type AgentConversationUndoReconciliationPhase,
-} from '#/agent/contextMemory/conversationUndoReconciliation';
+import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
 import {
   computeUndoCut,
   formatUndoUnavailableMessage,
@@ -114,10 +111,8 @@ export class AgentConversationUndoService
       this.assertUndoAvailable(turns);
       this.context.undo(turns);
       await this.flushAfterCommit('context cut');
-      await this.reconcileParticipants('state');
+      await this.reconcileParticipants();
       await this.flushAfterCommit('state reconciliation');
-      await this.reconcileParticipants('projection');
-      await this.flushAfterCommit('projection reconciliation');
       await this.reconcileLastPromptSafely();
       this.telemetry.track2('conversation_undo', { count: turns });
       this.eventBus.publish({ type: 'context.undone', turns });
@@ -178,12 +173,8 @@ export class AgentConversationUndoService
     );
   }
 
-  private async reconcileParticipants(
-    phase: AgentConversationUndoReconciliationPhase,
-  ): Promise<void> {
-    const participants = this.participants
-      .list()
-      .filter((participant) => (participant.phase ?? 'state') === phase);
+  private async reconcileParticipants(): Promise<void> {
+    const participants = this.participants.list();
     const results = await Promise.allSettled(
       participants.map((participant) => participant.reconcileAfterUndo()),
     );
