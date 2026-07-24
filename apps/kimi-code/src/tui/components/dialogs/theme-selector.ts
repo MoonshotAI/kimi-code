@@ -4,9 +4,9 @@ import { listCustomThemesSync } from '#/tui/theme/custom-theme-loader';
 import type { ThemeName } from '#/tui/theme/index';
 
 const THEME_OPTIONS: readonly ChoiceOption[] = [
-  { value: 'auto', label: 'Auto (match terminal)' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
+  { value: 'auto', label: '🌗 Auto (match terminal)' },
+  { value: 'dark', label: '🌑 Dark' },
+  { value: 'light', label: '🌕 Light' },
 ];
 
 export interface ThemeSelectorOptions {
