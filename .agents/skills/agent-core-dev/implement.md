@@ -127,16 +127,20 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
 ## §5 Eager vs delayed instantiation
 
 ```ts
-// Eager: constructed when the scope is created
+// Eager (default): constructed when the scope is created — registration alone
+// (via module import) is enough, nobody has to `get()` it first
 registerScopedService(LifecycleScope.App, ILogService, LogService, InstantiationType.Eager, 'log');
 
-// Delayed: constructed on first get
+// Delayed: scope creation materializes only a Proxy; the real constructor
+// still defers to first property access
 registerScopedService(LifecycleScope.App, IScopeRegistry, ScopeRegistry, InstantiationType.Delayed, 'gateway');
 ```
 
+When a scope (App / Session / Agent) is created, the container instantiates **every** service registered for that tier: the dependency graph is statically known from the `@IX` constructor metadata, so construction automatically follows dependency order, and cycles still throw `CyclicDependencyError`. A failing constructor fails the whole scope creation.
+
 A `Delayed` service returns a **Proxy** that constructs the real instance on first property access. Listeners registered on its `onDid…` / `onWill…` events before construction are not lost — the container records them and replays the subscriptions once the instance exists.
 
-> Rule of thumb: `Eager` for dependency-free, frequently-used, or "early side effect" services (e.g. `ILogService`); default to `Delayed` otherwise.
+> Rule of thumb: keep the default `Eager` for everything; mark `Delayed` only when construction is genuinely expensive and you want it deferred (a legacy escape hatch — only a handful of services use it).
 
 ## §6 Using a service inside a plain function (`invokeFunction`)
 

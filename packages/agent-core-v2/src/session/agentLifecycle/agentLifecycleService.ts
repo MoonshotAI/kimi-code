@@ -37,34 +37,17 @@ import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
-import { IAgentLoopContinuationService } from '#/agent/loop/loopContinuation';
-import { IAgentStepRetryService } from '#/agent/stepRetry/stepRetry';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { IAgentPlanService } from '#/agent/plan/plan';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry/builtinToolsRegistrar';
-import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
-import { IImageConfigBridge } from '#/agent/media/imageConfigBridge';
-import { IAgentMcpService } from '#/agent/mcp/mcp';
-import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
-import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -205,7 +188,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         labels: opts.labels,
       });
       this.onDidCreateEmitter.fire(handle);
-      this.igniteEagerServices(handle);
       await mcpReady;
       await wire.restore();
       await this.bindBootstrap(handle, opts);
@@ -220,47 +202,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidDisposeEmitter.fire(agentId);
       throw error;
     }
-  }
-
-  // Force-instantiate the agent-scope observer/registrar services before the
-  // first turn: each exists only for its constructor side effects (registering
-  // built-in tools, subscribing hooks), so nothing injects them directly.
-  // `InstantiationType.Eager` does NOT auto-instantiate in this DI — it only
-  // skips the lazy proxy at resolve time — so they must be resolved here or
-  // their registrations (built-in tools, loop error handlers, MCP tools) would
-  // never happen.
-  private igniteEagerServices(handle: IAgentScopeHandle): void {
-    handle.accessor.get(IAgentBuiltinToolsRegistrar);
-    handle.accessor.get(IAgentMediaToolsRegistrar);
-    handle.accessor.get(IImageConfigBridge);
-    handle.accessor.get(IAgentToolDedupeService);
-    handle.accessor.get(IAgentExternalHooksService);
-    // The permission gate exists only to subscribe `onBeforeExecuteTool` from
-    // its constructor; the veto-event refactor removed the ordering-driven
-    // force-injections that used to pull it up, so it must be resolved here or
-    // tool execution would run without policy adjudication.
-    handle.accessor.get(IAgentPermissionGate);
-    handle.accessor.get(IAgentMcpService);
-    // Agent plugin service: registers main-agent-only plugin session-start
-    // guidance before the first turn (self-gates to a no-op for other agents).
-    handle.accessor.get(IAgentPluginService);
-    // Tool-select services: precompute tool selection and the announcements
-    // derived from it before the first turn.
-    handle.accessor.get(IAgentToolSelectService);
-    handle.accessor.get(IAgentToolSelectAnnouncementsService);
-    handle.accessor.get(IAgentStepRetryService);
-    handle.accessor.get(IAgentLoopContinuationService);
-    handle.accessor.get(IAgentContextMemoryService);
-    handle.accessor.get(IAgentContextInjectorService);
-    handle.accessor.get(IAgentGoalService);
-    handle.accessor.get(IAgentPlanService);
-    handle.accessor.get(IAgentTaskService);
-    handle.accessor.get(IAgentUserToolService);
-    handle.accessor.get(IAgentFullCompactionService);
-    // The activity view publishes `agent.activity.updated` from its constructor
-    // subscriptions; without an explicit resolve nothing injects it and the
-    // wire would never see the projection.
-    handle.accessor.get(IAgentActivityView);
   }
 
   private async bindBootstrap(

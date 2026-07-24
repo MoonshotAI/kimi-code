@@ -36,7 +36,8 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
+import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
+import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -1905,12 +1906,19 @@ describe('FullCompaction', () => {
 
   it('does not trigger auto compaction from a deferred loaded MCP schema', async () => {
     vi.stubEnv(MASTER_ENV, '1');
-    const ctx = testAgent({
-      initialConfig: {
-        providers: {},
-        loopControl: { reservedContextSize: 0 },
+    const ctx = testAgent(
+      // Scope creation eagerly constructs every registered agent-scope service,
+      // so the tool-select announcements service now runs in this harness. The
+      // loadable-tools reminder it would inject for the MCP tool registered
+      // below is unrelated to this test's assertions, so stub it out.
+      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
+      {
+        initialConfig: {
+          providers: {},
+          loopControl: { reservedContextSize: 0 },
+        },
       },
-    });
+    );
     const parameters = {
       type: 'object',
       properties: {

@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import {
   IBootstrapService,
   bootstrap,
@@ -11,16 +12,16 @@ import {
   resolveBootstrapOptions,
 } from '#/app/bootstrap/bootstrap';
 import { BootstrapService } from '#/app/bootstrap/bootstrapService';
-import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
+import { stubLog } from '../../_base/log/stubs';
+
 describe('BootstrapService (scoped)', () => {
   beforeEach(() => {
-    // No `_clearScopedRegistryForTests()` here: the registry is process-wide,
-    // and wiping it would break other suites sharing this worker.
-    // Re-registering is enough — later registrations win in the scope
-    // collection.
+    // Scope creation eagerly instantiates every registered service of the
+    // tier, so keep the registry minimal: only what this file needs.
+    _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,
       IBootstrapService,
@@ -58,14 +59,11 @@ describe('resolveBootstrapOptions', () => {
 
 describe('bootstrap() storage seeding', () => {
   it('seeds IFileSystemStorageService as a FileStorageService instance', () => {
-    // `bootstrap()` eagerly instantiates the kosong persistence bridge; stub
-    // it out so this test stays focused on the storage seed instead of
-    // pulling the whole config/kosong graph into the module imports.
+    // Scope creation eagerly instantiates everything in the collection,
+    // including the seeded `ISkillDiscovery` (FileSkillDiscovery), whose
+    // constructor needs `ILogService` — seed a stub for it.
     const { app } = bootstrap({ homeDir: '/tmp/kimi-home' }, [
-      [
-        IKosongConfigService as ServiceIdentifier<unknown>,
-        { _serviceBrand: undefined, ready: Promise.resolve() },
-      ],
+      [ILogService as ServiceIdentifier<unknown>, stubLog()],
     ]);
     try {
       const storage = app.accessor.get(IFileSystemStorageService);

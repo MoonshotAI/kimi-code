@@ -182,4 +182,54 @@ describe('Scope tree', () => {
     expect(() => session.createChild(LifecycleScope.Agent, 'a1')).toThrow(/disposed/);
     app.dispose();
   });
+
+  it('constructs every registered service at scope creation, in dependency order, without any get()', () => {
+    const events: string[] = [];
+    interface ITagged {
+      tag: string;
+    }
+    const IDep = createDecorator<ITagged>('tree-eager-dep');
+    const ITop = createDecorator<ITagged>('tree-eager-top');
+    _clearScopedRegistryForTests();
+    class Dep implements ITagged {
+      tag = 'dep';
+      constructor() {
+        events.push('dep');
+      }
+    }
+    class Top implements ITagged {
+      tag = 'top';
+      constructor(@IDep public readonly dep: ITagged) {
+        events.push('top');
+      }
+    }
+    // Register the dependent BEFORE its dependency: construction order must
+    // come from the static dependency graph, not from registration order.
+    registerScopedService(LifecycleScope.Session, ITop, Top, InstantiationType.Eager);
+    registerScopedService(LifecycleScope.Session, IDep, Dep, InstantiationType.Eager);
+
+    const app = createAppScope();
+    app.createChild(LifecycleScope.Session, 's1');
+    expect(events).toEqual(['dep', 'top']);
+    app.dispose();
+  });
+
+  it('fails scope creation when a registered service constructor throws', () => {
+    interface IBoom {
+      tag: 'boom';
+    }
+    const IBoom = createDecorator<IBoom>('tree-eager-boom');
+    _clearScopedRegistryForTests();
+    class Boom implements IBoom {
+      tag = 'boom' as const;
+      constructor() {
+        throw new Error('boom');
+      }
+    }
+    registerScopedService(LifecycleScope.Session, IBoom, Boom, InstantiationType.Eager);
+
+    const app = createAppScope();
+    expect(() => app.createChild(LifecycleScope.Session, 's1')).toThrow(/boom/);
+    app.dispose();
+  });
 });

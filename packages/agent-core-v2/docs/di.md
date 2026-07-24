@@ -88,7 +88,7 @@ export * from './greetService';   // import 这一行即触发上面的 register
 export * from './greet/index';
 ```
 
-于是「import 这个包」=「加载全部注册」。**没有中心装配文件**：绑定散落在各自域的实现文件里，靠 import 副作用收集。
+于是「import 这个包」=「加载全部注册」。**没有中心装配文件**：绑定散落在各自域的实现文件里，靠 import 副作用收集。而 Scope 创建时会把注册在该层的服务全部实例化（见场景 5），所以「import 即注册」就等于「注册即构造」——不需要在任何地方先 `get()` 一次来触发。
 
 至此，任何人都能 `accessor.get(IGreeter)` 拿到这个全局唯一的服务。
 
@@ -216,12 +216,15 @@ export class FlagService extends Disposable implements IFlagService {
 这一步引入：**`InstantiationType.Eager` vs `Delayed`**。
 
 ```ts
-// Eager（默认）：第一次被解析（作为依赖或被 get）时同步构造，返回真实实例
+// Eager（默认）：所在 Scope 创建时同步构造——import 触发注册，注册即被实例化，
+// 不需要任何人事先 get
 registerScopedService(LifecycleScope.App, ILogService, LogService, InstantiationType.Eager, 'log');
 
-// Delayed：第一次被解析时先返回一个 Proxy，真实构造推迟到空闲时
+// Delayed：Scope 创建时只物化一个 Proxy，真实构造推迟到空闲时
 registerScopedService(LifecycleScope.App, IScopeRegistry, ScopeRegistry, InstantiationType.Delayed, 'gateway');
 ```
+
+每个 Scope（App / Session / Agent）创建时，容器会把注册在这一层的服务**全部**实例化：依赖图是静态已知的（`@IX` 记录在构造函数上），所以构造顺序自动按依赖关系拓扑展开，循环依赖照旧抛 `CyclicDependencyError`。任何一个服务构造失败，整个 Scope 创建失败。
 
 Delayed 服务返回的是一个 **Proxy**：真实构造推迟到空闲回调，或在首次访问其属性 / 调用其方法时立即发生。即便还没构造好，别人提前订阅它的 `onDid…` / `onWill…` 事件也不会丢——容器会先记下监听器，实例真正出来后再回放订阅。
 
@@ -308,7 +311,7 @@ export class ScopeRegistry implements IScopeRegistry {
 - `instantiation.createChild(collection)` 造一个子容器，它的父指针指向当前容器——于是子容器能向上解析到 App 的服务（场景 3 的可见性规则）。
 - 给外部暴露时，用 `invokeFunction` 把子容器包成 `ServicesAccessor`（场景 6）。
 
-> 更高层通常直接用 [`Scope.createChild(kind, id)`](../src/_base/di/scope.ts)（它帮你做了「筛描述符 + 建子容器」）；只有需要手动控制 `ServiceCollection` 时才像上面这样写。
+> 更高层通常直接用 [`Scope.createChild(kind, id)`](../src/_base/di/scope.ts)（它帮你做了「筛描述符 + 建子容器 + eager 实例化整层服务」）；只有需要手动控制 `ServiceCollection` 时才像上面这样写——注意手动 `createChild` 不会自动实例化，这一层的 `Eager` 服务会退回到首次 `get` 才构造。
 
 ---
 

@@ -4,8 +4,8 @@
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
  * to neutralize stale guidance. Main-agent-only (v1 parity): the service
- * self-gates on `agentId === 'main'`, and the agent bootstrap force-instantiates
- * it (`igniteEagerServices`) so other agents construct it as a no-op. Resolves
+ * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
+ * every agent, so other agents construct it as a no-op. Resolves
  * session prompt context through `sessionContext` and reports missing skills
  * through `log`. Bound at Agent scope.
  */
@@ -49,9 +49,9 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
   ) {
     super();
     // Plugin session-start guidance is main-agent-only (v1 parity:
-    // `pluginSessionStarts: type === 'main' ? … : undefined`). The bootstrap
-    // force-instantiates this Delayed service for every agent
-    // (`igniteEagerServices`); non-main agents no-op.
+    // `pluginSessionStarts: type === 'main' ? … : undefined`). Agent scope
+    // creation instantiates this service for every agent; non-main agents
+    // no-op.
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this._register(
       injector.register(

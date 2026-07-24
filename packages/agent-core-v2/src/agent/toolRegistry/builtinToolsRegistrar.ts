@@ -17,8 +17,8 @@
  * has finished its own constructor and downstream `@IAgentToolRegistryService`
  * resolutions hit the cached instance instead of re-entering construction.
  *
- * `AgentLifecycleService.create` force-instantiates this service on Agent scope
- * creation so builtin tools land in the registry before the first turn.
+ * Agent scope creation eagerly instantiates this service, so builtin tools
+ * land in the registry before the first turn.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

@@ -17,9 +17,8 @@
  * converts `video_url` takes the inline fallback when no upload hook
  * exists.
  *
- * `AgentLifecycleService.create` force-instantiates this service right after
- * the builtin-tools registrar, before any `opts.binding` bind runs, so the
- * first `agent.status.updated` is always observed.
+ * Agent scope creation instantiates this service before any `opts.binding`
+ * bind runs, so the first `agent.status.updated` is always observed.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
