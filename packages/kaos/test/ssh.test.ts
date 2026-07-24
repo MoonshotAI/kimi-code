@@ -519,13 +519,99 @@ describe('SSHKaos SFTP error mapping', () => {
     };
   }
 
-  function makeFakeKaos(sftp: unknown): SSHKaos {
+  function makeFakeKaos(
+    sftp: unknown,
+    remoteMove?: (source: string, target: string) => number,
+  ): SSHKaos {
     const instance = Object.create(SSHKaos.prototype) as SSHKaos;
     const internal = instance as unknown as { _sftp: unknown; _cwd: string; _home: string };
     internal._sftp = sftp;
     internal._cwd = '/';
     internal._home = '/';
+    if (remoteMove !== undefined) {
+      instance.exec = async (...args: string[]) =>
+        ({
+          wait: async () => remoteMove(args[2]!, args[3]!),
+          dispose: () => {},
+        }) as Awaited<ReturnType<SSHKaos['exec']>>;
+    }
     return instance;
+  }
+
+  function makeAtomicSftp(
+    entries: ReadonlyArray<readonly [string, string]>,
+    replacementError?: Error,
+  ) {
+    const files = new Map(entries.map(([path, content]) => [path, Buffer.from(content)]));
+    const modes = new Map(entries.map(([path]) => [path, 0o600]));
+    const moveNow = (source: string, target: string): void => {
+      const content = files.get(source);
+      const mode = modes.get(source);
+      if (content !== undefined) files.set(target, content);
+      if (mode !== undefined) modes.set(target, mode);
+      files.delete(source);
+      modes.delete(source);
+    };
+    const move = (
+      source: string,
+      target: string,
+      cb: (err: Error | null) => void,
+    ): void => {
+      moveNow(source, target);
+      cb(null);
+    };
+    return {
+      moveNow,
+      modes,
+      sftp: {
+        writeFile(
+          path: string,
+          data: Buffer,
+          optionsOrCallback: { mode?: number } | ((err: Error | null) => void),
+          callback?: (err: Error | null) => void,
+        ): void {
+          const options = typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+          const done = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+          files.set(path, Buffer.from(data));
+          modes.set(path, (options?.mode ?? modes.get(path) ?? 0o666) & 0o700);
+          done?.(null);
+        },
+        chmod(path: string, mode: number, cb: (err: Error | null) => void): void {
+          modes.set(path, mode);
+          cb(null);
+        },
+        exists(path: string, cb: (exists: boolean) => void): void {
+          cb(files.has(path));
+        },
+        stat(path: string, cb: (err: Error | null, stats?: { mode: number }) => void): void {
+          cb(null, { mode: modes.get(path) ?? 0o600 });
+        },
+        rename: move,
+        ext_openssh_rename(
+          source: string,
+          target: string,
+          cb: (err: Error | null) => void,
+        ): void {
+          if (replacementError !== undefined) {
+            if (isUnsupportedExtensionError(replacementError)) throw replacementError;
+            cb(replacementError);
+            return;
+          }
+          move(source, target, cb);
+        },
+        unlink(path: string, cb: (err: Error | null) => void): void {
+          files.delete(path);
+          cb(null);
+        },
+        readFile(path: string, cb: (err: Error | null, data?: Buffer) => void): void {
+          cb(null, files.get(path));
+        },
+      },
+    };
+  }
+
+  function isUnsupportedExtensionError(error: Error): boolean {
+    return error.message === 'Server does not support this extended request';
   }
 
   // ── stat(): the one method that already wraps errors. ────────────────
@@ -644,6 +730,66 @@ describe('SSHKaos SFTP error mapping', () => {
     await expect(kaos.writeText('/forbidden', 'data', { mode: 'a' })).rejects.toBeInstanceOf(
       KaosPermissionError,
     );
+  });
+
+  it('writeTextAtomic preserves the existing file when replacement fails', async () => {
+    const { sftp } = makeAtomicSftp([['/state.json', 'before']], makeSftpError(4));
+    const kaos = makeFakeKaos(sftp);
+
+    await expect(kaos.writeTextAtomic('/state.json', 'after')).rejects.toBeInstanceOf(KaosSSHError);
+
+    await expect(kaos.readText('/state.json')).resolves.toBe('before');
+  });
+
+  it('writeTextAtomic replaces an existing file through POSIX rename', async () => {
+    const { sftp } = makeAtomicSftp([['/state.json', 'before']]);
+    const kaos = makeFakeKaos(sftp);
+
+    await kaos.writeTextAtomic('/state.json', 'after');
+
+    await expect(kaos.readText('/state.json')).resolves.toBe('after');
+  });
+
+  it('writeTextAtomic uses remote mv when POSIX rename is unsupported', async () => {
+    const unsupported = new Error('Server does not support this extended request');
+    const { moveNow, sftp } = makeAtomicSftp([['/state.json', 'before']], unsupported);
+    const kaos = makeFakeKaos(sftp, (source, target) => {
+      moveNow(source, target);
+      return 0;
+    });
+
+    await kaos.writeTextAtomic('/state.json', 'after');
+
+    await expect(kaos.readText('/state.json')).resolves.toBe('after');
+  });
+
+  it('writeTextAtomic preserves the target when remote mv fails', async () => {
+    const unsupported = new Error('Server does not support this extended request');
+    const { sftp } = makeAtomicSftp([['/state.json', 'before']], unsupported);
+    const kaos = makeFakeKaos(sftp, () => 1);
+
+    await expect(kaos.writeTextAtomic('/state.json', 'after')).rejects.toBeInstanceOf(KaosSSHError);
+
+    await expect(kaos.readText('/state.json')).resolves.toBe('before');
+  });
+
+  it('writeTextAtomic preserves existing remote file permissions', async () => {
+    const { modes, sftp } = makeAtomicSftp([['/state.json', 'before']]);
+    modes.set('/state.json', 0o640);
+    const kaos = makeFakeKaos(sftp);
+
+    await kaos.writeTextAtomic('/state.json', 'after');
+
+    expect(modes.get('/state.json')).toBe(0o640);
+  });
+
+  it('writeTextAtomic creates a new file through standard rename', async () => {
+    const { sftp } = makeAtomicSftp([]);
+    const kaos = makeFakeKaos(sftp);
+
+    await kaos.writeTextAtomic('/state.json', 'created');
+
+    await expect(kaos.readText('/state.json')).resolves.toBe('created');
   });
 
   it('writeBytes() maps PERMISSION_DENIED → KaosPermissionError', async () => {

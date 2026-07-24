@@ -816,7 +816,11 @@ export class Session {
     const text = JSON.stringify(this.metadata, null, 2);
     const write = async () => {
       await this.persistenceKaos.mkdir(this.options.homedir, { parents: true, existOk: true });
-      await this.persistenceKaos.writeText(this.metadataPath, text);
+      if (this.persistenceKaos.writeTextAtomic === undefined) {
+        await this.persistenceKaos.writeText(this.metadataPath, text);
+        return;
+      }
+      await this.persistenceKaos.writeTextAtomic(this.metadataPath, text);
     };
     this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
     return this.writeMetadataPromise;
@@ -824,7 +828,34 @@ export class Session {
 
   async readMetadata() {
     const text = await this.persistenceKaos.readText(this.metadataPath);
-    this.metadata = JSON.parse(text);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.SESSION_STATE_INVALID,
+        'Session state.json contains invalid JSON',
+        { cause: error },
+      );
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !('agents' in parsed) ||
+      typeof parsed.agents !== 'object' ||
+      parsed.agents === null ||
+      Array.isArray(parsed.agents)
+    ) {
+      throw new KimiError(
+        ErrorCodes.SESSION_STATE_INVALID,
+        'Session state.json does not contain valid agent metadata',
+      );
+    }
+    // SAFETY: legacy and v2 session files have different top-level metadata
+    // fields, but both guarantee an object-valued `agents` map. Individual
+    // agent fields are refined by the existing resume paths that consume them.
+    this.metadata = parsed as SessionMeta;
     return this.metadata;
   }
 

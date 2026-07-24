@@ -17,7 +17,7 @@
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { open, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 /**
@@ -153,26 +153,27 @@ export async function atomicWrite(
 ): Promise<void> {
   const hex = randomBytes(4).toString('hex');
   const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
+  let mode = 0o600;
+  try {
+    mode = (await stat(filePath)).mode & 0o777;
+  } catch (error) {
+    const fileError = error as NodeJS.ErrnoException;
+    if (fileError.code !== 'ENOENT') throw error;
+  }
   let renamed = false;
   try {
-    const fh = await open(tmpPath, 'w');
+    const fh = await open(tmpPath, 'wx', 0o600);
     try {
       await fh.writeFile(content);
+      await fh.chmod(mode);
       await (_syncOverride ?? syncFd)(fh.fd);
     } finally {
       await fh.close();
     }
-    // Windows `fs.rename` maps to MoveFileEx and fails with EPERM if
-    // the target is held by another handle. Pre-unlinking
-    // before the rename turns this into the POSIX-style "replace" case.
-    if (process.platform === 'win32') {
-      try {
-        await unlink(filePath);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT') throw error;
-      }
-    }
+    // Do not unlink the destination first. If replacement is unavailable
+    // (for example because Windows has an open handle), failing the rename
+    // preserves the previous complete file instead of creating a missing-file
+    // window.
     await rename(tmpPath, filePath);
     renamed = true;
   } finally {

@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs';
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as nodePath from 'node:path';
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
@@ -24,6 +24,7 @@ import {
   type AgentRecord,
   type AgentRecordOf,
 } from '../../agent/records';
+import { atomicWrite } from '#/utils/fs';
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),
@@ -215,7 +216,7 @@ export class SessionStore {
       title: normalized,
       isCustomTitle: true,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWrite(statePath, `${JSON.stringify(next, null, 2)}\n`);
   }
 
   async archive(id: string): Promise<SessionSummary> {
@@ -238,7 +239,7 @@ export class SessionStore {
       archived: true,
       updatedAt: now,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWrite(statePath, `${JSON.stringify(next, null, 2)}\n`);
     return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
   }
 
@@ -510,7 +511,7 @@ export class SessionStore {
       agents: rewriteAgentHomedirs(parsed['agents'], sourceDir, targetDir),
       custom: forkCustomMetadata(parsed['custom'], input.metadata),
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWrite(statePath, `${JSON.stringify(next, null, 2)}\n`);
     return next;
   }
 
@@ -625,7 +626,7 @@ async function truncateForkedSessionAtTurn(
     lastPrompt: mainSlice.lastPrompt,
     agents: retainedAgents,
   };
-  await writeFile(join(sessionDir, 'state.json'), `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+  await atomicWrite(join(sessionDir, 'state.json'), `${JSON.stringify(next, null, 2)}\n`);
   return next;
 }
 

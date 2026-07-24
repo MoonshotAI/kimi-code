@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   appendFile,
   lstat,
@@ -7,11 +8,13 @@ import {
   open,
   readdir,
   readFile,
+  rename,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize } from 'pathe';
+import { dirname, isAbsolute, join, normalize } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
 
 import { detectEnvironmentFromNode, type Environment } from './environment';
@@ -667,6 +670,51 @@ export class LocalKaos implements Kaos {
       await writeFile(resolved, data, encoding);
     }
     return data.length;
+  }
+
+  /** Atomically replace a local text file using a same-directory temporary file. */
+  async writeTextAtomic(
+    path: string,
+    data: string,
+    options?: { encoding?: BufferEncoding },
+  ): Promise<number> {
+    const resolved = this._resolvePath(path);
+    const encoding = options?.encoding ?? 'utf-8';
+    const suffix = randomBytes(4).toString('hex');
+    const tempPath = `${resolved}.tmp.${process.pid}.${suffix}`;
+    let mode = 0o600;
+    try {
+      mode = (await stat(resolved)).mode & 0o777;
+    } catch (error) {
+      const fileError = error as NodeJS.ErrnoException;
+      if (fileError.code !== 'ENOENT') throw error;
+    }
+    let replaced = false;
+    try {
+      const handle = await open(tempPath, 'wx', 0o600);
+      try {
+        await handle.writeFile(data, encoding);
+        await handle.chmod(mode);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(tempPath, resolved);
+      replaced = true;
+      if (process.platform !== 'win32') {
+        const directory = await open(dirname(resolved), 'r');
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
+      }
+      return data.length;
+    } finally {
+      if (!replaced) {
+        await unlink(tempPath).catch(() => {});
+      }
+    }
   }
 
   async mkdir(path: string, options?: { parents?: boolean; existOk?: boolean }): Promise<void> {
