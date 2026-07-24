@@ -37,7 +37,11 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
-import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
+import type {
+  ExecutableTool,
+  ToolDisclosure,
+  ToolExecution,
+} from '#/tool/toolContract';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -59,6 +63,8 @@ const MCP_ALPHA = 'mcp__srv__alpha';
 const MCP_BETA = 'mcp__srv__beta';
 const MCP_GAMMA = 'mcp__srv__gamma';
 const MCP_GONE = 'mcp__srv__gone';
+const USER_DEFERRED = 'dashboard_create';
+const USER_INLINE = 'echo_inline';
 const REQUIRED_PAYLOAD_PARAMETERS = {
   type: 'object',
   required: ['payload'],
@@ -378,6 +384,16 @@ function registerBuiltin(h: Harness, tool: EchoTool): void {
   disposables.add(h.registry.register(tool, { source: 'builtin' }));
 }
 
+function registerUser(
+  h: Harness,
+  tool: EchoTool,
+  disclosure?: ToolDisclosure,
+): IDisposable {
+  const registration = h.registry.register(tool, { source: 'user', disclosure });
+  disposables.add(registration);
+  return registration;
+}
+
 async function announce(h: Harness, step = 1): Promise<string | undefined> {
   const before = h.contextMemory.appended.length;
   await h.loop.hooks.onWillBeginStep.run({
@@ -466,6 +482,16 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(shaped.every((entry) => entry.deferred === undefined)).toBe(true);
   });
 
+  it('keeps deferred user tools inline while the disclosure gate is closed', () => {
+    const h = createHarness();
+    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+
+    const shaped = h.sut.shapeTools(h.registry.list());
+
+    expect(shaped.map((entry) => entry.name)).toContain(USER_DEFERRED);
+    expect(shaped.find((entry) => entry.name === USER_DEFERRED)?.deferred).toBeUndefined();
+  });
+
   it('shapeTools applies profile filtering and removes select_tools while the gate is closed', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
@@ -535,6 +561,22 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
   });
 
+  it('defers only opted-in user tools and restores them after selection', () => {
+    const h = createHarness();
+    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+    registerUser(h, new EchoTool(USER_INLINE));
+
+    const beforeLoad = h.sut.shapeTools(h.registry.list());
+    expect(beforeLoad.map((entry) => entry.name)).toContain(USER_INLINE);
+    expect(beforeLoad.map((entry) => entry.name)).not.toContain(USER_DEFERRED);
+
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    const afterLoad = h.sut.shapeTools(h.registry.list());
+    expect(afterLoad.map((entry) => entry.name)).toContain(USER_DEFERRED);
+    expect(afterLoad.find((entry) => entry.name === USER_DEFERRED)?.deferred).toBe(true);
+    expect(afterLoad.find((entry) => entry.name === USER_INLINE)?.deferred).toBeUndefined();
+  });
+
   it('keeps select_tools visible when the profile omits it while hiding inactive tools', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
@@ -585,6 +627,44 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       MCP_BETA,
     ]);
   });
+
+  it('shapeHistory removes a deferred user schema after unregister', () => {
+    const h = createHarness();
+    const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    registration.dispose();
+
+    expect(h.sut.shapeHistory(h.contextMemory.get())).toEqual([]);
+    expect(h.sut.load([USER_DEFERRED])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      unknown: [USER_DEFERRED],
+    });
+    expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
+      USER_DEFERRED,
+    ]);
+  });
+
+  it('shapeHistory removes a deferred schema after re-registering the user tool inline', () => {
+    const h = createHarness();
+    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    registerUser(h, new EchoTool(USER_DEFERRED));
+
+    expect(h.sut.shapeHistory(h.contextMemory.get())).toEqual([]);
+    const inline = h.sut
+      .shapeTools(h.registry.list())
+      .find((entry) => entry.name === USER_DEFERRED);
+    expect(inline).toEqual(
+      expect.objectContaining({ name: USER_DEFERRED, disclosure: undefined }),
+    );
+    expect(inline?.deferred).toBeUndefined();
+    expect(h.sut.load([USER_DEFERRED])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      unknown: [USER_DEFERRED],
+    });
+  });
 });
 
 describe('AgentToolSelectService.load', () => {
@@ -608,6 +688,20 @@ describe('AgentToolSelectService.load', () => {
     expect(appended.role).toBe('system');
     expect(appended.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
     expect(appended.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
+  });
+
+  it('loads the schema of an opted-in user tool', () => {
+    const h = createHarness();
+    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+
+    expect(h.sut.load([USER_DEFERRED])).toEqual({
+      toLoad: [USER_DEFERRED],
+      alreadyAvailable: [],
+      unknown: [],
+    });
+    expect(h.contextMemory.appended[0]?.tools?.map((tool) => tool.name)).toEqual([
+      USER_DEFERRED,
+    ]);
   });
 
   it('sorts the injected schemas by name', () => {
@@ -801,6 +895,21 @@ describe('AgentToolSelectService executor interception', () => {
     expect(results[0]!.result.output).toBe('echo ok');
     expect(echo.calls).toBe(1);
   });
+
+  it('intercepts an unloaded deferred user tool and runs it after selection', async () => {
+    const h = createExecutorHarness();
+    const dashboard = new EchoTool(USER_DEFERRED);
+    registerUser(h, dashboard, 'deferred');
+
+    const beforeLoad = await execute(h, toolCall('call-1', USER_DEFERRED));
+    expect(beforeLoad[0]!.result.output).toContain('is available but not loaded');
+    expect(dashboard.calls).toBe(0);
+
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    const afterLoad = await execute(h, toolCall('call-2', USER_DEFERRED));
+    expect(afterLoad[0]!.result.output).toBe('echo ok');
+    expect(dashboard.calls).toBe(1);
+  });
 });
 
 describe('AgentToolSelectService missing tool wording', () => {
@@ -825,6 +934,20 @@ describe('AgentToolSelectService missing tool wording', () => {
     const h = createExecutorHarness();
     const results = await execute(h, toolCall('call-1', MCP_GONE));
     expect(results[0]!.result.output).toBe(`Tool "${MCP_GONE}" not found`);
+  });
+
+  it('reports a loaded user tool that is no longer registered', async () => {
+    const h = createExecutorHarness();
+    const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    registration.dispose();
+
+    const results = await execute(h, toolCall('call-1', USER_DEFERRED));
+
+    expect(results[0]!.result.output).toBe(
+      `Tool "${USER_DEFERRED}" was loaded but is no longer registered. ` +
+        'Do not retry it unless it becomes available again.',
+    );
   });
 });
 

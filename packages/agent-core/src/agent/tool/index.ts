@@ -6,6 +6,7 @@ import type { Agent } from '..';
 import {
   collectLoadedDynamicToolNames,
 } from '../context/dynamic-tools';
+import type { ContextMessage } from '../context/types';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -47,6 +48,7 @@ interface PendingMcpDiscovery {
 export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
+  private readonly deferredUserTools = new Set<string>();
   protected readonly mcpTools: Map<string, McpToolEntry> = new Map();
   private loopToolsOverride: readonly ExecutableTool[] | undefined;
   /** server name → list of qualified tool names registered for that server. */
@@ -244,6 +246,11 @@ export class ToolManager {
       },
     };
     this.userTools.set(name, tool);
+    if (input.disclosure === 'deferred') {
+      this.deferredUserTools.add(name);
+    } else {
+      this.deferredUserTools.delete(name);
+    }
     this.enabledTools.add(name);
   }
 
@@ -253,6 +260,8 @@ export class ToolManager {
       name,
     });
     this.userTools.delete(name);
+    this.deferredUserTools.delete(name);
+    this.pendingLoadedDynamicTools.delete(name);
     this.enabledTools.delete(name);
   }
 
@@ -263,6 +272,7 @@ export class ToolManager {
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
+        disclosure: parent.deferredUserTools.has(tool.name) ? 'deferred' : undefined,
       });
     }
   }
@@ -541,7 +551,7 @@ export class ToolManager {
   }
 
   /**
-   * Whether MCP tools are disclosed progressively: kept out of the top-level
+   * Whether tools are disclosed progressively: kept out of the top-level
    * `tools[]` and loaded on demand via select_tools. Reads the agent's single
    * three-gate decision point.
    */
@@ -551,19 +561,24 @@ export class ToolManager {
 
   /**
    * Names the model may select right now: registered MCP tools that pass the
-   * profile's `mcp__*` access patterns, sorted for byte-stable announcements.
+   * profile's `mcp__*` access patterns, plus active user tools that explicitly
+   * opt into deferred disclosure, sorted for byte-stable announcements.
    * In disclosure mode the patterns keep their permission-filter role but stop
    * feeding the top-level `tools[]`.
    */
   loadableDynamicToolNames(): string[] {
-    return [...this.mcpTools.keys()]
-      .filter((name) => this.isMcpToolEnabled(name))
-      .toSorted((a, b) => a.localeCompare(b));
+    const names = new Set(
+      [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name)),
+    );
+    for (const name of this.deferredUserTools) {
+      if (this.userTools.has(name) && this.enabledTools.has(name)) names.add(name);
+    }
+    return [...names].toSorted((a, b) => a.localeCompare(b));
   }
 
   /**
-   * The loaded-tools ledger: every name whose full definition has been
-   * delivered to the conversation via a `tools`-carrying message, plus the
+   * The active loaded-tools ledger: every still-loadable name whose full
+   * definition has been delivered via a `tools`-carrying message, plus the
    * defer-window pending set. History is the single source of truth, so the
    * ledger survives resume (records replay rebuilds the history), keeps its
    * state across undo (schema messages have `injection` origin and are not
@@ -571,9 +586,54 @@ export class ToolManager {
    * the folded history — the model re-selects what it still needs).
    */
   loadedDynamicToolNames(): ReadonlySet<string> {
+    const names = this.allLoadedDynamicToolNames();
+    for (const name of names) {
+      if (!this.isLoadedDynamicToolActive(name)) names.delete(name);
+    }
+    return names;
+  }
+
+  shapeDynamicToolHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
+    let shaped: ContextMessage[] | undefined;
+    for (let i = 0; i < messages.length; i += 1) {
+      const message = messages[i]!;
+      const tools = message.tools;
+      if (tools === undefined || tools.length === 0) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+
+      const kept = tools.filter((tool) => this.isLoadedDynamicToolActive(tool.name));
+      if (kept.length === tools.length) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+      shaped ??= messages.slice(0, i);
+      if (kept.length > 0) {
+        shaped.push({ ...message, tools: kept });
+        continue;
+      }
+
+      const { tools: _tools, ...rest } = message;
+      void _tools;
+      if (rest.content.length > 0 || rest.toolCalls.length > 0) shaped.push(rest);
+    }
+    return shaped ?? messages;
+  }
+
+  private allLoadedDynamicToolNames(): Set<string> {
     const names = collectLoadedDynamicToolNames(this.agent.context.history);
     for (const name of this.pendingLoadedDynamicTools) names.add(name);
     return names;
+  }
+
+  private isLoadedDynamicToolActive(name: string): boolean {
+    if (isMcpToolName(name)) return true;
+    return (
+      this.deferredUserTools.has(name) &&
+      this.userTools.has(name) &&
+      this.enabledTools.has(name)
+    );
   }
 
   /** Mark names loaded ahead of their schema message landing in history. */
@@ -603,16 +663,21 @@ export class ToolManager {
   }
 
   /**
-   * Plain schema snapshot of a registered MCP tool, read from the live
+   * Plain schema snapshot of a loadable dynamic tool, read from the live
    * registry (never from history) at injection time.
    */
-  getMcpToolSchema(name: string): Tool | undefined {
-    const entry = this.mcpTools.get(name);
-    if (entry === undefined) return undefined;
+  getDynamicToolSchema(name: string): Tool | undefined {
+    const userTool =
+      this.deferredUserTools.has(name) && this.enabledTools.has(name)
+        ? this.userTools.get(name)
+        : undefined;
+    const mcpTool = this.isMcpToolEnabled(name) ? this.mcpTools.get(name)?.tool : undefined;
+    const tool = userTool ?? mcpTool;
+    if (tool === undefined) return undefined;
     return {
-      name: entry.tool.name,
-      description: entry.tool.description,
-      parameters: entry.tool.parameters,
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
     };
   }
 
@@ -624,19 +689,24 @@ export class ToolManager {
    */
   missingToolMessage(name: string): string | undefined {
     if (!this.progressiveDisclosure) return undefined;
-    if (!isMcpToolName(name)) return undefined;
-    const registered = this.mcpTools.has(name) && this.isMcpToolEnabled(name);
-    const loaded = this.loadedDynamicToolNames().has(name);
+    const registered = this.loadableDynamicToolNames().includes(name);
+    const loaded = this.allLoadedDynamicToolNames().has(name);
     if (registered && !loaded) {
       return (
         `Tool "${name}" is available but not loaded. ` +
         `Call select_tools with ["${name}"] first, then call the tool.`
       );
     }
-    if (!registered && loaded) {
+    if (!registered && loaded && isMcpToolName(name)) {
       return (
         `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
         'It may become available again when the server reconnects; do not retry immediately.'
+      );
+    }
+    if (!registered && loaded) {
+      return (
+        `Tool "${name}" was loaded but is no longer registered or active. ` +
+        'Do not retry it unless it becomes available again.'
       );
     }
     return undefined;
@@ -874,17 +944,23 @@ export class ToolManager {
     );
     // Progressive disclosure splits "the model can see this tool" from "the
     // core can execute it": the top-level request view stays the immutable
-    // core set + select_tools, while loaded MCP tools join the executable
+    // core set + select_tools, while loaded dynamic tools join the executable
     // table as deferred extras — dispatchable, but stripped from the outbound
     // top-level tools[] by kosong generate(). With disclosure off this is the
     // inline behavior, byte for byte.
     const loadedSet = disclosure ? this.loadedDynamicToolNames() : undefined;
+    const enabledNames =
+      loadedSet === undefined
+        ? [...this.enabledTools]
+        : [...this.enabledTools].filter(
+            (name) => !this.deferredUserTools.has(name) || loadedSet.has(name),
+          );
     const mcpNames =
       loadedSet === undefined
         ? enabledMcpNames
         : enabledMcpNames.filter((name) => loadedSet.has(name));
     const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
-    return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
+    return uniq([...enabledNames, ...selectToolsName, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
       // select_tools is exposed exclusively through the disclosure gate — a
       // profile or setActiveTools listing the name explicitly must not
@@ -897,9 +973,11 @@ export class ToolManager {
           this.mcpTools.get(name)?.tool ??
           this.builtinTools.get(name);
         if (tool === undefined) return undefined;
-        // MCP entries are plain object literals, so the spread keeps the
+        const deferred =
+          disclosure && (this.mcpTools.has(name) || this.deferredUserTools.has(name));
+        // Dynamic entries are plain object literals, so the spread keeps the
         // execution closure intact while adding the wire-strip marker.
-        return disclosure && this.mcpTools.has(name) ? { ...tool, deferred: true as const } : tool;
+        return deferred ? { ...tool, deferred: true as const } : tool;
       })
       .filter((tool) => !!tool);
   }

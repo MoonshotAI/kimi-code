@@ -1,8 +1,8 @@
 /**
  * Scenario (v1 `tool-select.e2e.test.ts` headline parity): progressive tool
- * disclosure converges the provider-visible table, keeps it byte-stable
- * across loads, makes a loaded tool dispatchable the next step, and
- * self-heals the loaded-ledger across undo.
+ * disclosure converges the provider-visible table for MCP and opted-in user
+ * tools, keeps it byte-stable across loads, makes a loaded tool dispatchable
+ * the next step, and self-heals the loaded-ledger across undo.
  *
  * Responsibilities: assert v1 contract at the provider wire, not via service
  * internals: the manifest announcement reaches the model, `select_tools`
@@ -28,11 +28,13 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import '#/agent/toolSelect/tools/select-tools';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
+const DASHBOARD_TOOL = 'dashboard_create';
 
 const DISCLOSURE_CAPABILITIES = {
   image_in: false,
@@ -170,6 +172,54 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(1);
 
     expect(alpha.calls).toBe(1);
+  });
+
+  it('loads and dispatches a user tool registered through the domain service', async () => {
+    ctx.get(IAgentUserToolService).register({
+      name: DASHBOARD_TOOL,
+      description: 'Create a dashboard.',
+      parameters: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false,
+      },
+      disclosure: 'deferred',
+    });
+    ctx.mockNextResponse(selectToolsCall('call_select_1', [DASHBOARD_TOOL]));
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_dashboard_1',
+      name: DASHBOARD_TOOL,
+      arguments: JSON.stringify({ title: 'Operations' }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'create a dashboard' }] });
+    await ctx.untilToolCall({ output: 'dashboard-created' });
+    await ctx.untilTurnEnd();
+
+    const firstWire = ctx.llmCalls[0]!;
+    expect(toolNames(firstWire.tools)).not.toContain(DASHBOARD_TOOL);
+    expect(historyText(firstWire.history)).toContain(DASHBOARD_TOOL);
+
+    const secondWire = ctx.llmCalls[1]!;
+    const injected = secondWire.history.find((message) =>
+      message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
+    );
+    expect(injected?.tools?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    });
+    expect(secondWire.tools).toEqual(firstWire.tools);
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      `Loaded: ${DASHBOARD_TOOL}`,
+    );
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      'dashboard-created',
+    );
   });
 
   it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
