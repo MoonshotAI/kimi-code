@@ -40,7 +40,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isUnknownCapability, UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
+import { isUnknownCapability } from '#/kosong/contract/capability';
 import { APIConnectionError } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
 import type {
@@ -282,10 +282,6 @@ describe('resolveProviderBaseId', () => {
 });
 
 describe('resolveCapability', () => {
-  it('lets the definition win outright — kimi is UNKNOWN even though the base knows gpt models', () => {
-    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi')).toBe(UNKNOWN_CAPABILITY);
-  });
-
   it('falls back to trait capability hooks before the base catalog', () => {
     const fromTrait = registry.resolveCapability('openai', 'special-model', 'cap-vendor');
     expect(fromTrait.image_in).toBe(true);
@@ -298,16 +294,20 @@ describe('resolveCapability', () => {
     expect(isUnknownCapability(registry.resolveCapability('openai', 'mystery-model'))).toBe(true);
     expect(registry.resolveCapability('anthropic', 'claude-opus-4-1').thinking).toBe(true);
   });
+
+  it('kimi declares no vendor-level capability — the base catalog answers instead', () => {
+    // Kimi model ids never match the bases' builtin catalogs, so the detected
+    // layer still answers UNKNOWN for them; an id the base does know (gpt-4o)
+    // now resolves through the base catalog rather than being suppressed by a
+    // vendor-level UNKNOWN declaration.
+    expect(isUnknownCapability(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi'))).toBe(
+      true,
+    );
+    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
+  });
 });
 
 describe('explainCapability', () => {
-  it('reports the definition level when the pair declares a capability', () => {
-    const { capability, source } = registry.explainCapability('openai', 'gpt-4o', 'kimi');
-    expect(capability).toBe(UNKNOWN_CAPABILITY);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain("'kimi'");
-  });
-
   it('reports the trait level when a trait hook answers', () => {
     const { capability, source } = registry.explainCapability('openai', 'special-model', 'cap-vendor');
     expect(capability.image_in).toBe(true);
@@ -455,7 +455,6 @@ describe('kimi provider definitions', () => {
       });
       expect(definition?.hostHeaders).toBe('full');
       expect(definition?.modelSource).toBe('oauth-catalog');
-      expect(definition?.capability).toBe(UNKNOWN_CAPABILITY);
     }
   });
 

@@ -59,10 +59,12 @@
  *    (warning + pass-through).
  *
  * Vendor-level facts — the endpoint fallback chain, full host-header
- * forwarding, OAuth-catalog model discovery, and the UNKNOWN capability
- * declaration (Kimi model capabilities come from the catalog, not from
- * client-side tables) — are shared constants declared identically on both
- * registrations, so id-level queries read either one.
+ * forwarding, and OAuth-catalog model discovery — are shared constants
+ * declared identically on both registrations, so id-level queries read
+ * either one. Kimi declares no vendor-level capability: model capabilities
+ * come from the catalog, not from client-side tables (Kimi model ids never
+ * match the protocol bases' builtin catalogs, so the detected layer answers
+ * UNKNOWN on its own).
  *
  * Deliberately absent (do not reintroduce): a 64-char tool-call-id policy
  * (the base default is identical), an extra-body deep-merge morph, and a
@@ -70,7 +72,6 @@
  * base's `'openai'`).
  */
 
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type {
@@ -307,7 +308,6 @@ registerProviderDefinition({
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
-  capability: UNKNOWN_CAPABILITY,
 });
 
 registerProviderDefinition({
@@ -317,5 +317,4 @@ registerProviderDefinition({
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
-  capability: UNKNOWN_CAPABILITY,
 });
