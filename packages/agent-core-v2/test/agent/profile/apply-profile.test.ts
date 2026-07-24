@@ -5,9 +5,12 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 
 import { createTestAgent, execEnvServices, hostEnvironmentServices, type TestAgentContext } from '../../harness';
+
+const MOCK_MODEL = 'mock-model';
 
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
@@ -88,6 +91,48 @@ describe('AgentProfileService.applyProfile', () => {
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'new instructions'));
     expect(svc.getActiveToolNames()).toEqual(['Read']);
+  });
+
+  it('rebuilds baseline context messages on refresh after a binding snapshot clear', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+    const { profile: svc } = buildContext();
+    await svc.bind({
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      model: MOCK_MODEL,
+      cwd: workDir,
+    });
+
+    const before = svc.getBaselineContextMessages();
+    expect(before.length).toBeGreaterThan(0);
+    expect(
+      before
+        .flatMap((message) => message.content)
+        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('project instructions');
+    expect(svc.data().systemPrompt).not.toContain('project instructions');
+
+    svc.applyBindingSnapshot({
+      cwd: workDir,
+      profileName: DEFAULT_AGENT_PROFILE_NAME,
+      thinkingLevel: 'off',
+      systemPrompt: 'trusted only',
+      activeToolNames: ['Read'],
+    });
+    expect(svc.getBaselineContextMessages()).toEqual([]);
+
+    await svc.refreshSystemPrompt();
+
+    const after = svc.getBaselineContextMessages();
+    expect(after.length).toBeGreaterThan(0);
+    expect(
+      after
+        .flatMap((message) => message.content)
+        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('project instructions');
   });
 
   it('caches an agents-md warning when the content exceeds the 32 KB soft budget', async () => {

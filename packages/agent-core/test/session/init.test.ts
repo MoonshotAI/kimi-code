@@ -98,16 +98,22 @@ describe('Session.init', () => {
         contextTokens: expect.any(Number),
       }),
     );
-    expect(scripted.calls[0]?.history).toMatchObject([
-      {
-        role: 'user',
-        content: [
-          expect.objectContaining({
-            text: expect.stringContaining('Task requirements:'),
-          }),
-        ],
-      },
-    ]);
+    const history = scripted.calls[0]?.history ?? [];
+    const taskMessage = history.find(
+      (message) =>
+        message.role === 'user' &&
+        message.content.some(
+          (part) => part.type === 'text' && part.text.includes('Task requirements:'),
+        ),
+    );
+    expect(taskMessage).toMatchObject({
+      role: 'user',
+      content: [
+        expect.objectContaining({
+          text: expect.stringContaining('Task requirements:'),
+        }),
+      ],
+    });
 
     const contextText = mainAgent.context.history
       .flatMap((message) => message.content)
@@ -166,11 +172,19 @@ describe('Session.init', () => {
     }
   });
 
-  it('refreshes AGENTS.md from a resumed native session system prompt', async () => {
+  it('refreshes AGENTS.md from a resumed native session baseline context', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
     await mkdir(join(workDir, '.git'));
     await writeFile(join(workDir, 'AGENTS.md'), 'initial resume instructions', 'utf-8');
+
+    const baselineText = (agent: { getBaselineContextMessages: () => readonly { content: readonly { type: string; text?: string }[] }[] }) =>
+      agent
+        .getBaselineContextMessages()
+        .flatMap((message) => message.content)
+        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
 
     const firstSession = new Session({
       id: 'test-resume-system-prompt-refresh',
@@ -183,7 +197,8 @@ describe('Session.init', () => {
     });
     try {
       const agent = await firstSession.createMain();
-      expect(agent.config.systemPrompt).toContain('initial resume instructions');
+      expect(agent.config.systemPrompt).not.toContain('initial resume instructions');
+      expect(baselineText(agent)).toContain('initial resume instructions');
     } finally {
       await firstSession.closeForReload();
     }
@@ -202,12 +217,15 @@ describe('Session.init', () => {
     try {
       await resumedSession.resume();
       const resumedAgent = await resumedSession.ensureAgentResumed('main');
-      expect(resumedAgent.config.systemPrompt).toContain('initial resume instructions');
+      expect(resumedAgent.config.systemPrompt).not.toContain('resume instructions');
+      expect(baselineText(resumedAgent)).toContain('updated resume instructions');
 
+      await writeFile(join(workDir, 'AGENTS.md'), 'refreshed resume instructions', 'utf-8');
       await resumedAgent.refreshSystemPrompt();
 
-      expect(resumedAgent.config.systemPrompt).toContain('updated resume instructions');
-      expect(resumedAgent.config.systemPrompt).not.toContain('initial resume instructions');
+      expect(baselineText(resumedAgent)).toContain('refreshed resume instructions');
+      expect(baselineText(resumedAgent)).not.toContain('updated resume instructions');
+      expect(resumedAgent.config.systemPrompt).not.toContain('resume instructions');
     } finally {
       await resumedSession.close();
     }

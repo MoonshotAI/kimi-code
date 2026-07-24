@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_AGENT_PROFILES,
+  buildBaselineContextMessages,
   loadAgentProfilesFromDir,
   loadAgentProfilesFromSources,
   resolveAgentProfiles,
@@ -111,9 +112,13 @@ tools:
     expect(profiles['shared']?.description).toBe('Shared parent subagent');
     expect(coderPrompt).toContain('os=macOS');
     expect(coderPrompt).toContain('cwd=/workspace');
-    expect(coderPrompt).toContain('listing=README.md');
-    expect(coderPrompt).toContain('agents=Project instructions.');
-    expect(coderPrompt).toContain('skills=Available test skills.');
+    // Workspace payloads are no longer injected into the system channel.
+    expect(coderPrompt).toContain('listing=');
+    expect(coderPrompt).toContain('agents=');
+    expect(coderPrompt).toContain('skills=');
+    expect(coderPrompt).not.toContain('README.md');
+    expect(coderPrompt).not.toContain('Project instructions.');
+    expect(coderPrompt).not.toContain('Available test skills.');
     expect(coderPrompt).toContain('parent=parent-value');
     expect(coderPrompt).toContain('child=child-value');
     expect(coderPrompt).toContain('role=child-role');
@@ -207,7 +212,7 @@ describe('default agent profiles', () => {
     expect(DEFAULT_AGENT_PROFILES['plan']?.tools).not.toContain('Bash');
   });
 
-  it('renders the model-invocable skill listing for bundled prompts', () => {
+  it('keeps model-invocable skill listings out of the trusted system prompt', () => {
     const skills = new SessionSkillRegistry();
     skills.register(skill('review', { whenToUse: 'When code review is requested.' }));
     skills.register({
@@ -222,21 +227,32 @@ describe('default agent profiles', () => {
     skills.register(skill('private', { disableModelInvocation: true }));
     skills.register(skill('flow-only', { type: 'flow' }));
 
+    const listing = skills.getModelSkillListing();
     const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
       ...promptContext,
       skills,
     });
+    const baseline = buildBaselineContextMessages({
+      skills: listing,
+      includeSkills: true,
+    })
+      .flatMap((m) => m.content)
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text)
+      .join('\n');
 
-    expect(prompt).toContain('Current available skills:');
-    expect(prompt).toContain('- review:');
-    expect(prompt).toContain('When to use: When code review is requested.');
-    expect(prompt).not.toContain('- nested-review:');
-    expect(prompt).not.toContain('Path: /skills/parent/nested-review/SKILL.md');
-    expect(prompt).not.toContain('When to use: When nested review is requested.');
-    expect(prompt).not.toContain('- private:');
-    expect(prompt).not.toContain('flow-only');
-    expect(prompt).not.toContain('body of review');
-    expect(prompt).not.toContain('Nested review body must not enter system prompt.');
+    expect(prompt).not.toContain('Current available skills:');
+    expect(prompt).not.toContain('- review:');
+    expect(baseline).toContain('Current available skills:');
+    expect(baseline).toContain('- review:');
+    expect(baseline).toContain('When to use: When code review is requested.');
+    expect(baseline).not.toContain('- nested-review:');
+    expect(baseline).not.toContain('Path: /skills/parent/nested-review/SKILL.md');
+    expect(baseline).not.toContain('When to use: When nested review is requested.');
+    expect(baseline).not.toContain('- private:');
+    expect(baseline).not.toContain('flow-only');
+    expect(baseline).not.toContain('body of review');
+    expect(baseline).not.toContain('Nested review body must not enter system prompt.');
   });
 
   it('renders the bundled default prompt from the current runtime context', () => {
@@ -250,7 +266,7 @@ describe('default agent profiles', () => {
     });
 
     expect(first).toContain('You are Kimi Code CLI');
-    expect(first).toContain('Available skills');
+    expect(first).toContain('workspace-supplied reference data');
     expect(first).toContain('/workspace/one');
     expect(second).toContain('/workspace/two');
     expect(second).not.toContain('/workspace/one');

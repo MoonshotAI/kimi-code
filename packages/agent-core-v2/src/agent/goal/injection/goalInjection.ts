@@ -1,6 +1,7 @@
 import type { GoalSnapshot } from '#/agent/goal/types';
 import { Disposable } from "#/_base/di/lifecycle";
 import { renderPrompt } from "#/_base/utils/render-prompt";
+import { escapeUntrustedText } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import GOAL_ACTIVE_REMINDER from './goal-active-reminder.md?raw';
 import GOAL_BLOCKED_REMINDER from './goal-blocked-reminder.md?raw';
@@ -112,12 +113,6 @@ function maxBudgetFraction(goal: GoalSnapshot): number {
   return fractions.length === 0 ? 0 : Math.max(...fractions);
 }
 
-function escapeUntrustedText(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);

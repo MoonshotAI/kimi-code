@@ -264,6 +264,7 @@ export class SessionSubagentHost {
       thinkingEffort: parent.config.thinkingEffort,
       systemPrompt: parent.config.systemPrompt,
     });
+    child.copyBaselineContextFrom(parent);
     child.tools.copyLoopToolsFrom(parent.tools);
     child.context.useProjectedHistoryFrom(parent.context);
     child.context.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {

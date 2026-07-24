@@ -1,3 +1,4 @@
+import { escapeUntrustedText } from '#/utils/xml-escape';
 import type { GoalSnapshot } from '../goal';
 import { DynamicInjector } from './injector';
 
@@ -197,12 +198,6 @@ function budgetBandGuidance(goal: GoalSnapshot): string {
   return 'Budget guidance: you are within budget. Make steady, focused progress toward the objective.';
 }
 
-function escapeUntrustedText(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);

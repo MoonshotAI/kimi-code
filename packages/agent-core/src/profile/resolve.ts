@@ -140,27 +140,23 @@ function createSystemPromptRenderer(merged: MergedAgentProfile): SystemPromptRen
 function buildTemplateVars(
   context: SystemPromptContext,
   promptVars: Record<string, string>,
-  tools: readonly string[],
+  _tools: readonly string[],
 ): Record<string, string> {
-  const skills =
-    typeof context.skills === 'string'
-      ? context.skills
-      : (context.skills?.getModelSkillListing() ?? '');
-  const now =
-    context.now instanceof Date
-      ? context.now.toISOString()
-      : (context.now ?? new Date().toISOString());
-
+  // Workspace payloads and the dynamic timestamp live in request-time
+  // baseline user fragments (see buildBaselineContextMessages), not in
+  // the trusted system channel. Keep the placeholders defined but empty
+  // so legacy custom templates that still reference them do not re-inject
+  // untrusted text into system.
   return {
     ...promptVars,
     KIMI_OS: context.osEnv.osKind,
     KIMI_SHELL: `${context.osEnv.shellName} (\`${context.osEnv.shellPath}\`)`,
-    KIMI_NOW: now,
+    KIMI_NOW: '',
     KIMI_WORK_DIR: context.cwd,
-    KIMI_WORK_DIR_LS: context.cwdListing ?? '',
-    KIMI_AGENTS_MD: context.agentsMd ?? '',
-    KIMI_SKILLS: tools.includes('Skill') ? skills : '',
-    KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
+    KIMI_WORK_DIR_LS: '',
+    KIMI_AGENTS_MD: '',
+    KIMI_SKILLS: '',
+    KIMI_ADDITIONAL_DIRS_INFO: '',
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
   };

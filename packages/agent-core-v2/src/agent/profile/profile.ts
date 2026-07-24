@@ -15,6 +15,7 @@
 
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
+import type { Message } from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelRequestParams } from '#/kosong/model/modelRequester';
 
@@ -62,6 +63,8 @@ export interface ProfileData extends AgentConfigData {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  /** Request-time baseline fragments; not persisted on the wire. */
+  readonly baselineContextMessages?: readonly Message[];
 }
 
 export type ProfileUpdateData = Partial<{
@@ -83,6 +86,8 @@ export interface ProfileBindingSnapshot {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  /** Request-time baseline fragments copied on fork (not wire-persisted). */
+  readonly baselineContextMessages?: readonly Message[];
 }
 
 export interface ProfileServiceOptions {
@@ -147,6 +152,11 @@ export interface IAgentProfileService {
   isRunnable(): boolean;
   hasProvider(): boolean;
   getSystemPrompt(): string;
+  /**
+   * Request-time user fragments (time fringe, AGENTS.md, listings, skills).
+   * Prefixed onto history at LLM request assembly; not part of context memory.
+   */
+  getBaselineContextMessages(): readonly Message[];
   getActiveToolNames(): readonly string[] | undefined;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
