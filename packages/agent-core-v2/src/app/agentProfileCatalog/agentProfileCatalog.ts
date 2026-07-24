@@ -10,8 +10,11 @@
  *
  * Every profile is self-contained: `systemPrompt(context)` returns the complete
  * prompt (base + role overlay are merged at definition time, not at spawn
- * time). The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the default
- * profile used when an Agent is bound to a Model without naming a profile.
+ * time). Profiles stay independent of concrete model aliases, but may declare
+ * a symbolic primary/secondary preference used as the default when spawned as
+ * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
+ * default profile used when an Agent is bound to a Model without naming a
+ * profile.
  *
  * `tools` is an allowlist of exact builtin names plus `mcp__` globs
  * (`undefined` = every tool active); `disallowedTools` denies with the same
@@ -34,6 +37,8 @@ import type { ILogger } from '#/_base/log/log';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
 
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
+
+export type AgentModelPreference = 'primary' | 'secondary';
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;
@@ -69,6 +74,7 @@ export interface AgentProfile {
   readonly tools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  readonly modelPreference?: AgentModelPreference;
   systemPrompt(context: AgentProfileContext): string;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
