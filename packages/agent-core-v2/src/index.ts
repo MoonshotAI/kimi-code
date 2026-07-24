@@ -37,6 +37,7 @@ export * from '#/os/interface/hostEnvironment';
 export * from '#/os/interface/hostFileSystem';
 export * from '#/os/interface/hostFsWatch';
 export * from '#/os/interface/hostProcess';
+export * from '#/os/interface/sudoAskpass';
 export * from '#/os/interface/terminal';
 export * from '#/os/interface/terminalErrors';
 export * from '#/os/backends/node-local/hostEnvironmentService';

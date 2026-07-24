@@ -32,11 +32,11 @@ import {
   makeSessionContext,
 } from '#/session/sessionContext/sessionContext';
 import {
-  ISessionSudoAskpassService,
   SUDO_ASKPASS_COMMAND_ENV,
   SUDO_ASKPASS_ENV,
   SUDO_ASKPASS_TOKEN_ENV,
 } from '#/session/sudoAskpass/sudoAskpass';
+import { ISudoAskpassEnvProvider } from '#/os/interface/sudoAskpass';
 import { SessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpassService';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -115,7 +115,7 @@ describe('SessionSudoAskpassService', () => {
     ix.stub(ILogService, stubLog());
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
-    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+    ix.set(ISudoAskpassEnvProvider, new SyncDescriptor(SessionSudoAskpassService));
   }
 
   beforeEach(async () => {
@@ -129,7 +129,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('returns the askpass env with the helper path, token, and command', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     const env = await svc.envForCommand('sudo ls /root');
 
@@ -141,7 +141,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('truncates the forwarded command to 500 chars', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     const env = await svc.envForCommand(`sudo ${'x'.repeat(600)}`);
 
@@ -150,7 +150,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('creates the askpass dir with locked-down permissions on first use', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     const env = await svc.envForCommand('sudo true');
     const dir = dirname(env![SUDO_ASKPASS_ENV]!);
@@ -165,7 +165,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('reuses one socket and token across commands', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     const first = await svc.envForCommand('sudo a');
     const second = await svc.envForCommand('sudo b');
@@ -176,14 +176,14 @@ describe('SessionSudoAskpassService', () => {
 
   it('returns undefined on Windows', async () => {
     setup({ env: windowsEnv });
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     await expect(svc.envForCommand('sudo ls')).resolves.toBeUndefined();
   });
 
   it('returns undefined when disabled via config', async () => {
     setup({ config: { sudoAskpass: { enabled: false } } });
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
 
     await expect(svc.envForCommand('sudo ls')).resolves.toBeUndefined();
     // No askpass dir is created when the channel is disabled.
@@ -192,7 +192,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('roundtrips a password through the real helper over the socket', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
     const passwords = ix.get(ISessionPasswordService);
     const env = (await svc.envForCommand('sudo cat /etc/shadow'))!;
 
@@ -218,7 +218,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('queues concurrent helper connections as independent interactions', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
     const passwords = ix.get(ISessionPasswordService);
     const env = (await svc.envForCommand('sudo true'))!;
 
@@ -246,7 +246,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('exits the helper with code 1 when the request is cancelled', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
     const passwords = ix.get(ISessionPasswordService);
     const env = (await svc.envForCommand('sudo true'))!;
 
@@ -266,7 +266,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('rejects a helper presenting the wrong token', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
     const passwords = ix.get(ISessionPasswordService);
     const env = (await svc.envForCommand('sudo true'))!;
 
@@ -281,7 +281,7 @@ describe('SessionSudoAskpassService', () => {
 
   it('removes the askpass dir on dispose', async () => {
     setup();
-    const svc = ix.get(ISessionSudoAskpassService);
+    const svc = ix.get(ISudoAskpassEnvProvider);
     const env = (await svc.envForCommand('sudo true'))!;
     const dir = dirname(env[SUDO_ASKPASS_ENV]!);
     await fs.stat(dir);

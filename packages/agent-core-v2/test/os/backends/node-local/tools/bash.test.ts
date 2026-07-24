@@ -49,7 +49,7 @@ import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import { ISessionPasswordService } from '#/session/password/password';
 import { SessionPasswordService } from '#/session/password/passwordService';
-import { ISessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpass';
+import { ISudoAskpassEnvProvider } from '#/os/interface/sudoAskpass';
 import { SessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpassService';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -728,7 +728,7 @@ function stubConfig(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
-function stubSudoAskpass(env?: Record<string, string>): ISessionSudoAskpassService {
+function stubSudoAskpass(env?: Record<string, string>): ISudoAskpassEnvProvider {
   return {
     _serviceBrand: undefined,
     envForCommand: async () => env,
@@ -742,7 +742,7 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
-  sudoAskpass: ISessionSudoAskpassService = stubSudoAskpass(),
+  sudoAskpass: ISudoAskpassEnvProvider = stubSudoAskpass(),
 ): BashTool {
   return new BashTool(runner, env, ctx, background, toolPolicy, config, sudoAskpass);
 }
@@ -1958,7 +1958,7 @@ exec "$@"
     ix.stub(ILogService, noopLog);
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
-    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+    ix.set(ISudoAskpassEnvProvider, new SyncDescriptor(SessionSudoAskpassService));
 
     originalPath = process.env['PATH'];
     process.env['PATH'] = `${binDir}:${originalPath ?? ''}`;
@@ -2014,7 +2014,7 @@ exec "$@"
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),
-      ix.get(ISessionSudoAskpassService),
+      ix.get(ISudoAskpassEnvProvider),
     );
   }
 
@@ -2108,7 +2108,7 @@ describe('BashTool sudo askpass (real sudo smoke)', () => {
     ix.stub(ILogService, noopLog);
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
-    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+    ix.set(ISudoAskpassEnvProvider, new SyncDescriptor(SessionSudoAskpassService));
   });
 
   afterEach(async () => {
@@ -2156,7 +2156,7 @@ describe('BashTool sudo askpass (real sudo smoke)', () => {
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),
-      ix.get(ISessionSudoAskpassService),
+      ix.get(ISudoAskpassEnvProvider),
     );
     return { passwords, running: executeTool(bash, context({ command, timeout: 30 })) };
   }

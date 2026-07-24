@@ -438,10 +438,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // re-declared copy of the shape.
   'permissionRules>approval',
   'userTool>interaction',
-  // `os/backends` (L6) BashTool pulls the per-spawn sudo askpass env from the
-  // Session-scope `sudoAskpass` channel (L7) — same cross-scope broker shape
-  // as `toolApproval>approval` above.
-  'os/backends>sudoAskpass',
   'skill>loop',
   // `activityView` seeds its background-task slice once from the agent's task
   // registry (a read, never a write) — everything else it folds from events.

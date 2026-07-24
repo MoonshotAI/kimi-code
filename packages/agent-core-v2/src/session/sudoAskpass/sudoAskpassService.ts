@@ -1,5 +1,5 @@
 /**
- * `sudoAskpass` domain (L7) — `ISessionSudoAskpassService` implementation.
+ * `sudoAskpass` domain (L7) — `ISudoAskpassEnvProvider` implementation.
  *
  * Owns the per-session askpass IPC endpoint: a `<sessionDir>/sudo-askpass/`
  * directory (mode 0700) holding `helper.sh` (0700) and `helper.mjs` (0600),
@@ -44,13 +44,13 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISudoAskpassEnvProvider } from '#/os/interface/sudoAskpass';
 import { ISessionPasswordService } from '#/session/password/password';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { resolveSudoAskpassConfig } from './configSection';
 import { helperMjsSource, helperShSource, sudoShimSource } from './helperAssets';
 import {
-  ISessionSudoAskpassService,
   SUDO_ASKPASS_COMMAND_ENV,
   SUDO_ASKPASS_ENV,
   SUDO_ASKPASS_TOKEN_ENV,
@@ -70,7 +70,7 @@ interface AskpassRuntime {
   readonly binDir?: string;
 }
 
-export class SessionSudoAskpassService extends Disposable implements ISessionSudoAskpassService {
+export class SessionSudoAskpassService extends Disposable implements ISudoAskpassEnvProvider {
   declare readonly _serviceBrand: undefined;
 
   private runtime: AskpassRuntime | undefined;
@@ -297,7 +297,7 @@ function readRequestLine(socket: Socket): Promise<string> {
 
 registerScopedService(
   LifecycleScope.Session,
-  ISessionSudoAskpassService,
+  ISudoAskpassEnvProvider,
   SessionSudoAskpassService,
   InstantiationType.Delayed,
   'sudoAskpass',

@@ -11,7 +11,7 @@
  *   - `ctx`      — `ISessionContext`, session cwd used to render the shell prompt
  *   - `tasks`    — `IAgentTaskService`, owns foreground/detached task
  *                  lifecycle (timeouts, detach, user interrupt)
- *   - `sudoAskpass` — `ISessionSudoAskpassService`, per-session sudo
+ *   - `sudoAskpass` — `ISudoAskpassEnvProvider`, per-session sudo
  *                  askpass env (`SUDO_ASKPASS` + token) injected per spawn
  *                  (`undefined` when disabled or on Windows)
  *
@@ -43,7 +43,7 @@ import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
-import { ISessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpass';
+import { ISudoAskpassEnvProvider } from '#/os/interface/sudoAskpass';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
@@ -191,7 +191,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
-    @ISessionSudoAskpassService private readonly sudoAskpass: ISessionSudoAskpassService,
+    @ISudoAskpassEnvProvider private readonly sudoAskpass: ISudoAskpassEnvProvider,
   ) {
     this.isWindowsBash = this.env.osKind === 'Windows';
     this.renderedDescription = renderBashDescription(this.env.shellName);
