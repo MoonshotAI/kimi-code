@@ -107,6 +107,12 @@ export interface CreateSessionOptions {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Extra standing-prompt text rendered into the resolved profile's
+   * {{ROLE_ADDITIONAL}} slot. Flows via createSession → session config → Agent
+   * → updateSystemPromptFromProfile.
+   */
+  readonly roleAdditional?: string;
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
    * Print-mode (`kimi -p`) only: when the main agent ends a turn while
@@ -128,6 +134,8 @@ export interface ResumeSessionInput {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Standing-prompt text ({{ROLE_ADDITIONAL}}) preserved across resume. */
+  readonly roleAdditional?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**

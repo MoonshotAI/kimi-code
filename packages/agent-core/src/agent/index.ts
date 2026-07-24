@@ -101,6 +101,8 @@ export interface AgentOptions {
   readonly imageLimits?: ImageLimits;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
+  /** Standing prompt rendered into the profile's {{ROLE_ADDITIONAL}} slot. */
+  readonly roleAdditional?: string;
   readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 }
 
@@ -160,6 +162,7 @@ export class Agent {
   printDrainAgentTasksOnStop = false;
 
   private additionalDirs: readonly string[];
+  private roleAdditional?: string;
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
   private readonly emittedThinkingEffortWarnings = new Set<string>();
@@ -193,6 +196,7 @@ export class Agent {
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.imageLimits = options.imageLimits ?? new ImageLimits();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.roleAdditional = options.roleAdditional;
     this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
@@ -467,6 +471,7 @@ export class Agent {
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
       additionalDirsInfo: context?.additionalDirsInfo,
+      roleAdditional: this.roleAdditional,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
   }

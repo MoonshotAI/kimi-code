@@ -83,6 +83,8 @@ export interface SessionOptions {
   /** Owner-scoped [image] limits, threaded from the owning core into every agent. */
   readonly imageLimits?: ImageLimits;
   readonly additionalDirs?: readonly string[];
+  /** Session-level standing prompt rendered into every agent's {{ROLE_ADDITIONAL}} slot. */
+  readonly roleAdditional?: string;
   /**
    * Print-mode (`kimi -p`) only: hold the main turn open while background
    * subagents (`kind === 'agent'`) are still running, idle-waiting until they
@@ -107,6 +109,8 @@ export interface AgentMeta {
   readonly type: AgentType;
   readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
+  /** The `roleAdditional` value used to render this agent's system prompt. */
+  roleAdditional?: string;
 }
 
 interface ResumedAgent {
@@ -185,6 +189,7 @@ export class Session {
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
   private sessionAdditionalDirs: readonly string[] = [];
+  private roleAdditional?: string;
   private readonly pluginCommands: readonly PluginCommandDef[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
@@ -226,6 +231,7 @@ export class Session {
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.roleAdditional = options.roleAdditional;
     this.pluginCommands = options.pluginCommands ?? [];
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
@@ -359,6 +365,16 @@ export class Session {
       additionalDirs,
     );
     await this.setBaseAdditionalDirs(this.additionalDirs);
+    // Preserve the standing prompt persisted with the session when this
+    // resume/reload didn't supply a `roleAdditional`. `/reload` and plain
+    // `resumeSession({ id })` have no way to pass the value, so without this an
+    // omitted value would compare unequal to the persisted one below, clear the
+    // {{ROLE_ADDITIONAL}} slot, and drop the standing prompt (and newly-spawned
+    // agents would inherit `undefined`). An explicit value — including `""` to
+    // clear it — is left untouched and still overrides.
+    if (this.roleAdditional === undefined) {
+      this.roleAdditional = agents.main?.roleAdditional;
+    }
     this.agents.clear();
     // Only the main agent is needed to reopen the session; subagents replay
     // lazily when an RPC or Agent(resume=...) call asks for their state.
@@ -645,6 +661,7 @@ export class Session {
         type,
         parentAgentId,
         swarmItem: options.swarmItem,
+        roleAdditional: this.roleAdditional,
       };
       void this.writeMetadata();
     }
@@ -952,6 +969,7 @@ export class Session {
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,
+      roleAdditional: this.roleAdditional,
       systemPromptContextProvider: () =>
         prepareSystemPromptContext(
           this.systemContextKaos(agent.kaos.getcwd()),
@@ -1039,6 +1057,16 @@ export class Session {
       );
       const result = await agent.resume();
       this.restoreAgentProfileHandle(agent, meta, parent?.agent);
+      // If the session was resumed with a different `roleAdditional` than the
+      // one used to render this agent's persisted system prompt, re-render the
+      // prompt using the restored profile and the fresh context. This keeps the
+      // persisted profile in sync with the new standing instructions without
+      // refreshing AGENTS.md/cwd on every resume.
+      if (this.roleAdditional !== meta.roleAdditional) {
+        await agent.refreshSystemPrompt();
+        meta.roleAdditional = this.roleAdditional;
+        void this.writeMetadata();
+      }
       this.agents.set(id, agent);
       return { agent, warning: parent?.warning ?? result.warning };
     } catch (error) {
