@@ -149,7 +149,6 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | --- | --- | --- | --- |
 | `provider` | `string` | Yes | Name of the provider to use; must be defined in `providers` |
 | `model` | `string` | Yes | Model identifier sent to the server when calling the API |
-| `catalog_model` | `string` | No | Exact model id used for capability lookup under the provider's `catalog_provider`. Omit it when `model` is already the canonical models.dev id; set it when the server-facing name is a deployment alias |
 | `max_context_size` | `integer` | Yes | Maximum context length in tokens; must be at least 1 |
 | `max_input_size` | `integer` | No | Declared per-request input limit when it sits below the total window (e.g. gpt-5: 400k window, 272k input). Compaction, context-overflow checks, and usage ratios prefer it; completion budgeting keeps the total window. Resolution clamps it to `max_context_size` |
 | `max_output_size` | `integer` | No | Per-request output token cap (maps to `max_tokens`). Currently only the `anthropic` provider honors it. When set for a Claude model, this explicit value overrides the built-in server-side maximum |

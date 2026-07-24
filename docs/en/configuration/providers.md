@@ -93,7 +93,7 @@ base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
 
-For an OpenAI-compatible third-party endpoint, keep `type = "openai"` because it controls the wire protocol, and set `catalog_provider` to the exact models.dev provider id used for capability metadata. If the endpoint exposes a deployment alias instead of the canonical model id, set `catalog_model` on that model entry:
+For an OpenAI-compatible third-party endpoint, keep `type = "openai"` because it controls the wire protocol, and set `catalog_provider` to the exact models.dev provider id used for capability metadata:
 
 ```toml
 [providers.deepseek]
@@ -102,14 +102,13 @@ catalog_provider = "deepseek"
 base_url = "https://api.deepseek.com"
 api_key = "sk-xxxxx"
 
-[models.production-reasoner]
+[models."deepseek/v4-pro"]
 provider = "deepseek"
-model = "production-reasoner"
-catalog_model = "deepseek-reasoner"
-max_context_size = 128000
+model = "deepseek-v4-pro"
+max_context_size = 1000000
 ```
 
-This lookup is exact within the selected provider. Kimi Code does not guess a vendor from the provider name or scan other providers for a matching model id. If the endpoint already uses `deepseek-reasoner`, omit `catalog_model`.
+Kimi Code looks up the configured `model` within the selected catalog provider. It does not guess a vendor from the local provider name or scan unrelated providers for a matching model id. If a gateway replaces the canonical model id with an arbitrary deployment alias, declare capabilities explicitly instead.
 
 ## `openai_responses`
 

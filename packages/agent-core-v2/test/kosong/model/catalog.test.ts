@@ -319,7 +319,7 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
-  it('passes Vertex mode and explicit catalog coordinates to capability sources', () => {
+  it('passes Vertex mode and explicit catalog provider to capability sources', () => {
     let captured: ModelCapabilityQuery | undefined;
     const registration = registerModelCapabilityResolver((query) => {
       captured = query;
@@ -346,8 +346,7 @@ describe('Model assembly (pure data)', () => {
       models: {
         v: {
           provider: 'vertex',
-          model: 'deployment-name',
-          catalogModel: 'gemini-canonical',
+          model: 'gemini-canonical',
           maxContextSize: 1_000,
         },
       },
@@ -358,9 +357,8 @@ describe('Model assembly (pure data)', () => {
       expect(captured).toMatchObject({
         protocol: 'google-genai',
         providerType: 'google-genai',
-        modelName: 'deployment-name',
+        modelName: 'gemini-canonical',
         catalogProvider: 'google-vertex',
-        catalogModel: 'gemini-canonical',
         providerOptions: {
           vertexai: true,
           project: 'my-project',

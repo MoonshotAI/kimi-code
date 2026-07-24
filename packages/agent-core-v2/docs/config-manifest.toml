@@ -220,7 +220,6 @@ merge_all_available_skills = true
   # aliases: string[]
   # provider: string
   # model: string
-  # catalog_model: string
   # max_context_size: integer
   # max_input_size: integer
   # max_output_size: integer

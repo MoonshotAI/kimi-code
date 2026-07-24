@@ -93,7 +93,7 @@ base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
 
-配置 OpenAI 兼容的第三方端点时，保留 `type = "openai"`，因为它决定在线协议；同时把 `catalog_provider` 设为 models.dev 中用于读取能力元数据的精确供应商 ID。如果端点暴露的是部署别名而不是规范模型 ID，再在模型条目上设置 `catalog_model`：
+配置 OpenAI 兼容的第三方端点时，保留 `type = "openai"`，因为它决定在线协议；同时把 `catalog_provider` 设为 models.dev 中用于读取能力元数据的精确供应商 ID：
 
 ```toml
 [providers.deepseek]
@@ -102,14 +102,13 @@ catalog_provider = "deepseek"
 base_url = "https://api.deepseek.com"
 api_key = "sk-xxxxx"
 
-[models.production-reasoner]
+[models."deepseek/v4-pro"]
 provider = "deepseek"
-model = "production-reasoner"
-catalog_model = "deepseek-reasoner"
-max_context_size = 128000
+model = "deepseek-v4-pro"
+max_context_size = 1000000
 ```
 
-查找只会在指定供应商内精确进行。Kimi Code 不会根据配置中的供应商名称猜厂商，也不会扫描其他供应商寻找同名模型。如果端点本来就使用 `deepseek-reasoner`，可以省略 `catalog_model`。
+Kimi Code 会在指定的目录供应商中查找配置的 `model`。它不会根据本地供应商名称猜厂商，也不会扫描其他供应商寻找同名模型。如果网关把规范模型 ID 换成任意部署别名，请改为显式声明能力。
 
 ## `openai_responses`
 

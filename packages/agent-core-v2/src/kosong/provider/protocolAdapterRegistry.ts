@@ -138,7 +138,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       providerType,
       modelName,
       catalogProvider: context?.catalogProvider,
-      catalogModel: context?.catalogModel,
       providerOptions: context?.providerOptions,
     });
     if (registeredCapability !== undefined) return registeredCapability;

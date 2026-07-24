@@ -82,7 +82,6 @@ GOOGLE_CLOUD_PROJECT = "project-1"
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
-catalog_model = "kimi-k3"
 max_context_size = 262144
 capabilities = ["image_in", "thinking", "video_in"]
 display_name = "Kimi for Coding"
@@ -174,7 +173,6 @@ describe('harness config TOML loader', () => {
     expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
       provider: 'managed:kimi-code',
       model: 'kimi-for-coding',
-      catalogModel: 'kimi-k3',
       maxContextSize: 262144,
       capabilities: ['image_in', 'thinking', 'video_in'],
       displayName: 'Kimi for Coding',
@@ -375,7 +373,6 @@ removed_flag = true
     expect(text).toContain('default_model = "kimi-code/kimi-for-coding"');
     expect(text).toContain('default_permission_mode = "auto"');
     expect(text).toContain('catalog_provider = "moonshotai"');
-    expect(text).toContain('catalog_model = "kimi-k3"');
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
     expect(text).toContain('telemetry = false');
     expect(text).not.toContain('default_yolo');

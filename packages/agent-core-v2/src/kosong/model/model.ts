@@ -20,10 +20,9 @@
  *
  * `name` is the wire-facing model identifier sent to the endpoint; `model` is
  * the legacy spelling of the same field (at least one is required at resolve
- * time). `catalogModel` can separately name the canonical models.dev entry
- * used for metadata. `aliases` is a free-form list of routing keys; callers
- * may request "claude-sonnet-4" and the router picks any Model whose name or
- * aliases match (many-to-many).
+ * time). `aliases` is a free-form list of routing keys; callers may request
+ * "claude-sonnet-4" and the router picks any Model whose name or aliases
+ * match (many-to-many).
  *
  * `protocol` names one of the four real wire protocols (no vendor entries —
  * a vendor such as `kimi` is expressed as the referenced provider's free-form
@@ -76,7 +75,6 @@ export interface ModelRecord {
 
   provider?: string;
   model?: string;
-  catalogModel?: string;
   maxContextSize?: number;
   maxInputSize?: number;
   maxOutputSize?: number;

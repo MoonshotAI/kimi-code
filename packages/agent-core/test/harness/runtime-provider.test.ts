@@ -149,7 +149,7 @@ describe('resolveRuntimeProvider model metadata', () => {
     });
   });
 
-  it('uses explicit catalog coordinates for an OpenAI-compatible provider', () => {
+  it('uses an explicit catalog provider for an OpenAI-compatible provider', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -163,8 +163,7 @@ describe('resolveRuntimeProvider model metadata', () => {
         models: {
           custom: {
             provider: 'deepseek',
-            model: 'production-reasoner',
-            catalogModel: 'deepseek-reasoner',
+            model: 'deepseek-reasoner',
             maxContextSize: 128_000,
           },
         },
@@ -187,7 +186,7 @@ describe('resolveRuntimeProvider model metadata', () => {
 
     expect(resolved.provider).toMatchObject({
       type: 'openai',
-      model: 'production-reasoner',
+      model: 'deepseek-reasoner',
     });
     expect(resolved.modelCapabilities).toMatchObject({
       thinking: true,

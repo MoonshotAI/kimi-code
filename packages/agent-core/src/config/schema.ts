@@ -41,7 +41,6 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 const ModelAliasBaseSchema = z.object({
   provider: z.string(),
   model: z.string(),
-  catalogModel: z.string().min(1).optional(),
   maxContextSize: z.number().int().min(1),
   // Declared prompt/input cap when below the total window (e.g. gpt-5: 400k
   // window, 272k input). Compaction and other prompt-budget checks prefer it
@@ -80,7 +79,6 @@ const ModelAliasBaseSchema = z.object({
 export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
   provider: true,
   model: true,
-  catalogModel: true,
   protocol: true,
   betaApi: true,
   baseUrl: true,

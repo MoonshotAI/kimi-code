@@ -22,7 +22,7 @@
  * credential env fallbacks resolve through `resolveProviderEndpoint` against
  * the config env bag; host-header forwarding follows the vendor definition's
  * `hostHeaders`; capability detection receives the resolved provider mode and
- * explicit models.dev catalog coordinates separately from wire identity.
+ * explicit models.dev provider identity separately from wire identity.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
  * model/provider config-change events. Tests that mutate config
@@ -391,7 +391,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       providerType,
       {
         catalogProvider: providerConfig?.catalogProvider,
-        catalogModel: model.catalogModel,
         providerOptions,
       },
     );

@@ -199,7 +199,6 @@ const ModelBaseSchema = z.object({
 
   provider: z.string().optional(),
   model: z.string().optional(),
-  catalogModel: z.string().min(1).optional(),
   maxContextSize: z.number().int().min(1).optional(),
   maxInputSize: z.number().int().min(1).optional(),
   maxOutputSize: z.number().int().min(1).optional(),
@@ -223,7 +222,6 @@ export const ModelOverrideSchema = ModelBaseSchema.omit({
   aliases: true,
   provider: true,
   model: true,
-  catalogModel: true,
   betaApi: true,
 }).partial();
 

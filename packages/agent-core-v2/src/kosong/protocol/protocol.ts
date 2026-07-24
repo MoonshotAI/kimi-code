@@ -90,7 +90,6 @@ export interface ExplainedCapability {
 
 export interface CapabilityResolutionContext {
   readonly catalogProvider?: string;
-  readonly catalogModel?: string;
   readonly providerOptions?: ProtocolProviderOptions;
 }
 

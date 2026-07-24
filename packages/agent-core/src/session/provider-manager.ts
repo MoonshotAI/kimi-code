@@ -269,7 +269,7 @@ function resolveModelCapabilities(
   const detected =
     (catalogProvider === undefined
       ? undefined
-      : getCatalogModelCapability(catalog, catalogProvider, alias.catalogModel ?? provider.model)) ??
+      : getCatalogModelCapability(catalog, catalogProvider, provider.model)) ??
     getModelCapability(provider.type, provider.model);
 
   return {

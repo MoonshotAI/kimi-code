@@ -408,7 +408,7 @@ describe('Agent config', () => {
 });
 
 describe('ConfigService env overlay (live)', () => {
-  it('loads explicit catalog coordinates from snake-case TOML fields', async () => {
+  it('loads an explicit catalog provider from snake-case TOML', async () => {
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     const storage = new InMemoryStorageService();
@@ -417,8 +417,7 @@ describe('ConfigService env overlay (live)', () => {
       'config.toml',
       new TextEncoder().encode(
         '[providers.deepseek]\ntype = "openai"\ncatalog_provider = "deepseek"\n' +
-          '[models.production]\nprovider = "deepseek"\nmodel = "deployment-name"\n' +
-          'catalog_model = "deepseek-reasoner"\n',
+          '[models.production]\nprovider = "deepseek"\nmodel = "deepseek-reasoner"\n',
       ),
     );
     ix.stub(ILogService, stubLog());
@@ -440,8 +439,7 @@ describe('ConfigService env overlay (live)', () => {
       config.get<Record<string, ModelRecord>>(MODELS_SECTION)['production'],
     ).toMatchObject({
       provider: 'deepseek',
-      model: 'deployment-name',
-      catalogModel: 'deepseek-reasoner',
+      model: 'deepseek-reasoner',
     });
 
     disposables.dispose();

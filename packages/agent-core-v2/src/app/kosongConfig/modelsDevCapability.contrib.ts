@@ -28,11 +28,7 @@ registerModelCapabilityResolver((query) => {
     vertexai: query.providerOptions?.vertexai,
   });
   if (providerId === undefined) return undefined;
-  const match = getModelsDevModelCapability(
-    catalog,
-    providerId,
-    query.catalogModel ?? query.modelName,
-  );
+  const match = getModelsDevModelCapability(catalog, providerId, query.modelName);
   if (match === undefined) return undefined;
   return {
     capability: match.capability,

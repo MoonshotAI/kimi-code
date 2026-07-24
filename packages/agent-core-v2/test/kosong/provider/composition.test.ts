@@ -344,7 +344,6 @@ describe('resolveCapability', () => {
     try {
       registry.resolveCapability('google-genai', 'deployment-name', 'google-genai', {
         catalogProvider: 'google-vertex',
-        catalogModel: 'gemini-canonical',
         providerOptions: { vertexai: true, project: 'example-project' },
       });
       expect(captured).toMatchObject({
@@ -352,7 +351,6 @@ describe('resolveCapability', () => {
         providerType: 'google-genai',
         modelName: 'deployment-name',
         catalogProvider: 'google-vertex',
-        catalogModel: 'gemini-canonical',
         providerOptions: { vertexai: true, project: 'example-project' },
       });
     } finally {
