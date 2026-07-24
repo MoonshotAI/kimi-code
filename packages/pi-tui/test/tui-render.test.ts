@@ -740,12 +740,13 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		// Upstream behavior: a change above the viewport triggers a
-		// destructive full redraw, which repaints the tail of the new
-		// content and leaves no stale rows on screen.
-		assert.ok(
-			tui.fullRedraws > redrawsBeforeSwitch,
-			"Branch switch above the viewport should trigger a full redraw",
+		// A change above the viewport must not trigger a destructive full
+		// redraw: the viewport re-anchors with the shifted content and only
+		// repaints the visible rows, leaving no stale rows on screen.
+		assert.strictEqual(
+			tui.fullRedraws,
+			redrawsBeforeSwitch,
+			"Branch switch above the viewport should not trigger a full redraw",
 		);
 
 		const viewport = terminal.getViewport();
@@ -756,20 +757,281 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// The full redraw shows the tail of the new content with the editor
-		// at the bottom.
+		// The window re-anchors by the shrink delta and repaints in place:
+		// the visible rows show the shifted tail of the new content with the
+		// editor at the bottom and no destructive clear.
 		assert.deepStrictEqual(viewport, [
-			"Chat 5",
-			"Chat 6",
-			"Chat 7",
-			"Chat 8",
-			"Chat 9",
 			"Chat 10",
 			"Chat 11",
 			"Editor 0",
 			"Editor 1",
 			"Editor 2",
+			"",
+			"",
+			"",
+			"",
+			"",
 		]);
+
+		tui.stop();
+	});
+});
+
+describe("TUI above-viewport changes", () => {
+	// Regression suite for https://github.com/MoonshotAI/kimi-code/issues/2098:
+	// while a subagent runs, status rows above the visible window keep
+	// changing; a destructive full redraw (ESC[2J/ESC[3J) for each such
+	// change yanked the user's scroll position to the bottom and wiped
+	// scrollback. These tests pin the non-destructive behavior.
+
+	it("ignores in-place changes above the viewport without a full redraw", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+		const scrollbackBefore = terminal.getScrollBuffer();
+
+		// Edit a row above the visible window (viewport top is 7).
+		component.lines = ["Line 0", "Line 1", "EDITED", "Line 3", ...Array.from({ length: 8 }, (_, i) => `Line ${i + 4}`)];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "above-viewport edit should not trigger a full redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "above-viewport edit should not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "above-viewport edit should not clear scrollback");
+		assert.deepStrictEqual(
+			terminal.getViewport(),
+			["Line 7", "Line 8", "Line 9", "Line 10", "Line 11"],
+			"viewport should be untouched by an above-viewport edit",
+		);
+		assert.deepStrictEqual(terminal.getScrollBuffer(), scrollbackBefore, "scrollback should stay intact");
+
+		// Bookkeeping must stay consistent: a following append lands normally.
+		component.lines = [...component.lines, "Line 12"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 8", "Line 9", "Line 10", "Line 11", "Line 12"]);
+
+		tui.stop();
+	});
+
+	it("clamps the diff to the viewport when an above-viewport edit has visible changes", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+
+		// Edit one row above the window and one row inside it.
+		component.lines = [
+			"Line 0",
+			"ABOVE",
+			...Array.from({ length: 7 }, (_, i) => `Line ${i + 2}`),
+			"VISIBLE",
+			"Line 10",
+			"Line 11",
+		];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "mixed above/visible edit should not trigger a full redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "mixed edit should not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "mixed edit should not clear scrollback");
+		assert.ok(writes.includes("VISIBLE"), "visible change should be painted");
+		assert.ok(!writes.includes("ABOVE"), "above-viewport change should not be painted");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "Line 8", "VISIBLE", "Line 10", "Line 11"]);
+
+		tui.stop();
+	});
+
+	it("never full-redraws while a subagent-style status row ticks above the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+		const scrollbackBefore = terminal.getScrollBuffer();
+
+		// Simulate the subagent header timer: the status row above the
+		// window changes every frame while the transcript tail stays put.
+		for (let i = 0; i < 20; i++) {
+			component.lines = [
+				"Line 0",
+				"Line 1",
+				`Agent ⠋ ${i}s`,
+				"Line 3",
+				...Array.from({ length: 8 }, (_, k) => `Line ${k + 4}`),
+			];
+			tui.requestRender();
+			await terminal.waitForRender();
+		}
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "ticking above the viewport must not full-redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "ticking above the viewport must not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "ticking above the viewport must not clear scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "Line 8", "Line 9", "Line 10", "Line 11"]);
+		assert.deepStrictEqual(terminal.getScrollBuffer(), scrollbackBefore, "scrollback must survive the ticks");
+
+		tui.stop();
+	});
+
+	it("re-anchors the viewport on insertions above it without scrolling or clearing", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+		const scrollbackBefore = terminal.getScrollBuffer();
+
+		// Insert two progress lines above the window, like a subagent's
+		// live progress output growing its tool-call component.
+		component.lines = [
+			"Line 0",
+			"Line 1",
+			"Line 2",
+			"progress-1",
+			"progress-2",
+			...Array.from({ length: 9 }, (_, i) => `Line ${i + 3}`),
+		];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "above-viewport insertion should not trigger a full redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "above-viewport insertion should not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "above-viewport insertion should not clear scrollback");
+		assert.deepStrictEqual(
+			terminal.getViewport(),
+			["Line 7", "Line 8", "Line 9", "Line 10", "Line 11"],
+			"the screen already shows the shifted content; nothing should be repainted",
+		);
+		assert.deepStrictEqual(terminal.getScrollBuffer(), scrollbackBefore, "nothing should scroll into scrollback");
+
+		// The re-anchored bookkeeping stays continuous: the next append
+		// scrolls exactly one row into scrollback and shows the new tail.
+		component.lines = [...component.lines, "Line 12"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 8", "Line 9", "Line 10", "Line 11", "Line 12"]);
+		const scrollbackAfter = terminal.getScrollBuffer();
+		assert.strictEqual(scrollbackAfter.length, scrollbackBefore.length + 1, "append should commit exactly one row");
+		assert.strictEqual(scrollbackAfter[6], "Line 6");
+		assert.strictEqual(scrollbackAfter[7], "Line 7", "the scrolled-out row should commit in order");
+
+		tui.stop();
+	});
+
+	it("re-anchors the viewport on shrink above it without a full redraw", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+
+		// Remove two rows above the window (a collapsing step row).
+		component.lines = ["Line 0", "Line 1", ...Array.from({ length: 8 }, (_, i) => `Line ${i + 4}`)];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "above-viewport shrink should not trigger a full redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "above-viewport shrink should not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "above-viewport shrink should not clear scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "Line 8", "Line 9", "Line 10", "Line 11"]);
+
+		// Visible edits after the shrink keep working off the new anchor.
+		component.lines = ["Line 0", "Line 1", "Line 4", "Line 5", "Line 6", "Line 7", "EDITED", "Line 9", "Line 10", "Line 11"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "EDITED", "Line 9", "Line 10", "Line 11"]);
+
+		tui.stop();
+	});
+
+	it("repaints only the mismatched window rows when an above-viewport insertion mixes with visible edits", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+
+		// Insert above the window and edit a visible row in the same frame.
+		component.lines = [
+			"Line 0",
+			"Line 1",
+			"Line 2",
+			"progress-1",
+			"progress-2",
+			...Array.from({ length: 6 }, (_, i) => `Line ${i + 3}`),
+			"Line 9*",
+			"Line 10",
+			"Line 11",
+		];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(tui.fullRedraws, redrawsBefore, "mixed shift+edit should not trigger a full redraw");
+		assert.ok(!writes.includes("\x1b[2J"), "mixed shift+edit should not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "mixed shift+edit should not clear scrollback");
+		assert.ok(writes.includes("Line 9*"), "the edited visible row should be repainted");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "Line 8", "Line 9*", "Line 10", "Line 11"]);
+
+		tui.stop();
+	});
+
+	it("still full-redraws when content collapses to above the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const redrawsBefore = tui.fullRedraws;
+
+		component.lines = ["New 0", "New 1", "New 2", "New 3"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > redrawsBefore, "a collapse above the viewport should still full-redraw");
+		assert.deepStrictEqual(terminal.getViewport(), ["New 0", "New 1", "New 2", "New 3", ""]);
 
 		tui.stop();
 	});
