@@ -388,6 +388,9 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[statusline].command` | `string` | `""` | Shell command for a scriptable statusline: its first stdout line (ANSI SGR colors included) is rendered as a third footer line; empty disables the feature |
+| `[statusline].interval_ms` | `integer` | `2000` | How often the statusline command runs; clamped to at least 300 |
+| `[statusline].timeout_ms` | `integer` | `5000` | Per-run timeout for the statusline command; the process is killed past it and the last successful output is kept |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -403,7 +406,14 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[statusline]
+command = "" # empty disables the statusline
+interval_ms = 2000
+timeout_ms = 5000
 ```
+
+On every run the statusline command receives the current session context as JSON on stdin — `session_id`, `version`, `model` (`id` and `display_name`), `workspace.current_dir`, `permission_mode`, `plan_mode`, and `context` token usage (`used_tokens`, `max_tokens`, `percent`) — so a script can render any of it without further calls. Only the first stdout line is used; a failing or timed-out run keeps the previous output, and before the first successful run no extra line is shown.
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_STATUSLINE_CONFIG,
   DEFAULT_TUI_CONFIG,
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
@@ -40,6 +41,8 @@ describe('TUI config', () => {
     expect(text).toContain('[notifications]');
     expect(text).toContain('enabled = true');
     expect(text).toContain('notification_condition = "unfocused"');
+    expect(text).toContain('[statusline]');
+    expect(text).toContain('interval_ms = 2000');
   });
 
   it('parses valid TOML', () => {
@@ -63,6 +66,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: DEFAULT_STATUSLINE_CONFIG,
     });
   });
 
@@ -87,6 +91,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: DEFAULT_STATUSLINE_CONFIG,
     });
   });
 
@@ -119,6 +124,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        statusLine: { command: '/tmp/statusline.sh', intervalMs: 1_000, timeoutMs: 3_000 },
       },
       filePath,
     );
@@ -129,6 +135,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: { command: '/tmp/statusline.sh', intervalMs: 1_000, timeoutMs: 3_000 },
     });
   });
 
@@ -141,10 +148,71 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        statusLine: DEFAULT_TUI_CONFIG.statusLine,
       },
       filePath,
     );
 
     expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+  });
+
+  it('parses the [statusline] section', () => {
+    const config = parseTuiConfig(`
+[statusline]
+command = "/path/to/statusline.sh"
+interval_ms = 1500
+timeout_ms = 8000
+`);
+
+    expect(config.statusLine).toEqual({
+      command: '/path/to/statusline.sh',
+      intervalMs: 1500,
+      timeoutMs: 8000,
+    });
+  });
+
+  it('defaults to a disabled statusline when the section is omitted', () => {
+    const config = parseTuiConfig(`theme = "dark"`);
+
+    expect(config.statusLine).toEqual(DEFAULT_STATUSLINE_CONFIG);
+    expect(config.statusLine.command).toBeNull();
+  });
+
+  it('normalizes an empty statusline command to disabled', () => {
+    const config = parseTuiConfig(`
+[statusline]
+command = "   "
+`);
+
+    expect(config.statusLine.command).toBeNull();
+  });
+
+  it('clamps a too-small statusline interval instead of rejecting the config', () => {
+    const config = parseTuiConfig(`
+[statusline]
+command = "x"
+interval_ms = 50
+`);
+
+    expect(config.statusLine.intervalMs).toBe(300);
+  });
+
+  it('round-trips the [statusline] section through save and load', async () => {
+    await saveTuiConfig(
+      {
+        ...DEFAULT_TUI_CONFIG,
+        statusLine: { command: 'echo hi', intervalMs: 2_500, timeoutMs: 4_000 },
+      },
+      filePath,
+    );
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('[statusline]');
+    expect(text).toContain('interval_ms = 2500');
+    expect((await loadTuiConfig(filePath)).statusLine).toEqual({
+      command: 'echo hi',
+      intervalMs: 2_500,
+      timeoutMs: 4_000,
+    });
   });
 });

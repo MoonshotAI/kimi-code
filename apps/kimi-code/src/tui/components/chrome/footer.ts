@@ -4,6 +4,8 @@
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
+ *   Line 3: optional statusline — first stdout line of the user-configured
+ *           `[statusline] command`, ANSI SGR passed through
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
@@ -15,6 +17,7 @@ import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import type { StatusLineConfig } from '#/tui/config';
 import type { AppState } from '#/tui/types';
 import {
   createGitStatusCache,
@@ -23,6 +26,7 @@ import {
   type GitStatus,
   type GitStatusCache,
 } from '#/utils/git/git-status';
+import { StatusLineRunner } from '#/utils/statusline/status-line-runner';
 import {
   formatTokenCount,
   usagePercent,
@@ -141,6 +145,26 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
+/**
+ * Session context passed to the statusline command on stdin. Field names
+ * follow Claude Code's statusline contract so community scripts port over.
+ */
+function buildStatusLineInput(state: AppState): Record<string, unknown> {
+  return {
+    session_id: state.sessionId,
+    version: state.version,
+    model: { id: state.model, display_name: modelDisplayName(state) },
+    workspace: { current_dir: state.workDir },
+    permission_mode: state.permissionMode,
+    plan_mode: state.planMode,
+    context: {
+      used_tokens: state.contextTokens,
+      max_tokens: state.maxContextTokens,
+      percent: usagePercent(state.contextTokens, state.maxContextTokens),
+    },
+  };
+}
+
 function shortenCwd(path: string): string {
   if (!path) return path;
   const home = process.env['HOME'] ?? '';
@@ -200,6 +224,8 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private statusLineRunner: StatusLineRunner | null = null;
+  private statusLineRunnerKey: string | null = null;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -208,6 +234,7 @@ export class FooterComponent implements Component {
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncStatusLineRunner(state.statusLine);
   }
 
   setState(state: AppState): void {
@@ -218,6 +245,10 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
+    // Sync after `this.state` is updated: the runner's getInput closure
+    // reads it for the stdin payload. Restarts only on config change
+    // (e.g. /reload-tui), leaving a running interval untouched otherwise.
+    this.syncStatusLineRunner(state.statusLine);
   }
 
   /**
@@ -357,7 +388,13 @@ export class FooterComponent implements Component {
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
-    return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    // ── Line 3 (optional): statusline command output, ANSI passed through ──
+    const lines = [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    const statusLineOutput = this.statusLineRunner?.getOutput();
+    if (statusLineOutput) {
+      lines.push(truncateToWidth(statusLineOutput, width));
+    }
+    return lines;
   }
 
   private syncGoalClock(goal: AppState['goal']): void {
@@ -388,6 +425,40 @@ export class FooterComponent implements Component {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
     }
+    if (this.statusLineRunner !== null) {
+      this.statusLineRunner.stop();
+      this.statusLineRunner = null;
+      this.statusLineRunnerKey = null;
+    }
+  }
+
+  /**
+   * Keeps the statusline runner in sync with the configured command.
+   * A null/empty command stops the runner; any field change restarts it.
+   */
+  private syncStatusLineRunner(config: StatusLineConfig): void {
+    const command = config.command;
+    if (command === null || command.length === 0) {
+      if (this.statusLineRunner !== null) {
+        this.statusLineRunner.stop();
+        this.statusLineRunner = null;
+        this.statusLineRunnerKey = null;
+      }
+      return;
+    }
+
+    const key = [command, String(config.intervalMs), String(config.timeoutMs)].join('\u0000');
+    if (key === this.statusLineRunnerKey) return;
+    this.statusLineRunner?.stop();
+    this.statusLineRunnerKey = key;
+    this.statusLineRunner = new StatusLineRunner({
+      command,
+      intervalMs: config.intervalMs,
+      timeoutMs: config.timeoutMs,
+      getInput: () => buildStatusLineInput(this.state),
+      onChange: this.onRefresh,
+    });
+    this.statusLineRunner.start();
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

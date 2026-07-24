@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import { DEFAULT_STATUSLINE_CONFIG } from '#/tui/config';
 import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
 
@@ -29,6 +30,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     version: 'test',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
+    statusLine: DEFAULT_STATUSLINE_CONFIG,
     availableModels: {},
     ...overrides,
   } as AppState;

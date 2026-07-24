@@ -30,6 +30,15 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
+/** Lower bound for the statusline refresh period; tighter loops just fork spam. */
+export const STATUSLINE_MIN_INTERVAL_MS = 300;
+
+export const StatusLineConfigSchema = z.object({
+  command: z.string().nullable(),
+  intervalMs: z.number().int().min(STATUSLINE_MIN_INTERVAL_MS),
+  timeoutMs: z.number().int().positive(),
+});
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -49,6 +58,13 @@ export const TuiConfigFileSchema = z.object({
       auto_install: z.boolean().optional(),
     })
     .optional(),
+  statusline: z
+    .object({
+      command: z.string().optional(),
+      interval_ms: z.number().int().optional(),
+      timeout_ms: z.number().int().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -57,12 +73,14 @@ export const TuiConfigSchema = z.object({
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
+  statusLine: StatusLineConfigSchema,
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 export type UpgradePreferences = z.infer<typeof UpgradePreferencesSchema>;
+export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
 
 export const DEFAULT_NOTIFICATIONS_CONFIG: NotificationsConfig = {
   enabled: true,
@@ -73,12 +91,19 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
   autoInstall: true,
 };
 
+export const DEFAULT_STATUSLINE_CONFIG: StatusLineConfig = {
+  command: null,
+  intervalMs: 2_000,
+  timeoutMs: 5_000,
+};
+
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
   disablePasteBurst: false,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
+  statusLine: DEFAULT_STATUSLINE_CONFIG,
 });
 
 /**
@@ -133,6 +158,7 @@ export async function saveTuiConfig(
 
 export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
+  const statusLineCommand = config.statusline?.command?.trim();
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
@@ -144,6 +170,22 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
     },
     upgrade: {
       autoInstall: config.upgrade?.auto_install ?? DEFAULT_UPGRADE_PREFERENCES.autoInstall,
+    },
+    statusLine: {
+      command:
+        statusLineCommand === undefined || statusLineCommand.length === 0
+          ? null
+          : statusLineCommand,
+      // Clamp instead of rejecting: a typo in one preference should not
+      // discard the whole config file.
+      intervalMs: Math.max(
+        STATUSLINE_MIN_INTERVAL_MS,
+        config.statusline?.interval_ms ?? DEFAULT_STATUSLINE_CONFIG.intervalMs,
+      ),
+      timeoutMs: Math.max(
+        1,
+        config.statusline?.timeout_ms ?? DEFAULT_STATUSLINE_CONFIG.timeoutMs,
+      ),
     },
   });
 }
@@ -165,6 +207,11 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
+
+[statusline]
+command = "${escapeTomlBasicString(config.statusLine.command ?? '')}" # Empty disables the statusline
+interval_ms = ${String(config.statusLine.intervalMs)} # Refresh period; clamped to >= ${String(STATUSLINE_MIN_INTERVAL_MS)}
+timeout_ms = ${String(config.statusLine.timeoutMs)} # Per-run timeout; the process is killed past it
 `;
 }
 
