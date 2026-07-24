@@ -1609,9 +1609,14 @@ function selectModel(modelId: string): void {
   min-height: 36px;
   max-height: calc(100vh / 4);
   overflow-y: auto;
+  scrollbar-width: none;
   line-height: 1.5;
   margin-bottom: 6px;
   user-select: text;
+}
+
+.ph::-webkit-scrollbar {
+  display: none;
 }
 
 .ph::placeholder {
