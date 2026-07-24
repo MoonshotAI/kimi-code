@@ -14,7 +14,7 @@ import {
   collectCompactableUserMessages,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isUndoAnchor } from './conversationTime';
+import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage, PromptOrigin } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -257,6 +257,12 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       if (removedUserCount >= count) {
         cutIndex = i;
         cutEntry = entry;
+        while (
+          cutIndex > clearFloor &&
+          isPromptOwnedInjection(transcript[cutIndex - 1]!.message, message)
+        ) {
+          cutIndex--;
+        }
         break;
       }
     }

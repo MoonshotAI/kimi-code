@@ -221,8 +221,15 @@ export class AgentPromptService implements IAgentPromptService {
     return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
   }
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
-    for (const caption of captions) this.reminders.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
-    if (message.content.length > 0) this.context.append(message);
+    const ownerPromptId = message.id ?? newMessageId();
+    for (const caption of captions) {
+      this.reminders.appendSystemReminder(caption, {
+        kind: 'injection',
+        variant: 'image_compression',
+        ownerPromptId,
+      });
+    }
+    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;

@@ -205,6 +205,29 @@ describe('reduceContextTranscript', () => {
     expect(result.turns.map((turn) => turn.turnId)).toEqual([1]);
   });
 
+  it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
+    const result = reduceContextTranscript([
+      promptTurn('undo me', { kind: 'user' }),
+      appendMessage(
+        userMessage('compressed image', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-1',
+        }),
+      ),
+      appendMessage({ ...userMessage('undo me', { kind: 'user' }), id: 'prompt-1' }),
+      appendMessage(assistantMessage('undone answer')),
+      undo(1),
+      promptTurn('keep me', { kind: 'user' }),
+      appendMessage(userMessage('keep me', { kind: 'user' })),
+      appendMessage(assistantMessage('kept answer')),
+    ]);
+
+    expect(texts(result)).toEqual(['keep me', 'kept answer']);
+    expect(result.turnIds).toEqual([1, 1]);
+    expect(result.turns.map((turn) => turn.turnId)).toEqual([1]);
+  });
+
   it('keeps stable turn ids when undo removes a steer after a hidden retry turn', () => {
     const result = reduceContextTranscript([
       promptTurn('u0', { kind: 'user' }),

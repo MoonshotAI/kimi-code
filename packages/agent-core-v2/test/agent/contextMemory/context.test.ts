@@ -2,6 +2,7 @@ import type { Message } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWireService } from '#/wire/wire';
 import {
@@ -661,6 +662,30 @@ describe('Agent context', () => {
         origin: { kind: 'user' },
       }),
     ]);
+  });
+
+  it('removes a pre-anchor image compression reminder when undoing its prompt', async () => {
+    profile.update({ activeToolNames: [] });
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({
+      input: [{ type: 'text', text: `inspect this image ${caption}` }],
+    });
+    await ctx.untilTurnEnd();
+
+    expect(context.get()).toMatchObject([
+      { origin: { kind: 'injection', variant: 'image_compression' } },
+      { origin: { kind: 'user' } },
+      { role: 'assistant' },
+    ]);
+
+    await ctx.undoHistory(1);
+
+    expect(context.get()).toEqual([]);
   });
 
   describe('notification projection', () => {

@@ -20,6 +20,18 @@ export function isUndoAnchor(message: ContextMessage): boolean {
   );
 }
 
+export function isPromptOwnedInjection(
+  message: ContextMessage,
+  prompt: ContextMessage,
+): boolean {
+  const origin = message.origin;
+  return (
+    origin?.kind === 'injection' &&
+    origin.ownerPromptId !== undefined &&
+    origin.ownerPromptId === prompt.id
+  );
+}
+
 export function isValidUndoCount(count: number): boolean {
   return Number.isSafeInteger(count) && count > 0;
 }
