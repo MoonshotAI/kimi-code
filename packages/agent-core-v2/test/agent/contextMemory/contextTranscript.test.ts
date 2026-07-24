@@ -188,6 +188,23 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['message A', 'reply A']);
   });
 
+  it('removes a post-anchor injection when undo cuts its turn', () => {
+    const result = reduceContextTranscript([
+      promptTurn('undo me', { kind: 'user' }),
+      appendMessage(userMessage('undo me', { kind: 'user' })),
+      appendMessage(assistantMessage('undone answer')),
+      appendMessage(userMessage('internal reminder', { kind: 'injection', variant: 'todo' })),
+      undo(1),
+      promptTurn('keep me', { kind: 'user' }),
+      appendMessage(userMessage('keep me', { kind: 'user' })),
+      appendMessage(assistantMessage('kept answer')),
+    ]);
+
+    expect(texts(result)).toEqual(['keep me', 'kept answer']);
+    expect(result.turnIds).toEqual([1, 1]);
+    expect(result.turns.map((turn) => turn.turnId)).toEqual([1]);
+  });
+
   it('keeps stable turn ids when undo removes a steer after a hidden retry turn', () => {
     const result = reduceContextTranscript([
       promptTurn('u0', { kind: 'user' }),

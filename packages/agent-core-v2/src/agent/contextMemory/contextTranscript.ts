@@ -243,21 +243,27 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
+    let cutIndex = -1;
     let cutEntry: MutableEntry | undefined;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const entry = transcript[i]!;
       const message = entry.message;
-      if (message.origin?.kind === 'injection') continue;
-      if (message.origin?.kind === 'compaction_summary') break;
-      transcript.splice(i, 1);
-      foldedLength = Math.max(0, foldedLength - 1);
-      if (isUndoAnchor(message)) {
-        removedUserCount++;
-        if (removedUserCount >= count) {
-          cutEntry = entry;
-          break;
-        }
+      if (message.origin?.kind === 'compaction_summary') {
+        cutIndex = i + 1;
+        break;
       }
+      if (!isUndoAnchor(message)) continue;
+      removedUserCount++;
+      if (removedUserCount >= count) {
+        cutIndex = i;
+        cutEntry = entry;
+        break;
+      }
+    }
+    if (cutIndex >= 0) {
+      const removedEntries = transcript.length - cutIndex;
+      transcript.splice(cutIndex);
+      foldedLength = Math.max(0, foldedLength - removedEntries);
     }
     if (cutEntry !== undefined) {
       turns = turns.filter(
