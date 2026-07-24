@@ -96,11 +96,11 @@ function onBodyScroll(): void {
 
 const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
-  { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'sparkles' },
+  { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'robot' },
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
   // Desktop-only tab (web's copy stops at 'archived'; docs/native-todos.md).
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
-  { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'tool' },
+  { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
 
@@ -496,8 +496,8 @@ function archiveTime(iso: string): string {
               <SegmentedControl
                 :model-value="colorScheme"
                 :options="[
-                  { value: 'light', label: t('theme.light') },
-                  { value: 'dark', label: t('theme.dark') },
+                  { value: 'light', label: t('theme.light'), icon: 'light-mode' },
+                  { value: 'dark', label: t('theme.dark'), icon: 'dark-mode' },
                   { value: 'system', label: t('theme.system') },
                 ]"
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"

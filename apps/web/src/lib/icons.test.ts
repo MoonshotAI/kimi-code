@@ -50,12 +50,11 @@ describe('iconSvg', () => {
     expect(iconSvg('plus', 'lg')).toContain(`width="${SIZE_PX.lg}" height="${SIZE_PX.lg}"`);
   });
 
-  it('does not duplicate width/height attributes from the raw icon', () => {
+  it('does not duplicate width/height attributes on the root <svg>', () => {
     const svg = iconSvg('plus');
-    const widthCount = (svg.match(/\bwidth="/g) ?? []).length;
-    const heightCount = (svg.match(/\bheight="/g) ?? []).length;
-    expect(widthCount).toBe(1);
-    expect(heightCount).toBe(1);
+    const root = svg.match(/^<svg\b[^>]*>/)?.[0] ?? '';
+    expect((root.match(/\bwidth="/g) ?? []).length).toBe(1);
+    expect((root.match(/\bheight="/g) ?? []).length).toBe(1);
   });
 
   it('returns empty string for an unknown name', () => {

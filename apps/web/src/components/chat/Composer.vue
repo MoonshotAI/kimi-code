@@ -871,9 +871,9 @@ function choosePermission(mode: PermissionMode): void {
 const permInfo = computed(() => PERM_MODES.find((p) => p.mode === props.status?.permission));
 const permLabel = computed(() => (permInfo.value ? t(permInfo.value.labelKey) : ''));
 const permIcon = computed(() => {
-  if (props.status?.permission === 'yolo') return 'bolt';
-  if (props.status?.permission === 'auto') return 'check';
-  return 'help-circle';
+  if (props.status?.permission === 'yolo') return 'alert-triangle';
+  if (props.status?.permission === 'auto') return 'robot';
+  return 'hand';
 });
 
 // ---------------------------------------------------------------------------

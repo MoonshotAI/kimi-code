@@ -562,3 +562,105 @@ body {
     font-size: max(16px, var(--ui-font-size-xl));
   }
 }
+
+/* Animated icon tracks (see the design-system Motion section). */
+:root {
+  --anim-rive-spin: 416.7ms;
+  --anim-leftbar: 533.3ms;
+  --anim-leftbar-shrink: 200ms;
+}
+
+/* Sidebar toggle: on hover the divider shrinks and the arrow flies in. */
+#bar-divider {
+  transform-box: view-box;
+  transform-origin: 9.3px 12px;
+  transition: transform var(--anim-leftbar-shrink) linear;
+}
+svg:hover #bar-divider,
+button:hover #bar-divider {
+  transform: translateX(-1.5px) scaleY(0.5);
+}
+#bar-arrow {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(63.95833%, 50.625%) scale(0);
+}
+svg:hover #bar-arrow,
+button:hover #bar-arrow {
+  animation: leftbar-arrow var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes leftbar-arrow {
+  0% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 0; }
+  3.125% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 1; }
+  15.625% { transform: translate(59.0125%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  37.5% { transform: translate(52.08333%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  100% { transform: translate(52.08333%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+}
+
+/* Expand variant: the arrow flies in from the left instead. */
+#bar-arrow-expand {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(52.08333%, 50.625%) scale(0);
+}
+svg:hover #bar-arrow-expand,
+button:hover #bar-arrow-expand {
+  animation: leftbar-arrow-expand var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes leftbar-arrow-expand {
+  0% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 0; }
+  3.125% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 1; }
+  15.625% { transform: translate(40.9875%, 50.625%) scale(1); opacity: 1; }
+  37.5% { transform: translate(52.08333%, 50.625%) scale(1); opacity: 1; }
+  100% { transform: translate(52.08333%, 50.625%) scale(1); opacity: 1; }
+}
+
+/* New chat: the plus spins once on hover (keyed to #p1 in the glyph). */
+#p1 {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+svg:hover #p1,
+button:hover #p1 {
+  animation: nc-plus-spin var(--anim-rive-spin) linear 1 forwards;
+}
+@keyframes nc-plus-spin {
+  0% { transform: translate(11.5px, 11.5px); }
+  8% { transform: translate(11.501px, 11.48px) rotate(1.1795deg) scale(1.02022); }
+  12% { transform: translate(11.511px, 11.46px) rotate(2.8374deg) scale(1.03026); }
+  20% { transform: translate(11.562px, 11.401px) rotate(8.8167deg) scale(1.05041); }
+  24% { transform: translate(11.608px, 11.361px) rotate(13.4726deg) scale(1.06017); }
+  32% { transform: translate(11.751px, 11.278px) rotate(25.9719deg) scale(1.08008); }
+  48% { transform: translate(12.149px, 11.222px) rotate(55.8418deg) scale(1.12025); }
+  52% { transform: translate(12.235px, 11.236px) rotate(62.0737deg) scale(1.12953); }
+  60% { transform: translate(12.371px, 11.276px) rotate(72.1167deg) scale(1.14954); }
+  68% { transform: translate(12.446px, 11.346px) rotate(79.3018deg) scale(1.12048); }
+  76% { transform: translate(12.488px, 11.403px) rotate(84.2633deg) scale(1.09046); }
+  88% { transform: translate(12.509px, 11.464px) rotate(88.52deg) scale(1.04535); }
+  100% { transform: translate(12.5px, 11.5px) rotate(90deg); }
+}
+
+/* Folder-plus: the same spin on #af-p1. */
+#af-p1 {
+  transform-box: view-box;
+  transform-origin: 18.4px 16.3px;
+}
+svg:hover #af-p1,
+button:hover #af-p1 {
+  animation: folder-plus-spin var(--anim-rive-spin) linear 1 forwards;
+}
+@keyframes folder-plus-spin {
+  0% { transform: none; }
+  8% { transform: rotate(1.1795deg) scale(1.02022); }
+  12% { transform: rotate(2.8374deg) scale(1.03026); }
+  20% { transform: rotate(8.8167deg) scale(1.05041); }
+  24% { transform: rotate(13.4726deg) scale(1.06017); }
+  32% { transform: rotate(25.9719deg) scale(1.08008); }
+  48% { transform: rotate(55.8418deg) scale(1.12025); }
+  52% { transform: rotate(62.0737deg) scale(1.12953); }
+  60% { transform: rotate(72.1167deg) scale(1.14954); }
+  68% { transform: rotate(79.3018deg) scale(1.12048); }
+  76% { transform: rotate(84.2633deg) scale(1.09046); }
+  88% { transform: rotate(88.52deg) scale(1.04535); }
+  100% { transform: rotate(90deg); }
+}

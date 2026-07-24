@@ -99,7 +99,7 @@ const TOOL_GLYPH: Record<string, IconName> = {
   web_fetch: 'globe',
   todo: 'check-list',
   task: 'sparkles',
-  agentswarm: 'git-pull-request',
+  agentswarm: 'sparkles',
   askuserquestion: 'help-circle',
   creategoal: 'target',
   getgoal: 'target',

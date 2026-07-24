@@ -148,7 +148,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
 <template>
   <div class="swarm-card" :class="{ open, err: aggregateStatus === 'error' }">
     <button class="head" type="button" :aria-expanded="open" @click="toggle">
-      <Icon class="ic" name="git-pull-request" size="sm" />
+      <Icon class="ic" name="sparkles" size="sm" />
       <span class="title">{{ label }}</span>
       <span v-if="description" class="meta">·</span>
       <span v-if="description" class="sum-txt">{{ description }}</span>

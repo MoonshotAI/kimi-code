@@ -333,8 +333,8 @@ watch(
       <SegmentedControl
         :model-value="colorScheme ?? 'system'"
         :options="[
-          { value: 'light', label: t('theme.light') },
-          { value: 'dark', label: t('theme.dark') },
+          { value: 'light', label: t('theme.light'), icon: 'light-mode' },
+          { value: 'dark', label: t('theme.dark'), icon: 'dark-mode' },
           { value: 'system', label: t('theme.system') },
         ]"
         @update:model-value="onColorScheme"
