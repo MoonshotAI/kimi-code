@@ -13,6 +13,13 @@ describe('createKimiI18n', () => {
     const i18n = createKimiI18n({ locale: 'en' });
     expect(i18n.global.t('filePreview.copyCode')).toBe('Copy code');
   });
+
+  it('renders the /goal description in full (pipe chars are escaped literals, not plural separators)', () => {
+    const i18n = createKimiI18n({ locale: 'en' });
+    expect(i18n.global.t('commands.goal.desc')).toBe(
+      'Create/control a goal: /goal <objective>, /goal pause|resume|cancel',
+    );
+  });
 });
 
 describe('formatCountNumber', () => {

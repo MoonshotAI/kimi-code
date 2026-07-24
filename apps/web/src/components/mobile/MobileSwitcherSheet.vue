@@ -269,7 +269,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
             <!-- Kebab menu -->
             <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
               <MenuItem size="lg" @click="onRename(s)">{{ t('sidebar.rename') }}</MenuItem>
-              <MenuItem size="lg" danger @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
+              <MenuItem size="lg" @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
             </Menu>
           </div>
           <button

@@ -93,7 +93,10 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
 ];
 
 const daemonEndpoint = serverEndpointLabel();
-const permissionModes = ['manual', 'auto', 'yolo'] as const;
+// Escalating autonomy order, matching the Composer's permission menu and the
+// protocol's PermissionMode enum: manual < yolo (auto-approves tools) < auto
+// (fully autonomous, never asks).
+const permissionModes = ['manual', 'yolo', 'auto'] as const;
 // Reuse the Composer's permission labels (status.permission*) so the
 // default-permission names stay in sync with the toolbar.
 const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {

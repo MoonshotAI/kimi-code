@@ -38,7 +38,7 @@ export default {
   goalStatusComplete: 'Complete',
   modeNotSupported: 'Not supported',
   // Thinking selector
-  thinkingLabel: 'thinking',
+  thinkingLabel: 'Thinking',
   thinkingTooltip: 'Toggle thinking mode',
   thinkingOn: 'On',
   thinkingOff: 'Off',

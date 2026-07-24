@@ -17,7 +17,7 @@ export default {
   prStatusDraft: 'draft',
   prStatusUnknown: 'unknown',
   options: 'Options',
-  copySessionId: 'Copy Session ID',
+  copySessionId: 'Copy session ID',
   renameSession: 'Rename',
   forkSession: 'Fork session',
   archiveSession: 'Archive',

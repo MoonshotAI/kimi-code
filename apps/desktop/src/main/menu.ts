@@ -73,7 +73,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     window: 'Window',
     closeWindow: 'Close Window',
     file: 'File',
-    newChat: 'New Chat',
+    newChat: 'New chat',
     openFolder: 'Open Folder…',
     aboutApp: 'About Kimi Code',
     quitApp: 'Quit Kimi Code',

@@ -517,7 +517,7 @@ defineExpose({ closeMenu });
           <Icon :name="session.pinned ? 'unpin' : 'pin'" size="sm" />
           {{ session.pinned ? t('sidebar.unpin') : t('sidebar.pin') }}
         </MenuItem>
-        <MenuItem danger @click="startArchive">
+        <MenuItem @click="startArchive">
           <Icon name="archive" size="sm" />
           {{ t('sidebar.archive') }}
         </MenuItem>

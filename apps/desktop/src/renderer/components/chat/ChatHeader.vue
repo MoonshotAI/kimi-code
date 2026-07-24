@@ -329,7 +329,7 @@ async function onOpenInApp(appId: string): Promise<void> {
           <Icon name="download" size="sm" />
           {{ t('header.exportSession') }}
         </MenuItem>
-        <MenuItem danger @click="startArchive">
+        <MenuItem @click="startArchive">
           <Icon name="archive" size="sm" />
           {{ t('header.archiveSession') }}
         </MenuItem>

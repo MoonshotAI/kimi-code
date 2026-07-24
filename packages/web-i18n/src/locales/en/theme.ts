@@ -1,6 +1,6 @@
 export default {
   colorSchemeLabel: 'Light/Dark',
-  light: 'Moon Bright',
-  dark: 'Moon Dark',
+  light: 'Moon bright',
+  dark: 'Moon dark',
   system: 'System',
 } as const;

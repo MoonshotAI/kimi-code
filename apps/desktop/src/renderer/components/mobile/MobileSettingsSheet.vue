@@ -70,7 +70,9 @@ function onColorScheme(v: string): void {
   emit('setColorScheme', v as ColorScheme);
 }
 
-const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
+// Escalating autonomy order, matching the Composer's permission menu:
+// manual < yolo (auto-approves tools) < auto (fully autonomous).
+const PERM_MODES: PermissionMode[] = ['manual', 'yolo', 'auto'];
 
 // Identity is the model id — display/model names can collide across providers.
 const currentModel = computed<AppModel | undefined>(() =>
@@ -93,10 +95,12 @@ const thinkingOptions = computed(() =>
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
+// Same escalation colours as the Composer's permission menu: yolo is the
+// warning level, auto (fully autonomous, never asks) is the danger level.
 const permColor = computed<string>(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--color-danger)';
-  if (p === 'auto') return 'var(--color-warning)';
+  if (p === 'auto') return 'var(--color-danger)';
+  if (p === 'yolo') return 'var(--color-warning)';
   return 'var(--color-text-muted)';
 });
 /** Permission sub-line, e.g. "manual · confirm every tool". */

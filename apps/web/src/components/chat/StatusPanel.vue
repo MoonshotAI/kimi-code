@@ -52,10 +52,12 @@ function permLabel(p: PermissionMode): string {
   return t('status.permissionManual');
 }
 
+// Same escalation colours as the Composer's permission menu: yolo is the
+// warning level, auto (fully autonomous, never asks) is the danger level.
 const permColor = computed(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--color-danger)';
-  if (p === 'auto') return 'var(--color-warning)';
+  if (p === 'auto') return 'var(--color-danger)';
+  if (p === 'yolo') return 'var(--color-warning)';
   return 'var(--color-text)';
 });
 

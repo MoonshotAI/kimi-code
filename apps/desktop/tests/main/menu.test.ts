@@ -168,7 +168,7 @@ describe('menuTemplate', () => {
     expect(items.find((item) => item.role === 'close')).toMatchObject({ label: 'Close Window' });
     expect(items.some((item) => item.id === 'new-window')).toBe(false);
     expect(items.find((item) => item.id === 'new-chat')).toMatchObject({
-      label: 'New Chat',
+      label: 'New chat',
       accelerator: 'CommandOrControl+N',
     });
     expect(items.find((item) => item.id === 'open-folder')).toMatchObject({
