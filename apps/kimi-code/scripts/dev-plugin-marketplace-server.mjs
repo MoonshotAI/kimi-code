@@ -12,6 +12,9 @@ import { readPluginManifestVersion } from './plugin-manifest-version.mjs';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
 const DEFAULT_PLUGINS_ROOT = resolve(REPO_ROOT, 'plugins');
+// Mirror the official CDN layout (/kimi-code/plugins/...) so plugin source
+// URLs resolved against the dev marketplace keep the production path shape.
+const CDN_MIRROR_PREFIX = '/kimi-code/plugins';
 
 export async function startPluginMarketplaceServer(options = {}) {
   const pluginsRoot = resolve(
@@ -39,7 +42,7 @@ export async function startPluginMarketplaceServer(options = {}) {
     throw new Error('Plugin marketplace dev server did not bind to a TCP port.');
   }
 
-  const marketplaceUrl = `http://${host}:${address.port}/marketplace.json`;
+  const marketplaceUrl = `http://${host}:${address.port}${CDN_MIRROR_PREFIX}/marketplace.json`;
   return {
     server,
     pluginsRoot,
@@ -72,15 +75,23 @@ async function handleRequest(req, res, pluginsRoot) {
   }
 
   try {
-    if (pathname === '/' || pathname === '/marketplace.json') {
+    if (
+      pathname === '/' ||
+      pathname === '/marketplace.json' ||
+      pathname === `${CDN_MIRROR_PREFIX}/marketplace.json`
+    ) {
       await serveMarketplaceJson(res, pluginsRoot, method === 'HEAD');
       return;
     }
-    if (pathname.endsWith('.zip')) {
-      await servePluginZip(res, pluginsRoot, pathname, method === 'HEAD');
+    // Strip the CDN-mirror prefix so mirrored URLs resolve inside pluginsRoot.
+    const localPathname = pathname.startsWith(`${CDN_MIRROR_PREFIX}/`)
+      ? pathname.slice(CDN_MIRROR_PREFIX.length)
+      : pathname;
+    if (localPathname.endsWith('.zip')) {
+      await servePluginZip(res, pluginsRoot, localPathname, method === 'HEAD');
       return;
     }
-    await serveStaticFile(res, pluginsRoot, pathname, method === 'HEAD');
+    await serveStaticFile(res, pluginsRoot, localPathname, method === 'HEAD');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
