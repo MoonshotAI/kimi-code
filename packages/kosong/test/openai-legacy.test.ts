@@ -1389,6 +1389,26 @@ describe('OpenAILegacyChatProvider', () => {
       });
     });
 
+    it('includes empty content for reasoning-only assistant messages without tool calls', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: 'reasoning before the crash' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: '',
+        reasoning_content: 'reasoning before the crash',
+      });
+    });
+
     it('serializes an explicitly empty ThinkPart to reasoning_content', async () => {
       const provider = createProvider({ model: 'deepseek-reasoner' });
       const history: Message[] = [
