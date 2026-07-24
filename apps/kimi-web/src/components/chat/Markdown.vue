@@ -16,7 +16,7 @@ import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { asCopyableText, copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import Tooltip from '../ui/Tooltip.vue';
@@ -338,10 +338,14 @@ const codeBlockProps = {
   loading: false,
 };
 
-function copyCodeBlockFallback(code: string): void {
+function copyCodeBlockFallback(payload: unknown): void {
   // markstream emits `copy` even when it skipped the write because the
   // Clipboard API is unavailable. Reuse our plain-HTTP fallback in that case,
   // while avoiding a duplicate write after markstream succeeds on HTTPS.
+  // Also ignore non-string payloads (e.g. native ClipboardEvent) — coercing
+  // those would write the literal "[object ClipboardEvent]" to the clipboard.
+  const code = asCopyableText(payload);
+  if (!code) return;
   const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
   if (clipboard && typeof clipboard.writeText === 'function') return;
   void copyTextToClipboard(code);

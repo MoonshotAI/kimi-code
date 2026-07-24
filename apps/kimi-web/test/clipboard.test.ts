@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { copyTextToClipboard } from '../src/lib/clipboard';
+import { asCopyableText, copyTextToClipboard } from '../src/lib/clipboard';
 
 // The web test suite runs in the default node environment (no jsdom), so we
 // mock the tiny `navigator` / `document` surface that the helper touches.
@@ -38,6 +38,20 @@ function installNavigator(clipboard: unknown): void {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('asCopyableText', () => {
+  it('returns non-empty strings', () => {
+    expect(asCopyableText('hello')).toBe('hello');
+  });
+
+  it('rejects empty strings and non-strings', () => {
+    expect(asCopyableText('')).toBeNull();
+    expect(asCopyableText(undefined)).toBeNull();
+    expect(asCopyableText({ type: 'copy' })).toBeNull();
+    // Simulate a native ClipboardEvent-like object that stringifies badly.
+    expect(asCopyableText({ toString: () => '[object ClipboardEvent]' })).toBeNull();
+  });
 });
 
 describe('copyTextToClipboard', () => {
