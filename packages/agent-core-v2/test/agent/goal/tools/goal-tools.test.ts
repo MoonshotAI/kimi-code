@@ -23,6 +23,7 @@ import {
 } from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
@@ -38,6 +39,7 @@ import {
   type TestAgentContext,
 } from '../../../harness';
 import { stubLoopWithHooks } from '../../loop/stubs';
+import { stubAgentSwarm } from '../stubs';
 
 const signal = new AbortController().signal;
 
@@ -54,6 +56,7 @@ describe('goal tools', () => {
     loopService = stubLoopWithHooks({ hasActiveTurn: true });
     ctx = createTestAgent(
       agentService(IAgentLoopService, loopService),
+      agentService(IAgentSwarmService, stubAgentSwarm()),
       permissionModeServices('auto'),
     );
     goals = ctx.get(IAgentGoalService);

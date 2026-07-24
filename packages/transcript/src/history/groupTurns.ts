@@ -5,11 +5,17 @@
  * This is a best-effort reconstruction — the live path (engine events) is the
  * high-fidelity one. Known limitations, accepted by design:
  *  - step granularity collapses to "one assistant message = one step";
+ *  - live-only detail is never backfilled: step usage / finishReason /
+ *    timing / retry, turn durationMs / error, tool inputText / progress, and
+ *    task resultSummary / error / stateReason / usage exist only on live
+ *    engine events — persisted context messages do not carry them;
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
- *  - interaction frames do not appear (approvals are not persisted as
- *    context messages);
+ *  - only the turn tree is built here: tasks / interactions / todos / meta
+ *    (goal, plan, swarm) are NOT context messages — the companion fold
+ *    (`foldWireRecordFacts` in `foldFacts.ts`) rebuilds them from the
+ *    non-`context.*` wire records on top of this base snapshot;
  *  - persisted messages carry no turn ids, so turn ordinals are assigned by
  *    grouping — **0-based, matching the engine's live turn numbering** — and
  *    can drift from the engine's ids when hidden origins (e.g. retries) make
@@ -124,7 +130,7 @@ export function groupMessagesIntoSnapshot(
               : source.kind === 'file'
                 ? { kind: 'file', fileId: source.file_id }
                 : undefined,
-          // base64 bytes are deliberately dropped — never shipped on the wire.
+          // base64 bytes are deliberately dropped — never shipped to clients.
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
@@ -251,9 +257,11 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  // Approvals / questions are never persisted, so a cold rebuild carries no
-  // interaction entities (same as the pre-entity frame model).
-  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
+  // The entity slots stay empty here: tasks / interactions / todos / meta are
+  // not context messages — `foldWireRecordFacts` fills them from the
+  // non-`context.*` wire records on top of this base snapshot. Prompts stay
+  // empty too: the wire journal carries no prompt records (see foldFacts).
+  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 // ---------------------------------------------------------------- helpers

@@ -14,9 +14,14 @@ export function stubProviderService(
     _serviceBrand: undefined,
     ready,
     onDidChangeProviders: () => ({ dispose: () => {} }),
+    onDidChangeDefaultProvider: () => ({ dispose: () => {} }),
     get: (name: string) => providers[name],
     list: () => providers,
+    getDefaultProvider: () => undefined,
     set: async () => {},
     delete: async () => {},
+    loadAll: () => {},
+    replaceAll: async () => {},
+    setDefaultProvider: async () => {},
   };
 }

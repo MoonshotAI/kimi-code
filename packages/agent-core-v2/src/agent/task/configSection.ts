@@ -40,6 +40,7 @@ export const AgentTaskConfigSchema = z.object({
   maxRunningTasks: z.number().int().min(1).optional(),
   keepAliveOnExit: z.boolean().optional(),
   bashAutoBackgroundOnTimeout: z.boolean().optional(),
+  bashTaskTimeoutS: z.number().int().min(0).optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),
   printBackgroundMode: PrintBackgroundModeSchema.optional(),
@@ -56,18 +57,10 @@ export function resolveAgentTaskConfig(config: IConfigService): AgentTaskConfig 
   return { ...legacy, ...current };
 }
 
-/**
- * Resolve the effective print-mode (`kimi -p`) background-task policy, mirroring
- * v1's `Session.resolvePrintBackgroundMode`: `printBackgroundMode` is
- * authoritative when set; otherwise fall back to the legacy `keepAliveOnExit`
- * mapping (`true` ⇒ `'drain'`, otherwise `'exit'`). The
- * `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` env override is applied by the
- * config env overlay (see `taskEnvBindings`), so it is covered here.
- */
 export function resolvePrintBackgroundMode(config: IConfigService): PrintBackgroundMode {
   const section = resolveAgentTaskConfig(config);
   if (section?.printBackgroundMode !== undefined) return section.printBackgroundMode;
-  return section?.keepAliveOnExit === true ? 'drain' : 'exit';
+  return section?.keepAliveOnExit === true ? 'drain' : 'steer';
 }
 
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';

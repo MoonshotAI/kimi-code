@@ -14,6 +14,7 @@ import {
   convertOpenAIError,
 } from '#/providers/openai-common';
 import { OpenAILegacyChatProvider, OpenAILegacyStreamedMessage } from '#/providers/openai-legacy';
+import { ReasoningKeyDialect } from '#/providers/reasoning-key';
 import {
   APIError as OpenAIAPIError,
   APIConnectionError as OpenAIConnectionError,
@@ -252,7 +253,7 @@ describe('OpenAI streaming error propagation', () => {
     const msg = new OpenAILegacyStreamedMessage(
       failingStream() as AsyncIterable<never>,
       true,
-      undefined,
+      new ReasoningKeyDialect(),
     );
 
     await expect(async () => {
@@ -270,7 +271,7 @@ describe('OpenAI streaming error propagation', () => {
       const msg2 = new OpenAILegacyStreamedMessage(
         failingStream2() as AsyncIterable<never>,
         true,
-        undefined,
+        new ReasoningKeyDialect(),
       );
       for await (const _ of msg2) {
         void _;
@@ -319,7 +320,7 @@ describe('OpenAI streaming: undici terminated mid-stream', () => {
     const msg = new OpenAILegacyStreamedMessage(
       terminatedStream() as AsyncIterable<never>,
       true,
-      undefined,
+      new ReasoningKeyDialect(),
     );
 
     let caught: unknown;

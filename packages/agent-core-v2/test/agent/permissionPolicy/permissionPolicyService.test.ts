@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -17,9 +17,6 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
-import { DenyAllPermissionPolicyService } from '#/agent/permissionPolicy/policies/deny-all';
-import { AgentSwarmExclusiveDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/agent-swarm-exclusive-deny';
-import { SwarmModeAgentSwarmApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/swarm-mode-agent-swarm-approve';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
 import {
@@ -27,9 +24,7 @@ import {
   type IAgentPermissionRulesService as PermissionRulesServiceContract,
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
-import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -45,8 +40,6 @@ describe('AgentPermissionPolicyService chain', () => {
   let mode: PermissionMode;
   let rules: PermissionRule[];
   let sessionApprovalRulePatterns: string[];
-  let plan: PlanData;
-  let swarmActive: boolean;
   let workspace: ReturnType<typeof workspaceStub>;
 
   beforeEach(() => {
@@ -54,8 +47,6 @@ describe('AgentPermissionPolicyService chain', () => {
     mode = 'manual';
     rules = [];
     sessionApprovalRulePatterns = [];
-    plan = null;
-    swarmActive = false;
     workspace = workspaceStub('/workspace');
     ix = createServices(disposables, {
       additionalServices: (reg) => {
@@ -70,10 +61,6 @@ describe('AgentPermissionPolicyService chain', () => {
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.definePartialInstance(IAgentPlanService, planServiceStub(() => plan, () => {
-          plan = null;
-        }));
-        reg.definePartialInstance(IAgentSwarmService, swarmServiceStub(() => swarmActive));
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
@@ -96,21 +83,6 @@ describe('AgentPermissionPolicyService chain', () => {
     return svc.evaluate(policyContext(input));
   }
 
-  it('lets a registered deny-all policy take precedence over approvals', async () => {
-    const svc = service();
-    const registration = svc.registerPolicy(new DenyAllPermissionPolicyService('tools disabled'));
-
-    await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.toMatchObject({
-      policyName: 'deny-all',
-      result: { kind: 'deny', message: 'tools disabled' },
-    });
-
-    registration.dispose();
-    await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.not.toMatchObject({
-      policyName: 'deny-all',
-    });
-  });
-
   it('keeps auto-mode AskUserQuestion deny above default approval', async () => {
     mode = 'auto';
 
@@ -120,33 +92,6 @@ describe('AgentPermissionPolicyService chain', () => {
     })).resolves.toMatchObject({
       policyName: 'auto-mode-ask-user-question-deny',
       result: { kind: 'deny' },
-    });
-  });
-
-  it('denies invalid AgentSwarm batches before auto-mode approval', async () => {
-    mode = 'auto';
-    const agentSwarmArgs = {
-      description: 'Review files',
-      prompt_template: 'Review {{item}}',
-      items: ['src/a.ts', 'src/b.ts'],
-    };
-    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', agentSwarmArgs);
-    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
-
-    await expect(evaluate({
-      toolName: 'AgentSwarm',
-      args: agentSwarmArgs,
-      toolCall: agentSwarmCall,
-      toolCalls: [agentSwarmCall, readCall],
-    })).resolves.toMatchObject({
-      policyName: 'agent-swarm-exclusive-deny',
-      result: {
-        kind: 'deny',
-        reason: {
-          agent_swarm_tool_calls: 1,
-          tool_calls: 2,
-        },
-      },
     });
   });
 
@@ -216,197 +161,12 @@ describe('AgentPermissionPolicyService chain', () => {
       },
     });
   });
-});
 
-describe('AgentPermissionPolicyService plan-mode policies', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
-  let mode: PermissionMode;
-  let sessionApprovalRulePatterns: string[];
-  let plan: PlanData;
-
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    mode = 'manual';
-    sessionApprovalRulePatterns = [];
-    plan = null;
-    ix = createServices(disposables, {
-      additionalServices: (reg) => {
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
-        reg.defineInstance(
-          IAgentScopeContext,
-          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
-        );
-        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
-          sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
-        }));
-        reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace'));
-        reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.definePartialInstance(IAgentPlanService, planServiceStub(() => plan, () => {
-          plan = null;
-        }));
-        reg.definePartialInstance(IAgentSwarmService, swarmServiceStub(() => false));
-        reg.defineInstance(ITelemetryService, recordingTelemetry([]));
-        reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
-      },
-      strict: true,
-    });
-  });
-
-  afterEach(() => {
-    disposables.dispose();
-  });
-
-  async function evaluate(
-    input: PolicyContextInput,
-  ): Promise<PermissionPolicyEvaluation | undefined> {
-    const svc = ix.get(IAgentPermissionPolicyService);
-    return svc.evaluate(policyContext(input));
-  }
-
-  it('approves EnterPlanMode in manual mode', async () => {
-    await expect(evaluate({ toolName: 'EnterPlanMode', args: {} })).resolves.toMatchObject({
-      policyName: 'plan-mode-tool-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it.each(['Write', 'Edit'] as const)(
-    'approves %s when it only writes the active plan file',
+  it.each(['AgentSwarm', 'EnterPlanMode', 'ExitPlanMode', 'CreateGoal'] as const)(
+    'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
-      const planFilePath = '/workspace/.kimi/plans/current.md';
-      plan = planData(planFilePath);
-      await expect(evaluate({
-        toolName,
-        args: toolName === 'Write'
-          ? { path: planFilePath, content: '# Plan' }
-          : { path: planFilePath, old_string: '# Draft', new_string: '# Plan' },
-        accesses: toolName === 'Write'
-          ? ToolAccesses.writeFile(planFilePath)
-          : ToolAccesses.readWriteFile(planFilePath),
-      })).resolves.toMatchObject({
-        policyName: 'plan-mode-tool-approve',
-        result: { kind: 'approve' },
-      });
-    },
-  );
-
-  it('denies active plan-mode writes that have no file write access', async () => {
-    const planFilePath = '/workspace/.kimi/plans/current.md';
-    plan = planData(planFilePath);
-
-    await expect(evaluate({
-      toolName: 'Write',
-      args: { path: planFilePath, content: '# Plan' },
-      accesses: ToolAccesses.none(),
-    })).resolves.toMatchObject({
-      policyName: 'plan-mode-guard-deny',
-      result: {
-        kind: 'deny',
-        message: expect.stringContaining('Plan mode is active'),
-      },
-    });
-  });
-
-  it('approves ExitPlanMode directly when plan mode is inactive', async () => {
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: planReviewDisplay({ plan: '# Plan' }),
-    })).resolves.toMatchObject({
-      policyName: 'plan-mode-tool-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('approves ExitPlanMode while active when there is no plan review display', async () => {
-    plan = planData('/tmp/plan.md');
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: { kind: 'generic', summary: 'exit', detail: {} },
-    })).resolves.toMatchObject({
-      policyName: 'plan-mode-tool-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('approves ExitPlanMode while active when the plan review is blank', async () => {
-    plan = planData('/tmp/plan.md');
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: planReviewDisplay({ plan: '  \n\t' }),
-    })).resolves.toMatchObject({
-      policyName: 'plan-mode-tool-approve',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('defers non-empty plan reviews to the review approval policy in manual mode', async () => {
-    plan = planData('/tmp/plan.md');
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: planReviewDisplay({ plan: '# Plan' }),
-    })).resolves.toMatchObject({
-      policyName: 'exit-plan-mode-review-ask',
-      result: { kind: 'ask' },
-    });
-  });
-
-  it('requests plan-review approval in yolo mode', async () => {
-    mode = 'yolo';
-    plan = planData('/tmp/plan.md');
-
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: planReviewDisplay({ plan: '# Plan' }),
-    })).resolves.toMatchObject({
-      policyName: 'exit-plan-mode-review-ask',
-      result: { kind: 'ask' },
-    });
-  });
-
-  it('reuses session approval for ExitPlanMode without re-prompting plan review', async () => {
-    sessionApprovalRulePatterns.push('ExitPlanMode');
-    plan = planData('/tmp/plan.md');
-
-    await expect(evaluate({
-      toolName: 'ExitPlanMode',
-      args: {},
-      display: planReviewDisplay({ plan: '# Updated Plan' }),
-    })).resolves.toMatchObject({
-      policyName: 'session-approval-history',
-      result: { kind: 'approve' },
-    });
-  });
-
-  it('uses ordinary Bash approval in manual plan mode', async () => {
-    plan = planData('/tmp/plan.md');
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'ls -la', timeout: 60 },
-    })).resolves.toMatchObject({
-      policyName: 'fallback-ask',
-      result: { kind: 'ask' },
-    });
-  });
-
-  it.each([
-    ['auto', 'auto-mode-approve'],
-    ['yolo', 'yolo-mode-approve'],
-  ] as const)(
-    'defers Bash to ordinary %s permission behavior in plan mode',
-    async (nextMode, policyName) => {
-      mode = nextMode;
-      plan = planData('/tmp/plan.md');
-      await expect(evaluate({
-        toolName: 'Bash',
-        args: { command: 'rm generated.txt', timeout: 60 },
-      })).resolves.toMatchObject({
-        policyName,
+      await expect(evaluate({ toolName, args: {} })).resolves.toMatchObject({
+        policyName: 'default-tool-approve',
         result: { kind: 'approve' },
       });
     },
@@ -438,8 +198,6 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.definePartialInstance(IAgentPlanService, planServiceStub(() => null));
-        reg.definePartialInstance(IAgentSwarmService, swarmServiceStub(() => false));
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
@@ -569,117 +327,6 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   });
 });
 
-describe('AgentSwarm permission policies', () => {
-  const agentSwarmArgs = {
-    description: 'Review files',
-    prompt_template: 'Review {{item}}',
-    items: ['src/a.ts', 'src/b.ts'],
-  };
-
-  it('approves only AgentSwarm when swarm mode is active', () => {
-    let swarmActive = false;
-    const swarm = {
-      get isActive() {
-        return swarmActive;
-      },
-    } as IAgentSwarmService;
-    const policy = new SwarmModeAgentSwarmApprovePermissionPolicyService(swarm);
-
-    expect(
-      policy.evaluate(policyContext({ toolName: 'AgentSwarm', args: agentSwarmArgs })),
-    ).toBeUndefined();
-    swarmActive = true;
-    expect(
-      policy.evaluate(policyContext({ toolName: 'AgentSwarm', args: agentSwarmArgs })),
-    ).toEqual({ kind: 'approve' });
-    expect(policy.evaluate(policyContext({ toolName: 'Agent', args: {} }))).toBeUndefined();
-  });
-
-  it('denies AgentSwarm mixed with other tool calls in the same response', () => {
-    const policy = new AgentSwarmExclusiveDenyPermissionPolicyService();
-    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', agentSwarmArgs);
-    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
-
-    expect(
-      policy.evaluate(
-        policyContext({
-          toolName: 'AgentSwarm',
-          args: agentSwarmArgs,
-          toolCall: agentSwarmCall,
-          toolCalls: [agentSwarmCall, readCall],
-        }),
-      ),
-    ).toMatchObject({
-      kind: 'deny',
-      message: expect.stringContaining('AgentSwarm must be the only tool call'),
-      reason: {
-        agent_swarm_tool_calls: 1,
-        tool_calls: 2,
-      },
-    });
-    expect(
-      policy.evaluate(
-        policyContext({
-          toolName: 'Read',
-          args: { path: 'src/a.ts' },
-          toolCall: readCall,
-          toolCalls: [agentSwarmCall, readCall],
-        }),
-      ),
-    ).toMatchObject({ kind: 'deny' });
-  });
-
-  it('denies multiple AgentSwarm calls with one-at-a-time guidance', () => {
-    const policy = new AgentSwarmExclusiveDenyPermissionPolicyService();
-    const first = toolCall('call_agent_swarm_1', 'AgentSwarm', agentSwarmArgs);
-    const second = toolCall('call_agent_swarm_2', 'AgentSwarm', {
-      description: 'Review tests',
-      prompt_template: 'Review {{item}}',
-      items: ['test/a.ts', 'test/b.ts'],
-    });
-
-    const result = policy.evaluate(
-      policyContext({
-        toolName: 'AgentSwarm',
-        args: agentSwarmArgs,
-        toolCall: first,
-        toolCalls: [first, second],
-      }),
-    );
-
-    expect(result).toMatchObject({
-      kind: 'deny',
-      message: expect.stringContaining('Multiple AgentSwarm calls are not forbidden'),
-      reason: {
-        agent_swarm_tool_calls: 2,
-        tool_calls: 2,
-      },
-    });
-    expect(result).toMatchObject({
-      message: expect.stringContaining('call one AgentSwarm, wait for its result'),
-    });
-    expect(result).toMatchObject({
-      message: expect.stringContaining('merge the work into a single AgentSwarm'),
-    });
-  });
-
-  it('allows a single AgentSwarm call for later permission policies', () => {
-    const policy = new AgentSwarmExclusiveDenyPermissionPolicyService();
-    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', agentSwarmArgs);
-
-    expect(
-      policy.evaluate(
-        policyContext({
-          toolName: 'AgentSwarm',
-          args: agentSwarmArgs,
-          toolCall: agentSwarmCall,
-          toolCalls: [agentSwarmCall],
-        }),
-      ),
-    ).toBeUndefined();
-  });
-});
-
 interface MutablePermissionRulesStubOptions {
   readonly rules?: () => readonly PermissionRule[];
   readonly sessionApprovalRulePatterns?: () => readonly string[];
@@ -706,26 +353,21 @@ interface PolicyContextInput {
   readonly id?: string;
   readonly toolName: string;
   readonly args: Record<string, unknown>;
-  readonly toolCall?: ToolCall;
-  readonly toolCalls?: readonly ToolCall[];
-  readonly display?: ToolInputDisplay;
   readonly accesses?: ToolAccessList;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
-  const toolCall =
-    input.toolCall ??
-    toolCallFor(input.id ?? `call_${input.toolName}`, input.toolName, input.args);
+  const toolCall = toolCallFor(input.id ?? `call_${input.toolName}`, input.toolName, input.args);
   const subject = ruleSubject(input.toolName, input.args);
   return {
     turnId: 0,
     signal,
     toolCall,
-    toolCalls: input.toolCalls ?? [toolCall],
+    toolCalls: [toolCall],
     args: input.args,
     execution: {
       description: description(input.toolName),
-      display: input.display ?? display(input.toolName, input.args),
+      display: display(input.toolName, input.args),
       accesses: input.accesses ?? accesses(input.toolName, input.args),
       approvalRule:
         subject === undefined ? input.toolName : literalRulePattern(input.toolName, subject),
@@ -745,10 +387,6 @@ function toolCallFor(id: string, name: string, args: Record<string, unknown>): T
     name,
     arguments: JSON.stringify(args),
   };
-}
-
-function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
-  return toolCallFor(id, name, args);
 }
 
 function ruleSubject(toolName: string, args: Record<string, unknown>): string | undefined {
@@ -788,8 +426,6 @@ function description(toolName: string): string {
       return 'write file';
     case 'Edit':
       return 'edit file';
-    case 'ExitPlanMode':
-      return 'Presenting plan and exiting plan mode';
     default:
       return `Approve ${toolName}`;
   }
@@ -879,39 +515,5 @@ function kaosStub(pathClass: HostEnvironmentService['pathClass'] = 'posix'): Hos
     pathClass,
     homeDir: '/home/test',
     ready: Promise.resolve(),
-  };
-}
-
-function planServiceStub(
-  status: () => PlanData | Promise<PlanData>,
-  exit: IAgentPlanService['exit'] = () => {},
-): Partial<IAgentPlanService> {
-  return {
-    status: async () => status(),
-    exit,
-  };
-}
-
-function swarmServiceStub(isActive: () => boolean): Partial<IAgentSwarmService> {
-  return {
-    get isActive() {
-      return isActive();
-    },
-  };
-}
-
-function planData(path: string): NonNullable<PlanData> {
-  return {
-    id: 'plan-1',
-    content: '# Plan',
-    path,
-  };
-}
-
-function planReviewDisplay(input: { readonly plan: string }): ToolInputDisplay {
-  return {
-    kind: 'plan_review',
-    plan: input.plan,
-    path: '/tmp/plan.md',
   };
 }

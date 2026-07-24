@@ -37,7 +37,7 @@ import { sessionQuestionContract } from './session/question.js';
 export const globalContract: KlientContract = {
   // core (app scope)
   sessionIndex: sessionsContract,
-  workspaceRegistry: workspacesContract,
+  workspaceService: workspacesContract,
   configService: configContract,
   providerService: providersContract,
   modelService: modelsContract,
@@ -65,4 +65,5 @@ export const globalContract: KlientContract = {
   agentTaskService: agentTaskContract,
 };
 
-export type { KlientContract, ProcedureContract, ServiceContract } from './types.js';
+export type { KlientContract, ProcedureContract, ServiceContract, StreamingProcedureContract } from './types.js';
+export { isStreamingContract } from './types.js';

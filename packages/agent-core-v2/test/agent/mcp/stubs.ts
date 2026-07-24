@@ -24,6 +24,9 @@ export const cwdStdioFixture = fileURLToPath(new URL('./fixtures/cwd-stdio-serve
 export const slowStdioFixture = fileURLToPath(
   new URL('./fixtures/slow-stdio-server.mjs', import.meta.url),
 );
+export const slowToolStdioFixture = fileURLToPath(
+  new URL('./fixtures/slow-tool-stdio-server.mjs', import.meta.url),
+);
 export const hangingListStdioFixture = fileURLToPath(
   new URL('./fixtures/hanging-list-stdio-server.mjs', import.meta.url),
 );

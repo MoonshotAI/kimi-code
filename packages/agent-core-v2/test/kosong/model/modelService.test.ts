@@ -4,19 +4,16 @@
  *
  *  - the section TOML transforms round-trip snake_case ↔ camelCase (including
  *    the nested `overrides` object);
- *  - `ModelService` CRUD persists through config and diffs section changes
- *    into `onDidChangeModels` (added/changed/removed).
+ *  - `ModelService` is an in-memory registry: `loadAll` hydrates and resolves
+ *    `ready`, CRUD diffs state changes into `onDidChangeModels`
+ *    (added/changed/removed), and equal writes stay silent.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { createScopedTestHost } from '#/_base/di/test';
-import { IConfigService } from '#/app/config/config';
-import { modelsFromToml, modelsToToml } from '#/kosong/model/configSection';
-import { IModelService, type ModelRecord } from '#/kosong/model/model';
-import '#/kosong/model/modelService';
-
-import { StubConfigService } from '../stubs';
+import { modelsFromToml, modelsToToml } from '#/app/kosongConfig/configSection';
+import { type ModelRecord } from '#/kosong/model/model';
+import { ModelService } from '#/kosong/model/modelService';
 
 describe('models TOML transforms', () => {
   it('converts snake_case entries to camelCase and back', () => {
@@ -67,46 +64,76 @@ describe('models TOML transforms', () => {
 });
 
 describe('ModelService', () => {
-  function createHost(): {
-    host: ReturnType<typeof createScopedTestHost>;
-    service: IModelService;
-  } {
-    const config = new StubConfigService();
-    const host = createScopedTestHost([[IConfigService, config]]);
-    const service = host.app.accessor.get(IModelService);
-    return { host, service };
+  function createService(models: Readonly<Record<string, ModelRecord>> = {}): ModelService {
+    const service = new ModelService();
+    service.loadAll({ ...models }, undefined);
+    return service;
   }
 
-  it('supports CRUD and diffs section changes into onDidChangeModels', async () => {
-    const { host, service } = createHost();
-    try {
-      const events: Array<{
-        added: readonly string[];
-        removed: readonly string[];
-        changed: readonly string[];
-      }> = [];
-      service.onDidChangeModels((e) => events.push(e));
+  it('resolves ready on the first loadAll and exposes the default pointer', async () => {
+    const service = new ModelService();
+    let ready = false;
+    void service.ready.then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
 
-      const k1: ModelRecord = { provider: 'moonshot', model: 'kimi-k2', maxContextSize: 262144 };
-      await service.set('k1', k1);
-      expect(service.get('k1')).toEqual(k1);
-      expect(service.list()).toEqual({ k1 });
-      expect(events).toEqual([{ added: ['k1'], removed: [], changed: [] }]);
+    service.loadAll({ k1: { model: 'kimi-k2', maxContextSize: 262144 } }, 'k1');
+    await service.ready;
+    expect(ready).toBe(true);
+    expect(service.getDefaultModel()).toBe('k1');
+  });
 
-      const updated: ModelRecord = { ...k1, displayName: 'K2' };
-      await service.set('k1', updated);
-      expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['k1'] });
+  it('supports CRUD and diffs state changes into onDidChangeModels', async () => {
+    const service = createService();
+    const events: Array<{
+      added: readonly string[];
+      removed: readonly string[];
+      changed: readonly string[];
+    }> = [];
+    service.onDidChangeModels((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
 
-      // Rewriting with an identical record still fires the config event but
-      // diffs to no changed keys.
-      await service.set('k1', updated);
-      expect(events.at(-1)).toEqual({ added: [], removed: [], changed: [] });
+    const k1: ModelRecord = { provider: 'moonshot', model: 'kimi-k2', maxContextSize: 262144 };
+    await service.set('k1', k1);
+    expect(service.get('k1')).toEqual(k1);
+    expect(service.list()).toEqual({ k1 });
+    expect(events).toEqual([{ added: ['k1'], removed: [], changed: [] }]);
 
-      await service.delete('k1');
-      expect(service.get('k1')).toBeUndefined();
-      expect(events.at(-1)).toEqual({ added: [], removed: ['k1'], changed: [] });
-    } finally {
-      host.dispose();
-    }
+    const updated: ModelRecord = { ...k1, displayName: 'K2' };
+    await service.set('k1', updated);
+    expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['k1'] });
+
+    // Rewriting with an identical record is silent — no event fires.
+    await service.set('k1', updated);
+    expect(events).toHaveLength(2);
+
+    await service.delete('k1');
+    expect(service.get('k1')).toBeUndefined();
+    expect(events.at(-1)).toEqual({ added: [], removed: ['k1'], changed: [] });
+  });
+
+  it('replaceAll replaces the records and keeps the default pointer', async () => {
+    const service = createService({ a: { model: 'm-a' }, b: { model: 'm-b' } });
+    await service.setDefaultModel('a');
+
+    await service.replaceAll({ c: { model: 'm-c' } });
+    expect(service.list()).toEqual({ c: { model: 'm-c' } });
+    expect(service.getDefaultModel()).toBe('a');
+  });
+
+  it('fires the pointer event only on real pointer changes', async () => {
+    const service = createService({ k1: { model: 'kimi-k2' } });
+    const pointerEvents: Array<string | undefined> = [];
+    service.onDidChangeDefaultModel((e) => pointerEvents.push(e.id));
+
+    await service.setDefaultModel('k1');
+    await service.setDefaultModel('k1');
+    expect(pointerEvents).toEqual(['k1']);
+
+    await service.setDefaultModel(undefined);
+    expect(pointerEvents).toEqual(['k1', undefined]);
   });
 });

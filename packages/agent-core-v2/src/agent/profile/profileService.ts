@@ -62,10 +62,10 @@ import {
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
-  THINKING_SECTION,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';

@@ -9,8 +9,9 @@
  *  - `kimiOpenAITrait.convertMessage`: empty-content assistant tool messages
  *    drop `content`; `tool_calls[].extras` round-trips; message-level
  *    `tools` embed;
- *  - `kimiOpenAITrait.reasoningKey` / `preserveThinking`: reasoning field is
- *    `reasoning_content`; force-replay only `keep: 'all'` sessions with
+ *  - reasoning: the trait does NOT pin a `reasoningKey` — the base
+ *    auto-detects the endpoint's dialect, defaulting to `reasoning_content`;
+ *    `preserveThinking` force-replays only `keep: 'all'` sessions with
  *    thinking not disabled;
  *  - `kimiOpenAITrait.extractUsage`: usage at the top level or
  *    `choices[0].usage`;
@@ -140,8 +141,11 @@ describe('kimiOpenAITrait.convertMessage', () => {
 });
 
 describe('kimiOpenAITrait reasoning hooks', () => {
-  it('declares reasoning_content as the reasoning field', () => {
-    expect(call(kimiOpenAITrait.reasoningKey, context)).toBe('reasoning_content');
+  it('does not pin a reasoning field — the base detects the endpoint dialect', () => {
+    // Detection defaults to `reasoning_content` (Kimi's native field) and
+    // adapts to peers that speak `reasoning` (newer vLLM); a trait pin would
+    // disable that adaptation. Operator config `reasoning_key` still pins.
+    expect(kimiOpenAITrait.reasoningKey).toBeUndefined();
   });
 
   it('force-replays reasoning only in keep:all sessions with thinking enabled', () => {
@@ -289,7 +293,6 @@ describe('trait objects are plain declarations', () => {
       'endpoint',
       'extractUsage',
       'preserveThinking',
-      'reasoningKey',
       'strictThinkingValidation',
       'uploadVideo',
       'withMaxCompletionTokens',

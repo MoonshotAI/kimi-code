@@ -9,7 +9,7 @@
  *
  * One physical folder may be split across sibling buckets by legacy id
  * spellings (Windows casing/slash variants minted different `workspaceId`s for
- * the same directory; see `IWorkspaceRegistry.resolveAliasIds`). A list or
+ * the same directory; see `IWorkspaceAliases.resolveAliasIds`). A list or
  * `countActive` query takes the workspace-id *set*, enumerates each bucket,
  * and merges before the single recency sort and `limit` step — the merged
  * listing is observably identical to a single-bucket list (same sort key,

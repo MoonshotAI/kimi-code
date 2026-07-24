@@ -42,8 +42,8 @@ export interface ProtocolBaseDefinition {
   readonly id: ProtocolBaseId;
   /**
    * The base's own capability catalog — the final fallback of capability
-   * resolution (definition → traits → base). Absent or `undefined` means the
-   * base knows nothing about the model.
+   * resolution (traits → base). Absent or `undefined` means the base knows
+   * nothing about the model.
    */
   capability?(modelName: string): ModelCapability | undefined;
   createChatProvider(context: ProtocolBaseContext): ChatProvider;

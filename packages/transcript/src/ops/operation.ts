@@ -23,13 +23,14 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
+import type { TranscriptPrompt } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
-/** Turn header as carried on the wire: steps always arrive via step.upsert. */
+/** Turn header as carried in ops: steps always arrive via step.upsert. */
 export type TurnHeader = Omit<TranscriptTurn, 'steps'>;
-/** Step header as carried on the wire: frames always arrive via frame.upsert. */
+/** Step header as carried in ops: frames always arrive via frame.upsert. */
 export type StepHeader = Omit<TranscriptStep, 'frames'>;
 
 export interface ResetOp {
@@ -103,7 +104,7 @@ export interface InteractionUpsertOp {
 
 /**
  * Attachment entity upsert — global, addressed by id. Media bytes never
- * travel the wire; the entity carries metadata plus a fetch reference.
+ * travel in ops; the entity carries metadata plus a fetch reference.
  */
 export interface AttachmentUpsertOp {
   readonly op: 'attachment.upsert';
@@ -117,6 +118,16 @@ export interface AttachmentUpsertOp {
 export interface TodoUpsertOp {
   readonly op: 'todo.upsert';
   readonly todo: TranscriptTodo;
+}
+
+/**
+ * Prompt queue entity upsert — global like `task.upsert`, addressed by id
+ * (never placed into the timeline). Flows at 'turn' grade and up, so even
+ * coarse subscribers see queue state.
+ */
+export interface PromptUpsertOp {
+  readonly op: 'prompt.upsert';
+  readonly prompt: TranscriptPrompt;
 }
 
 export interface MetaMergeOp {
@@ -142,6 +153,7 @@ export type TranscriptOperation =
   | InteractionUpsertOp
   | AttachmentUpsertOp
   | TodoUpsertOp
+  | PromptUpsertOp
   | MetaMergeOp
   | ItemsRemoveOp;
 
@@ -160,6 +172,8 @@ export interface AgentTranscriptSnapshot {
   readonly attachments: readonly TranscriptAttachment[];
   /** Global todo documents (latest state); never paginated. */
   readonly todos: readonly TranscriptTodo[];
+  /** Global prompt queue entities; never paginated. */
+  readonly prompts: readonly TranscriptPrompt[];
   readonly meta: TranscriptMeta;
   /**
    * When the reset only ships a tail window, this flag tells the consumer

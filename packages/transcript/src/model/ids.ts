@@ -20,6 +20,7 @@ export type AgentId = string;
 export type InteractionId = string;
 export type AttachmentId = string;
 export type TodoId = string;
+export type PromptId = string;
 export type ItemId = string;
 
 export function turnId(ordinal: number): TurnId {

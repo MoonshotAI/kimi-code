@@ -26,6 +26,7 @@ import { OsProcessErrors } from '#/os/interface/hostProcess';
 import { PluginErrors } from '#/app/plugin/errors';
 import { ProfileErrors } from '#/agent/profile/errors';
 import { PromptErrors } from '#/agent/prompt/errors';
+import { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 import { SessionExportErrors } from '#/app/sessionExport/errors';
 import { SessionErrors } from '#/session/errors';
 import { SkillErrors } from '#/app/skillCatalog/errors';
@@ -33,7 +34,7 @@ import { StorageErrors } from '#/persistence/interface/storage';
 import { TerminalErrors } from '#/os/interface/terminalErrors';
 import { UsageErrors } from '#/agent/usage/errors';
 import { WireErrors } from '#/wire/errors';
-import { WorkspaceErrors } from '#/app/workspaceRegistry/errors';
+import { WorkspaceErrors } from '#/app/workspace/errors';
 
 export * from '#/_base/errors/codes';
 export * from '#/_base/errors/errorMessage';
@@ -58,6 +59,7 @@ export { OsProcessErrors } from '#/os/interface/hostProcess';
 export { PluginErrors } from '#/app/plugin/errors';
 export { ProfileErrors } from '#/agent/profile/errors';
 export { PromptErrors } from '#/agent/prompt/errors';
+export { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 export { SessionExportErrors } from '#/app/sessionExport/errors';
 export { SessionErrors } from '#/session/errors';
 export { SkillErrors } from '#/app/skillCatalog/errors';
@@ -65,7 +67,7 @@ export { StorageErrors } from '#/persistence/interface/storage';
 export { TerminalErrors } from '#/os/interface/terminalErrors';
 export { UsageErrors } from '#/agent/usage/errors';
 export { WireErrors } from '#/wire/errors';
-export { WorkspaceErrors } from '#/app/workspaceRegistry/errors';
+export { WorkspaceErrors } from '#/app/workspace/errors';
 
 export const ErrorCodes = {
   ...CoreErrors.codes,
@@ -87,6 +89,7 @@ export const ErrorCodes = {
   ...PluginErrors.codes,
   ...ProfileErrors.codes,
   ...PromptErrors.codes,
+  ...ModelsDevImportErrors.codes,
   ...SessionExportErrors.codes,
   ...SessionErrors.codes,
   ...SkillErrors.codes,

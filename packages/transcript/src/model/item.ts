@@ -24,18 +24,21 @@ export const KNOWN_MARKERS = [
   'goal',
   'plan.enter',
   'plan.exit',
+  'plan.revision',
   'swarm.enter',
   'swarm.exit',
   'skill',
   'cron.fired',
   'notice',
+  'hook',
 ] as const;
 
 /**
  * A structural timeline annotation that does not belong to any step:
  * compaction/undo/clear ribbons, goal updates (also mirrored into
  * `meta.goal`), plan/swarm mode transitions, skill activations, cron firing,
- * and step-less notices (`marker: 'notice'` with a notice payload).
+ * hook results, and step-less notices (`marker: 'notice'` with a notice
+ * payload).
  */
 export interface TranscriptMarker {
   readonly kind: 'marker';

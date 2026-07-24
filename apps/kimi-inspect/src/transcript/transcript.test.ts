@@ -16,7 +16,12 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { WsLike } from '../channel/wsLike';
-import { fetchTranscriptPage, type TranscriptPage } from './api';
+import {
+  fetchTranscriptOps,
+  fetchTranscriptPage,
+  fetchTranscriptPlan,
+  type TranscriptPage,
+} from './api';
 import {
   countTurns,
   createCoalescedRunner,
@@ -127,7 +132,8 @@ class FakeWs implements WsLike {
 
 function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0]['handlers']> = {}) {
   const seen = {
-    ops: [] as { agentId: string; ops: readonly TranscriptOperation[] }[],
+    ops: [] as { agentId: string; ops: readonly TranscriptOperation[]; at?: string; seq?: number }[],
+    resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
     resyncs: 0,
     reconnects: 0,
   };
@@ -138,9 +144,13 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
     agentId: 'main',
     WebSocketImpl: FakeWs,
     handlers: {
-      onOps: (agentId, ops) => {
-        seen.ops.push({ agentId, ops });
-        handlers.onOps?.(agentId, ops);
+      onOps: (agentId, ops, meta) => {
+        seen.ops.push({ agentId, ops, at: meta?.at, seq: meta?.seq });
+        handlers.onOps?.(agentId, ops, meta);
+      },
+      onReset: (agentId, _snapshot, hasMoreOlder, meta) => {
+        seen.resets.push({ agentId, hasMoreOlder, at: meta?.at, seq: meta?.seq });
+        handlers.onReset?.(agentId, _snapshot, hasMoreOlder, meta);
       },
       onResyncRequired: () => {
         seen.resyncs += 1;
@@ -169,6 +179,7 @@ describe('fetchTranscriptPage', () => {
     meta: { activity: 'turn' },
     agents: [],
     pending_interactions: ['apr-1'],
+    seq: 42,
   };
 
   it('requests the endpoint with cursor params and bearer auth, unwraps the envelope', async () => {
@@ -185,13 +196,14 @@ describe('fetchTranscriptPage', () => {
     expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript?');
     expect(calls[0]!.url).toContain('agent_id=main');
     expect(calls[0]!.url).toContain('before_turn=t5');
-    expect(calls[0]!.url).toContain('page_size=30');
+    expect(calls[0]!.url).toContain('page_size=1');
     expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
     expect(page.hasMoreOlder).toBe(true);
     expect(page.items.map((item) => itemId(item))).toEqual(['t1']);
     expect(page.tasks.map((task) => task.taskId)).toEqual(['bash-1']);
     expect(page.meta.activity).toBe('turn');
     expect(page.pendingInteractions).toEqual(['apr-1']);
+    expect(page.seq).toBe(42);
   });
 
   it('throws on a non-zero envelope code', async () => {
@@ -209,10 +221,167 @@ describe('fetchTranscriptPage', () => {
   });
 });
 
+// ---------------------------------------------------------------- ops catch-up
+
+describe('fetchTranscriptOps', () => {
+  const catchupData = {
+    agent_id: 'main',
+    batches: [
+      { seq: 6, ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }] },
+      { seq: 7, ops: [{ op: 'turn.upsert', turn: turnHeader(7, 'running') }] },
+    ],
+    latest_seq: 7,
+    complete: true,
+  };
+
+  it('requests the ops endpoint with since_seq and unwraps batches in order', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope(catchupData));
+    const res = await fetchTranscriptOps({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's1',
+      agentId: 'main',
+      sinceSeq: 5,
+      fetchImpl,
+    });
+    expect(calls[0]!.url).toContain('/api/v1/sessions/s1/transcript/ops?');
+    expect(calls[0]!.url).toContain('agent_id=main');
+    expect(calls[0]!.url).toContain('since_seq=5');
+    expect(res.complete).toBe(true);
+    expect(res.latestSeq).toBe(7);
+    expect(res.batches.map((batch) => batch.seq)).toEqual([6, 7]);
+  });
+
+  it('surfaces an incomplete catch-up (journal cannot cover)', async () => {
+    const { fetchImpl } = fakeFetch(
+      okEnvelope({ ...catchupData, batches: [], latest_seq: 500, complete: false }),
+    );
+    const res = await fetchTranscriptOps({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      sinceSeq: 5,
+      fetchImpl,
+    });
+    expect(res.complete).toBe(false);
+    expect(res.batches).toEqual([]);
+  });
+
+  it('throws on a legacy server (envelope error) so callers fall back', async () => {
+    const { fetchImpl } = fakeFetch({ code: 40404, msg: 'unknown route', data: null });
+    await expect(
+      fetchTranscriptOps({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        sinceSeq: 5,
+        fetchImpl,
+      }),
+    ).rejects.toThrow('unknown route');
+  });
+});
+
+// ------------------------------------------------------------------ plan lookup
+
+describe('fetchTranscriptPlan', () => {
+  const planEntry = {
+    tool_call_id: 'call_plan',
+    turn_id: 't3',
+    source: 'interaction',
+    plan: '# The Plan\n\nDo the thing.',
+    path: '/tmp/plans/foo.md',
+    options: [{ label: 'Approach A', description: 'fast' }],
+    review: { state: 'approved', selected_option: 'Approach A', feedback: 'looks good' },
+  };
+
+  it('requests the plan endpoint with agent_id/tool_call_id and maps the snake_case payload', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: [planEntry] }));
+    const plans = await fetchTranscriptPlan({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's 1',
+      agentId: 'main',
+      toolCallId: 'call_plan',
+      fetchImpl,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript/plan?');
+    expect(calls[0]!.url).toContain('agent_id=main');
+    expect(calls[0]!.url).toContain('tool_call_id=call_plan');
+    expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
+    expect(plans).toEqual([
+      {
+        toolCallId: 'call_plan',
+        turnId: 't3',
+        source: 'interaction',
+        plan: '# The Plan\n\nDo the thing.',
+        path: '/tmp/plans/foo.md',
+        options: [{ label: 'Approach A', description: 'fast' }],
+        review: { state: 'approved', selectedOption: 'Approach A', feedback: 'looks good' },
+      },
+    ]);
+  });
+
+  it('omits tool_call_id from the query when unset (lists every plan of the agent)', async () => {
+    const { calls, fetchImpl } = fakeFetch(
+      okEnvelope({
+        agent_id: 'main',
+        plans: [
+          { tool_call_id: 'call_draft', turn_id: 't1', source: 'display', plan: '# Draft' },
+          { tool_call_id: 'call_final', turn_id: 't2', source: 'output', plan: '# Final' },
+        ],
+      }),
+    );
+    const plans = await fetchTranscriptPlan({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      fetchImpl,
+    });
+    expect(calls[0]!.url).not.toContain('tool_call_id');
+    expect(plans.map((p) => [p.toolCallId, p.plan])).toEqual([
+      ['call_draft', '# Draft'],
+      ['call_final', '# Final'],
+    ]);
+    expect(plans[0]!.review).toBeUndefined();
+    expect(plans[0]!.path).toBeUndefined();
+    expect(plans[0]!.options).toBeUndefined();
+  });
+
+  it('throws on a 40416 envelope (unknown tool call / not ExitPlanMode)', async () => {
+    const { fetchImpl } = fakeFetch({
+      code: 40416,
+      msg: 'no ExitPlanMode tool call found for tool_call_id: call_nope',
+      data: null,
+    });
+    await expect(
+      fetchTranscriptPlan({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        toolCallId: 'call_nope',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('40416');
+  });
+
+  it('throws when the payload fails schema validation', async () => {
+    const { fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: 'nope' }));
+    await expect(
+      fetchTranscriptPlan({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('unexpected response shape');
+  });
+});
+
 // ---------------------------------------------------------------- ws
 
 describe('TranscriptWs', () => {
-  it('connects with the bearer subprotocol and sends client_hello with the transcript grade spec', () => {
+  it('connects with the bearer subprotocol and sends the grade spec via subscribe_v2', () => {
     FakeWs.reset();
     makeWs();
     const sock = FakeWs.instances[0]!;
@@ -223,12 +392,18 @@ describe('TranscriptWs', () => {
       type: 'client_hello',
       payload: {
         subscriptions: ['s1'],
-        transcript: { s1: { main: 'delta' } },
+      },
+    });
+    expect(sock.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: {
+        session_id: 's1',
+        transcript: { main: 'block' },
       },
     });
   });
 
-  it('forwards transcript.ops and ignores transcript.reset snapshots', () => {
+  it('forwards transcript.ops and surfaces transcript.reset via onReset, both with envelope meta', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
@@ -244,24 +419,101 @@ describe('TranscriptWs', () => {
         agent_id: 'main',
         snapshot: { items: [], tasks: [], interactions: [], meta: {} },
         has_more_older: true,
+        seq: 41,
       },
     });
     expect(seen.ops).toHaveLength(0);
+    expect(seen.resets).toEqual([
+      { agentId: 'main', hasMoreOlder: true, at: '2026-01-01T00:00:00Z', seq: 41 },
+    ]);
     sock.serverFrame({
       type: 'transcript.ops',
       seq: 1,
       volatile: true,
       session_id: 's1',
-      timestamp: '2026-01-01T00:00:00Z',
+      timestamp: '2026-01-01T00:00:01Z',
       payload: {
         type: 'transcript.ops',
         agent_id: 'main',
         ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }],
+        seq: 42,
       },
     });
     expect(seen.ops).toHaveLength(1);
     expect(seen.ops[0]!.agentId).toBe('main');
+    expect(seen.ops[0]!.at).toBe('2026-01-01T00:00:01Z');
+    expect(seen.ops[0]!.seq).toBe(42);
     expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
+  });
+
+  it('sends a clean client_hello and carries grades/transcript_since on subscribe_v2', async () => {
+    FakeWs.reset();
+    let watermark: number | undefined;
+    new TranscriptWs({
+      url: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      getSince: () => watermark,
+      reconnectDelayMs: 1,
+      handlers: { onOps: () => {}, onResyncRequired: () => {}, onReconnected: () => {} },
+    });
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    expect(sock.sentFrames()[0]).toMatchObject({
+      type: 'client_hello',
+      payload: { client_id: 'kimi-inspect', subscriptions: ['s1'] },
+    });
+    expect(sock.sentFrames()[0]).not.toHaveProperty('payload.transcript');
+    expect(sock.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: { session_id: 's1', transcript: { main: 'block' } },
+    });
+    expect(
+      (sock.sentFrames()[1] as { payload: Record<string, unknown> }).payload['transcript_since'],
+    ).toBeUndefined();
+    watermark = 42;
+    sock.emit('close');
+    await vi.waitFor(() => {
+      expect(FakeWs.instances.length).toBeGreaterThan(1);
+    });
+    const second = FakeWs.instances[1]!;
+    second.open();
+    expect(second.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: { session_id: 's1', transcript_since: { main: 42 } },
+    });
+  });
+
+  it('still ignores transcript.reset when no onReset handler is set', () => {
+    FakeWs.reset();
+    const seen = { ops: 0 };
+    new TranscriptWs({
+      url: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      handlers: {
+        onOps: () => {
+          seen.ops += 1;
+        },
+        onResyncRequired: () => {},
+        onReconnected: () => {},
+      },
+    });
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    sock.serverFrame({
+      type: 'transcript.reset',
+      timestamp: '2026-01-01T00:00:00Z',
+      payload: {
+        type: 'transcript.reset',
+        agent_id: 'main',
+        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
+        has_more_older: false,
+      },
+    });
+    expect(seen.ops).toBe(0);
   });
 
   it('answers ping with pong carrying the nonce', () => {
@@ -292,7 +544,7 @@ describe('TranscriptWs', () => {
     expect(seen.resyncs).toBe(1);
   });
 
-  it('re-subscribes after a drop and reports the reconnect only on the subscribe ack', () => {
+  it('re-subscribes after a drop and reports the reconnect only on the subscribe_v2 ack', () => {
     vi.useFakeTimers();
     try {
       FakeWs.reset();
@@ -300,10 +552,14 @@ describe('TranscriptWs', () => {
       const first = FakeWs.instances[0]!;
       first.open();
       // Open alone does not reconcile: the server attaches the transcript
-      // stream only after processing client_hello.
+      // stream only after processing subscribe_v2.
       expect(seen.reconnects).toBe(0);
+      // Neither does the client_hello ack.
       const helloId = (first.sentFrames()[0] as { id: string }).id;
       first.serverFrame({ type: 'ack', id: helloId, code: 0, msg: 'success', payload: {} });
+      expect(seen.reconnects).toBe(0);
+      const subscribeV2Id = (first.sentFrames()[1] as { id: string }).id;
+      first.serverFrame({ type: 'ack', id: subscribeV2Id, code: 0, msg: 'success', payload: {} });
       expect(seen.reconnects).toBe(1);
       first.emit('close');
       vi.advanceTimersByTime(600);
@@ -311,9 +567,10 @@ describe('TranscriptWs', () => {
       const second = FakeWs.instances[1]!;
       second.open();
       expect(second.sentFrames()[0]).toMatchObject({ type: 'client_hello' });
+      expect(second.sentFrames()[1]).toMatchObject({ type: 'subscribe_v2' });
       expect(seen.reconnects).toBe(1);
-      const helloId2 = (second.sentFrames()[0] as { id: string }).id;
-      second.serverFrame({ type: 'ack', id: helloId2, code: 0, msg: 'success', payload: {} });
+      const subscribeV2Id2 = (second.sentFrames()[1] as { id: string }).id;
+      second.serverFrame({ type: 'ack', id: subscribeV2Id2, code: 0, msg: 'success', payload: {} });
       expect(seen.reconnects).toBe(2);
     } finally {
       vi.useRealTimers();
@@ -503,6 +760,26 @@ describe('recoverLoadedWindow', () => {
     // The anchor no longer exists server-side: one no-progress probe, then stop.
     expect(fetched).toEqual(['t10']);
     expect(countTurns(store.getState().items)).toBe(11);
+  });
+
+  it('reports each applied page through onPageApplied', async () => {
+    const store = new TranscriptChatStore();
+    store.applyPage(pageOf(range(36, 65), true), { replace: true });
+    const applied: TranscriptPage[] = [];
+    await recoverLoadedWindow(
+      store,
+      't1',
+      async (beforeTurn) =>
+        beforeTurn === 't36' ? pageOf(range(6, 35), true) : pageOf(range(1, 5), false),
+      () => false,
+      (page) => {
+        applied.push(page);
+      },
+    );
+    expect(applied.map((page) => page.items.map((item) => itemId(item)))).toEqual([
+      range(6, 35).map((turn) => turn.turnId),
+      range(1, 5).map((turn) => turn.turnId),
+    ]);
   });
 });
 

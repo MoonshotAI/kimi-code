@@ -18,11 +18,15 @@ import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/up
 import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import type { WireRecord } from '#/wire/record';
@@ -31,22 +35,36 @@ import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
-import type { ExecutableTool } from '#/tool/toolContract';
+import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   InMemoryWireRecordPersistence,
   appService,
   agentService,
-  createTestAgent,
+  createTestAgent as createHarnessTestAgent,
   permissionModeServices,
   telemetryServices,
-  testAgent,
   wireRecordPersistenceServices,
   type TestAgentContext,
   type TestAgentOptions,
+  type TestAgentServiceOverride,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import { stubAgentSwarm } from './stubs';
+
+// The real AgentSwarmService self-wires executor listeners and pulls in the
+// swarm runtime; goal tests never exercise swarm behavior, so every test
+// agent here stubs it out to keep the wiring focused on the goal domain.
+function createTestAgent(
+  ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
+): TestAgentContext {
+  return createHarnessTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()), ...inputs);
+}
+
+const testAgent = createTestAgent;
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
 type GoalRecord = WireRecord & { type: `goal.${string}` };
@@ -684,6 +702,114 @@ describe('AgentGoalService', () => {
   });
 });
 
+describe('AgentGoalService goal-start review', () => {
+  interface ApprovalCall {
+    readonly result: Extract<PermissionPolicyResult, { kind: 'ask' }>;
+    readonly origin: string;
+  }
+
+  const goalStartDisplay: ToolInputDisplay = {
+    kind: 'goal_start',
+    objective: 'Ship feature X',
+    completionCriterion: undefined,
+    mode: 'manual',
+  };
+
+  let ctx: TestAgentContext | undefined;
+  let executorEvents: ToolExecutorEventStubs;
+  let approvalCalls: ApprovalCall[];
+
+  function approvalStub(): IAgentToolApprovalService {
+    return {
+      _serviceBrand: undefined,
+      resolvePermissionResolution: async () => undefined,
+      requestToolApproval: async (_context, result, origin) => {
+        approvalCalls.push({ result, origin });
+        return undefined;
+      },
+      formatDenyMessage: (message) => message,
+      formatApprovalRejectionMessage: () => 'rejected',
+    };
+  }
+
+  function setup(mode: PermissionMode): void {
+    approvalCalls = [];
+    executorEvents = stubToolExecutorEvents();
+    ctx = createTestAgent(
+      permissionModeServices(mode),
+      agentService(IAgentToolApprovalService, approvalStub()),
+      agentService(IAgentToolExecutorService, executorEvents.executor),
+    );
+    ctx.get(IAgentGoalService);
+  }
+
+  afterEach(async () => {
+    await ctx?.dispose();
+  });
+
+  function createGoalHookContext(display: ToolInputDisplay | undefined): ResolvedToolExecutionHookContext {
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_create_goal',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'Ship feature X' }),
+    };
+    const execution: RunnableToolExecution = {
+      description: 'Creating a goal',
+      display,
+      approvalRule: 'CreateGoal',
+      execute: async () => ({ output: '' }),
+    };
+    return {
+      turnId: 1,
+      signal: new AbortController().signal,
+      toolCall,
+      toolCalls: [toolCall],
+      args: { objective: 'Ship feature X' },
+      execution,
+    };
+  }
+
+  it('routes a goal_start CreateGoal through toolApproval and applies the mode switch', async () => {
+    setup('manual');
+    const hookCtx = createGoalHookContext(goalStartDisplay);
+
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+
+    expect(approvalCalls).toHaveLength(1);
+    expect(approvalCalls[0]!.origin).toBe('goal-start-review-ask');
+    expect(approvalCalls[0]!.result.kind).toBe('ask');
+    expect(decision).toBeUndefined();
+
+    const resolved = approvalCalls[0]!.result.resolveApproval?.({
+      decision: 'approved',
+      selectedLabel: 'yolo',
+    });
+    expect(resolved).toBeUndefined();
+    expect(ctx!.get(IAgentPermissionModeService).mode).toBe('yolo');
+  });
+
+  it('does not review CreateGoal in auto mode', async () => {
+    setup('auto');
+    const hookCtx = createGoalHookContext(goalStartDisplay);
+
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+
+    expect(approvalCalls).toHaveLength(0);
+    expect(decision).toBeUndefined();
+  });
+
+  it('does not review CreateGoal without a goal_start display', async () => {
+    setup('manual');
+    const hookCtx = createGoalHookContext({ kind: 'generic', summary: 'Creating a goal' });
+
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+
+    expect(approvalCalls).toHaveLength(0);
+    expect(decision).toBeUndefined();
+  });
+});
+
 describe('AgentGoalService core workflow hooks', () => {
   let ctx: TestAgentContext | undefined;
   let context: IAgentContextMemoryService;
@@ -947,20 +1073,13 @@ describe('AgentGoalService core workflow hooks', () => {
       name,
       arguments: JSON.stringify(args),
     };
-    const before: ToolBeforeExecuteContext = {
-      turnId: oldTurn.id,
-      signal: oldTurn.signal,
-      toolCall,
-      toolCalls: [toolCall],
-      args,
-      execution: { approvalRule: name, execute: async () => ({ output: 'executed' }) },
-    };
 
-    await toolExecutor.hooks.onBeforeExecuteTool.run(before);
+    const results = await executeToolCall(toolExecutor, oldTurn, toolCall);
 
-    expect(before.decision?.syntheticResult).toEqual({
-      output: 'Goal changed since this turn started; ignored stale goal tool call.',
-    });
+    expect(results).toHaveLength(1);
+    expect(results[0]!.result.output).toBe(
+      'Goal changed since this turn started; ignored stale goal tool call.',
+    );
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       status: 'active',

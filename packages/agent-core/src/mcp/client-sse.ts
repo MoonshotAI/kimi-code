@@ -18,6 +18,7 @@ import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 export interface SseMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
+  readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   /**
    * Reads `process.env[name]` by default. Tests can inject a deterministic
@@ -44,6 +45,7 @@ export interface SseMcpClientOptions {
 export class SseMcpClient implements MCPClient {
   private readonly client: Client;
   private readonly transport: SSEClientTransport;
+  private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private started = false;
   private closed = false;
@@ -69,6 +71,7 @@ export class SseMcpClient implements MCPClient {
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
     });
+    this.startupTimeoutMs = options.startupTimeoutMs;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
 
@@ -80,7 +83,10 @@ export class SseMcpClient implements MCPClient {
     this.started = true;
     this.installTransportHooks();
     try {
-      await this.client.connect(this.transport);
+      await this.client.connect(
+        this.transport,
+        buildRequestOptions(this.startupTimeoutMs, undefined),
+      );
     } catch (error) {
       await this.closeStartedClient();
       throw error;
@@ -113,7 +119,10 @@ export class SseMcpClient implements MCPClient {
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {
-    const result = await this.client.listTools();
+    const result = await this.client.listTools(
+      undefined,
+      buildRequestOptions(this.startupTimeoutMs, undefined),
+    );
     return result.tools.map(toMcpToolDefinition);
   }
 

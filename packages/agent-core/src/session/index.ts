@@ -29,6 +29,8 @@ import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
   McpOAuthService,
+  resolveMcpStartupTimeoutMs,
+  resolveMcpToolTimeoutMs,
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
@@ -232,6 +234,8 @@ export class Session {
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
+      defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
+      defaultToolTimeoutMs: resolveMcpToolTimeoutMs(options.config?.mcp?.toolTimeoutMs),
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);

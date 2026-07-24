@@ -16,7 +16,7 @@
  * counterpart: it scans the same roots a new session in that workspace cwd
  * would, so clients can populate the composer skill menu before a session
  * exists. The workspace id is resolved to its root via
- * `IWorkspaceRegistry.get` (`40410` when unknown); the root is then scanned by
+ * `IWorkspaceService.get` (`40410` when unknown); the root is then scanned by
  * composing the same five sources the per-session catalog merges — builtin /
  * user / extra / project(workDir) / plugin — through the shared `ISkillDiscovery`,
  * `skillRoots` and `InMemorySkillCatalog` primitives, so the result matches the
@@ -35,7 +35,7 @@
  * **Scope split**: v1 resolves a single `ISkillService` for every verb. v2
  * splits the domain, so the route borrows different scoped services per verb:
  *   - session list → `ISessionSkillCatalog` (Session scope) — `catalog.listSkills()`.
- *   - workspace list → no session: resolves `IWorkspaceRegistry` (App scope)
+ *   - workspace list → no session: resolves `IWorkspaceService` (App scope)
  *     for the root, then composes the skill scan at the edge (see above).
  *   - activate     → `IAgentSkillService` (Agent scope, on the `main` agent) —
  *                    renders the skill prompt and starts a turn with a
@@ -83,7 +83,7 @@ import {
   ISessionSkillCatalog,
   ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -222,7 +222,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const ws = await core.accessor.get(IWorkspaceRegistry).get(workspace_id);
+      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
       if (ws === undefined) {
         reply.send(
           errEnvelope(

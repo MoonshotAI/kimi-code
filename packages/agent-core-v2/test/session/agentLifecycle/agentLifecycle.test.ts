@@ -155,7 +155,7 @@ describe('AgentLifecycleService', () => {
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
-  let beforeExecuteHookIds: string[];
+  let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
   beforeEach(() => {
@@ -233,17 +233,16 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
-    beforeExecuteHookIds = [];
+    beforeExecuteListeners = 0;
     didExecuteHookIds = [];
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
+      onBeforeExecuteTool: () => {
+        beforeExecuteListeners += 1;
+        return { dispose: () => {} };
+      },
+      onWillExecuteTool: () => ({ dispose: () => {} }),
       hooks: {
-        onBeforeExecuteTool: {
-          register: (id: string) => {
-            beforeExecuteHookIds.push(id);
-            return { dispose: () => {} };
-          },
-        },
         onDidExecuteTool: {
           register: (id: string) => {
             didExecuteHookIds.push(id);
@@ -420,10 +419,10 @@ describe('AgentLifecycleService', () => {
     expect(removed).toBe(true);
   });
 
-  it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
+  it('ignites the self-wiring toolDedupe plugin so its listeners exist before the first turn', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
-    expect(beforeExecuteHookIds).toContain('toolDedupe');
+    expect(beforeExecuteListeners).toBeGreaterThan(0);
     expect(didExecuteHookIds).toContain('toolDedupe');
   });
 

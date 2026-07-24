@@ -2,7 +2,7 @@
  * TranscriptAttachment — a session-global attachment entity (image / video /
  * audio / file carried by a message).
  *
- * Media is heavy: bytes never cross the transcript wire. The entity carries
+ * Media is heavy: bytes never cross the transcript API. The entity carries
  * only metadata plus a fetch reference (`source`), and lives beside
  * `tasks`/`interactions` — global per agent transcript, never paginated.
  * The timeline anchor is a typed id list on the carrier (`TranscriptTurn.
@@ -16,7 +16,7 @@ import type { AttachmentId } from './ids';
 /**
  * Where the frontend fetches the bytes. Mirrors the engine's media source
  * kinds minus `base64` — inline data is deliberately dropped rather than
- * shipped over the transcript wire.
+ * shipped over the transcript API.
  */
 export type AttachmentSource =
   | { readonly kind: 'url'; readonly url: string }

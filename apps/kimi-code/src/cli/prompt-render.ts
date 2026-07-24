@@ -25,9 +25,10 @@ interface HookResultEventLike {
 
 /**
  * Structural retry shape the renderer reads. Mirrors the v1 SDK
- * `turn.step.retrying` event fields the stream-json meta line surfaces. Only
- * the v1 driver forwards retries to `writeRetrying`; the v2 runner currently
- * just discards the failed attempt's partial output and stays silent.
+ * `turn.step.retrying` event fields the stream-json meta line surfaces. Both
+ * drivers forward retries to `writeRetrying`: v1 from its SDK event stream,
+ * v2 from the native `turn.step.retrying` `DomainEvent` (same field names),
+ * after discarding the failed attempt's partial output.
  */
 interface RetryingEventLike {
   readonly failedAttempt: number;

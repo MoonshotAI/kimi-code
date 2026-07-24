@@ -239,12 +239,12 @@ export function bindSessionTranscript(
     }),
   );
 
-  // Interactions already pending at bind time are REGISTERED without frames
-  // (ownership must exist immediately so a resolve arriving before the
-  // deferred seed still routes); their frames land in seedPendingInteractions,
-  // which the service calls after the initial backfill so placement and the
-  // approvalId back-link find the persisted tool frames. New pendings
-  // announce live through onDidChangePending below.
+  // Interactions already pending at bind time are REGISTERED without
+  // announcing (ownership must exist immediately so a resolve arriving before
+  // the deferred seed still routes); their entity ops land in
+  // seedPendingInteractions, which the service calls after the initial
+  // backfill so the resolve-time approvalId back-link finds the persisted
+  // tool frames. New pendings announce live through onDidChangePending below.
   for (const pending of interactions.listPending()) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
@@ -262,7 +262,7 @@ export function bindSessionTranscript(
       const early = earlyResolves.get(id);
       if (early === undefined) continue;
       // The interaction opened and closed before the transcript attached:
-      // emit request + resolve back to back so the frame lands resolved,
+      // emit request + resolve back to back so the entity lands resolved,
       // with the approvalId back-link on the (now backfilled) tool frame.
       interactionAgents.delete(id);
       earlyResolves.delete(id);

@@ -74,6 +74,19 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
   'profile.bind',
 ]);
 
+// Persisted record types introduced after the v1 vocabulary: the task
+// lifecycle journal (the restore seed for ghosts and the cold transcript
+// fold), the interaction request/resolution journal, and the plan revision
+// reference journal. Replay tolerates unknown record types (skip + warn), so
+// older readers degrade gracefully.
+const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'task.started',
+  'task.terminated',
+  'interaction.request',
+  'interaction.resolved',
+  'plan.revision',
+]);
+
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
 
@@ -101,12 +114,14 @@ describe('v1 wire vocabulary', () => {
     return out;
   }
 
-  it('every persisted op type is either shared with v1 or explicitly v2-only', () => {
+  it('every persisted op type is a known (v1 or v2) record type', () => {
     for (const [type, descriptor] of OP_REGISTRY) {
       if (descriptor.persist === false) continue;
       expect(
-        V1_RECORD_TYPES.has(type) || V2_ONLY_RECORD_TYPES.has(type),
-        `op "${type}" is not classified as shared or v2-only`,
+        V1_RECORD_TYPES.has(type) ||
+          V2_ONLY_RECORD_TYPES.has(type) ||
+          V2_RECORD_TYPES.has(type),
+        `op "${type}" persists an unregistered record type`,
       ).toBe(true);
     }
   });

@@ -28,6 +28,11 @@ class FakeChannel implements KlientChannel {
     return Promise.resolve(this.results.has(key) ? this.results.get(key) : this.result);
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {
+    // stub — streaming is not exercised in facade tests
+  }
+
   listen(_scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
     this.nextSub += 1;
@@ -65,7 +70,7 @@ describe('facade routing', () => {
     channel.result = { id: 'w1', root: '/x', name: 'n', createdAt: 1, lastOpenedAt: 2 };
     await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
     expect(channel.calls[0]).toMatchObject({
-      service: 'workspaceRegistry',
+      service: 'workspaceService',
       method: 'createOrTouch',
       args: ['/x', 'n'],
     });
@@ -155,7 +160,7 @@ describe('event hub', () => {
         errors.push(error);
       });
 
-    klient.events.on('providers.changed', (event) => seen.push(event));
+    klient.events.on('kosong.providers.changed', (event) => seen.push(event));
     expect(channel.subscriptions[0]?.source).toEqual({
       kind: 'emitter',
       service: 'providerService',
@@ -177,7 +182,7 @@ describe('event hub', () => {
     const catalog: unknown[] = [];
 
     const subA = klient.events.on('session.archived', (event) => archived.push(event));
-    const subB = klient.events.on('catalog.changed', (event) => catalog.push(event));
+    const subB = klient.events.on('kosong.changed', (event) => catalog.push(event));
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
 

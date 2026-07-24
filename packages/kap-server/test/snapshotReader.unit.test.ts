@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import {
   ISessionIndex,
   ISessionLifecycleService,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   type ContextMessage,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -65,7 +65,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
   const core = {
     accessor: fakeAccessor([
       [ISessionIndex, { get: async (sid: string) => index.get(sid) }],
-      [IWorkspaceRegistry, { get: async (ws: string) => workspaces.get(ws) }],
+      [IWorkspaceService, { get: async (ws: string) => workspaces.get(ws) }],
       // Cold by default — no live handle.
       [ISessionLifecycleService, { get: () => undefined }],
     ]),

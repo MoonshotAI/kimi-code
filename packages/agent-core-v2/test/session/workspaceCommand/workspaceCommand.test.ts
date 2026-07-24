@@ -9,14 +9,14 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2 } from '#/errors';
 import {
   type HostDirEntry,
   type HostFileStat,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
-import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -252,7 +252,7 @@ describe('SessionWorkspaceCommandService', () => {
         reg.define(ISessionWorkspaceContext, SessionWorkspaceContextService);
         reg.defineInstance(IBootstrapService, bootstrapStub());
         reg.defineInstance(IHostFileSystem, fs);
-        reg.define(IWorkspaceLocalConfigService, FileWorkspaceLocalConfigService);
+        reg.define(IProjectLocalConfigService, FileProjectLocalConfigService);
         reg.defineInstance(IAgentLifecycleService, agents);
         reg.define(ISessionWorkspaceCommandService, SessionWorkspaceCommandService);
       },

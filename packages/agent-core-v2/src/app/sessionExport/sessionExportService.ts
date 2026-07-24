@@ -16,7 +16,7 @@ import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -48,7 +48,7 @@ export class SessionExportService implements ISessionExportService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
-    @IWorkspaceRegistry private readonly workspaces: IWorkspaceRegistry,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
 

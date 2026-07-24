@@ -47,7 +47,7 @@ import {
   ISessionLifecycleService,
   type SessionLifecycleHooks,
 } from '#/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -872,7 +872,7 @@ function registerSessionExportServices(
       throw new Error('createChild should not be called by session export');
     },
   });
-  reg.defineInstance(IWorkspaceRegistry, {
+  reg.defineInstance(IWorkspaceService, {
     _serviceBrand: undefined,
     list: async () => [],
     get: async (id) => ({
@@ -882,7 +882,6 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
-    resolveAliasIds: async (id) => [id],
     createOrTouch: async (root) => ({
       id: 'ws_created',
       root,

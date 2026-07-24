@@ -42,15 +42,15 @@ import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/tool
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 /** Loosely-typed view of a scoped service proxy (every member is a remote call). */
-export type AnyService = Record<string, (arg?: unknown) => Promise<unknown>>;
+export type AnyService = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
 /** Invoke a method on a loose proxy; the proxy materializes every member. */
-export function call(svc: AnyService, method: string, arg?: unknown): Promise<unknown> {
+export function call(svc: AnyService, method: string, ...args: unknown[]): Promise<unknown> {
   const fn = svc[method];
   if (fn === undefined) {
     return Promise.reject(new Error(`no such method on proxy: ${method}`));
   }
-  return fn(arg);
+  return fn(...args);
 }
 
 export interface PanelAction {

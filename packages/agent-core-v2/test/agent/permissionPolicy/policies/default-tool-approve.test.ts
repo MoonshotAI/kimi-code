@@ -52,8 +52,19 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['WebSearch', { query: 'kimi code' }],
     ['FetchURL', { url: 'https://example.com' }],
     ['Agent', { prompt: 'review this' }],
+    [
+      'AgentSwarm',
+      {
+        description: 'Check files',
+        prompt_template: 'Check {{item}}',
+        items: ['a.ts', 'b.ts'],
+      },
+    ],
     ['AskUserQuestion', { questions: [] }],
     ['Skill', { name: 'test-skill' }],
+    ['EnterPlanMode', {}],
+    ['ExitPlanMode', {}],
+    ['CreateGoal', { title: 'ship it' }],
     ['GetGoal', {}],
     ['SetGoalBudget', { tokenBudget: 1000 }],
     ['UpdateGoal', { status: 'complete' }],
@@ -68,14 +79,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['Custom', { value: 1 }],
     ['CronCreate', { cron: '*/5 * * * *', prompt: 'ping' }],
     ['CronDelete', { id: 'job_1' }],
-    [
-      'AgentSwarm',
-      {
-        description: 'Check files',
-        prompt_template: 'Check {{item}}',
-        items: ['a.ts', 'b.ts'],
-      },
-    ],
   ] as const)('does not approve %s', (toolName, args) => {
     expect(
       policy.evaluate(policyContext(toolName, args)),

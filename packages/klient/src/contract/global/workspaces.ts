@@ -1,6 +1,6 @@
 /**
- * `workspaceRegistry` — process-wide catalog of known workspaces. Mirrors
- * `agent-core-v2/app/workspaceRegistry/workspaceRegistry.ts`.
+ * `workspaceService` — process-wide catalog of known workspaces. Mirrors
+ * `agent-core-v2/app/workspace/workspace.ts`.
  */
 
 import { z } from 'zod';

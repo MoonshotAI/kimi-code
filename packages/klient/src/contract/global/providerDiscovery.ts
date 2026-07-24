@@ -1,7 +1,7 @@
 /**
  * `providerDiscovery` — the engine's `IProviderDiscoveryService`: remote
  * provider-model discovery and config sync. Mirrors
- * `agent-core-v2/kosong/model/discovery.ts`.
+ * `agent-core-v2/app/kosongConfig/discovery.ts`.
  */
 
 import { z } from 'zod';

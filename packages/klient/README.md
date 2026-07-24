@@ -54,7 +54,7 @@ ipc │ memory
   disable). Validation is sub-µs for typical payloads — cheaper than the JSON
   serialization the wire already pays.
 - **Events** — `klient.events.on(...)` for the global bus
-  (`config.changed`, `models.changed`, `session.archived`, …),
+  (`config.changed`, `kosong.models.changed`, `session.archived`, …),
   `session(id).events.on('metadata.changed' | 'interactions.changed' |
   'interactions.resolved')`, and `agent(id).events.on('turn.started' |
   'assistant.delta' | 'tool.call.started' | 'prompt.completed' | …)`.

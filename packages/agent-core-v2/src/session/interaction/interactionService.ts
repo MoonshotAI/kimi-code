@@ -2,14 +2,27 @@
  * `interaction` domain (L6) — `ISessionInteractionService` implementation.
  *
  * Owns the pending interaction set and resolves requests when a response
- * arrives; announces add/remove through a typed `onDidChangePending`. Bound at
- * Session scope.
+ * arrives; announces add/remove through a typed `onDidChangePending`. Every
+ * request/resolution is also journaled as a persisted `interaction.request` /
+ * `interaction.resolved` Op on the ORIGIN agent's wire (`origin.agentId ??
+ * 'main'`), so the journal can rebuild interaction entities on a cold
+ * transcript fold. `IAgentLifecycleService` is resolved lazily at dispatch
+ * time (via `IInstantiationService.invokeFunction`) because the lifecycle
+ * service already depends on this kernel for turn-end cancellation — a
+ * constructor edge would close a DI cycle. Direct construction without a
+ * container (tests, embeddings) simply skips the journaling. The kernel's
+ * pending semantics stay memory-only: pending promises are never restored
+ * from the journal. Bound at Session scope.
  */
 
 import { Emitter, type Event } from '#/_base/event';
 import { InstantiationType } from '#/_base/di/extensions';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IWireService } from '#/wire/wire';
 
 import {
   type Interaction,
@@ -20,6 +33,7 @@ import {
   type InteractionResolution,
   ISessionInteractionService,
 } from './interaction';
+import { interactionRequest, interactionResolved } from './interactionOps';
 
 interface Pending {
   readonly interaction: Interaction;
@@ -28,6 +42,7 @@ interface Pending {
 
 const RECENTLY_RESOLVED_TTL_MS = 60_000;
 const RECENTLY_RESOLVED_MAX = 256;
+const MAIN_AGENT_ID = 'main';
 
 export class SessionInteractionService extends Disposable implements ISessionInteractionService {
   declare readonly _serviceBrand: undefined;
@@ -40,7 +55,9 @@ export class SessionInteractionService extends Disposable implements ISessionInt
   readonly onDidResolve: Event<InteractionResolution> = this._onDidResolve.event;
   private nextId = 0;
 
-  constructor() {
+  constructor(
+    @IInstantiationService private readonly instantiation?: IInstantiationService,
+  ) {
     super();
   }
 
@@ -52,6 +69,7 @@ export class SessionInteractionService extends Disposable implements ISessionInt
       this.rememberResolved(id);
       const response = { cancelled: true, reason: 'turn_ended' };
       entry.resolve(response);
+      this.recordResolved(id, response, entry.interaction.origin);
       this._onDidResolve.fire({ id, response });
       changed = true;
     }
@@ -76,6 +94,7 @@ export class SessionInteractionService extends Disposable implements ISessionInt
     this.pending.delete(id);
     this.rememberResolved(id);
     entry.resolve(response);
+    this.recordResolved(id, response, entry.interaction.origin);
     this._onDidChangePending.fire({ pending: [...this.pending.keys()] });
     this._onDidResolve.fire({ id, response });
   }
@@ -109,8 +128,43 @@ export class SessionInteractionService extends Disposable implements ISessionInt
       createdAt: Date.now(),
     };
     this.pending.set(id, { interaction, resolve });
+    this.recordRequest(interaction);
     this._onDidChangePending.fire({ pending: [...this.pending.keys()] });
     return interaction;
+  }
+
+  private recordRequest(interaction: Interaction): void {
+    const wire = this.originWire(interaction.origin);
+    if (wire === undefined) return;
+    wire.dispatch(
+      interactionRequest({
+        id: interaction.id,
+        kind: interaction.kind,
+        toolCallId: readPayloadToolCallId(interaction.payload),
+        agentId: interaction.origin.agentId,
+        request: interaction.payload,
+      }),
+    );
+  }
+
+  private recordResolved(id: string, response: unknown, origin: InteractionOrigin): void {
+    const wire = this.originWire(origin);
+    if (wire === undefined) return;
+    wire.dispatch(interactionResolved({ id, response }));
+  }
+
+  private originWire(origin: InteractionOrigin): IWireService | undefined {
+    if (this.instantiation === undefined) return undefined;
+    const agentId = origin.agentId ?? MAIN_AGENT_ID;
+    try {
+      return this.instantiation.invokeFunction(
+        (accessor) => accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IWireService),
+      );
+    } catch {
+      // Journaling is best-effort: a partial scope without the agent
+      // lifecycle (test hosts, embeddings) must not break the kernel.
+      return undefined;
+    }
   }
 
   private rememberResolved(id: string): void {
@@ -129,6 +183,12 @@ export class SessionInteractionService extends Disposable implements ISessionInt
   private generateId(): string {
     return `interaction-${this.nextId++}`;
   }
+}
+
+function readPayloadToolCallId(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)['toolCallId'];
+  return typeof value === 'string' ? value : undefined;
 }
 
 registerScopedService(

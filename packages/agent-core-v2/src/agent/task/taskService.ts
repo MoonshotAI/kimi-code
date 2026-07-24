@@ -8,8 +8,10 @@
  * layout), lets only the main agent read through the previous v2
  * session-level task root without writing back to it, reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
- * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
- * signals), restores ghosts through a single `wire.hooks.onDidRestore` hook
+ * (persisted `task.started` / `task.terminated` Ops into `TaskModel`, the
+ * terminated record carrying a bounded tail of the task's retained output as
+ * `outputTail`, plus the matching signals), restores ghosts through a single
+ * `wire.hooks.onDidRestore` hook
  * (wire replay -> disk load -> reconcile, in that order), delivers live
  * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
  * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
@@ -156,6 +158,8 @@ interface ManagedTask {
 }
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+
+const TERMINAL_OUTPUT_TAIL_BYTES = 4 * 1024;
 
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
@@ -977,7 +981,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.terminalFired = true;
     const info = this.toInfo(entry);
     void this.notifyAgentTask(info).catch(() => { });
-    this.recordTaskTerminated(info);
+    this.recordTaskTerminated(info, this.retainedOutputTail(entry));
+  }
+
+  private retainedOutputTail(entry: ManagedTask): string | undefined {
+    if (entry.outputChunks.length === 0) return undefined;
+    const retained = Buffer.from(entry.outputChunks.join(''), 'utf-8');
+    const offset = Math.max(0, retained.byteLength - TERMINAL_OUTPUT_TAIL_BYTES);
+    return retained.subarray(offset).toString('utf-8');
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
@@ -988,8 +999,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  private recordTaskTerminated(info: AgentTaskInfo): void {
-    this.wire.dispatch(taskTerminated({ info }));
+  private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+    this.wire.dispatch(taskTerminated({ info, outputTail }));
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,

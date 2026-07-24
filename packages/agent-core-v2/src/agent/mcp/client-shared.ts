@@ -76,11 +76,11 @@ export interface McpRequestOptions {
 }
 
 export function buildRequestOptions(
-  toolCallTimeoutMs: number | undefined,
+  timeoutMs: number | undefined,
   signal: AbortSignal | undefined,
 ): McpRequestOptions | undefined {
-  if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
-  return { timeout: toolCallTimeoutMs, signal };
+  if (timeoutMs === undefined && signal === undefined) return undefined;
+  return { timeout: timeoutMs, signal };
 }
 
 interface SdkListedTool {

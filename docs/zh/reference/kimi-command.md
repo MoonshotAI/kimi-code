@@ -24,8 +24,8 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
-| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话（仅 v2 引擎） |
-| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅 v2 引擎）并选中它。不可重复传入，也不能与 `--agent` 同时使用 |
+| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话（仅实验性 `kimi -p`） |
+| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅实验性 `kimi -p`）并选中它。不可重复传入，也不能与 `--agent` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -98,7 +98,7 @@ kimi --plan
 
 ### 自定义 Agent
 
-`--agent` 和 `--agent-file` 用于选择驱动会话的 Agent。目前二者都要求 v2 引擎 —— 即 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 下的 `kimi -p`：
+`--agent` 和 `--agent-file` 用于选择驱动会话的 Agent。目前二者仅在 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的 `kimi -p` 下可用，其他启动方式会以明确错误拒绝：
 
 ```sh
 KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"

@@ -457,7 +457,9 @@ export class ContextMemory {
     // project() strips `origin`, the only anchor for the announcements.
     // setModel never rewrites history, so a mid-session switch
     // degrades/upgrades losslessly.
-    const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
+    const shaped = this.agent.toolSelectEnabled
+      ? this.agent.tools.shapeDynamicToolHistory(messages)
+      : stripDynamicToolContext(messages);
     const anomalies: ProjectionAnomaly[] = [];
     const result = project(this.agent.microCompaction.compact(shaped), {
       ...options,

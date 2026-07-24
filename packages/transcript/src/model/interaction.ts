@@ -2,13 +2,12 @@
  * TranscriptInteraction — a session-global interaction entity (approval /
  * question).
  *
- * Every interaction is an agent's request issued from inside a step, mediated
- * by a tool call: an approval is the permission gate of the tool call it
- * blocks; a question is emitted mid-run by the AskUserQuestion tool call
- * itself. So `toolCallId` is always present and is the timeline anchor — the
- * interaction renders inline at the linked tool frame
- * (`ToolCallFrame.approvalId` ↔ `toolCallId`), and the owning step is derived
- * transitively through that frame (never denormalized onto the entity).
+ * Interactions are entity-only: there is no inline step frame for them. An
+ * interaction anchored to a tool call (`toolCallId` present) renders inline
+ * at the linked tool frame (`ToolCallFrame.approvalId` ↔ `toolCallId`), and
+ * the owning step is derived transitively through that frame (never
+ * denormalized onto the entity). An interaction without an anchor is
+ * unanchored and renders floating (e.g. at the end of the transcript).
  *
  * Interactions are still NOT step content: they are resolved asynchronously by
  * user action, possibly long after the originating step flushed, so they live
@@ -38,10 +37,11 @@ export interface TranscriptInteraction {
   readonly interactionKind: InteractionKind;
   /**
    * The tool call this interaction was issued from — the timeline anchor.
-   * Always present: approvals gate a tool call; questions are emitted by the
-   * AskUserQuestion tool call itself.
+   * Present for the common case (approvals gate a tool call; questions are
+   * emitted by the AskUserQuestion tool call itself). Absent means the
+   * interaction is unanchored and renders floating rather than inline.
    */
-  readonly toolCallId: string;
+  readonly toolCallId?: string;
   readonly state: InteractionState;
   /** Open content: engine ApprovalRequest / QuestionRequest payload. */
   readonly request?: unknown;

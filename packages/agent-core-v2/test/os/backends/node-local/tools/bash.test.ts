@@ -1292,6 +1292,39 @@ describe('BashTool', () => {
     expect(noBackground.description).not.toContain('moved to the background instead of being killed');
     expect(noBackground.description).toContain('hits its timeout is killed');
   });
+
+  it('resolves the detach timeout from the bashTaskTimeoutS config', async () => {
+    async function detachTimeoutMsFor(
+      configValues: Record<string, unknown>,
+    ): Promise<number | undefined> {
+      const { runner } = createTestRunner(processWithOutput());
+      const { service, tasks } = createFakeTaskService();
+      const tool = bashTool(
+        runner,
+        createTestEnv(),
+        createTestCtx(),
+        service,
+        stubToolPolicy(),
+        stubConfig(configValues),
+      );
+
+      const result = await executeTool(
+        tool,
+        context({ command: 'watch', run_in_background: true, description: 'watch files' }),
+      );
+      expect(result).toMatchObject({ isError: false });
+
+      const taskId = service.list(false)[0]!.taskId;
+      return tasks.get(taskId)?.options.detachTimeoutMs;
+    }
+
+    await expect(detachTimeoutMsFor({})).resolves.toBe(600_000);
+    await expect(detachTimeoutMsFor({ task: { bashTaskTimeoutS: 30 } })).resolves.toBe(30_000);
+    await expect(detachTimeoutMsFor({ background: { bashTaskTimeoutS: 45 } })).resolves.toBe(
+      45_000,
+    );
+    await expect(detachTimeoutMsFor({ task: { bashTaskTimeoutS: 0 } })).resolves.toBe(0);
+  });
 });
 
 describe('BashTool background mode', () => {
