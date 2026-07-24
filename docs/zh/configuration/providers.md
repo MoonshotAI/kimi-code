@@ -59,7 +59,7 @@ api_key = "sk-xxxxx"
 
 ## `anthropic`
 
-用于对接 Claude API。标准 Claude 模型自动启用视觉、工具调用及 Thinking（如支持）；自定义或未覆盖的模型需在 `[models.<alias>]` 里显式声明 `capabilities`。
+用于对接 Claude API。Kimi Code 会先从随 CLI 发布的 models.dev 目录快照中自动识别视觉、工具调用及 Thinking 能力，再回退到内置模型匹配规则；只有两者都无法覆盖的自定义模型，才需要在 `[models.<alias>]` 里显式声明 `capabilities`。
 
 - 默认 `base_url`：跟随 Anthropic SDK 默认值
 - 凭证键名：`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`

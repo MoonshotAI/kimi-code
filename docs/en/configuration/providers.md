@@ -59,7 +59,7 @@ api_key = "sk-xxxxx"
 
 ## `anthropic`
 
-For connecting to the Claude API. Standard Claude models automatically enable vision, tool use, and Thinking (where supported); custom or uncovered models need `capabilities` declared explicitly on `[models.<alias>]`.
+For connecting to the Claude API. Kimi Code auto-detects vision, tool call, and Thinking capabilities from the bundled models.dev catalog, then falls back to its built-in model matchers. Only custom models that neither source covers need `capabilities` declared explicitly on `[models.<alias>]`.
 
 - Default `base_url`: follows Anthropic SDK default
 - Credential key names: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`

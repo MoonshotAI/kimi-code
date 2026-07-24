@@ -19,7 +19,8 @@
  *    `(protocol, providerType)`; composition needs the real config) and
  *    delegates to the registered base's contrib factory.
  *  - `resolveCapability` — the fixed fallback chain: trait capability hooks
- *    (last declarer wins) → the base's own catalog → `UNKNOWN_CAPABILITY`.
+ *    (last declarer wins) → registered external sources →
+ *    the base's own catalog → `UNKNOWN_CAPABILITY`.
  *
  * Bound at App scope, eager.
  */
@@ -44,6 +45,7 @@ import {
 } from '#/kosong/protocol/protocolBase';
 import type { ProtocolTrait, ResolvedTrait, TraitContext } from '#/kosong/protocol/protocolTrait';
 
+import { explainRegisteredModelCapability } from './modelCapabilityResolver';
 import { getProviderDefinition } from './providerDefinition';
 
 /**
@@ -123,6 +125,13 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
         },
       };
     }
+
+    const registeredCapability = explainRegisteredModelCapability({
+      protocol,
+      providerType,
+      modelName,
+    });
+    if (registeredCapability !== undefined) return registeredCapability;
 
     const baseCapability = getProtocolBase(identity.baseId)?.capability?.(modelName);
     if (baseCapability !== undefined) {

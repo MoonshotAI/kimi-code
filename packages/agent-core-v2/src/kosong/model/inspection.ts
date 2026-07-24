@@ -491,7 +491,7 @@ function attributeCapabilities(
       );
       continue;
     }
-    if (detected?.[key] === true) {
+    if (detected !== undefined && detectedSource.kind !== 'none') {
       sources.set(path, detectedSource);
       continue;
     }

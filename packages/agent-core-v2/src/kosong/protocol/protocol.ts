@@ -120,10 +120,9 @@ export interface IProtocolAdapterRegistry {
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId;
 
   /**
-   * Capability resolution with the fixed fallback chain: pair definition's
-   * declared capability → trait `capability` hooks (last declarer wins) →
-   * the base's own catalog. `UNKNOWN_CAPABILITY` when nothing knows the
-   * model.
+   * Capability resolution with the fixed fallback chain: trait `capability`
+   * hooks (last declarer wins) → registered external sources → the base's own
+   * catalog. `UNKNOWN_CAPABILITY` when nothing knows the model.
    */
   resolveCapability(
     protocol: Protocol,
@@ -133,9 +132,8 @@ export interface IProtocolAdapterRegistry {
 
   /**
    * The provenance-preserving twin of `resolveCapability` — the same chain,
-   * but reports which level answered (definition / trait / base / none), so
-   * inspection views can attribute a detected capability instead of just
-   * serving it.
+   * but reports which source answered, so inspection views can attribute a
+   * detected capability instead of just serving it.
    */
   explainCapability(
     protocol: Protocol,

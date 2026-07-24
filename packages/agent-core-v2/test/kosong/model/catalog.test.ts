@@ -33,6 +33,7 @@ import '#/kosong/provider/bases/anthropic/index';
 import '#/kosong/provider/bases/google-genai/index';
 import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/protocolAdapterRegistry';
+import { registerModelCapabilityResolver } from '#/kosong/provider/modelCapabilityResolver';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 import {
@@ -513,6 +514,78 @@ describe('headers merge order', () => {
 });
 
 describe('ModelCatalog inspect', () => {
+  it('attributes snapshot false values to the snapshot instead of none', () => {
+    const registration = registerModelCapabilityResolver(({ modelName }) =>
+      modelName === 'gpt-4o'
+        ? {
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: true,
+              thinking: false,
+              tool_use: false,
+              max_context_tokens: 128_000,
+            },
+            source: { kind: 'builtin', detail: 'test models.dev snapshot' },
+          }
+        : undefined,
+    );
+    const { host, catalog } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-test' } },
+      models: {
+        model: { provider: 'openai', model: 'gpt-4o', maxContextSize: 128_000 },
+      },
+    });
+    try {
+      const view = catalog.inspect('model');
+      expect(view.resolved.capabilities.image_in).toBe(false);
+      expect(view.sources['resolved.capabilities.image_in']).toMatchObject({
+        kind: 'builtin',
+        detail: 'test models.dev snapshot',
+      });
+    } finally {
+      host.dispose();
+      registration.dispose();
+    }
+  });
+
+  it('attributes a user capability above a snapshot false value', () => {
+    const registration = registerModelCapabilityResolver(({ modelName }) =>
+      modelName === 'gpt-4o'
+        ? {
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: false,
+              thinking: false,
+              tool_use: false,
+              max_context_tokens: 128_000,
+            },
+            source: { kind: 'builtin', detail: 'test models.dev snapshot' },
+          }
+        : undefined,
+    );
+    const { host, catalog } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-test' } },
+      models: {
+        model: {
+          provider: 'openai',
+          model: 'gpt-4o',
+          maxContextSize: 128_000,
+          capabilities: ['image_in'],
+        },
+      },
+    });
+    try {
+      const view = catalog.inspect('model');
+      expect(view.resolved.capabilities.image_in).toBe(true);
+      expect(view.sources['resolved.capabilities.image_in']).toMatchObject({ kind: 'config' });
+    } finally {
+      host.dispose();
+      registration.dispose();
+    }
+  });
+
   it('builds the god object with per-field provenance (kimi structured model)', () => {
     const { host, catalog } = createHost(kimiSections);
     try {

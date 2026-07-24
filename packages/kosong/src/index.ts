@@ -40,6 +40,7 @@ export type { ModelCapability } from './capability';
 // Model catalog (models.dev-style) metadata
 export {
   catalogBaseUrl,
+  getCatalogModelCapability,
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
