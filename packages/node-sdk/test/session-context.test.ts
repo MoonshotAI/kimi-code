@@ -26,6 +26,32 @@ afterEach(async () => {
 });
 
 describe('Session context', () => {
+  it('round-trips subagent model bindings through the public Session API', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-subagent-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-subagent-work-');
+    await writeTestConfig(homeDir, 200_000);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_subagent_binding', workDir });
+      await expect(session.getSubagentBindings()).resolves.toEqual({});
+
+      const { configPath } = await session.setSubagentBinding('coder', {
+        model: 'test-model',
+        thinkingEffort: 'high',
+      });
+      expect(configPath).toContain('local.toml');
+      await expect(session.getSubagentBindings()).resolves.toEqual({
+        coder: { model: 'test-model', thinkingEffort: 'high', inherit: undefined },
+      });
+
+      await session.setSubagentBinding('coder', undefined);
+      await expect(session.getSubagentBindings()).resolves.toEqual({});
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('restores a session-only additional directory after close and resume', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-work-');

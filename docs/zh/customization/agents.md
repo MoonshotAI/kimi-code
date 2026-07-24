@@ -22,6 +22,31 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 子 Agent 支持在后台运行：完成后结果自动回到主 Agent，无需手动轮询。也可以唤回已有的子 Agent 实例继续推进同一任务。
 
+为子 Agent 类型绑定模型或思考强度是实验功能，默认关闭。在 `config.toml` 中持久开启：
+
+```toml
+[experimental]
+subagent-model-selection = true
+```
+
+只对当前进程开启的话，设置专用环境变量：
+
+```sh
+export KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION=1
+```
+
+绑定属于**你而不是模型**：每个工作区在项目根的 `.kimi-code/local.toml` 里保存自己的绑定，形如 `[subagent.<类型>]`：
+
+```toml
+[subagent.coder]
+model = "kimi-code/kimi-for-coding"
+thinking_effort = "high"
+```
+
+某个子 Agent 类型在工作区首次被派发且没有绑定时，会询问你一次是否绑定模型（选择"保持继承"也会被记住）。之后该绑定会机械地应用到通过 `Agent` 工具派发的该类型每个新子 Agent 上——主 Agent 看不到也无法覆盖它。（`AgentSwarm` 批量派发暂不读取绑定，swarm 的模型指定方案留作后续。）随时可以用 `/subagent-model` 命令管理绑定（`list` / `set <类型>` / `clear <类型>`）。优先级：工作区绑定 > profile 绑定（随应用分发的 profile）> 继承主 Agent 当前的模型与思考强度。
+
+绑定值在派发时固化：唤回（resume）子 Agent 总是保持它已配置的模型与思考强度，无法在对话中途切换，会话重启后也会恢复。唤回时对子 Agent 已固化的别名做严格校验，不可解析会以配置错误失败。而工作区绑定里的别名在派发前同样会对照你的模型配置校验——如果它不再可解析（比如已从 `config.toml` 删除），交互环境下会重新弹出绑定询问并注明原因，你的新选择会写回修复该绑定；非交互环境（如 `kimi -p`）则继承主 Agent 的模型，并在工具结果中给出显式警告，直到你更新或清除该绑定。
+
 ## 上下文隔离与资源开销
 
 每个子 Agent 拥有完全独立的上下文窗口，只能看到主 Agent 显式传入的任务描述，看不到主 Agent 的对话历史。子 Agent 自己的中间思考和工具调用记录不会回流，只有最终结果会出现在主 Agent 的上下文里。

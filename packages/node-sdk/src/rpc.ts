@@ -33,6 +33,7 @@ import type {
   CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  GetSubagentBindingsResult,
   McpServerConfig,
   GoalSnapshot,
   GoalToolResult,
@@ -56,6 +57,8 @@ import type {
   ResumeSessionInput,
   ResumedSessionSummary,
   SessionSummary,
+  SetSubagentBindingInput,
+  SetSubagentBindingResult,
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
@@ -375,6 +378,20 @@ export abstract class SDKRpcClientBase {
   async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const rpc = await this.getRpc();
     return rpc.addAdditionalDir({ sessionId: input.id, path: input.path, persist: input.persist });
+  }
+
+  async getSubagentBindings(input: SessionIdRpcInput): Promise<GetSubagentBindingsResult> {
+    const rpc = await this.getRpc();
+    return rpc.getSubagentBindings({ sessionId: input.sessionId });
+  }
+
+  async setSubagentBinding(input: SetSubagentBindingInput): Promise<SetSubagentBindingResult> {
+    const rpc = await this.getRpc();
+    return rpc.setSubagentBinding({
+      sessionId: input.id,
+      agentType: input.agentType,
+      binding: input.binding,
+    });
   }
 
   async startBtw(input: SessionIdRpcInput): Promise<string> {

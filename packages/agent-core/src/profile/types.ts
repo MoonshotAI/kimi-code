@@ -5,6 +5,8 @@ import type { SkillRegistry } from '../agent/skill/types';
 
 export const RawSubagentProfileSchema = z.object({
   description: z.string().optional(),
+  modelAlias: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export type RawSubagentProfile = z.infer<typeof RawSubagentProfileSchema>;
@@ -52,5 +54,11 @@ export interface ResolvedAgentProfile {
   systemPrompt: SystemPromptRenderer;
   tools: string[];
   whenToUse?: string;
+  /**
+   * Optional model/thinking overrides bound at the owner's `subagents` entry.
+   * `undefined` means the subagent inherits the parent agent's settings.
+   */
+  modelAlias?: string;
+  thinkingEffort?: string;
   subagents?: Record<string, ResolvedAgentProfile>;
 }

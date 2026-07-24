@@ -388,7 +388,7 @@ describe('current builtin collaboration tools', () => {
       },
     });
     expect(Object.keys(tool.parameters['properties'] as Record<string, unknown>).at(-1)).toBe(
-      'resume_agent_ids',
+      'binding_slot',
     );
 
     const result = await executeTool(tool, context(input, 'call_swarm'));
@@ -433,6 +433,116 @@ describe('current builtin collaboration tools', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
+  });
+
+  it('AgentSwarm stamps a binding slot onto every item-based spawn task', async () => {
+    const host = mockSubagentHost({
+      runQueued: vi.fn().mockResolvedValue([
+        {
+          task: {
+            kind: 'spawn',
+            data: { kind: 'spawn', index: 1, item: 'src/a.ts', prompt: 'Review src/a.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-1',
+          status: 'completed',
+          result: 'result a',
+        },
+      ]),
+    });
+    const tool = new AgentSwarmTool(host, mockSwarmMode(), undefined, {
+      modelSelectionEnabled: true,
+      readSlotBinding: async () => ({ model: 'slot/model-a', thinkingEffort: 'high' }),
+      isModelAliasKnown: () => true,
+    });
+
+    await executeTool(
+      tool,
+      context(
+        {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts'],
+          resume_agent_ids: { 'agent-old': 'continue' },
+          binding_slot: 'debater_a',
+        },
+        'call_swarm',
+      ),
+    );
+
+    const tasks = (host.runQueued as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Array<
+      Record<string, unknown>
+    >;
+    const spawnTask = tasks.find((task) => task['kind'] === 'spawn')!;
+    const resumeTask = tasks.find((task) => task['kind'] === 'resume')!;
+    expect(spawnTask['modelAlias']).toBe('slot/model-a');
+    expect(spawnTask['thinkingEffort']).toBe('high');
+    // Resumed members keep their original configuration — no slot stamping.
+    expect(resumeTask['modelAlias']).toBeUndefined();
+  });
+
+  it('AgentSwarm warns and falls back when the binding slot is unconfigured', async () => {
+    const host = mockSubagentHost({
+      runQueued: vi.fn().mockResolvedValue([
+        {
+          task: {
+            kind: 'spawn',
+            data: { kind: 'spawn', index: 1, item: 'src/a.ts', prompt: 'Review src/a.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-1',
+          status: 'completed',
+          result: 'result a',
+        },
+        {
+          task: {
+            kind: 'spawn',
+            data: { kind: 'spawn', index: 2, item: 'src/b.ts', prompt: 'Review src/b.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/b.ts',
+            description: 'Review files #2 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-2',
+          status: 'completed',
+          result: 'result b',
+        },
+      ]),
+    });
+    const tool = new AgentSwarmTool(host, mockSwarmMode(), undefined, {
+      modelSelectionEnabled: true,
+      readSlotBinding: async () => undefined,
+      isModelAliasKnown: () => true,
+    });
+
+    const result = await executeTool(
+      tool,
+      context(
+        {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+          binding_slot: 'debater_a',
+        },
+        'call_swarm',
+      ),
+    );
+
+    expect(result.output).toContain('warning:');
+    expect(result.output).toContain('binding slot "debater_a" is not configured');
+    const tasks = (host.runQueued as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Array<
+      Record<string, unknown>
+    >;
+    expect(tasks[0]!['modelAlias']).toBeUndefined();
   });
 
   it('AgentSwarm does not expose permission rule argument matching', () => {

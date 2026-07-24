@@ -15,7 +15,7 @@ import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
 import type { ToolInfo } from '#/agent/tool';
-import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
+import type { KimiConfig, KimiConfigPatch, McpServerConfig, SubagentBinding } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
@@ -408,6 +408,18 @@ export interface AddAdditionalDirResult {
   readonly persisted: boolean;
 }
 
+export type GetSubagentBindingsResult = Readonly<Record<string, SubagentBinding>>;
+
+export interface SetSubagentBindingPayload {
+  readonly agentType: string;
+  /** Omit/undefined to clear the binding for this subagent type. */
+  readonly binding?: SubagentBinding;
+}
+
+export interface SetSubagentBindingResult {
+  readonly configPath: string;
+}
+
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -515,6 +527,8 @@ export interface SessionAPI extends AgentAPIWithId {
   waitForBackgroundTasksOnPrint: (payload: EmptyPayload) => void;
   handlePrintMainTurnCompleted: (payload: EmptyPayload) => 'finish' | 'continue';
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
+  getSubagentBindings: (payload: EmptyPayload) => GetSubagentBindingsResult;
+  setSubagentBinding: (payload: SetSubagentBindingPayload) => SetSubagentBindingResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

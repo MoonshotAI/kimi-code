@@ -48,6 +48,10 @@ type BaseQueuedSubagentTask<T> = {
   readonly description: string;
   readonly swarmIndex?: number;
   readonly swarmItem?: string;
+  /** Per-batch spawn override (e.g. from a binding slot); resume ignores it. */
+  readonly modelAlias?: string;
+  /** Per-batch thinking-effort override; same semantics as `modelAlias`. */
+  readonly thinkingEffort?: string;
   readonly runInBackground: boolean;
   readonly timeout?: number;
   readonly signal?: AbortSignal;
@@ -305,6 +309,8 @@ export class SubagentBatch<T> {
       prompt: task.prompt,
       description: task.description,
       swarmIndex: task.swarmIndex,
+      modelAlias: task.modelAlias,
+      thinkingEffort: task.thinkingEffort,
       runInBackground: task.runInBackground,
       signal: attempt.controller.signal,
       onReady: () => {

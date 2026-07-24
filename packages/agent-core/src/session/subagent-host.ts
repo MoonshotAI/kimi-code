@@ -6,7 +6,8 @@ import {
 
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
-import { ErrorCodes } from '../errors';
+import type { SubagentBinding } from '../config/workspace-local';
+import { ErrorCodes, KimiError } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
 import { isAbortError } from '../loop/errors';
@@ -32,6 +33,8 @@ import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '2 hours';
+export const SUBAGENT_MODEL_UNAVAILABLE_MESSAGE =
+  'The configured subagent model alias is not resolvable. Check the bindings in .kimi-code/local.toml and your models config.';
 
 const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
@@ -111,6 +114,14 @@ export interface RunSubagentOptions {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  /**
+   * Spawn-time model override (from workspace binding or profile binding).
+   * Spawn precedence: this value > profile binding > inherit the parent.
+   * Resume/retry ignore this: the child always keeps its configured model.
+   */
+  readonly modelAlias?: string;
+  /** Spawn-time thinking-effort override; same semantics as `modelAlias`. */
+  readonly thinkingEffort?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
@@ -123,6 +134,17 @@ export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly swarmItem?: string;
 }
 
+/**
+ * Read-only access to workspace subagent bindings, injected into the host so
+ * the shared spawn path (Agent tool AND AgentSwarm batches) resolves stored
+ * type bindings uniformly. Interactive asks and warnings stay at the tool
+ * layer — the host only applies (or safely ignores) what is already stored.
+ */
+export interface SubagentBindingResolver {
+  readonly readTypeBinding: (profileName: string) => Promise<SubagentBinding | undefined>;
+  readonly isAliasKnown: (alias: string) => boolean;
+}
+
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
@@ -132,6 +154,10 @@ export type SubagentHandle = {
   readonly agentId: string;
   readonly profileName: string;
   readonly resumed: boolean;
+  /** Effective model alias for this run (after override resolution). */
+  readonly modelAlias?: string;
+  /** Effective thinking effort for this run (after override resolution). */
+  readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
 };
 
@@ -149,19 +175,50 @@ export class SessionSubagentHost {
     private readonly ownerAgentId: string,
   ) {}
 
+  private bindingResolver?: SubagentBindingResolver;
+
+  setBindingResolver(resolver: SubagentBindingResolver): void {
+    this.bindingResolver = resolver;
+  }
+
   async spawn(options: SpawnSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
 
     const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const profile = this.resolveProfile(parent, options.profileName);
+    // Model/effort precedence: per-run override (slot or explicit) > workspace
+    // type binding > profile binding > inherit the parent agent. Bindings are
+    // part of the subagent-model-selection experiment and are ignored when it
+    // is off. The workspace read lives here — the shared spawn path — so
+    // AgentSwarm batches resolve the same stored bindings the Agent tool does.
+    const modelSelectionEnabled = parent.experimentalFlags.enabled('subagent-model-selection');
+    const workspaceBinding = await this.readWorkspaceTypeBinding(
+      parent,
+      options,
+      modelSelectionEnabled,
+    );
+    const modelAlias = this.resolveChildModel(
+      parent,
+      options.modelAlias ??
+        workspaceBinding?.model ??
+        (modelSelectionEnabled ? profile.modelAlias : undefined),
+    );
+    const thinkingEffort =
+      options.thinkingEffort ??
+      workspaceBinding?.thinkingEffort ??
+      (modelSelectionEnabled ? profile.thinkingEffort : undefined) ??
+      parent.config.thinkingEffort;
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
       { parentAgentId: this.ownerAgentId, swarmItem: options.swarmItem },
     );
     const completion = this.runWithActiveChild(id, options, async (runOptions) => {
-      this.emitSubagentSpawned(parent, id, profile.name, runOptions);
+      this.emitSubagentSpawned(parent, id, profile.name, runOptions, {
+        modelAlias,
+        thinkingEffort,
+      });
       try {
-        await this.configureChild(parent, agent, profile);
+        await this.configureChild(parent, agent, profile, { modelAlias, thinkingEffort });
         return await this.runPromptTurn(parent, id, agent, profile.name, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, id, runOptions, error);
@@ -172,33 +229,57 @@ export class SessionSubagentHost {
       agentId: id,
       profileName: profile.name,
       resumed: false,
+      modelAlias,
+      thinkingEffort,
       completion,
     };
   }
 
   async resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
-    const { parent, child, profileName } = await this.ensureIdleSubagent(agentId);
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
+    const { child, profileName } = await this.ensureIdleSubagent(agentId, parent);
+    // Sticky resume is part of the subagent-model-selection experiment: with
+    // the flag on, a resumed child always keeps its configured model/effort
+    // (no mid-conversation switches); with it off, resume realigns the child
+    // to the parent's current model exactly as before.
+    const sticky = parent.experimentalFlags.enabled('subagent-model-selection');
+    const modelAlias = sticky
+      ? this.resolveChildModel(parent, child.config.modelAlias)
+      : parent.config.modelAlias;
+    // Effort is never touched on resume (same as the pre-change behavior);
+    // the child keeps whatever it was configured with at spawn.
+    const thinkingEffort = child.config.thinkingEffort;
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
-      this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
+      this.emitSubagentSpawned(parent, agentId, profileName, runOptions, {
+        modelAlias,
+        thinkingEffort,
+      });
       try {
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias, thinkingEffort });
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
         throw error;
       }
     });
-    return { agentId, profileName, resumed: true, completion };
+    return { agentId, profileName, resumed: true, modelAlias, thinkingEffort, completion };
   }
 
   async retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
-    const { parent, child, profileName } = await this.ensureIdleSubagent(agentId);
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
+    const { child, profileName } = await this.ensureIdleSubagent(agentId, parent);
+    // Sticky semantics, same as resume().
+    const sticky = parent.experimentalFlags.enabled('subagent-model-selection');
+    const modelAlias = sticky
+      ? this.resolveChildModel(parent, child.config.modelAlias)
+      : parent.config.modelAlias;
+    const thinkingEffort = child.config.thinkingEffort;
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias, thinkingEffort });
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -211,13 +292,13 @@ export class SessionSubagentHost {
         throw error;
       }
     });
-    return { agentId, profileName, resumed: true, completion };
+    return { agentId, profileName, resumed: true, modelAlias, thinkingEffort, completion };
   }
 
   private async ensureIdleSubagent(
     agentId: string,
+    parent: Agent,
   ): Promise<{ readonly parent: Agent; readonly child: Agent; readonly profileName: string }> {
-    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const metadata = this.session.metadata.agents[agentId];
     if (metadata?.type !== 'sub') {
       throw new Error(`Agent instance "${agentId}" is not a subagent`);
@@ -317,6 +398,33 @@ export class SessionSubagentHost {
     return profile;
   }
 
+  /**
+   * Stored workspace type binding for the shared spawn path. Skipped when the
+   * caller passed an explicit per-run override (slot/type resolution at the
+   * tool layer wins), when the experiment is off, or when no resolver is
+   * wired. A stored alias that no longer resolves is ignored with a log
+   * warning — the host cannot ask; interactive repair stays at the tool
+   * layer.
+   */
+  private async readWorkspaceTypeBinding(
+    parent: Agent,
+    options: SpawnSubagentOptions,
+    modelSelectionEnabled: boolean,
+  ): Promise<SubagentBinding | undefined> {
+    if (options.modelAlias !== undefined || !modelSelectionEnabled) return undefined;
+    if (this.bindingResolver === undefined) return undefined;
+    const binding = await this.bindingResolver.readTypeBinding(options.profileName);
+    if (binding === undefined || binding.inherit === true) return undefined;
+    if (binding.model !== undefined && !this.bindingResolver.isAliasKnown(binding.model)) {
+      parent.log?.warn('ignoring workspace binding with unknown model alias', {
+        profileName: options.profileName,
+        modelAlias: binding.model,
+      });
+      return undefined;
+    }
+    return binding;
+  }
+
   private runWithActiveChild(
     childId: string,
     options: RunSubagentOptions,
@@ -400,12 +508,14 @@ export class SessionSubagentHost {
     parent: Agent,
     child: Agent,
     profile: ResolvedAgentProfile,
+    overrides: { readonly modelAlias?: string; readonly thinkingEffort?: string },
   ): Promise<void> {
-    // A subagent always inherits the parent agent's model.
+    // Model/effort are resolved by the caller (per-run override > profile
+    // binding > parent inheritance).
     child.config.update({
       cwd: parent.config.cwd,
-      modelAlias: parent.config.modelAlias,
-      thinkingEffort: parent.config.thinkingEffort,
+      modelAlias: overrides.modelAlias,
+      thinkingEffort: overrides.thinkingEffort,
     });
 
     const context = await prepareSystemPromptContext(
@@ -415,6 +525,19 @@ export class SessionSubagentHost {
     );
     child.useProfile(profile, context, this.session.options.kimiHomeDir);
     child.tools.inheritUserTools(parent.tools);
+  }
+
+  private resolveChildModel(parent: Agent, requestedModelAlias?: string): string {
+    const modelAlias = requestedModelAlias ?? parent.config.modelAlias;
+    if (modelAlias === undefined) throw new Error('Caller agent has no model bound');
+    try {
+      parent.modelProvider?.resolveProviderConfig(modelAlias);
+    } catch (error) {
+      throw new KimiError(ErrorCodes.CONFIG_INVALID, SUBAGENT_MODEL_UNAVAILABLE_MESSAGE, {
+        cause: error,
+      });
+    }
+    return modelAlias;
   }
 
   /**
@@ -504,6 +627,7 @@ export class SessionSubagentHost {
     childId: string,
     profileName: string,
     options: RunSubagentOptions,
+    effective: { readonly modelAlias?: string; readonly thinkingEffort?: string },
   ): void {
     parent.emitEvent({
       type: 'subagent.spawned',
@@ -515,6 +639,8 @@ export class SessionSubagentHost {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
+      modelAlias: effective.modelAlias,
+      thinkingEffort: effective.thinkingEffort,
     });
     parent.telemetry.track('subagent_created', {
       agent_id: childId,

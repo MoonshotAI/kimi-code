@@ -155,6 +155,26 @@ export interface AddAdditionalDirOptions {
   readonly persist: boolean;
 }
 
+/** Per-workspace model/effort binding for one subagent type. */
+export interface SubagentBinding {
+  readonly model?: string;
+  readonly thinkingEffort?: string;
+  readonly inherit?: boolean;
+}
+
+export type GetSubagentBindingsResult = Readonly<Record<string, SubagentBinding>>;
+
+export interface SetSubagentBindingInput {
+  readonly id: string;
+  readonly agentType: string;
+  /** Omit to clear the binding for this subagent type. */
+  readonly binding?: SubagentBinding;
+}
+
+export interface SetSubagentBindingResult {
+  readonly configPath: string;
+}
+
 export interface ForkSessionInput {
   readonly id: string;
   readonly forkId?: string;

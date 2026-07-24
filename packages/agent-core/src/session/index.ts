@@ -19,10 +19,13 @@ import {
   parseBooleanEnv,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
+  readSubagentBindings,
   readWorkspaceAdditionalDirs,
   resolveWorkspaceAdditionalDirs,
   resolveConfigValue,
   type BackgroundConfig,
+  type SubagentBinding,
+  writeSubagentBinding,
   type WorkspaceAdditionalDirsLoadResult,
 } from '../config';
 import { makeErrorPayload } from '../errors';
@@ -324,6 +327,29 @@ export class Session {
       ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${configPath}`
       : `Added workspace directory:\n  ${path}\n  For this session only`;
     this.requireMainAgent().context.appendLocalCommandStdout(message);
+  }
+
+  /** Per-workspace subagent model bindings from `.kimi-code/local.toml`. */
+  async getSubagentBindings(): Promise<Readonly<Record<string, SubagentBinding>>> {
+    const cwd = this.toolKaos.getcwd();
+    return readSubagentBindings(this.systemContextKaos(cwd), cwd);
+  }
+
+  /**
+   * Set or clear (binding `undefined`) one subagent type's model binding.
+   * A bound model is validated against the configured providers first.
+   */
+  async setSubagentBinding(
+    agentType: string,
+    binding: SubagentBinding | undefined,
+  ): Promise<{ readonly configPath: string }> {
+    const cwd = this.toolKaos.getcwd();
+    const systemKaos = this.systemContextKaos(cwd);
+    if (binding?.model !== undefined) {
+      const main = await this.ensureAgentResumed('main');
+      main.modelProvider?.resolveProviderConfig(binding.model);
+    }
+    return writeSubagentBinding(systemKaos, cwd, agentType, binding);
   }
 
   /**

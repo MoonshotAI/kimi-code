@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 import type { SwarmMode } from '../../../agent/swarm';
 import type { BuiltinTool } from '../../../agent/tool';
+import type {
+  IsModelAliasKnownCallback,
+  ReadSubagentSlotBindingCallback,
+} from '../../../agent/tool/subagent-binding';
+import type { Logger } from '../../../logging';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   type QueuedSubagentTask,
@@ -52,6 +57,14 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         'Map of existing subagent agent_id to the prompt used to resume that subagent. These resumed subagents are launched before new item-based subagents.',
       ),
+    binding_slot: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        'Named binding slot pre-configured by the user for this workspace (.kimi-code/local.toml under [subagent-slot.<name>]), applied to every new item-based spawn in this batch. Set ONLY when the task or preset explicitly names a slot — a slot selects a user-configured model/effort. Never invent slot names, and never use this to choose a model yourself.',
+      ),
   })
   .strict();
 
@@ -94,7 +107,27 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     // `0` = no timeout, preserved on purpose (`0 ?? DEFAULT` stays `0`);
     // SubagentBatch arms no timer for non-positive timeouts.
     private readonly subagentTimeoutMs?: number,
-  ) {}
+    options?: {
+      log?: Logger;
+      modelSelectionEnabled?: boolean | (() => boolean);
+      readSlotBinding?: ReadSubagentSlotBindingCallback;
+      isModelAliasKnown?: IsModelAliasKnownCallback;
+    },
+  ) {
+    this.log = options?.log;
+    const modelSelectionEnabled = options?.modelSelectionEnabled ?? false;
+    this.isModelSelectionEnabled =
+      typeof modelSelectionEnabled === 'function'
+        ? modelSelectionEnabled
+        : () => modelSelectionEnabled;
+    this.readSlotBinding = options?.readSlotBinding;
+    this.isModelAliasKnown = options?.isModelAliasKnown;
+  }
+
+  private readonly log?: Logger;
+  private readonly isModelSelectionEnabled: () => boolean;
+  private readonly readSlotBinding?: ReadSubagentSlotBindingCallback;
+  private readonly isModelAliasKnown?: IsModelAliasKnownCallback;
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
     const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
@@ -135,6 +168,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
+    const slot = await this.resolveBatchSlot(args);
     const specs = createAgentSwarmSpecs(args, (agentId) => this.subagentHost.getSwarmItem(agentId));
     const tasks = specs.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
       const descriptionName = spec.kind === 'resume' ? 'resume' : profileName;
@@ -160,10 +194,56 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       return {
         ...common,
         kind: 'spawn',
+        modelAlias: slot?.modelAlias,
+        thinkingEffort: slot?.thinkingEffort,
       };
     });
     const results = await this.subagentHost.runQueued(tasks);
-    return renderSwarmResults(results.map(({ task, ...result }) => ({ spec: task.data, ...result })));
+    const rendered = renderSwarmResults(
+      results.map(({ task, ...result }) => ({ spec: task.data, ...result })),
+    );
+    return slot?.warning === undefined ? rendered : `${slot.warning}\n${rendered}`;
+  }
+
+  /**
+   * Whole-batch binding slot: one lookup per swarm run (never per member).
+   * Unconfigured or stale slots degrade to the workspace type binding —
+   * resolved by the host's shared spawn path — with an explicit warning.
+   * Swarm launches never ask interactively.
+   */
+  private async resolveBatchSlot(
+    args: AgentSwarmToolInput,
+  ): Promise<
+    { readonly modelAlias?: string; readonly thinkingEffort?: string; readonly warning?: string } | undefined
+  > {
+    const bindingSlot = normalizeOptionalString(args.binding_slot);
+    if (bindingSlot === undefined || !this.isModelSelectionEnabled()) return undefined;
+    const binding = await this.readSlotBinding?.(bindingSlot);
+    if (binding !== undefined && binding.inherit !== true) {
+      if (
+        binding.model === undefined ||
+        this.isModelAliasKnown === undefined ||
+        this.isModelAliasKnown(binding.model)
+      ) {
+        return { modelAlias: binding.model, thinkingEffort: binding.thinkingEffort };
+      }
+      this.log?.warn('swarm binding slot references unknown model alias', {
+        bindingSlot,
+        modelAlias: binding.model,
+      });
+      return {
+        warning:
+          `warning: binding slot "${bindingSlot}" references unknown model alias ` +
+          `"${binding.model}"; falling back to the subagent type binding. Update it in ` +
+          `.kimi-code/local.toml.`,
+      };
+    }
+    return {
+      warning:
+        `warning: binding slot "${bindingSlot}" is not configured in this workspace; ` +
+        `falling back to the subagent type binding. Configure it in ` +
+        `.kimi-code/local.toml under [subagent-slot.${bindingSlot}].`,
+    };
   }
 }
 

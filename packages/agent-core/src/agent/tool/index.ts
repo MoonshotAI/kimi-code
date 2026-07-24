@@ -10,6 +10,7 @@ import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
+import { createSubagentBindingCallbacks, createSubagentBindingResolver } from './subagent-binding';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
@@ -688,6 +689,11 @@ export class ToolManager {
       config: { cwd, provider, modelCapabilities },
       background,
     } = this.agent;
+    // Wire stored workspace bindings into the shared spawn path so AgentSwarm
+    // batches resolve the same type bindings the Agent tool does.
+    this.agent.subagentHost?.setBindingResolver(
+      createSubagentBindingResolver(this.agent, kaos, cwd),
+    );
     const videoUploader = this.createVideoUploader(provider);
     const workspace = extendWorkspaceWithSkillRoots(
       {
@@ -756,6 +762,9 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+              modelSelectionEnabled: () =>
+                this.agent.experimentalFlags.enabled('subagent-model-selection'),
+              ...createSubagentBindingCallbacks(this.agent, kaos, cwd),
             },
           ),
         this.agent.subagentHost &&
@@ -763,6 +772,12 @@ export class ToolManager {
             this.agent.subagentHost,
             this.agent.swarmMode,
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+            {
+              log: this.agent.log,
+              modelSelectionEnabled: () =>
+                this.agent.experimentalFlags.enabled('subagent-model-selection'),
+              ...createSubagentBindingCallbacks(this.agent, kaos, cwd),
+            },
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
