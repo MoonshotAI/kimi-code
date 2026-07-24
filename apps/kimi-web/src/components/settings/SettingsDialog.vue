@@ -348,9 +348,9 @@ function archiveTime(iso: string): string {
               <SegmentedControl
                 :model-value="colorScheme"
                 :options="[
-                  { value: 'light', label: '🌕 ' + t('theme.light') },
-                  { value: 'dark', label: '🌑 ' + t('theme.dark') },
-                  { value: 'system', label: '🌗 ' + t('theme.system') },
+                  { value: 'light', label: t('theme.light') },
+                  { value: 'dark', label: t('theme.dark') },
+                  { value: 'system', label: t('theme.system') },
                 ]"
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"
               />
