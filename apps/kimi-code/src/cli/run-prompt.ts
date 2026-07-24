@@ -16,7 +16,11 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import { resolve } from 'pathe';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import {
+  CLI_SHUTDOWN_TIMEOUT_MS,
+  HEADLESS_STDIO_DRAIN_TIMEOUT_MS,
+  PROMPT_CLEANUP_TIMEOUT_MS,
+} from '#/constant/app';
 
 import { isKimiV2Enabled } from './experimental-v2';
 import { resolveOutputFormat } from './options';
@@ -29,7 +33,13 @@ import {
   type HeadlessGoalCreate,
 } from './goal-prompt';
 import type { PromptHarness, PromptSession } from './prompt-session';
-import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
+import {
+  drainPromptOutput,
+  PromptJsonWriter,
+  PromptTranscriptWriter,
+  writePromptOutput,
+  writeResumeHint,
+} from './prompt-render';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -146,6 +156,7 @@ export async function runPrompt(
   let restorePromptSessionPermission = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
+  let outputDrainAttempted = false;
   const cleanupPromptRun = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
@@ -153,8 +164,12 @@ export async function runPrompt(
       try {
         await restorePromptSessionPermission();
       } finally {
-        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-        await harness.close();
+        try {
+          await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+          await harness.close();
+        } finally {
+          if (!outputDrainAttempted) await drainPromptOutput(stdout);
+        }
       }
     })());
     // Bound cleanup so a wedged shutdown step (e.g. a SessionEnd hook, MCP
@@ -213,6 +228,8 @@ export async function runPrompt(
       );
     }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
+    outputDrainAttempted = true;
+    await raceWithTimeout(drainPromptOutput(stdout), HEADLESS_STDIO_DRAIN_TIMEOUT_MS);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_ms: Date.now() - startedAt,
@@ -268,7 +285,7 @@ async function runHeadlessGoal(
     unsubscribeGoalEvents();
     const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
     if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      writePromptOutput(stdout, `${JSON.stringify(goalSummaryJson(snapshot))}\n`);
     } else {
       stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
     }

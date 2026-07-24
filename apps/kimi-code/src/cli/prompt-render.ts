@@ -43,6 +43,41 @@ interface RetryingEventLike {
 export interface PromptOutput {
   readonly columns?: number | undefined;
   write(chunk: string): boolean;
+  once?(event: 'drain', listener: () => void): unknown;
+}
+
+interface PromptOutputDrainState {
+  pending: Promise<void> | undefined;
+}
+
+const outputDrainStates = new WeakMap<PromptOutput, PromptOutputDrainState>();
+
+export function writePromptOutput(output: PromptOutput, chunk: string): void {
+  if (output.write(chunk) || output.once === undefined) return;
+
+  let state = outputDrainStates.get(output);
+  if (state === undefined) {
+    state = { pending: undefined };
+    outputDrainStates.set(output, state);
+  }
+  if (state.pending !== undefined) return;
+
+  let resolveDrain!: () => void;
+  state.pending = new Promise<void>((resolve) => {
+    resolveDrain = resolve;
+  });
+  output.once('drain', () => {
+    state.pending = undefined;
+    resolveDrain();
+  });
+}
+
+export async function drainPromptOutput(output: PromptOutput): Promise<void> {
+  while (true) {
+    const pending = outputDrainStates.get(output)?.pending;
+    if (pending === undefined) return;
+    await pending;
+  }
 }
 
 const PROMPT_BLOCK_BULLET = '• ';
@@ -262,7 +297,7 @@ export class PromptJsonWriter implements PromptTurnWriter {
   private writeJsonLine(
     message: PromptJsonAssistantMessage | PromptJsonToolMessage | PromptJsonRetryMetaMessage,
   ): void {
-    this.stdout.write(`${JSON.stringify(message)}\n`);
+    writePromptOutput(this.stdout, `${JSON.stringify(message)}\n`);
   }
 }
 
@@ -381,7 +416,7 @@ export function writeExperimentalVersion(
       type: 'system.version',
       version,
     };
-    stdout.write(`${JSON.stringify(message)}\n`);
+    writePromptOutput(stdout, `${JSON.stringify(message)}\n`);
     return;
   }
   stderr.write(`kimi version ${version}\n`);
@@ -403,7 +438,7 @@ export function writeResumeHint(
       command,
       content,
     };
-    stdout.write(`${JSON.stringify(message)}\n`);
+    writePromptOutput(stdout, `${JSON.stringify(message)}\n`);
     return;
   }
   stderr.write(`${content}\n`);

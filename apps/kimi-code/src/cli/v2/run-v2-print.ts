@@ -63,6 +63,7 @@ import { resolve } from 'pathe';
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
   CLI_USER_AGENT_PRODUCT,
+  HEADLESS_STDIO_DRAIN_TIMEOUT_MS,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
 
@@ -85,11 +86,13 @@ import { createKimiCodeHostIdentity } from '../version';
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
+  drainPromptOutput,
   type PromptOutput,
   PromptJsonWriter,
   type PromptTurnWriter,
   PromptTranscriptWriter,
   writeExperimentalVersion,
+  writePromptOutput,
   writeResumeHint,
 } from '../prompt-render';
 
@@ -165,16 +168,21 @@ export async function runV2Print(
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
+  let outputDrainAttempted = false;
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
       try {
         await restorePermission();
       } finally {
-        if (telemetryService !== undefined) {
-          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+        try {
+          if (telemetryService !== undefined) {
+            await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+          }
+          app.dispose();
+        } finally {
+          if (!outputDrainAttempted) await drainPromptOutput(stdout);
         }
-        app.dispose();
       }
     })());
     await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
@@ -232,6 +240,8 @@ export async function runV2Print(
       );
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
+    outputDrainAttempted = true;
+    await raceWithTimeout(drainPromptOutput(stdout), HEADLESS_STDIO_DRAIN_TIMEOUT_MS);
 
     telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
@@ -535,7 +545,7 @@ async function runNativeGoal(
     subscription.dispose();
     const snapshot = completedSnapshot ?? goalService.getGoal().goal;
     if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      writePromptOutput(stdout, `${JSON.stringify(goalSummaryJson(snapshot))}\n`);
     } else {
       stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
     }

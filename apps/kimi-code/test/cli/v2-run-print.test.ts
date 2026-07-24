@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  HEADLESS_STDIO_DRAIN_TIMEOUT_MS,
+  PROMPT_CLEANUP_TIMEOUT_MS,
+} from '#/constant/app';
+
+import {
   IAgentCatalogRuntimeOptions,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -101,6 +106,39 @@ function writer() {
       return true;
     }),
     text: () => text,
+  };
+}
+
+function backpressuredWriter() {
+  let text = '';
+  let blocked = true;
+  const drainListeners = new Set<() => void>();
+  return {
+    write: vi.fn((chunk: string) => {
+      text += chunk;
+      return !blocked;
+    }),
+    once: vi.fn((_event: 'drain', listener: () => void) => drainListeners.add(listener)),
+    drain: () => {
+      blocked = false;
+      for (const listener of drainListeners) listener();
+      drainListeners.clear();
+    },
+    text: () => text,
+  };
+}
+
+function fakeProcess() {
+  const listeners = new Map<NodeJS.Signals, () => Promise<void> | void>();
+  return {
+    once: vi.fn((signal: NodeJS.Signals, listener: () => Promise<void> | void) => {
+      listeners.set(signal, listener);
+    }),
+    off: vi.fn((signal: NodeJS.Signals, listener: () => Promise<void> | void) => {
+      if (listeners.get(signal) === listener) listeners.delete(signal);
+    }),
+    exit: vi.fn(),
+    listener: (signal: NodeJS.Signals) => listeners.get(signal),
   };
 }
 
@@ -265,6 +303,119 @@ describe('runV2Print', () => {
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('waits for stream-json stdout backpressure before completing', async () => {
+    const stdout = backpressuredWriter();
+    const { app, agent } = makeFakeHarness();
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+    let settled = false;
+
+    const run = runV2Print(opts({ outputFormat: 'stream-json' }) as never, '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+    }).then(() => {
+      settled = true;
+    });
+
+    for (let attempt = 0; attempt < 20 && !stdout.text().includes('session.resume_hint'); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(stdout.text()).toContain('session.resume_hint');
+    expect(settled).toBe(false);
+
+    stdout.drain();
+    await run;
+    expect(settled).toBe(true);
+  });
+
+  it('completes cleanup after the stdio timeout if stdout never drains', async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = backpressuredWriter();
+      const { app, agent } = makeFakeHarness();
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue(agent);
+      let settled = false;
+      const run = runV2Print(
+        opts({ outputFormat: 'stream-json' }) as never,
+        '1.2.3-test',
+        { stdout, stderr: writer() },
+      ).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(HEADLESS_STDIO_DRAIN_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
+      expect(settled).toBe(true);
+      expect(app.dispose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores permission before timing out a wedged signal output drain', async () => {
+    let releaseTurn!: () => void;
+    const stdout = backpressuredWriter();
+    const processMock = fakeProcess();
+    const { app, agent, agentServices, appServices } = makeFakeHarness();
+    const permission = agentServices.get(IAgentPermissionModeService) as {
+      mode: string;
+      setMode: ReturnType<typeof vi.fn>;
+    };
+    permission.mode = 'manual';
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: new Promise((resolve) => {
+          releaseTurn = () => {
+            resolve({ type: 'completed' });
+          };
+        }),
+      }),
+    });
+    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
+    index.list.mockResolvedValueOnce({ items: [{ id: 'ses_v2', cwd: process.cwd() }] });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    const run = runV2Print(
+      opts({ session: 'ses_v2', outputFormat: 'stream-json' }) as never,
+      '1.2.3-test',
+      { stdout, stderr: writer(), process: processMock },
+    );
+    for (let attempt = 0; attempt < 20 && permission.setMode.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(permission.setMode).toHaveBeenNthCalledWith(1, 'auto');
+    expect(stdout.text()).toContain('system.version');
+
+    vi.useFakeTimers();
+    try {
+      const signalCleanup = processMock.listener('SIGTERM')?.();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(permission.setMode).toHaveBeenNthCalledWith(2, 'manual');
+      expect(app.dispose).toHaveBeenCalled();
+      expect(processMock.exit).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(PROMPT_CLEANUP_TIMEOUT_MS);
+      await signalCleanup;
+      expect(processMock.exit).toHaveBeenCalledWith(143);
+
+      stdout.drain();
+      releaseTurn();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('seeds explicit skill dirs from --skillsDir into bootstrap', async () => {
