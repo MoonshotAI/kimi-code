@@ -52,6 +52,7 @@ import { IModelService } from '#/kosong/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
+  type ModelRequestParams,
   type ModelRequester,
 } from '#/kosong/model/modelRequester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -617,6 +618,97 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       expect(calls.value).toBe(1);
       expect(degradedCalls).toBe(0);
     }
+  });
+});
+
+describe('AgentLLMRequesterService max-tokens clamp resend', () => {
+  // The harness budget is the stub model's 1000-token context window, so the
+  // server-declared ceiling must sit below it for the clamp to lower anything.
+  const MAX_TOKENS_400 = new APIStatusError(400, 'max_tokens: 128000, expected a value <= 512');
+
+  function createMaxTokensRequester(
+    calls: { value: number },
+    capturedParams: Array<ModelRequestParams | undefined>,
+    errors: readonly (Error | undefined)[],
+  ): ModelRequester {
+    const model: Model = {
+      id: 'm',
+      name: 'wire-model',
+      aliases: [],
+      protocol: 'anthropic',
+      baseUrl: 'https://example.test',
+      headers: {},
+      capabilities,
+      maxContextSize: 1000,
+      alwaysThinking: false,
+      providerName: 'p',
+      authProvider: { getAuth: async () => undefined },
+    };
+    return {
+      model,
+      request: async function* (_input, _signal, params) {
+        const index = calls.value;
+        calls.value += 1;
+        capturedParams.push(params);
+        const error = errors[index];
+        if (error !== undefined) throw error;
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+        };
+      },
+    };
+  }
+
+  it('resends once with the server-declared max_tokens ceiling', async () => {
+    const calls = { value: 0 };
+    const capturedParams: Array<ModelRequestParams | undefined> = [];
+    const requester = createMaxTokensRequester(calls, capturedParams, [
+      MAX_TOKENS_400,
+      undefined,
+    ]);
+    const { service } = createService(requester, undefined);
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(capturedParams[0]?.maxCompletionTokens).toBeGreaterThan(512);
+    expect(capturedParams[1]?.maxCompletionTokens).toBe(512);
+  });
+
+  it('stops after one clamp resend when the clamped request is rejected again', async () => {
+    const calls = { value: 0 };
+    const capturedParams: Array<ModelRequestParams | undefined> = [];
+    const requester = createMaxTokensRequester(calls, capturedParams, [
+      MAX_TOKENS_400,
+      MAX_TOKENS_400,
+    ]);
+    const { service } = createService(requester, undefined);
+
+    await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(2);
+  });
+
+  it('applies the remembered clamp to later requests for the same model', async () => {
+    const calls = { value: 0 };
+    const capturedParams: Array<ModelRequestParams | undefined> = [];
+    const requester = createMaxTokensRequester(calls, capturedParams, [
+      MAX_TOKENS_400,
+      undefined,
+      undefined,
+    ]);
+    const { service } = createService(requester, undefined);
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(calls.value).toBe(2);
+
+    await service.request({ source: { type: 'turn', turnId: 2, step: 1 } });
+    expect(calls.value).toBe(3);
+    expect(capturedParams[2]?.maxCompletionTokens).toBe(512);
   });
 });
 

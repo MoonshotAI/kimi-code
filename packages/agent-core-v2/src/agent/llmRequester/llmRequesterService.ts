@@ -8,8 +8,10 @@
  * params, then drives a bounded request chain through the `ModelRequester`
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
- * compatibility; general retry policy remains in the loop's `stepRetry`
- * plugin. Before each request the projected messages pass through `media`'s
+ * compatibility and a one-shot completion-budget clamp when the provider
+ * rejects `max_tokens` (the server-declared ceiling is remembered per model,
+ * so each model pays for at most one rejected-and-resent request); general
+ * retry policy remains in the loop's `stepRetry` plugin. Before each request the projected messages pass through `media`'s
  * video resolver, which rewrites every `kimi-file://` prompt-video reference
  * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
  * `<video path>` tag) so the internal reference never reaches the wire. When a
@@ -53,6 +55,7 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  parseMaxTokensLimit,
 } from '#/kosong/contract/errors';
 import { type Message } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -148,6 +151,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private readonly mediaDegradedTurns = new Set<number>();
   private readonly mediaStrippedTurns = new Map<number, MediaStripSnapshot>();
   private readonly emittedThinkingEffortWarnings = new Set<string>();
+  /** Server-declared `max_tokens` ceilings learned from a rejected request, keyed by wire model name. */
+  private readonly maxTokensClamps = new Map<string, number>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -286,6 +291,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<AgentLLMRequestFinish> {
     const shaped = this.toolSelect.shapeHistory(request.messages);
     let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
+    let params = this.applyMaxTokensClamp(request.model.name, request.params);
     const requestInput = (projection: RequestProjection) => {
       return {
         systemPrompt: request.systemPrompt,
@@ -327,7 +333,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         modelName: request.model.name,
         modelAlias: request.modelAlias,
         thinkingEffort: request.thinkingEffort,
-        maxTokens: effectiveMaxCompletionTokens(request.params),
+        maxTokens: effectiveMaxCompletionTokens(params),
         systemPrompt: input.systemPrompt,
         tools: input.tools,
         messages: input.messages,
@@ -352,7 +358,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
 
       for await (const event of request.requester.request(input, signal, {
-        ...request.params,
+        ...params,
         onTraceId: setTraceId,
       })) {
         switch (event.type) {
@@ -459,6 +465,26 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           projection = 'strict';
           continue;
         }
+        if (raw instanceof APIStatusError && raw.statusCode === 400) {
+          const maxTokensLimit = parseMaxTokensLimit(raw.message);
+          if (
+            maxTokensLimit !== null &&
+            maxTokensLimit < (params.maxCompletionTokens ?? Number.POSITIVE_INFINITY)
+          ) {
+            signal?.throwIfAborted();
+            this.log.warn(
+              'provider rejected the completion-token budget; resending with clamped max tokens',
+              {
+                model: request.model.name,
+                maxTokens: maxTokensLimit,
+                ...request.logFields,
+              },
+            );
+            this.maxTokensClamps.set(request.model.name, maxTokensLimit);
+            params = { ...params, maxCompletionTokens: maxTokensLimit };
+            continue;
+          }
+        }
         throw error;
       }
     }
@@ -526,6 +552,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       if (id < source.turnId) set.delete(id);
     }
     set.add(source.turnId);
+  }
+
+  private applyMaxTokensClamp(modelName: string, params: ModelRequestParams): ModelRequestParams {
+    const clamp = this.maxTokensClamps.get(modelName);
+    if (clamp === undefined) return params;
+    return {
+      ...params,
+      maxCompletionTokens: Math.min(clamp, params.maxCompletionTokens ?? clamp),
+    };
   }
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {

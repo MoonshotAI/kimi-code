@@ -13,6 +13,7 @@ import {
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
+  parseMaxTokensLimit,
 } from '#/errors';
 import { describe, expect, it } from 'vitest';
 
@@ -676,5 +677,42 @@ describe('isImageFormatError', () => {
     expect(
       isRetryableGenerateError(new APIStatusError(400, 'unsupported image format')),
     ).toBe(false);
+  });
+});
+
+describe('parseMaxTokensLimit', () => {
+  it('parses the volcano / ark "expected a value <= N" wording', () => {
+    expect(
+      parseMaxTokensLimit(
+        '400 {"error":{"code":"InvalidParameter","message":"The parameter max_tokens expected a value <= 32768, got 128000."}}',
+      ),
+    ).toBe(32768);
+  });
+
+  it('parses the generic "must be at most N" wording', () => {
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens must be at most 8192')).toBe(8192);
+  });
+
+  it('parses the generic "cannot exceed N" wording', () => {
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens cannot exceed 4096')).toBe(4096);
+  });
+
+  it('parses the Anthropic native "max output tokens is N" wording', () => {
+    expect(
+      parseMaxTokensLimit('max_tokens: claude-3-haiku-20240307 max output tokens is 4096'),
+    ).toBe(4096);
+  });
+
+  it('parses the "less than or equal to" and bare "<=" wordings', () => {
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens must be less than or equal to 4096')).toBe(4096);
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens <= 2048')).toBe(2048);
+  });
+
+  it('returns null for messages without a max_tokens limit', () => {
+    expect(parseMaxTokensLimit('400 Bad Request: invalid api key')).toBeNull();
+    // A context-overflow message must not be mistaken for a max_tokens ceiling.
+    expect(
+      parseMaxTokensLimit('prompt is too long: the maximum context length is 200000 tokens'),
+    ).toBeNull();
   });
 });

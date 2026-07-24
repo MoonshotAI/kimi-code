@@ -23,6 +23,7 @@ import {
   isAbortError,
   isRetryableGenerateError,
   normalizeAPIStatusError,
+  parseMaxTokensLimit,
   throwIfAbortError,
 } from '#/kosong/contract/errors';
 
@@ -181,5 +182,32 @@ describe('classifyApiError', () => {
   it('falls back to other for unknown values', () => {
     expect(classifyApiError(new Error('boom')).kind).toBe('other');
     expect(classifyApiError('boom').kind).toBe('other');
+  });
+});
+
+describe('parseMaxTokensLimit', () => {
+  it('parses the "expected a value <= N" form', () => {
+    expect(parseMaxTokensLimit('max_tokens: 128000, expected a value <= 8192')).toBe(8192);
+  });
+
+  it('parses the "must be at most", "cannot exceed", and "maximum value" forms', () => {
+    expect(parseMaxTokensLimit('max_tokens: value must be at most 32768')).toBe(32768);
+    expect(parseMaxTokensLimit('max_tokens cannot exceed 16384 for this model')).toBe(16384);
+    expect(parseMaxTokensLimit('max_tokens: maximum value is 64000')).toBe(64000);
+  });
+
+  it('parses the "max output tokens is N" form case-insensitively', () => {
+    expect(parseMaxTokensLimit('Max_Tokens: 99999 but max output tokens is 12000')).toBe(12000);
+  });
+
+  it('parses the "less than or equal to" and bare "<=" forms', () => {
+    expect(parseMaxTokensLimit('max_tokens must be less than or equal to 4096')).toBe(4096);
+    expect(parseMaxTokensLimit('max_tokens <= 2048')).toBe(2048);
+  });
+
+  it('returns null when no recognizable positive limit is present', () => {
+    expect(parseMaxTokensLimit('max_tokens must be positive')).toBeNull();
+    expect(parseMaxTokensLimit('some unrelated validation problem')).toBeNull();
+    expect(parseMaxTokensLimit('max_tokens: expected a value <= 0')).toBeNull();
   });
 });

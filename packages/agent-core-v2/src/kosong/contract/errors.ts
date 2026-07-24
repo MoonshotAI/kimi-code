@@ -265,6 +265,34 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
 
+const MAX_TOKENS_LIMIT_MESSAGE_PATTERNS: readonly RegExp[] = [
+  /max_tokens[\s\S]{0,200}expected a value\s*<=\s*(\d+)/i,
+  /max_tokens[\s\S]{0,200}(?:must be at most|cannot exceed|maximum value[^\d]*)\s*(\d+)/i,
+  /max_tokens[\s\S]{0,200}(?:less than or equal to|<=)\s*(\d+)/i,
+  /max_tokens[\s\S]{0,200}max output tokens is\s*(\d+)/i,
+];
+
+/**
+ * Parse the provider's actual max_tokens ceiling from a 400 error message.
+ * Returns the parsed limit, or null if no max_tokens limit pattern matched.
+ * Patterns are matched against the full error message text (which includes
+ * the provider's JSON body) and each anchors on `max_tokens` to avoid false
+ * positives from context-overflow messages. Recognized wordings: volcano/ark
+ * "expected a value <= N"; "must be at most N" / "cannot exceed N" /
+ * "maximum value … N"; "must be less than or equal to N" and the bare "<= N"
+ * form; Anthropic-native "max output tokens is N".
+ */
+export function parseMaxTokensLimit(message: string): number | null {
+  for (const pattern of MAX_TOKENS_LIMIT_MESSAGE_PATTERNS) {
+    const match = pattern.exec(message);
+    if (match?.[1]) {
+      const limit = parseInt(match[1], 10);
+      if (Number.isFinite(limit) && limit > 0) return limit;
+    }
+  }
+  return null;
+}
+
 const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /(?:apistatuserror.*429|429.*apistatuserror)/,
   /429.*too many requests/,
