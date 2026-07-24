@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import { DEFAULT_FOOTER_CONFIG } from '#/tui/config';
 import type { AppState } from '#/tui/types';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
@@ -28,6 +29,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     version: 'test',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
+    footer: DEFAULT_FOOTER_CONFIG,
     availableModels: {},
     ...overrides,
   } as AppState;

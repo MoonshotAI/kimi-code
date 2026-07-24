@@ -2,8 +2,11 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
- *   Line 2: context: N% (tokens/max)
+ *   Line 1: [yolo] [plan] <model> [vX.Y.Z] <cwd>  <git-badge>  <shortcut hints>
+ *   Line 2: [plan usage] context: N% (tokens/max)
+ *
+ * The version badge and plan-usage quota are opt-in via `[footer]` in
+ * tui.toml (both default off).
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
@@ -11,11 +14,18 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
+import {
+  severityColor,
+  type ManagedUsageReport,
+  type ManagedUsageRow,
+} from '#/tui/components/messages/usage-panel';
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import type { FooterConfig } from '#/tui/config';
 import type { AppState } from '#/tui/types';
+import type { ManagedUsageFetchResult } from '#/tui/utils/managed-usage';
 import {
   createGitStatusCache,
   formatGitBadgeBase,
@@ -25,12 +35,22 @@ import {
 } from '#/utils/git/git-status';
 import {
   formatTokenCount,
+  ratioSeverity,
+  renderProgressBar,
+  safeUsageRatio,
   usagePercent,
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
+const PLAN_USAGE_BAR_WIDTH = 8;
+/**
+ * Fixed poll cadence used while no plan-usage fetch has succeeded yet
+ * (startup races, transient errors). After the first success the poller
+ * settles into the configured `plan_usage_refresh_seconds` period.
+ */
+export const PLAN_USAGE_RETRY_MS = 5_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
 // joined by " | ") when space allows; tips flagged `solo` are long or
@@ -141,6 +161,28 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
+/**
+ * Injected managed-plan usage loader (see `tui/utils/managed-usage.ts`).
+ * `undefined` means the feature does not apply (non-managed provider —
+ * hide the segment); `{ error }` means the fetch failed and the footer
+ * keeps its last successful report.
+ */
+export type ManagedUsageFetcher = () => Promise<ManagedUsageFetchResult | undefined>;
+
+/**
+ * One compact quota row, e.g. `week ███░░░░░ 40% (21h)`. The label comes
+ * from the API verbatim; bar and percent share the severity color; the
+ * reset hint is muted in parentheses.
+ */
+function formatPlanUsageRow(row: ManagedUsageRow, colors: ColorPalette): string {
+  const ratio = safeUsageRatio(row.limit > 0 ? row.used / row.limit : 0);
+  const severity = severityColor(ratioSeverity(ratio));
+  const bar = currentTheme.fg(severity, renderProgressBar(ratio, PLAN_USAGE_BAR_WIDTH));
+  const pct = currentTheme.fg(severity, `${String(usagePercent(row.used, row.limit))}%`);
+  const reset = row.resetHint ? chalk.hex(colors.textMuted)(` (${row.resetHint})`) : '';
+  return `${chalk.hex(colors.textDim)(row.label)} ${bar} ${pct}${reset}`;
+}
+
 function shortenCwd(path: string): string {
   if (!path) return path;
   const home = process.env['HOME'] ?? '';
@@ -200,6 +242,12 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private planUsageFetcher: ManagedUsageFetcher | null = null;
+  private planUsageReport: ManagedUsageReport | null = null;
+  private planUsageTimer: ReturnType<typeof setTimeout> | null = null;
+  private planUsageTimerKey: string | null = null;
+  private planUsageGeneration = 0;
+  private planUsageInFlightGeneration: number | null = null;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -218,6 +266,16 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
+    this.syncPlanUsageTimer(state.footer);
+  }
+
+  /**
+   * Injects the managed-plan usage loader. Called once at startup with
+   * the harness-backed implementation; tests inject their own.
+   */
+  setManagedUsageFetcher(fetcher: ManagedUsageFetcher): void {
+    this.planUsageFetcher = fetcher;
+    this.syncPlanUsageTimer(this.state.footer);
   }
 
   /**
@@ -284,6 +342,10 @@ export class FooterComponent implements Component {
       left.push(renderedModelLabel);
     }
 
+    if (state.footer.showVersion && state.version.length > 0) {
+      left.push(chalk.hex(colors.textDim)(`v${state.version}`));
+    }
+
     // Background-task badges sit immediately before cwd. `bash-*` tasks
     // (shell processes) and `agent-*` tasks (background subagents) get
     // separate badges so the user can distinguish them at a glance.
@@ -332,7 +394,7 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: transient hint or plan usage (bottom-left) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
@@ -341,6 +403,7 @@ export class FooterComponent implements Component {
     const contextWidth = visibleWidth(contextText);
     let line2: string;
     if (this.transientHint) {
+      // The transient hint wins the left slot; the quota segment yields.
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
       const shownHint =
         visibleWidth(this.transientHint) <= maxHintWidth
@@ -353,8 +416,12 @@ export class FooterComponent implements Component {
         ' '.repeat(pad) +
         chalk.hex(colors.text)(contextText);
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      const planUsage = state.footer.showPlanUsage
+        ? this.formatPlanUsage(colors, Math.max(0, width - contextWidth - 1))
+        : null;
+      const leftSegment = planUsage ?? '';
+      const leftPad = Math.max(0, width - visibleWidth(leftSegment) - contextWidth);
+      line2 = leftSegment + ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
@@ -388,6 +455,131 @@ export class FooterComponent implements Component {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
     }
+    this.stopPlanUsageTimer();
+  }
+
+  /**
+   * Keeps the plan-usage poller in sync with footer config and the active
+   * model/provider state. Changing either clears stale quota data immediately
+   * and starts a fresh request for the new state.
+   */
+  private syncPlanUsageTimer(config: FooterConfig): void {
+    if (!config.showPlanUsage || this.planUsageFetcher === null) {
+      this.stopPlanUsageTimer();
+      this.planUsageReport = null;
+      return;
+    }
+
+    const providerKey = this.state.availableModels[this.state.model]?.provider;
+    const key = [String(config.planUsageRefreshSeconds), this.state.model, providerKey ?? ''].join(
+      '\u0000',
+    );
+    if (key === this.planUsageTimerKey) return;
+    this.stopPlanUsageTimer();
+    // Never render quota fetched for a previous model/provider while the new
+    // request is in flight.
+    this.planUsageReport = null;
+    this.planUsageTimerKey = key;
+    void this.pollPlanUsage(this.planUsageGeneration);
+  }
+
+  private stopPlanUsageTimer(): void {
+    // Bumping the generation also stops an in-flight poll from
+    // scheduling its follow-up when it settles.
+    this.planUsageGeneration += 1;
+    if (this.planUsageTimer !== null) {
+      clearTimeout(this.planUsageTimer);
+      this.planUsageTimer = null;
+    }
+    this.planUsageTimerKey = null;
+  }
+
+  /**
+   * Schedules the next poll. Unsuccessful polls (undefined/error/throw)
+   * retry after `PLAN_USAGE_RETRY_MS` instead of the full configured
+   * period — startup races (provider list not populated yet, token not
+   * refreshed) would otherwise hide the segment for a whole period.
+   */
+  private schedulePlanUsagePoll(generation: number, delayMs: number): void {
+    if (generation !== this.planUsageGeneration) return;
+    this.planUsageTimer = setTimeout(() => {
+      this.planUsageTimer = null;
+      void this.pollPlanUsage(generation);
+    }, delayMs);
+    this.planUsageTimer.unref?.();
+  }
+
+  private async pollPlanUsage(generation: number): Promise<void> {
+    const fetcher = this.planUsageFetcher;
+    if (
+      fetcher === null ||
+      generation !== this.planUsageGeneration ||
+      this.planUsageInFlightGeneration === generation
+    ) {
+      return;
+    }
+    this.planUsageInFlightGeneration = generation;
+    let succeeded = false;
+    try {
+      const result = await fetcher();
+      // Model/provider changes start a new generation. Ignore any response
+      // from the previous state so it cannot overwrite fresh quota data.
+      if (generation !== this.planUsageGeneration) return;
+      if (result === undefined) {
+        // Not a managed provider (anymore): hide the segment entirely.
+        if (this.planUsageReport !== null) {
+          this.planUsageReport = null;
+          this.onRefresh();
+        }
+        return;
+      }
+      if (result.usage !== undefined) {
+        this.planUsageReport = result.usage;
+        this.onRefresh();
+        succeeded = true;
+      }
+      // `{ error }`: keep the last successful report, stay silent.
+    } catch {
+      // Injected fetchers report errors in-band; a throw is treated the
+      // same — keep the last successful report.
+    } finally {
+      if (this.planUsageInFlightGeneration === generation) {
+        this.planUsageInFlightGeneration = null;
+      }
+      this.schedulePlanUsagePoll(
+        generation,
+        succeeded
+          ? this.state.footer.planUsageRefreshSeconds * 1_000
+          : PLAN_USAGE_RETRY_MS,
+      );
+    }
+  }
+
+  /**
+   * Compact plan-quota segment for line 2, e.g.
+   * `week ███░░░░░ 40% (21h) · 5h █░░░░░░░ 8% (17m)`. When it does not
+   * fit, rolling-window rows drop off from the right first — the summary
+   * row is the last one standing (then plain truncation).
+   */
+  private formatPlanUsage(colors: ColorPalette, maxWidth: number): string | null {
+    const report = this.planUsageReport;
+    if (report === null) return null;
+    const rows: ManagedUsageRow[] = [];
+    if (report.summary !== null) rows.push(report.summary);
+    rows.push(...report.limits);
+    if (rows.length === 0) return null;
+
+    const separator = chalk.hex(colors.textDim)(' · ');
+    const parts = rows.map((row) => formatPlanUsageRow(row, colors));
+    let keep = parts.length;
+    let segment = parts.slice(0, keep).join(separator);
+    while (keep > 1 && visibleWidth(segment) > maxWidth) {
+      keep -= 1;
+      segment = parts.slice(0, keep).join(separator);
+    }
+    return visibleWidth(segment) <= maxWidth
+      ? segment
+      : truncateToWidth(segment, maxWidth, '…');
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

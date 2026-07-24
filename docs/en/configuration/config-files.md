@@ -388,6 +388,9 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[footer].show_version` | `boolean` | `false` | Show the CLI version (for example `v0.28.1`) next to the model name in the footer |
+| `[footer].show_plan_usage` | `boolean` | `false` | Show managed-plan quota (weekly summary plus rolling windows, with reset hints) to the left of the footer's context readout; only visible on managed providers while signed in |
+| `[footer].plan_usage_refresh_seconds` | `integer` | `60` | How often the plan usage is refreshed; clamped to at least 1 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -403,7 +406,14 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[footer]
+show_version = false
+show_plan_usage = false
+plan_usage_refresh_seconds = 60
 ```
+
+The plan-usage segment renders each quota as `label ███░░░░░ N% (reset hint)` with a severity-colored progress bar, and silently stays hidden when the active model is not on a managed provider or when signed out. Failed refreshes keep the last successful data; when the line gets too narrow, rolling-window rows drop off before the summary row.
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 

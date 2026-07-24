@@ -23,7 +23,7 @@ import {
   type UpdateInstallState,
   type UpdateManifest,
 } from '#/cli/update/types';
-import type { TuiConfig } from '#/tui/config';
+import { DEFAULT_FOOTER_CONFIG, type TuiConfig } from '#/tui/config';
 
 const mocks = vi.hoisted(() => ({
   readUpdateCache: vi.fn(),
@@ -57,17 +57,15 @@ vi.mock('../../../src/cli/update/install-state', () => ({
   writeUpdateInstallState: mocks.writeUpdateInstallState,
 }));
 
-vi.mock('../../../src/tui/config', () => ({
-  loadTuiConfig: mocks.loadTuiConfig,
-  TuiConfigParseError: class TuiConfigParseError extends Error {
-    readonly fallback: TuiConfig;
-
-    constructor(fallback: TuiConfig) {
-      super('Invalid client preferences in ~/.kimi-code/tui.toml; using defaults.');
-      this.fallback = fallback;
-    }
-  },
-}));
+vi.mock('../../../src/tui/config', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/tui/config.js')>(
+    '../../../src/tui/config.js',
+  );
+  return {
+    ...actual,
+    loadTuiConfig: mocks.loadTuiConfig,
+  };
+});
 
 vi.mock('../../../src/cli/update/source', () => ({
   detectInstallSource: mocks.detectInstallSource,
@@ -165,6 +163,7 @@ function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    footer: DEFAULT_FOOTER_CONFIG,
     ...overrides,
   };
 }

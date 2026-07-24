@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
+import { DEFAULT_FOOTER_CONFIG } from '#/tui/config';
 import type { AppState } from '#/tui/types';
 
 function fakeInitialAppState(): AppState {
@@ -27,6 +28,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    footer: DEFAULT_FOOTER_CONFIG,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import { DEFAULT_FOOTER_CONFIG } from '#/tui/config';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { darkColors } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
@@ -32,6 +33,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  footer: DEFAULT_FOOTER_CONFIG,
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,

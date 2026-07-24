@@ -146,7 +146,7 @@ function buildManagedUsageSection(
   return out;
 }
 
-function severityColor(sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' {
+export function severityColor(sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' {
   return sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 }
 

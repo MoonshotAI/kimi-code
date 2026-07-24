@@ -388,6 +388,9 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[footer].show_version` | `boolean` | `false` | 在 footer 模型名旁显示 CLI 版本号（如 `v0.28.1`） |
+| `[footer].show_plan_usage` | `boolean` | `false` | 在 footer context 读数左侧显示套餐额度（周额度汇总 + 滚动窗口，含重置提示）；仅在 managed provider 且已登录时可见 |
+| `[footer].plan_usage_refresh_seconds` | `integer` | `60` | 套餐额度刷新周期；最小钳制到 1 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -403,7 +406,14 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[footer]
+show_version = false
+show_plan_usage = false
+plan_usage_refresh_seconds = 60
 ```
+
+额度段将每项额度渲染为 `label ███░░░░░ N% (重置提示)`，进度条按用量严重度着色；当前模型不在 managed provider 或未登录时整段静默隐藏。刷新失败保留上一次成功的数据；行宽不足时优先砍掉滚动窗口行，最后才砍汇总行。
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。
 
