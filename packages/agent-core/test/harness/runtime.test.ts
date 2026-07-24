@@ -267,6 +267,87 @@ micro_compaction = false
     expect(session?.getAdditionalDirs()).toContain(normalize(sharedDir));
   });
 
+  // Sibling of the createSession regression above, for the fork path:
+  // `forkSessionWithOverrides` must thread the kaos pair into the fork's
+  // resume — the ACP adapter's `kimi/session/fork` relies on it,
+  // otherwise the fork silently falls back to the process-wide LocalKaos
+  // and stops routing file I/O to the client.
+  it('threads kaos overrides through forkSessionWithOverrides into the forked session', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const sharedDir = join(tmp, 'shared');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(join(workDir, '.git'), { recursive: true });
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["../shared"]\n`,
+    );
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const source = await core.createSessionWithOverrides(
+      { id: 'ses_runtime_fork_kaos_source', workDir, model: 'default-mock' },
+      { kaos: testKaos, persistenceKaos: testKaos },
+    );
+
+    // Tool-kaos double for the fork: rejects local.toml reads (so a
+    // regression routing the workspace config through the tool kaos
+    // fails loudly) and records withCwd calls (so the override reaching
+    // the forked Session ctor is directly observable).
+    const withCwdCalls: string[] = [];
+    const toolKaos = new Proxy(testKaos, {
+      get(target, prop, receiver) {
+        if (prop === 'readText') {
+          return (
+            path: string,
+            options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
+          ) => {
+            if (path.endsWith('local.toml')) {
+              return Promise.reject(
+                new Error(`fork tool kaos must not read ${path} (issue #988)`),
+              );
+            }
+            return target.readText(path, options);
+          };
+        }
+        if (prop === 'withCwd') {
+          return (cwd: string) => {
+            withCwdCalls.push(cwd);
+            return target.withCwd(cwd);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+
+    const forked = await core.forkSessionWithOverrides(
+      { sessionId: source.id, id: 'ses_runtime_fork_kaos_child' },
+      { kaos: toolKaos, persistenceKaos: testKaos },
+    );
+
+    const forkSession = core.sessions.get(forked.id);
+    expect(forkSession).toBeDefined();
+    // local.toml was read through the persistence kaos (a tool-kaos read
+    // would have rejected), so the workspace additional dir landed.
+    expect(forkSession?.getAdditionalDirs()).toContain(normalize(sharedDir));
+    // The tool kaos override reached the forked Session ctor.
+    expect(withCwdCalls.length).toBeGreaterThan(0);
+  });
+
   it('uses the shared OAuth resolver for Moonshot service tokens', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');

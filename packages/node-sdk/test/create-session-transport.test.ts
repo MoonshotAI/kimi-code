@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Kaos } from '@moonshot-ai/kaos';
 import { createKimiHarness, KimiHarness } from '#/index';
 import type { KimiError } from '#/index';
-import type { ResumeSessionInput, ResumedSessionSummary } from '#/types';
+import type { ForkSessionInput, ResumeSessionInput, ResumedSessionSummary } from '#/types';
 import { SDKRpcClientBase } from '#/rpc';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -53,6 +53,7 @@ max_context_size = 1000
 
 class StubRpc extends SDKRpcClientBase {
   resumeCalls: Array<{ input: ResumeSessionInput; kaos: Kaos; persistenceKaos?: Kaos }> = [];
+  forkCalls: Array<{ input: ForkSessionInput; kaos?: Kaos; persistenceKaos?: Kaos }> = [];
 
   protected async getRpc(): Promise<never> {
     throw new Error('not used');
@@ -85,6 +86,28 @@ class StubRpc extends SDKRpcClientBase {
         custom: {},
       },
       agents: {},
+    };
+  }
+
+  override async forkSession(input: ForkSessionInput) {
+    this.forkCalls.push({ input });
+    return {
+      id: input.forkId ?? 'ses_fork_stub',
+      workDir: '/tmp/work',
+      sessionDir: '/tmp/session',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+
+  override async forkSessionWithKaos(input: ForkSessionInput, kaos: Kaos, persistenceKaos?: Kaos) {
+    this.forkCalls.push({ input, kaos, persistenceKaos });
+    return {
+      id: input.forkId ?? 'ses_fork_stub',
+      workDir: '/tmp/work',
+      sessionDir: '/tmp/session',
+      createdAt: 1,
+      updatedAt: 1,
     };
   }
 }
@@ -771,6 +794,39 @@ effort = "medium"
       kaos,
       persistenceKaos: undefined,
     });
+  });
+
+  it('routes forkSession kaos overrides through forkSessionWithKaos only when set', async () => {
+    const records: TelemetryRecord[] = [];
+    const rpc = new StubRpc();
+    const harness = new KimiHarness(rpc, {
+      homeDir: '/tmp/home',
+      configPath: '/tmp/config.toml',
+      auth: { status: async () => ({ providers: [] }) } as never,
+      telemetry: recordingTelemetry(records),
+      ensureConfigFile: async () => undefined,
+      onClose: () => undefined,
+    });
+
+    const kaos = {} as Kaos;
+    const persistenceKaos = {} as Kaos;
+
+    await harness.forkSession({ id: 'ses_src', forkId: 'ses_fork_with_kaos', kaos, persistenceKaos });
+    expect(rpc.forkCalls).toHaveLength(1);
+    expect(rpc.forkCalls[0]).toMatchObject({
+      input: { id: 'ses_src', forkId: 'ses_fork_with_kaos' },
+      kaos,
+      persistenceKaos,
+    });
+
+    // Without kaos fields the call stays on the plain forkSession path.
+    await harness.forkSession({ id: 'ses_src', forkId: 'ses_fork_plain' });
+    expect(rpc.forkCalls).toHaveLength(2);
+    expect(rpc.forkCalls[1]).toMatchObject({
+      input: { id: 'ses_src', forkId: 'ses_fork_plain' },
+    });
+    expect(rpc.forkCalls[1]?.kaos).toBeUndefined();
+    expect(rpc.forkCalls[1]?.persistenceKaos).toBeUndefined();
   });
 });
 

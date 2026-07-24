@@ -68,6 +68,32 @@ kimi acp
 
 上述未列出的方法一律返回 `methodNotFound`。
 
+## 扩展方法（`kimi/*` 命名空间）
+
+适配器自有的扩展方法放在 `kimi/*` 命名空间，避免与未来 ACP 规范方法冲突。未知的扩展方法返回 `methodNotFound (-32601)`。
+
+| 方法 | 参数 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `kimi/session/fork` | `{ sessionId }` | `{ sessionId }` | 把会话 fork 成一个临时副本，并注册为一等 ACP 会话，客户端可照常 `session/prompt`（btw 式旁路对话，不会污染源上下文）。源会话有活跃 turn 时拒绝。继承源会话的 model/thinking 状态；客户端声明 `fs.readTextFile` / `fs.writeTextFile` 能力时，fork 与 `session/new` 一样走同一对 ACP reverse-RPC kaos 路由文件 I/O。不携带 ACP 侧提供的 MCP servers。 |
+| `kimi/session/close` | `{ sessionId, archive? }` | `{}` | 关闭会话并从适配器移除。`archive: true` 时一并归档磁盘会话目录（fork 的清理路径）；否则会话仍可恢复。 |
+| `kimi/session/steer` | `{ sessionId, prompt }` | `{ steered: true }` 或 `{ steered: false, reason: 'no_active_turn' }` | 把一条待处理的用户消息（`prompt` 为 `ContentBlock[]`，与 `session/prompt` 同构）注入当前活跃 turn；模型在下一个 step 边界消费，在途工具调用和 subagent 不受影响。无活跃 turn 时不报错，返回 `{ steered: false, reason: 'no_active_turn' }`，客户端应回退到 `session/prompt`。 |
+
+## 内置斜杠命令
+
+以纯文本 `session/prompt` 块发送的斜杠命令会被适配器拦截。每次 `session/new` / `session/load` / `session/resume` 之后通过 `available_commands_update` 公告给客户端：
+
+| 命令 | 参数 | 说明 |
+| --- | --- | --- |
+| `/compact` | `<可选指令>` | 压缩会话上下文，可附带自定义总结指令 |
+| `/undo` | `<可选 count>` | 撤销最近 N 个 turn（默认 1）；turn 运行中拒绝；活跃上下文中可撤销的 prompt 不足 N 个时（如 compaction 之后）预先拒绝 |
+| `/status` | — | 显示当前会话状态 |
+| `/usage` | — | 显示会话 token 用量 |
+| `/mcp` | — | 显示 MCP server 状态 |
+| `/tasks` | — | 列出后台任务 |
+| `/help` | — | 显示可用 ACP 命令 |
+
+未知斜杠命令在本地回复一条 "unknown command" 提示，不会转发给模型。
+
 ## MCP 转发
 
 ACP 客户端在 `session/new` 或 `session/load` 中提供 `mcpServers` 时，适配层做如下转换：

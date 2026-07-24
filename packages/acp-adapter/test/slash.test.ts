@@ -94,6 +94,11 @@ describe('slash', () => {
         args: 'summarize aggressively',
       });
       expect(detectSlashIntent('/status', map)).toEqual({ kind: 'builtin', name: 'status', args: '' });
+      expect(detectSlashIntent('/undo 3', map)).toEqual({
+        kind: 'builtin',
+        name: 'undo',
+        args: '3',
+      });
     });
 
     it('falls back to passthrough for non-slash text', () => {

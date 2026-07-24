@@ -1,6 +1,7 @@
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
+import { LocalKaos, type Environment } from '@moonshot-ai/kaos';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -151,6 +152,38 @@ describe('KimiHarness.forkSession', () => {
       await harness.close();
     }
   });
+
+  it('forks through forkSessionWithKaos when kaos overrides are supplied', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-kaos-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-kaos-work-');
+    await writeFakeModelConfig(homeDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const source = await harness.createSession({ id: 'ses_fork_kaos_source', workDir });
+      await source.setPlanMode(true);
+      const sourcePlan = await source.getPlan();
+      if (sourcePlan === null) throw new Error('expected source plan');
+      await mkdir(dirname(sourcePlan.path), { recursive: true });
+      await writeFile(sourcePlan.path, 'source plan', 'utf-8');
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_fork_kaos_child',
+        kaos: testLocalKaos(),
+        persistenceKaos: testLocalKaos(),
+      });
+
+      expect(fork.id).toBe('ses_fork_kaos_child');
+      // The source's plan file is copied into the fork's own session
+      // dir through the supplied kaos pair — not aliased to the source.
+      const forkPlan = await fork.getPlan();
+      expect(forkPlan).toMatchObject({ content: 'source plan' });
+      expect(forkPlan?.path).not.toBe(sourcePlan.path);
+    } finally {
+      await harness.close();
+    }
+  });
 });
 
 async function writeFakeModelConfig(homeDir: string): Promise<void> {
@@ -171,6 +204,24 @@ max_context_size = 1000
 `,
     'utf-8',
   );
+}
+
+// `LocalKaos`'s constructor is `private` at the TS level only — build a
+// fresh instance around a stub `osEnv` (the same bypass as agent-core's
+// `test/fixtures/test-kaos.ts`) so the test stays hermetic: no host
+// login-shell or environment probing.
+const TEST_OS_ENV: Environment = {
+  osKind: 'Linux',
+  osArch: 'x86_64',
+  osVersion: 'test',
+  shellName: 'bash',
+  shellPath: '/bin/bash',
+};
+
+type LocalKaosCtor = new (osEnv: Environment) => LocalKaos;
+
+function testLocalKaos(): LocalKaos {
+  return new (LocalKaos as unknown as LocalKaosCtor)(TEST_OS_ENV);
 }
 
 function waitForAbort(signal: AbortSignal | undefined): Promise<void> {

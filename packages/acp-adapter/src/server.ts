@@ -20,6 +20,7 @@ import {
   type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
+  type ContentBlock,
   type Implementation,
   type InitializeRequest,
   type InitializeResponse,
@@ -829,23 +830,186 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Stub the ACP `ext/<method>` extension surface. The interface
-   * declares both `extMethod` and `extNotification` as optional, but
-   * implementing them explicitly with a structured `MethodNotFound`
-   * response gives clients a uniform failure shape (mirrors the
-   * `authenticate` pattern at {@link AcpServer.authenticate}) — some
-   * clients treat "method absent on the agent" differently from an
-   * explicit error reply.
+   * ACP `ext/<method>` extension surface. Unknown methods get a
+   * structured `MethodNotFound` response (mirrors the `authenticate`
+   * pattern at {@link AcpServer.authenticate}) so clients can
+   * distinguish "method absent on the agent" from a transport failure.
    *
-   * Future work (PLAN D9): route slash-command bridge / model-list /
-   * mode-list extensions through here once the adapter has access to
-   * the kimi-code app's registry. Phase 11 keeps it as a no-op stub.
+   * Adapter-owned methods live in the `kimi/*` namespace, kept clear of
+   * the ACP spec's core `session/*` methods:
+   *
+   *   - `kimi/session/fork`  — fork a session into an ephemeral copy
+   *     (btw-style side conversation) and register it as a first-class
+   *     ACP session the client can prompt normally.
+   *   - `kimi/session/close` — close a session and drop it from the
+   *     adapter; `archive: true` also archives the on-disk directory
+   *     (the btw fork cleanup path).
+   *   - `kimi/session/steer` — inject a pending user message into the
+   *     session's active turn; the model consumes it at the next step
+   *     boundary while in-flight tool calls and subagents run on
+   *     undisturbed. With no active turn the method resolves to
+   *     `{ steered: false, reason: 'no_active_turn' }` instead of
+   *     erroring, so the client can fall back to `session/prompt`.
    */
   async extMethod(
     method: string,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (method === 'kimi/session/fork') {
+      return this.forkSessionExt(params);
+    }
+    if (method === 'kimi/session/close') {
+      return this.closeSessionExt(params);
+    }
+    if (method === 'kimi/session/steer') {
+      return this.steerSessionExt(params);
+    }
     throw RequestError.methodNotFound(method);
+  }
+
+  /**
+   * `kimi/session/fork` — fork an existing session into a new copy and
+   * register it as a first-class ACP session so the client can drive it
+   * with the normal `session/prompt` streaming/tool surface. The
+   * kernel-level fork copies the context/history and rejects while the
+   * source has an active turn (SESSION_FORK_ACTIVE_TURN).
+   *
+   * The fork inherits the source AcpSession's adapter-side model /
+   * thinking state. ACP-supplied MCP servers are NOT carried over —
+   * `resumeSession` rebuilds MCP from the on-disk config only; forks
+   * that need caller-supplied MCP servers are a follow-up.
+   *
+   * When the client advertised `fs.readTextFile` / `fs.writeTextFile`,
+   * the fork is resumed through an {@link AcpKaos} pair (reverse-RPC tool
+   * kaos + local persistence kaos), exactly like `session/new` — so file
+   * I/O inside the fork routes to the same client instead of silently
+   * falling back to the kernel's process-wide {@link LocalKaos}.
+   *
+   * Forks accumulate on disk until the client archives them via
+   * `kimi/session/close` with `archive: true`.
+   */
+  private async forkSessionExt(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = params['sessionId'];
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/fork requires a string sessionId',
+      );
+    }
+    const source = this.sessions.get(sessionId);
+    if (source === undefined) {
+      throw RequestError.invalidParams(undefined, `Unknown session: ${sessionId}`);
+    }
+    if (!this.conn) {
+      throw RequestError.internalError(
+        undefined,
+        'AcpServer is missing its AgentSideConnection',
+      );
+    }
+    // Pre-mint the fork id so the optional AcpKaos carries the reverse-RPC
+    // channel of the session the kernel is about to resume — same boundary-
+    // injection pattern as `newSession`.
+    const forkId = `session_${randomUUID()}`;
+    const acpKaos = await this.maybeBuildAcpKaos(forkId);
+    const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
+    const fork = await this.harness.forkSession({
+      id: sessionId,
+      forkId,
+      title: `Fork of ${sessionId}`,
+      kaos: acpKaos,
+      persistenceKaos,
+    });
+    const acpSession = new AcpSession(
+      this.conn,
+      fork,
+      this.clientCapabilities,
+      this.makeTelemetryTrack(),
+      source.currentModelId,
+      this.harness,
+      source.currentThinkingEnabled,
+    );
+    this.sessions.set(fork.id, acpSession);
+    this.scheduleAvailableCommandsUpdate(fork.id);
+    return { sessionId: fork.id };
+  }
+
+  /**
+   * `kimi/session/close` — close a session and drop it from the
+   * adapter's session table. With `archive: true` the on-disk session
+   * directory is archived too (the btw fork cleanup path); otherwise
+   * the session stays resumable.
+   */
+  private async closeSessionExt(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = params['sessionId'];
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/close requires a string sessionId',
+      );
+    }
+    if (!this.sessions.has(sessionId)) {
+      throw RequestError.invalidParams(undefined, `Unknown session: ${sessionId}`);
+    }
+    this.sessions.delete(sessionId);
+    if (params['archive'] === true) {
+      await this.harness.archiveSession(sessionId);
+    } else {
+      await this.harness.closeSession(sessionId);
+    }
+    return {};
+  }
+
+  /**
+   * `kimi/session/steer` — forward a pending user message to
+   * {@link AcpSession.steer}, which injects it into the session's active
+   * turn. The result is the steer outcome verbatim:
+   * `{ steered: true }`, or `{ steered: false, reason: 'no_active_turn' }`
+   * when the session has no running turn (the client is expected to fall
+   * back to `session/prompt` in that case).
+   */
+  private async steerSessionExt(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = params['sessionId'];
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/steer requires a string sessionId',
+      );
+    }
+    const acpSession = this.sessions.get(sessionId);
+    if (acpSession === undefined) {
+      throw RequestError.invalidParams(undefined, `Unknown session: ${sessionId}`);
+    }
+    const prompt = params['prompt'];
+    if (!Array.isArray(prompt) || prompt.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/steer requires a non-empty prompt array of content blocks',
+      );
+    }
+    // Element-level guard so malformed blocks fail as invalidParams here
+    // instead of surfacing as a downstream TypeError (internal error).
+    for (const block of prompt as readonly unknown[]) {
+      const candidate = block as { type?: unknown; text?: unknown } | null;
+      const valid =
+        candidate !== null &&
+        typeof candidate === 'object' &&
+        typeof candidate.type === 'string' &&
+        candidate.type.length > 0 &&
+        (candidate.type !== 'text' || typeof candidate.text === 'string');
+      if (!valid) {
+        throw RequestError.invalidParams(
+          undefined,
+          'kimi/session/steer prompt blocks must be objects with a string type (text blocks require string text)',
+        );
+      }
+    }
+    return acpSession.steer(prompt as readonly ContentBlock[]);
   }
 
   /**

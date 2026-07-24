@@ -200,6 +200,16 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async forkSessionWithKaos(
+    input: ForkSessionInput,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<SessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.forkSession(input);
+  }
+
   async closeSession(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.closeSession({ sessionId: input.sessionId });
@@ -208,6 +218,11 @@ export abstract class SDKRpcClientBase {
   async deleteSession(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.deleteSession({ sessionId: input.sessionId });
+  }
+
+  async archiveSession(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.archiveSession({ sessionId: input.sessionId });
   }
 
   async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {

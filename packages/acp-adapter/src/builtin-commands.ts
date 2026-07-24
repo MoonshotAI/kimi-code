@@ -7,6 +7,11 @@ export const ACP_BUILTIN_SLASH_COMMANDS = [
     input: { hint: '<optional custom summarization instructions>' },
   },
   {
+    name: 'undo',
+    description: 'Undo the last N turns of conversation (default 1)',
+    input: { hint: '<optional count>' },
+  },
+  {
     name: 'status',
     description: 'Show current session status',
   },

@@ -68,6 +68,32 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 
 All methods not listed above return `methodNotFound`.
 
+## Extension methods (`kimi/*` namespace)
+
+Adapter-owned extensions live in the `kimi/*` namespace so they never collide with future ACP spec methods. Unknown extension methods return `methodNotFound (-32601)`.
+
+| Method | Params | Returns | Description |
+| --- | --- | --- | --- |
+| `kimi/session/fork` | `{ sessionId }` | `{ sessionId }` | Forks the session into an ephemeral copy and registers it as a first-class ACP session the client can `session/prompt` normally (btw-style side conversation that cannot pollute the source context). Rejected while the source has an active turn. Inherits the source session's model/thinking state; when the client advertises `fs.readTextFile` / `fs.writeTextFile`, the fork routes file I/O through the same ACP reverse-RPC kaos pair as `session/new`. ACP-supplied MCP servers are not carried over. |
+| `kimi/session/close` | `{ sessionId, archive? }` | `{}` | Closes the session and drops it from the adapter. With `archive: true` the on-disk session directory is archived as well (the fork cleanup path); otherwise the session stays resumable. |
+| `kimi/session/steer` | `{ sessionId, prompt }` | `{ steered: true }` or `{ steered: false, reason: 'no_active_turn' }` | Injects a pending user message (`prompt` is a `ContentBlock[]`, same shape as `session/prompt`) into the session's active turn; the model consumes it at the next step boundary while in-flight tool calls and subagents run on undisturbed. With no active turn it resolves to `{ steered: false, reason: 'no_active_turn' }` instead of erroring — the client is expected to fall back to `session/prompt`. |
+
+## Built-in slash commands
+
+Slash commands sent as plain-text `session/prompt` blocks are intercepted by the adapter. Advertised to the client via `available_commands_update` after every `session/new` / `session/load` / `session/resume`:
+
+| Command | Args | Description |
+| --- | --- | --- |
+| `/compact` | `<optional instruction>` | Compacts the conversation context, with an optional custom summarization instruction |
+| `/undo` | `<optional count>` | Undoes the last N turns (default 1); refused while a turn is running, or up front when fewer than N prompts are undoable in the active context (e.g. after a compaction) |
+| `/status` | — | Shows current session status |
+| `/usage` | — | Shows session token usage |
+| `/mcp` | — | Shows MCP server status |
+| `/tasks` | — | Lists background tasks |
+| `/help` | — | Shows available ACP commands |
+
+Unknown slash commands are answered locally with an "unknown command" notice instead of being forwarded to the model.
+
 ## MCP Forwarding
 
 When an ACP client provides `mcpServers` in `session/new` or `session/load`, the adapter layer performs the following conversions:

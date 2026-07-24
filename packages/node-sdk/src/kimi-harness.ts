@@ -194,13 +194,22 @@ export class KimiHarness {
   }
 
   async forkSession(input: ForkSessionInput): Promise<Session> {
-    const summary = await this.rpc.forkSession({
-      id: normalizeSessionId(input.id),
-      forkId: input.forkId,
-      title: input.title,
-      metadata: input.metadata,
-      turnIndex: input.turnIndex,
-    });
+    const { kaos, persistenceKaos, ...forkInput } = input;
+    const normalizedInput = {
+      id: normalizeSessionId(forkInput.id),
+      forkId: forkInput.forkId,
+      title: forkInput.title,
+      metadata: forkInput.metadata,
+      turnIndex: forkInput.turnIndex,
+    };
+    const summary =
+      kaos === undefined && persistenceKaos === undefined
+        ? await this.rpc.forkSession(normalizedInput)
+        : await this.rpc.forkSessionWithKaos(
+            normalizedInput,
+            kaos ?? persistenceKaos as Kaos,
+            persistenceKaos,
+          );
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -228,6 +237,18 @@ export class KimiHarness {
     const sessionId = normalizeSessionId(id);
     await this.activeSessions.get(sessionId)?.close();
     await this.rpc.deleteSession({ sessionId });
+  }
+
+  /**
+   * Close (if active) and archive the on-disk session directory so it
+   * disappears from the session list. Used by the ACP adapter to clean
+   * up ephemeral fork sessions (btw) — `closeSession` alone would leave
+   * the fork dir on disk forever.
+   */
+  async archiveSession(id: string): Promise<void> {
+    const normalized = normalizeSessionId(id);
+    await this.activeSessions.get(normalized)?.close();
+    await this.rpc.archiveSession({ sessionId: normalized });
   }
 
   async renameSession(input: RenameSessionInput): Promise<void> {
