@@ -77,14 +77,12 @@ import {
   IAgentProfileService,
   IAgentPromptService,
   IAgentFullCompactionService,
-  IAgentLifecycleService,
   IAgentRPCService,
-  IAgentActivityView,
   IAuthSummaryService,
+  ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
-  ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
@@ -129,7 +127,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface SessionRouteHost {
@@ -1080,11 +1078,11 @@ export interface SessionFacts {
 }
 
 /**
- * Resolve a session's live wire facts, derived on demand from the agents'
- * activity views: `busy` = any agent with an active turn or background task;
- * the reason is the main agent's latest turn outcome (`blocked` folds into
- * `failed`). Nothing is booked at session level — a cold session (no live
- * handle) is not busy and carries no outcome.
+ * Resolve a session's live wire facts from the core `ISessionActivityView`
+ * aggregate (`busy` = any agent with an active turn or background task; the
+ * reason is the main agent's latest turn outcome, `blocked` folds into
+ * `failed`). A cold session (no live handle) is not busy and carries no
+ * outcome.
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
@@ -1095,33 +1093,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       pendingInteraction: 'none',
     };
   }
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
-  const interactions = handle.accessor.get(ISessionInteractionService);
-  let busy = false;
-  for (const agent of agents.list()) {
-    const state = agent.accessor.get(IAgentActivityView).state();
-    if (state.turn !== undefined || state.background.length > 0) {
-      busy = true;
-      break;
-    }
-  }
-  const reason = mainActivity?.lastTurn?.reason;
-  const pendingInteraction = resolvePendingInteraction(interactions);
-  return {
-    busy,
-    mainTurnActive: mainActivity?.turn !== undefined,
-    pendingInteraction,
-    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
-  };
-}
-
-function resolvePendingInteraction(
-  interactions: ISessionInteractionService,
-): SessionPendingInteraction {
-  if (interactions.listPending('approval').length > 0) return 'approval';
-  if (interactions.listPending('question').length > 0) return 'question';
-  return 'none';
+  return handle.accessor.get(ISessionActivityView).state();
 }
 
 /**

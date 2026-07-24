@@ -1,5 +1,5 @@
 /**
- * `kosong/model` envOverlay tests — the `KIMI_MODEL_*` effective overlay:
+ * `app/kosongConfig` envOverlay tests — the `KIMI_MODEL_*` effective overlay:
  *
  *  - with `KIMI_MODEL_NAME` set it synthesizes the reserved env model +
  *    provider entries and selects the model; without it only the
@@ -13,10 +13,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ENV_MODEL_PROVIDER_KEY } from '#/kosong/provider/provider';
+import { ENV_MODEL_PROVIDER_KEY } from '#/app/kosongConfig/configSection';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
-import { ENV_MODEL_ALIAS_KEY, kimiModelEnvOverlay } from '#/kosong/model/envOverlay';
+import { ENV_MODEL_ALIAS_KEY, kimiModelEnvOverlay } from '#/app/kosongConfig/envOverlay';
 
 type Env = Record<string, string>;
 

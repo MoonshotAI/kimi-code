@@ -8,7 +8,8 @@
  * server-v2 serves one WebSocket endpoint:
  *   - `/api/v1/ws` (v1 protocol) — `has_client_hello` reflects the v1
  *     `client_hello` handshake; `subscriptions` are the sessions the client
- *     subscribed to via `client_hello` / `subscribe`.
+ *     subscribed to via `subscribe` (or the legacy inline subscriptions on
+ *     `client_hello`).
  *
  * Read-only and infallible: it only snapshots the registry.
  */

@@ -162,6 +162,17 @@ export class ConfigState {
     return provider;
   }
 
+  /**
+   * Memo of the base provider built by {@link provider}, keyed by config
+   * content. The morphs applied per access (withThinking, sampling,
+   * thinking.keep) clone the base, and the clones share provider-level state
+   * — the OpenAI client and the reasoning-field dialect detected from inbound
+   * responses. Rebuilding the base per access would silently reset that
+   * dialect on every turn; a config change (model switch, credential refresh)
+   * changes the key and rebuilds cleanly.
+   */
+  private providerMemo: { key: string; provider: ChatProvider } | undefined;
+
   get provider(): ChatProvider {
     // All provider-level request config is applied here so every request built
     // from config.provider — the main loop AND full-history compaction — carries it:
@@ -172,7 +183,12 @@ export class ConfigState {
     //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all"
     //     (only while thinking is on). Drives Kimi's `thinking.keep` and, on the
     //     Anthropic path, a `context_management` `clear_thinking_20251015` edit.
-    const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
+    const providerConfig = this.providerConfig;
+    const memoKey = JSON.stringify(providerConfig);
+    if (this.providerMemo?.key !== memoKey) {
+      this.providerMemo = { key: memoKey, provider: createProvider(providerConfig) };
+    }
+    const provider = this.providerMemo.provider.withThinking(this.thinkingEffort);
     const withSampling = applyKimiEnvSamplingParams(provider);
     const configKeep = this.agent.kimiConfig?.thinking?.keep;
     const withKimiKeep = applyKimiEnvThinkingKeep(

@@ -214,7 +214,16 @@ describe('ws-control — §3.1 server_hello', () => {
 });
 
 describe('ws-control — §3.2 client_hello', () => {
-  it('parses a canonical client_hello', () => {
+  it('parses a handshake-only client_hello (just client_id)', () => {
+    const result = clientHelloMessageSchema.safeParse({
+      type: 'client_hello',
+      id: 'c1',
+      payload: { client_id: 'web_abc' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses a canonical client_hello with legacy inline subscriptions', () => {
     const result = clientHelloMessageSchema.safeParse({
       type: 'client_hello',
       id: 'c1',

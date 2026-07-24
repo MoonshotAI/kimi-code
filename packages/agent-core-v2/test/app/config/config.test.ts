@@ -43,10 +43,8 @@ import {
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
-import {
-  THINKING_SECTION,
-  type ThinkingConfig,
-} from '#/kosong/model/thinking';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
   MAX_RUNNING_TASKS_ENV,
@@ -63,6 +61,22 @@ import {
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
 } from '#/session/subagent/configSection';
+import {
+  SERVICES_SECTION,
+  WEB_FETCH_API_KEY_ENV,
+  WEB_FETCH_BASE_URL_ENV,
+  WEB_SEARCH_API_KEY_ENV,
+  WEB_SEARCH_BASE_URL_ENV,
+  type ServicesConfig,
+} from '#/app/auth/configSection';
+import '#/agent/mcp/configSection';
+import {
+  MCP_SECTION,
+  MCP_STARTUP_TIMEOUT_ENV,
+  MCP_TOOL_TIMEOUT_ENV,
+  McpSectionSchema,
+  type McpSection,
+} from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -461,6 +475,158 @@ describe('ConfigService env overlay (live)', () => {
 
     await config.replace('defaultModel', undefined);
     expect(config.get<string>('defaultModel')).toBeUndefined();
+
+    disposables.dispose();
+  });
+});
+
+describe('services config section env bindings', () => {
+  function createConfig(env: Record<string, string>): {
+    config: IConfigService;
+    disposables: DisposableStore;
+  } {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    return { config: ix.get(IConfigService), disposables };
+  }
+
+  it('resolves moonshot_search / moonshot_fetch fields from KIMI_WEB_* env vars', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+      [WEB_SEARCH_API_KEY_ENV]: 'env-search-key',
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+    await config.ready;
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)).toEqual({
+      moonshotSearch: { baseUrl: 'https://search-env.example/search', apiKey: 'env-search-key' },
+      moonshotFetch: { baseUrl: 'https://fetch-env.example/fetch', apiKey: 'env-fetch-key' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not inherit persisted credentials when env selects a service endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        apiKey: 'file-search-key',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { Authorization: 'Bearer configured-search-secret' },
+      },
+      moonshotFetch: {
+        baseUrl: 'https://file.example/fetch',
+        apiKey: 'file-fetch-key',
+        oauth: { storage: 'file', key: 'oauth/fetch' },
+        customHeaders: { Authorization: 'Bearer configured-fetch-secret' },
+      },
+    });
+    Object.assign(env, {
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+      [WEB_SEARCH_API_KEY_ENV]: 'env-search-key',
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)).toEqual({
+      moonshotSearch: {
+        baseUrl: 'https://search-env.example/search',
+        apiKey: 'env-search-key',
+      },
+      moonshotFetch: {
+        baseUrl: 'https://fetch-env.example/fetch',
+        apiKey: 'env-fetch-key',
+      },
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses an env API key instead of persisted OAuth for a configured endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { 'X-Service': 'search' },
+      },
+    });
+    env[WEB_SEARCH_API_KEY_ENV] = 'env-search-key';
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch).toEqual({
+      baseUrl: 'https://file.example/search',
+      apiKey: 'env-search-key',
+      customHeaders: { 'X-Service': 'search' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('ignores blank env values instead of masking the file value', async () => {
+    const { config, disposables } = createConfig({ [WEB_SEARCH_BASE_URL_ENV]: '   ' });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch).toEqual({
+      baseUrl: 'https://file.example/search',
+    });
+
+    disposables.dispose();
+  });
+
+  it('strips env-derived fields before persisting a round-tripped effective value', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    const effective = config.get<ServicesConfig>(SERVICES_SECTION);
+    expect(effective?.moonshotFetch).toEqual({
+      baseUrl: 'https://fetch-env.example/fetch',
+      apiKey: 'env-fetch-key',
+    });
+
+    await config.replace(SERVICES_SECTION, effective);
+    expect(config.inspect<ServicesConfig>(SERVICES_SECTION).userValue).toEqual({
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('clears the section on replace(undefined) even with env vars set', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+    });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    await config.replace(SERVICES_SECTION, undefined);
+
+    expect(config.inspect<ServicesConfig>(SERVICES_SECTION).userValue).toBeUndefined();
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch?.baseUrl).toBe(
+      'https://search-env.example/search',
+    );
 
     disposables.dispose();
   });
@@ -1234,6 +1400,120 @@ describe('subagent config section', () => {
     delete env[SUBAGENT_TIMEOUT_ENV];
     expect(config.get<SubagentConfig>(SUBAGENT_SECTION)).toEqual({
       timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+
+    disposables.dispose();
+  });
+});
+
+describe('mcp config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('is unset by default and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '60000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(60000);
+
+    disposables.dispose();
+  });
+
+  it('accepts the Node.js timer upper boundary', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_647,
+        toolTimeoutMs: 2_147_483_647,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects config timeouts above the Node.js timer limit', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_648,
+        toolTimeoutMs: 2_147_483_648,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('falls back to config when env timeouts exceed the Node.js timer limit', async () => {
+    const env: Record<string, string> = {
+      [MCP_STARTUP_TIMEOUT_ENV]: '2147483648',
+      [MCP_TOOL_TIMEOUT_ENV]: '2147483648',
+    };
+    const { config, disposables } = await createConfig(
+      env,
+      '[mcp]\nstartup_timeout_ms = 5000\ntool_timeout_ms = 60000\n',
+    );
+    try {
+      expect(config.get<McpSection | undefined>(MCP_SECTION)).toEqual({
+        startupTimeoutMs: 5000,
+        toolTimeoutMs: 60000,
+      });
+    } finally {
+      disposables.dispose();
+    }
+  });
+
+  it('reads startup_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(5000);
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '7000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('reads tool_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\ntool_timeout_ms = 60000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = '90000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(90000);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [MCP_STARTUP_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+
+    // A client echoing the env-overlaid section back.
+    await config.set(MCP_SECTION, { startupTimeoutMs: 7000 });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+    // …but persistence keeps the raw value.
+    expect(config.inspect<McpSection>(MCP_SECTION).userValue).toEqual({
+      startupTimeoutMs: 5000,
     });
 
     disposables.dispose();

@@ -2,12 +2,13 @@
  * `authLegacy` domain — `IAuthLegacyService` implementation.
  *
  * Stateless App-scope projector: reads the configured providers through
- * `provider`, the global default-model selection through `config`, and the
- * managed OAuth provider's cached-token state through `auth`, then assembles
- * the v1 `AuthSummary`. The computation mirrors v1's `AuthSummaryService.get()`
- * so the `/api/v1/auth` envelope is byte-compatible. No business logic is
- * duplicated; the native `IAuthSummaryService` (which serves `/api/v2`) is not
- * involved.
+ * `provider`, the global default-model selection through `model` (the
+ * kosong registry is the runtime source of truth; config is only its
+ * persistence), and the managed OAuth provider's cached-token state through
+ * `auth`, then assembles the v1 `AuthSummary`. The computation mirrors v1's
+ * `AuthSummaryService.get()` so the `/api/v1/auth` envelope is
+ * byte-compatible. No business logic is duplicated; the native
+ * `IAuthSummaryService` (which serves `/api/v2`) is not involved.
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
@@ -16,8 +17,7 @@ import type { AuthSummary } from './authLegacy';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
-import { IConfigService } from '#/app/config/config';
-import { DEFAULT_MODEL_SECTION } from '#/kosong/model/model';
+import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
 
 import { IAuthLegacyService } from './authLegacy';
@@ -29,16 +29,18 @@ export class AuthLegacyService implements IAuthLegacyService {
 
   constructor(
     @IProviderService private readonly providerService: IProviderService,
-    @IConfigService private readonly config: IConfigService,
+    @IModelService private readonly modelService: IModelService,
     @IOAuthService private readonly oauth: IOAuthService,
   ) {}
 
   async get(): Promise<AuthSummary> {
-    await this.config.ready;
+    // The kosong registries become ready once the persistence bridge has
+    // hydrated them from config — that is the readiness this projection needs.
+    await this.modelService.ready;
 
     const providers = this.providerService.list();
     const providers_count = Object.keys(providers).length;
-    const default_model = nonEmpty(this.config.get<string>(DEFAULT_MODEL_SECTION));
+    const default_model = nonEmpty(this.modelService.getDefaultModel());
 
     let managed_provider: AuthSummary['managed_provider'] = null;
     if (providers[MANAGED_PROVIDER_NAME] !== undefined) {
