@@ -26,6 +26,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: 'dark',
+    language: 'en',
     version: 'test',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },

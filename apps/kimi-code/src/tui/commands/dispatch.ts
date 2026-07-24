@@ -3,6 +3,7 @@ import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
+import type { Language } from '#/tui/i18n';
 
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
@@ -27,6 +28,7 @@ import {
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
+  handleLanguageCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -69,6 +71,7 @@ export {
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
+  handleLanguageCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -133,6 +136,9 @@ export interface SlashCommandHost {
   // Theme
   applyTheme(theme: ThemeName, resolved?: ResolvedTheme): Promise<void>;
   refreshTerminalThemeTracking(): void;
+
+  // Language
+  applyLanguage(language: Language): void;
 
   // Dispatch
   stop(exitCode?: number): Promise<void>;
@@ -299,6 +305,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'theme':
       await handleThemeCommand(host, args);
+      return;
+    case 'language':
+      await handleLanguageCommand(host, args);
       return;
     case 'model':
       await handleModelCommand(host, args);

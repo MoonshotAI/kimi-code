@@ -37,6 +37,7 @@
   "imports": {
     "#/tui/theme": "./src/tui/theme/index.ts",
     "#/tui/commands": "./src/tui/commands/index.ts",
+    "#/tui/i18n": "./src/tui/i18n/index.ts",
     "#/cli/sub/web": "./src/cli/sub/web/index.ts",
     "#/cli/sub/web/*": "./src/cli/sub/web/*.ts",
     "#/generated/vis-web-asset": [

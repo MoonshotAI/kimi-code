@@ -49,6 +49,7 @@ export async function applyReloadedTuiConfig(
     notifications: config.notifications,
     upgrade: config.upgrade,
   });
+  host.applyLanguage(config.language);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }
 

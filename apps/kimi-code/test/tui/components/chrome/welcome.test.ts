@@ -29,6 +29,7 @@ const appState: AppState = {
   inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
+  language: 'en',
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },

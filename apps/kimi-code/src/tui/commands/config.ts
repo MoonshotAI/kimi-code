@@ -9,6 +9,7 @@ import {
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
+import { LanguageSelectorComponent } from '../components/dialogs/language-selector';
 import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
@@ -20,6 +21,8 @@ import { SettingsSelectorComponent, type SettingsSelection } from '../components
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
+import { isLanguage, type Language } from '#/tui/i18n';
+import { t } from '#/tui/i18n';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -53,6 +56,7 @@ function hasConversationHistory(host: SlashCommandHost): boolean {
 function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   return {
     theme: host.state.appState.theme,
+    language: host.state.appState.language,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     notifications: host.state.appState.notifications,
@@ -234,6 +238,19 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
     }
   }
   await applyThemeChoice(host, theme);
+}
+
+export async function handleLanguageCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const language = args.trim();
+  if (language.length === 0) {
+    showLanguagePicker(host);
+    return;
+  }
+  if (!isLanguage(language)) {
+    host.showError(`Unknown language: ${language}`);
+    return;
+  }
+  await applyLanguageChoice(host, language);
 }
 
 export async function handleModelCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -609,6 +626,45 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   host.showStatus(`Theme set to "${theme}"${detail}.`);
 }
 
+function showLanguagePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new LanguageSelectorComponent({
+      currentValue: host.state.appState.language,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyLanguageChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyLanguageChoice(host: SlashCommandHost, language: Language): Promise<void> {
+  if (language === host.state.appState.language) {
+    host.showStatus(`Language already set to "${language}".`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host),
+      language,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save language: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.applyLanguage(language);
+  host.track('language_switch', { language });
+  host.showStatus(`Language set to "${language}".`);
+}
+
 export function showPermissionPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new PermissionSelectorComponent({
@@ -782,6 +838,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
+    case 'language': showLanguagePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;

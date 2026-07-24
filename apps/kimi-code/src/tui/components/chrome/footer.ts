@@ -28,6 +28,7 @@ import {
   usagePercent,
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
+import { t } from '#/tui/i18n';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -167,9 +168,9 @@ function shortenCwd(path: string): string {
 function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
   if (maxTokens !== undefined && maxTokens > 0 && tokens !== undefined) {
     const pct = String(usagePercent(tokens, maxTokens));
-    return `context: ${pct}% (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
+    return `${t('footer.context', { pct })} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
-  return `context: ${String(usagePercentFromRatio(usage))}%`;
+  return `${t('footer.context', { pct: String(usagePercentFromRatio(usage)) })}`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {

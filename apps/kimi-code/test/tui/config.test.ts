@@ -34,6 +34,7 @@ describe('TUI config', () => {
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
+    expect(text).toContain('language = "en"');
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
@@ -59,6 +60,7 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      language: 'en',
       disablePasteBurst: false,
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
@@ -83,6 +85,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      language: 'en',
       disablePasteBurst: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
@@ -115,6 +118,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme: 'light',
+        language: 'en',
         disablePasteBurst: false,
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
@@ -125,6 +129,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      language: 'en',
       disablePasteBurst: false,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
@@ -137,6 +142,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme,
+        language: DEFAULT_TUI_CONFIG.language,
         disablePasteBurst: DEFAULT_TUI_CONFIG.disablePasteBurst,
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,

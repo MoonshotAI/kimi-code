@@ -361,6 +361,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'language',
+    aliases: ['lang'],
+    description: 'Set the TUI display language',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'logout',
     aliases: ['disconnect'],
     description: 'Log out of a configured provider',
