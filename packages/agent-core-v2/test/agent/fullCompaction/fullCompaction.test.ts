@@ -37,6 +37,7 @@ import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
 import { appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
+import { nodeScriptCommand } from '../../harness/nodeScriptCommand';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -3080,7 +3081,6 @@ function messageText(message: Message | undefined): string {
 }
 
 function hookPayloadLoggerCommand(logPath: string): string {
-  const scriptPath = `${logPath}.cjs`;
   const script = [
     "const fs = require('node:fs');",
     "let input = '';",
@@ -3089,8 +3089,7 @@ function hookPayloadLoggerCommand(logPath: string): string {
     `  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(JSON.parse(input)) + '\\n');`,
     '});',
   ].join('');
-  writeFileSync(scriptPath, script);
-  return `${process.execPath} ${scriptPath}`;
+  return nodeScriptCommand(script);
 }
 
 function readHookPayloads(logPath: string): Array<Record<string, unknown>> {

@@ -1,5 +1,6 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
+
+import { isAbsolute, join, relative, resolve } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -69,12 +70,14 @@ function fakeFs(
     addAncestors(rel);
   }
   const isDir = (p: string): boolean => p === WORK_DIR || dirSet.has(p);
+  const norm = (p: string): string => p.replace(/\\/g, '/');
   const enoent = (p: string): NodeJS.ErrnoException => {
     const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
     err.code = 'ENOENT';
     return err;
   };
-  const lstatImpl = async (p: string) => {
+  const lstatImpl = async (rawPath: string) => {
+    const p = norm(rawPath);
     if (fileMap.has(p)) {
       return {
         isFile: true,
@@ -95,14 +98,14 @@ function fakeFs(
   return {
     _serviceBrand: undefined,
     readText: async (p) => {
-      const c = fileMap.get(p);
+      const c = fileMap.get(norm(p));
       if (c === undefined) throw enoent(p);
       return c;
     },
     writeText: async () => {},
     appendText: async () => {},
     readBytes: async (p, n) => {
-      const c = fileMap.get(p);
+      const c = fileMap.get(norm(p));
       if (c === undefined) throw enoent(p);
       const buf = Buffer.from(c);
       return buf.subarray(0, n ?? buf.length);
@@ -113,7 +116,7 @@ function fakeFs(
     createExclusive: async () => false,
     lstat: lstatImpl,
     stat: async (p) => {
-      let cur = p;
+      let cur = norm(p);
       for (let hops = 0; hops < 10 && symlinkSet.has(cur); hops += 1) {
         const target = symlinkTargetMap.get(cur);
         if (target === undefined) break;
@@ -121,7 +124,8 @@ function fakeFs(
       }
       return lstatImpl(cur);
     },
-    readdir: async (p) => {
+    readdir: async (rawPath) => {
+      const p = norm(rawPath);
       if (!isDir(p)) throw enoent(p);
       const prefix = `${p}/`;
       const children = new Map<string, HostDirEntry>();
@@ -155,7 +159,8 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
-    mkdir: async (p, options) => {
+    mkdir: async (rawPath, options) => {
+      const p = norm(rawPath);
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
       if (recursive) {
@@ -183,7 +188,8 @@ function fakeFs(
       dirSet.add(p);
     },
     remove: async () => {},
-    realpath: async (p) => {
+    realpath: async (rawPath) => {
+      const p = norm(rawPath);
       let current = p;
       for (let i = 0; i < 40; i++) {
         let longest: string | undefined;

@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 import { Readable, type Writable } from 'node:stream';
 
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
@@ -26,6 +26,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
+import { nodeScriptCommand } from '../harness/nodeScriptCommand';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
@@ -2639,12 +2640,14 @@ describe('Agent tools', () => {
           {
             event: 'PreToolUse',
             matcher: 'Bash',
-            command: "echo 'blocked by PreToolUse' >&2; exit 2",
+            command: nodeScriptCommand(
+              "console.error('blocked by PreToolUse'); process.exit(2);",
+            ),
           },
           {
             event: 'PostToolUseFailure',
             matcher: 'Bash',
-            command: 'exit 0',
+            command: nodeScriptCommand('process.exit(0);'),
           },
         ],
         {
@@ -3239,7 +3242,7 @@ function hookErrorMessageAssertCommand(expected: string): string {
     '  process.exit(2);',
     '});',
   ].join('');
-  return `node -e ${JSON.stringify(script)}`;
+  return nodeScriptCommand(script);
 }
 
 function hookPayloadAssertCommand(expected: {
@@ -3275,5 +3278,5 @@ function hookPayloadAssertCommand(expected: {
     '});',
     "process.on('uncaughtException', (error) => { console.error(error.message); process.exit(2); });",
   ].filter((line) => line.length > 0).join('');
-  return `node -e ${JSON.stringify(script)}`;
+  return nodeScriptCommand(script);
 }

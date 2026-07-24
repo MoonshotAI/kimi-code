@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { configuredRoots, projectRoots, userRoots } from '#/app/skillCatalog/skillRoots';
@@ -107,10 +107,10 @@ describe('skillRoots', () => {
       const paths = roots.map((root) => root.path);
 
       expect(roots.every((root) => root.source === 'extra')).toBe(true);
-      expect(paths).toContain(await realpath(homeDir));
-      expect(paths).toContain(await realpath(join(homeDir, 'notes')));
-      expect(paths).toContain(await realpath(absDir));
-      expect(paths).toContain(await realpath(join(root, 'relative')));
+      expect(paths).toContain(normalize(await realpath(homeDir)));
+      expect(paths).toContain(normalize(await realpath(join(homeDir, 'notes'))));
+      expect(paths).toContain(normalize(await realpath(absDir)));
+      expect(paths).toContain(normalize(await realpath(join(root, 'relative'))));
     });
   });
 });

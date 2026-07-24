@@ -9,7 +9,7 @@
 import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -129,10 +129,10 @@ describe('agentRoots', () => {
       const paths = roots.map((r) => r.path);
 
       expect(roots.every((r) => r.source === 'extra')).toBe(true);
-      expect(paths).toContain(await realpath(homeDir));
-      expect(paths).toContain(await realpath(join(homeDir, 'team')));
-      expect(paths).toContain(await realpath(absDir));
-      expect(paths).toContain(await realpath(join(root, 'relative')));
+      expect(paths).toContain(normalize(await realpath(homeDir)));
+      expect(paths).toContain(normalize(await realpath(join(homeDir, 'team'))));
+      expect(paths).toContain(normalize(await realpath(absDir)));
+      expect(paths).toContain(normalize(await realpath(join(root, 'relative'))));
     });
 
     it('propagates filesystem-unavailable failures while probing a root', async () => {
@@ -186,7 +186,9 @@ describe('agentRoots', () => {
         (message) => warnings.push(message),
       );
 
-      expect(roots.map((candidate) => candidate.path)).toEqual([await realpath(availableDir)]);
+      expect(roots.map((candidate) => candidate.path)).toEqual([
+        normalize(await realpath(availableDir)),
+      ]);
       expect(warnings.some((warning) => warning.includes(blockedDir))).toBe(true);
     });
   });

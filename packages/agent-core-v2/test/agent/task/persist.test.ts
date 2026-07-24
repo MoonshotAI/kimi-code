@@ -5,6 +5,8 @@
  * resolved by interface, covering primary writes, local-first reads, the
  * previous v2 session-root fallback, and exact output paths. Run with
  * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/task/persist.test.ts`.
+ * Windows ignores POSIX mode bits on mkdir, so the 0700 directory-mode
+ * assertion is POSIX-only (`it.skipIf(isWin)`).
  */
 
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -27,6 +29,8 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 const SESSION_SCOPE = 'session';
 const AGENT_SCOPE = `${SESSION_SCOPE}/agents/main`;
+
+const isWin = process.platform === 'win32';
 
 let disposables: DisposableStore;
 let sessionDir: string;
@@ -130,7 +134,7 @@ describe('AgentTaskPersistence', () => {
     expect(all.map((task) => task.taskId)).toEqual(['bash-11111111']);
   });
 
-  it('writeTask creates tasks dir with mode 0700', async () => {
+  it.skipIf(isWin)('writeTask creates tasks dir with mode 0700', async () => {
     await persistence.writeTask(sample());
     const st = await stat(join(sessionDir, SESSION_SCOPE, 'tasks'));
     // eslint-disable-next-line no-bitwise

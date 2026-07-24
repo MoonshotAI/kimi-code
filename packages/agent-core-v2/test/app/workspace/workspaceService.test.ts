@@ -24,6 +24,8 @@ import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
 
+import { canCreateSymlinks } from '../../harness/symlinkSupport';
+
 interface SessionIndexLine {
   readonly sessionId: string;
   readonly sessionDir: string;
@@ -393,7 +395,8 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await build().list()).toEqual([]);
   });
 
-  it('accepts createOrTouch when the root is given through a symlink', async () => {
+  it('accepts createOrTouch when the root is given through a symlink', async (ctx) => {
+    if (!(await canCreateSymlinks())) ctx.skip();
     const real = join(homeDir, 'real-root');
     await fsp.mkdir(real, { recursive: true });
     const link = join(homeDir, 'link-root');

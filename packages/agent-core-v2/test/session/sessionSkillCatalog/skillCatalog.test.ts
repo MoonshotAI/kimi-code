@@ -10,7 +10,7 @@
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
@@ -189,7 +189,7 @@ async function withSkillCatalogWorkspace(
   const skillRoot = join(workDir, '.kimi-code', 'skills');
   await mkdir(skillRoot, { recursive: true });
   try {
-    await run({ workDir, skillRoot: await realpath(skillRoot) });
+    await run({ workDir, skillRoot: normalize(await realpath(skillRoot)) });
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

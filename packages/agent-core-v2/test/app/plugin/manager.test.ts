@@ -6,7 +6,6 @@
  * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/manager.test.ts
  */
 
-import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +14,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginManager } from '#/app/plugin/manager';
+
+import { zipDirectoryToBuffer } from '../../harness/zipArchive';
 
 describe('PluginManager', () => {
   let home: string;
@@ -108,7 +109,7 @@ describe('PluginManager', () => {
     });
     try {
       await writeFile(join(sourceRoot, 'kimi.plugin.json'), JSON.stringify({ name: 'zip-plugin' }), 'utf8');
-      execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
+      await writeFile(zipPath, await zipDirectoryToBuffer(sourceRoot));
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       const address = server.address();
       if (address === null || typeof address === 'string') throw new Error('bad server address');
@@ -131,7 +132,7 @@ describe('PluginManager', () => {
     const zipPath = join(tmpdir(), `plugin-github-${Date.now()}.zip`);
     try {
       await writeFile(join(sourceRoot, 'kimi.plugin.json'), JSON.stringify({ name: 'github-plugin' }), 'utf8');
-      execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
+      await writeFile(zipPath, await zipDirectoryToBuffer(sourceRoot));
       const zip = await readFile(zipPath);
       const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
         const url =

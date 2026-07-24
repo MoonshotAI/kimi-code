@@ -56,6 +56,7 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
+import { canCreateSymlinks } from '../../harness/symlinkSupport';
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -609,7 +610,8 @@ describe('sessionExport', () => {
     await expect(readdir(tmp)).resolves.toEqual([]);
   });
 
-  it('does not follow an output symlink swapped during compression', async () => {
+  it('does not follow an output symlink swapped during compression', async (ctx) => {
+    if (!(await canCreateSymlinks())) ctx.skip();
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     const statePath = join(tmp, 'state.json');
     const safeTarget = join(tmp, 'safe-output');

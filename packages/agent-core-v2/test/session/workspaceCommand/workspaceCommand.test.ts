@@ -1,3 +1,6 @@
+import { resolve as resolveOsPath } from 'node:path';
+
+import { normalize as normalizeSlash } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -29,10 +32,19 @@ import { SessionWorkspaceContextService } from '#/session/workspaceContext/works
 
 import { stubContextMemory, type StubContextMemory } from '../../agent/contextMemory/stubs';
 
-const WORK_DIR = '/repo/work';
+function slashForm(path: string): string {
+  return normalizeSlash(resolveOsPath(path));
+}
+
+function osForm(path: string): string {
+  return resolveOsPath(path);
+}
+
+const WORK_DIR = slashForm('/repo/work');
 const EXTRA_DIR = `${WORK_DIR}/extra`;
 const DIR_A = `${WORK_DIR}/a`;
 const DIR_B = `${WORK_DIR}/b`;
+const OS_EXTRA_DIR = osForm(EXTRA_DIR);
 
 class MemoryHostFs implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
@@ -198,8 +210,8 @@ function agentsStub(): AgentsStub {
 function bootstrapStub(): IBootstrapService {
   return {
     _serviceBrand: undefined,
-    homeDir: '/home/test',
-    osHomeDir: '/users/test',
+    homeDir: slashForm('/home/test'),
+    osHomeDir: slashForm('/users/test'),
   } as IBootstrapService;
 }
 
@@ -271,8 +283,8 @@ describe('SessionWorkspaceCommandService', () => {
 
     expect(result.persisted).toBe(true);
     expect(result.configPath).toBe(`${WORK_DIR}/.kimi-code/local.toml`);
-    expect(result.additionalDirs).toContain(EXTRA_DIR);
-    expect(workspace.additionalDirs).toContain(EXTRA_DIR);
+    expect(result.additionalDirs).toContain(OS_EXTRA_DIR);
+    expect(workspace.additionalDirs).toContain(OS_EXTRA_DIR);
 
     const written = fs.files.get(`${WORK_DIR}/.kimi-code/local.toml`);
     expect(written).toContain('additional_dir');
@@ -297,7 +309,7 @@ describe('SessionWorkspaceCommandService', () => {
     const result = await svc.addAdditionalDir({ path: 'extra', persist: false });
 
     expect(result.persisted).toBe(false);
-    expect(workspace.additionalDirs).toContain(EXTRA_DIR);
+    expect(workspace.additionalDirs).toContain(OS_EXTRA_DIR);
     expect(fs.files.has(`${WORK_DIR}/.kimi-code/local.toml`)).toBe(false);
 
     expect(agents.mainContext.messages).toHaveLength(1);
@@ -351,8 +363,8 @@ describe('SessionWorkspaceCommandService', () => {
     const [, secondResult] = await Promise.all([first, second]);
 
     expect(overlappingReads).toEqual([]);
-    expect(secondResult.additionalDirs).toEqual([DIR_A, DIR_B]);
-    expect(workspace.additionalDirs).toEqual([DIR_A, DIR_B]);
+    expect(secondResult.additionalDirs).toEqual([osForm(DIR_A), osForm(DIR_B)]);
+    expect(workspace.additionalDirs).toEqual([osForm(DIR_A), osForm(DIR_B)]);
 
     const written = fs.files.get(`${WORK_DIR}/.kimi-code/local.toml`);
     expect(written).toContain(DIR_A);
@@ -360,7 +372,7 @@ describe('SessionWorkspaceCommandService', () => {
   });
 
   it('resolves caller-relative dirs against the session workDir when project root is above it', async () => {
-    const projectRoot = '/repo/project';
+    const projectRoot = slashForm('/repo/project');
     const workDir = `${projectRoot}/apps/foo`;
     const sharedDir = `${workDir}/shared`;
     const { svc, fs, workspace } = build([sharedDir], true, workDir, `${projectRoot}/.git`);
@@ -369,13 +381,13 @@ describe('SessionWorkspaceCommandService', () => {
 
     expect(result.projectRoot).toBe(projectRoot);
     expect(result.configPath).toBe(`${projectRoot}/.kimi-code/local.toml`);
-    expect(result.additionalDirs).toEqual([sharedDir]);
-    expect(workspace.additionalDirs).toEqual([sharedDir]);
+    expect(result.additionalDirs).toEqual([osForm(sharedDir)]);
+    expect(workspace.additionalDirs).toEqual([osForm(sharedDir)]);
     expect(fs.files.get(`${projectRoot}/.kimi-code/local.toml`)).toContain(sharedDir);
   });
 
   it('keeps a dangling .git symlink as the local project-root marker', async () => {
-    const ancestorRoot = '/repo/project';
+    const ancestorRoot = slashForm('/repo/project');
     const workDir = `${ancestorRoot}/apps/foo`;
     const sharedDir = `${workDir}/shared`;
     const { svc, fs } = build([sharedDir], true, workDir, `${ancestorRoot}/.git`);
@@ -389,7 +401,7 @@ describe('SessionWorkspaceCommandService', () => {
   });
 
   it('resolves session-only relative dirs against the session workDir when project root is above it', async () => {
-    const projectRoot = '/repo/project';
+    const projectRoot = slashForm('/repo/project');
     const workDir = `${projectRoot}/apps/foo`;
     const sharedDir = `${workDir}/shared`;
     const { svc, fs, workspace } = build([sharedDir], true, workDir, `${projectRoot}/.git`);
@@ -398,23 +410,23 @@ describe('SessionWorkspaceCommandService', () => {
 
     expect(result.projectRoot).toBe(projectRoot);
     expect(result.configPath).toBe(`${projectRoot}/.kimi-code/local.toml`);
-    expect(result.additionalDirs).toEqual([sharedDir]);
-    expect(workspace.additionalDirs).toEqual([sharedDir]);
+    expect(result.additionalDirs).toEqual([osForm(sharedDir)]);
+    expect(workspace.additionalDirs).toEqual([osForm(sharedDir)]);
     expect(fs.files.has(`${projectRoot}/.kimi-code/local.toml`)).toBe(false);
   });
 
   it('expands home-relative dirs against the OS home like v1', async () => {
-    const homeDir = '/users/test/shared';
+    const homeDir = slashForm('/users/test/shared');
     const { svc, workspace } = build([homeDir], true);
 
     const result = await svc.addAdditionalDir({ path: '~/shared', persist: false });
 
-    expect(result.additionalDirs).toEqual([homeDir]);
-    expect(workspace.additionalDirs).toEqual([homeDir]);
+    expect(result.additionalDirs).toEqual([osForm(homeDir)]);
+    expect(workspace.additionalDirs).toEqual([osForm(homeDir)]);
   });
 
   it('treats project-root stat errors as absent git markers like v1', async () => {
-    const projectRoot = '/repo';
+    const projectRoot = slashForm('/repo');
     const { svc, fs } = build([EXTRA_DIR], true, WORK_DIR, `${projectRoot}/.git`);
     const error = new Error('EACCES: cannot stat .git') as NodeJS.ErrnoException;
     error.code = 'EACCES';

@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
+import { normalize } from 'pathe';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureRgPath, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
@@ -949,7 +950,7 @@ describe('GlobTool integration (real ripgrep)', () => {
 
       const result = await execute(tool, { pattern: '*.ts', path: externalDir });
 
-      expect(result.output).toBe(extFile);
+      expect(result.output).toBe(normalize(extFile));
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }
