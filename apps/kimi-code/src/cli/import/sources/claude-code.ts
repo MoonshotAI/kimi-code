@@ -427,7 +427,7 @@ function aggregateTokenUsage(entries: CCRawEntry[]): HandoffTokenUsage | undefin
   }
 
   if (input === 0 && output === 0) return undefined;
-  return { input, output, ...(cacheRead > 0 ? { cacheRead } : {}), ...(cacheCreation > 0 ? { cacheCreation } : {}) };
+  return { input, output, cacheRead: cacheRead > 0 ? cacheRead : undefined, cacheCreation: cacheCreation > 0 ? cacheCreation : undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -680,7 +680,7 @@ class ClaudeCodeParser implements SourceParser {
     // Extract conversation turns
     const conversation: ConversationTurn[] = [];
     const allThinking: string[] = [];
-    let lastToolCallName = '';
+    const toolIdToName = new Map<string, string>();
 
     for (const entry of convEntries.slice(-MAX_RECENT_TURNS * 2)) {
       if (entry.message === undefined) continue;
@@ -692,9 +692,10 @@ class ClaudeCodeParser implements SourceParser {
         const toolResults = extractToolResultsFromBlocks(blocks);
         if (toolResults.length > 0) {
           for (const tr of toolResults) {
+            const toolName = toolIdToName.get(tr.tool_use_id) ?? 'tool';
             conversation.push({
               kind: 'tool-result',
-              toolName: lastToolCallName || 'tool',
+              toolName,
               summary: safeStringify(tr.content, MAX_TOOL_INPUT_CHARS),
             });
           }
@@ -717,7 +718,7 @@ class ClaudeCodeParser implements SourceParser {
         const toolCalls = extractToolCallsFromBlocks(blocks);
         if (toolCalls.length > 0) {
           for (const tc of toolCalls) {
-            lastToolCallName = tc.name;
+            toolIdToName.set(tc.id, tc.name);
             conversation.push({
               kind: 'tool-call',
               toolName: tc.name,
@@ -730,10 +731,8 @@ class ClaudeCodeParser implements SourceParser {
         if (text.length > 0 || thinking.length > 0) {
           conversation.push({
             kind: 'assistant',
-            ...(text.length > 0 ? { text: truncateText(text, 500) } : {}),
-            ...(thinking.length > 0
-              ? { thinking: truncateText(thinking, MAX_THINKING_CHARS) }
-              : {}),
+            text: text.length > 0 ? truncateText(text, 500) : undefined,
+            thinking: thinking.length > 0 ? truncateText(thinking, MAX_THINKING_CHARS) : undefined,
           });
         }
       }
@@ -755,10 +754,10 @@ class ClaudeCodeParser implements SourceParser {
     const ctx: Omit<HandoffContext, 'markdown'> = {
       source: this.sourceId,
       sourceSessionId: sessionId,
-      ...(model.length > 0 ? { model } : {}),
-      ...(createdAt !== undefined ? { createdAt } : {}),
-      ...(cwd.length > 0 ? { workingDirectory: cwd } : {}),
-      ...(tokenUsage !== undefined ? { tokenUsage } : {}),
+      model: model.length > 0 ? model : undefined,
+      createdAt: createdAt !== undefined ? createdAt : undefined,
+      workingDirectory: cwd.length > 0 ? cwd : undefined,
+      tokenUsage: tokenUsage !== undefined ? tokenUsage : undefined,
       summary: truncateText(firstUserText, 200) || undefined,
       keyDecisions,
       filesModified,

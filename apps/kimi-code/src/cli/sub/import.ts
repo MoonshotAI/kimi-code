@@ -216,18 +216,46 @@ async function importIntoSession(
 
       await new Promise<void>((resolve, reject) => {
         let settled = false;
+        let mainTurnActive = false;
+        const PROMPT_MAIN_AGENT_ID = 'main';
         const unsubscribe = session.onEvent((event) => {
           if (settled) return;
+
           if (event.type === 'error') {
+            // Only fail on main-agent errors; subagent errors are recoverable
+            if ('agentId' in event && event.agentId !== PROMPT_MAIN_AGENT_ID) return;
             settled = true;
             unsubscribe();
             reject(new Error(`${event.code}: ${event.message}`));
             return;
           }
+
+          if (event.type === 'turn.started') {
+            if ('agentId' in event && event.agentId === PROMPT_MAIN_AGENT_ID) {
+              mainTurnActive = true;
+            }
+            return;
+          }
+
           if (event.type === 'turn.ended') {
+            // Ignore subagent and non-main turns
+            if (!mainTurnActive) return;
+            if ('agentId' in event && event.agentId !== PROMPT_MAIN_AGENT_ID) return;
+
+            if (event.reason === 'completed') {
+              settled = true;
+              unsubscribe();
+              resolve();
+              return;
+            }
+            // Non-completed: error, blocked, or cancelled
             settled = true;
             unsubscribe();
-            resolve();
+            const msg =
+              event.error !== undefined
+                ? `${event.error.code}: ${event.error.message}`
+                : `Turn ended with reason: ${event.reason}`;
+            reject(new Error(msg));
             return;
           }
         });
