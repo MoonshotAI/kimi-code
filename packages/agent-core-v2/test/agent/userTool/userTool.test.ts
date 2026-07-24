@@ -32,6 +32,12 @@ const toolB: UserToolRegistration = {
   description: 'Echo the input.',
   parameters: { type: 'object', properties: { text: { type: 'string' } } },
 };
+const deferredTool: UserToolRegistration = {
+  name: 'DashboardCreate',
+  description: 'Create a dashboard.',
+  parameters: { type: 'object', properties: { title: { type: 'string' } } },
+  disclosure: 'deferred',
+};
 
 interface ProfileStub {
   readonly active: Set<string>;
@@ -116,6 +122,22 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
 
+  it('preserves deferred disclosure in the wire model and runtime registry', async () => {
+    svc.register(deferredTool);
+
+    expect(modelOf(wire).get(deferredTool.name)).toEqual(deferredTool);
+    expect(registry.list().find((tool) => tool.name === deferredTool.name)?.disclosure).toBe(
+      'deferred',
+    );
+    expect(await readRecords()).toEqual([
+      {
+        type: 'tools.register_user_tool',
+        ...deferredTool,
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
   it('unregister persists a flat record and removes the tool live', async () => {
     svc.register(toolA);
     svc.unregister(toolA.name);
@@ -175,6 +197,19 @@ describe('AgentUserToolService (wire-backed)', () => {
     const before = modelOf(wire);
     svc.register(toolA);
     expect(modelOf(wire)).toBe(before);
+  });
+
+  it('treats a disclosure change as a new registration state', () => {
+    svc.register(toolA);
+    const before = modelOf(wire);
+
+    svc.register({ ...toolA, disclosure: 'deferred' });
+
+    expect(modelOf(wire)).not.toBe(before);
+    expect(modelOf(wire).get(toolA.name)?.disclosure).toBe('deferred');
+    expect(registry.list().find((tool) => tool.name === toolA.name)?.disclosure).toBe(
+      'deferred',
+    );
   });
 
   it('replay rebuilds the model silently and onDidRestore re-registers tools after replay', async () => {

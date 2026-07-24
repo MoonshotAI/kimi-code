@@ -54,7 +54,12 @@ export class AgentBuiltinToolsRegistrar extends Disposable implements IAgentBuil
           ctor,
           ...(staticArgs as []),
         );
-        this._register(toolRegistry.register(tool, { source: options.source }));
+        this._register(
+          toolRegistry.register(tool, {
+            source: options.source,
+            disclosure: options.disclosure,
+          }),
+        );
       }
     });
   }

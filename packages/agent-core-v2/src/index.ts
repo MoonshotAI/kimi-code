@@ -131,6 +131,11 @@ export * from '#/kosong/model/modelOAuth';
 export * from '#/app/kosongConfig/oauthTokenAdapter';
 export * from '#/app/kosongConfig/discovery';
 export * from '#/app/kosongConfig/discoveryService';
+export * from '#/app/kosongConfig/errors';
+export * from '#/app/kosongConfig/modelsDevImport';
+export * from '#/app/kosongConfig/modelsDevImportService';
+export * from '#/app/kosongConfig/modelsDevUpstream';
+export * from '#/app/kosongConfig/modelsDev';
 // kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.

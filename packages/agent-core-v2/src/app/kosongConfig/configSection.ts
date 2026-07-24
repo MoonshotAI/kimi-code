@@ -268,18 +268,17 @@ export const modelsToToml = (value: unknown, rawSnake: unknown): unknown => {
       out[id] = entry;
       continue;
     }
-    const rawEntry = cloneRecord(rawSub[id]);
-    const converted: Record<string, unknown> = {};
+    const merged = cloneRecord(rawSub[id]);
     for (const [key, field] of Object.entries(entry)) {
       if (key === 'capabilities' && Array.isArray(field)) {
-        converted[camelToSnake(key)] = [...field];
+        merged[camelToSnake(key)] = [...field];
       } else if (key === 'overrides' && isPlainObject(field)) {
-        converted['overrides'] = modelOverridesToToml(field, rawEntry['overrides']);
+        merged['overrides'] = modelOverridesToToml(field, merged['overrides']);
       } else {
-        setDefined(converted, camelToSnake(key), field);
+        setDefined(merged, camelToSnake(key), field);
       }
     }
-    out[id] = { ...rawEntry, ...converted };
+    out[id] = merged;
   }
   return out;
 };

@@ -23,10 +23,14 @@ describe('ModelCapability / UNKNOWN_CAPABILITY', () => {
   };
 
   it.each([
-    ['the declared input cap', { ...capability, max_input_tokens: 64_000 }, 64_000],
-    ['the total context window when no input cap is declared', capability, 128_000],
-    ['zero when the capability is unavailable', undefined, 0],
-  ])('resolves %s', (_label, value, expected) => {
+    [
+      'returns 64000 when an input cap is declared',
+      { ...capability, max_input_tokens: 64_000 },
+      64_000,
+    ],
+    ['returns 128000 when only the total context window is declared', capability, 128_000],
+    ['returns 0 when capability data is unavailable', undefined, 0],
+  ])('%s', (_name, value, expected) => {
     expect(getModelInputTokenLimit(value)).toBe(expected);
   });
 

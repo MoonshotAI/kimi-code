@@ -43,7 +43,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getModelInputTokenLimit,
   isUnknownCapability,
-  UNKNOWN_CAPABILITY,
   type ModelCapability,
 } from '#/kosong/contract/capability';
 import { APIConnectionError } from '#/kosong/contract/errors';
@@ -287,10 +286,6 @@ describe('resolveProviderBaseId', () => {
 });
 
 describe('resolveCapability', () => {
-  it('lets the definition win outright — kimi is UNKNOWN even though the base knows gpt models', () => {
-    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi')).toBe(UNKNOWN_CAPABILITY);
-  });
-
   it('falls back to trait capability hooks before the base catalog', () => {
     const fromTrait = registry.resolveCapability('openai', 'special-model', 'cap-vendor');
     expect(fromTrait.image_in).toBe(true);
@@ -302,6 +297,17 @@ describe('resolveCapability', () => {
     expect(registry.resolveCapability('openai', 'gpt-4o').image_in).toBe(true);
     expect(isUnknownCapability(registry.resolveCapability('openai', 'mystery-model'))).toBe(true);
     expect(registry.resolveCapability('anthropic', 'claude-opus-4-1').thinking).toBe(true);
+  });
+
+  it('kimi declares no vendor-level capability — the base catalog answers instead', () => {
+    // Kimi model ids never match the bases' builtin catalogs, so the detected
+    // layer still answers UNKNOWN for them; an id the base does know (gpt-4o)
+    // now resolves through the base catalog rather than being suppressed by a
+    // vendor-level UNKNOWN declaration.
+    expect(isUnknownCapability(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi'))).toBe(
+      true,
+    );
+    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
   });
 });
 
@@ -316,22 +322,19 @@ describe('getModelInputTokenLimit', () => {
   };
 
   it.each([
-    ['the declared input cap', { ...capability, max_input_tokens: 64_000 }, 64_000],
-    ['the total context window when no input cap is declared', capability, 128_000],
-    ['zero when the capability is unavailable', undefined, 0],
-  ])('resolves %s', (_label, value, expected) => {
+    [
+      'returns 64000 when an input cap is declared',
+      { ...capability, max_input_tokens: 64_000 },
+      64_000,
+    ],
+    ['returns 128000 when only the total context window is declared', capability, 128_000],
+    ['returns 0 when capability data is unavailable', undefined, 0],
+  ])('%s', (_name, value, expected) => {
     expect(getModelInputTokenLimit(value)).toBe(expected);
   });
 });
 
 describe('explainCapability', () => {
-  it('reports the definition level when the pair declares a capability', () => {
-    const { capability, source } = registry.explainCapability('openai', 'gpt-4o', 'kimi');
-    expect(capability).toBe(UNKNOWN_CAPABILITY);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain("'kimi'");
-  });
-
   it('reports the trait level when a trait hook answers', () => {
     const { capability, source } = registry.explainCapability('openai', 'special-model', 'cap-vendor');
     expect(capability.image_in).toBe(true);
@@ -479,7 +482,6 @@ describe('kimi provider definitions', () => {
       });
       expect(definition?.hostHeaders).toBe('full');
       expect(definition?.modelSource).toBe('oauth-catalog');
-      expect(definition?.capability).toBe(UNKNOWN_CAPABILITY);
     }
   });
 
