@@ -4,12 +4,17 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. Bound at Agent scope.
+ * resource model. The mutable scheduler state (`active`, `pending`,
+ * `steered`, `launching`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; the lazily-resolved
+ * `fullCompactionService` reference and the `hooks` slot stay plain fields.
+ * Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -19,6 +24,7 @@ import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/t
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { steerTurn } from '#/agent/loop/turnOps';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -57,12 +63,16 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
+export const promptActiveKey = defineState<(Record & { turn: Turn }) | undefined>(
+  'prompt.active',
+  () => undefined as (Record & { turn: Turn }) | undefined,
+);
+export const promptPendingKey = defineState<Record[]>('prompt.pending', () => []);
+export const promptSteeredKey = defineState<Map<string, Record[]>>('prompt.steered', () => new Map());
+export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
+
 export class AgentPromptService implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
-  private active: (Record & { turn: Turn }) | undefined;
-  private readonly pending: Record[] = [];
-  private readonly steered = new Map<string, Record[]>();
-  private launching = false;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -74,11 +84,40 @@ export class AgentPromptService implements IAgentPromptService {
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
+    this.states.register(promptActiveKey);
+    this.states.register(promptPendingKey);
+    this.states.register(promptSteeredKey);
+    this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
     });
+  }
+
+  private get active(): (Record & { turn: Turn }) | undefined {
+    return this.states.get(promptActiveKey);
+  }
+
+  private set active(value: (Record & { turn: Turn }) | undefined) {
+    this.states.set(promptActiveKey, value);
+  }
+
+  private get pending(): Record[] {
+    return this.states.get(promptPendingKey);
+  }
+
+  private get steered(): Map<string, Record[]> {
+    return this.states.get(promptSteeredKey);
+  }
+
+  private get launching(): boolean {
+    return this.states.get(promptLaunchingKey);
+  }
+
+  private set launching(value: boolean) {
+    this.states.set(promptLaunchingKey, value);
   }
 
   async enqueue(input: PromptInput): Promise<PromptHandle> {

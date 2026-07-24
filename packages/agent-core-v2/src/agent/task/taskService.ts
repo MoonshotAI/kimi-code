@@ -26,6 +26,10 @@
  * remain governed by the Session lifecycle. Scope disposal paths that bypass
  * graceful close synchronously cancel/abort work and immediately attempt a
  * best-effort force-stop to reduce the risk of surviving child processes.
+ * The mutable task state (`tasks`, `ghosts`, `scheduledNotificationKeys`,
+ * `deliveredNotificationKeys`, `activeTaskReminderPending`) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it; the
+ * `persistence` construction-time helper stays a plain field.
  * Bound at Agent scope.
  */
 
@@ -38,6 +42,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { defineState } from '#/_base/state/stateRegistry';
 import {
   abortable,
   userCancellationReason,
@@ -49,6 +54,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -213,15 +219,28 @@ export class TaskNotificationStepRequest extends MessageStepRequest {
   }
 }
 
+export const taskTasksKey = defineState<Map<string, ManagedTask>>('task.tasks', () => new Map());
+export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
+  'task.ghosts',
+  () => new Map(),
+);
+export const taskScheduledNotificationKeysKey = defineState<Set<string>>(
+  'task.scheduledNotificationKeys',
+  () => new Set(),
+);
+export const taskDeliveredNotificationKeysKey = defineState<Set<string>>(
+  'task.deliveredNotificationKeys',
+  () => new Set(),
+);
+export const taskActiveTaskReminderPendingKey = defineState<boolean>(
+  'task.activeTaskReminderPending',
+  () => false,
+);
+
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly tasks = new Map<string, ManagedTask>();
-  private readonly ghosts = new Map<string, AgentTaskInfo>();
-  private readonly scheduledNotificationKeys = new Set<string>();
-  private readonly deliveredNotificationKeys = new Set<string>();
   private readonly persistence: AgentTaskPersistence;
-  private activeTaskReminderPending = false;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -236,8 +255,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(taskTasksKey);
+    this.states.register(taskGhostsKey);
+    this.states.register(taskScheduledNotificationKeysKey);
+    this.states.register(taskDeliveredNotificationKeysKey);
+    this.states.register(taskActiveTaskReminderPendingKey);
     const fallbackRoot =
       scopeContext.agentId === 'main'
         ? { dir: session.sessionDir, scope: session.scope() }
@@ -275,6 +300,30 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         this.activeBackgroundTaskReminder(),
       ),
     );
+  }
+
+  private get tasks(): Map<string, ManagedTask> {
+    return this.states.get(taskTasksKey);
+  }
+
+  private get ghosts(): Map<string, AgentTaskInfo> {
+    return this.states.get(taskGhostsKey);
+  }
+
+  private get scheduledNotificationKeys(): Set<string> {
+    return this.states.get(taskScheduledNotificationKeysKey);
+  }
+
+  private get deliveredNotificationKeys(): Set<string> {
+    return this.states.get(taskDeliveredNotificationKeysKey);
+  }
+
+  private get activeTaskReminderPending(): boolean {
+    return this.states.get(taskActiveTaskReminderPendingKey);
+  }
+
+  private set activeTaskReminderPending(value: boolean) {
+    this.states.set(taskActiveTaskReminderPendingKey, value);
   }
 
   private async restoreAfterReplay(): Promise<void> {

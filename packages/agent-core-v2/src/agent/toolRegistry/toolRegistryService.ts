@@ -1,6 +1,15 @@
+/**
+ * `toolRegistry` domain (L3) — `IAgentToolRegistryService` implementation.
+ *
+ * The per-agent tool table (`tools`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it. Bound at Agent scope.
+ */
+
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -19,9 +28,23 @@ interface ToolEntry {
   readonly disclosure?: ToolDisclosure;
 }
 
+export const toolRegistryToolsKey = defineState<Map<string, ToolEntry>>(
+  'toolRegistry.tools',
+  () => new Map(),
+);
+
 export class AgentToolRegistryService implements IAgentToolRegistryService {
   declare readonly _serviceBrand: undefined;
-  private readonly tools = new Map<string, ToolEntry>();
+
+  constructor(
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(toolRegistryToolsKey);
+  }
+
+  private get tools(): Map<string, ToolEntry> {
+    return this.states.get(toolRegistryToolsKey);
+  }
 
   register(tool: ExecutableTool, options: ToolRegistrationOptions = {}): IDisposable {
     const source = options.source ?? 'builtin';

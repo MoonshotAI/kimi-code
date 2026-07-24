@@ -28,6 +28,7 @@ import {
 } from '#/agent/media/image-compress';
 import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import {
   ToolAccesses,
@@ -781,7 +782,7 @@ describe('registerMediaTools', () => {
   const env = createTestEnv();
 
   it('registers ReadMediaFile when the model supports image input', () => {
-    const registry = new AgentToolRegistryService();
+    const registry = new AgentToolRegistryService(new AgentStateService());
     const disposable = registerMediaTools(registry, {
       fs,
       env,
@@ -794,7 +795,7 @@ describe('registerMediaTools', () => {
   });
 
   it('registers ReadMediaFile when the model supports video input', () => {
-    const registry = new AgentToolRegistryService();
+    const registry = new AgentToolRegistryService(new AgentStateService());
     registerMediaTools(registry, {
       fs,
       env,
@@ -805,7 +806,7 @@ describe('registerMediaTools', () => {
   });
 
   it('does not register anything when the model lacks media capability', () => {
-    const registry = new AgentToolRegistryService();
+    const registry = new AgentToolRegistryService(new AgentStateService());
     const disposable = registerMediaTools(registry, {
       fs,
       env,
@@ -824,7 +825,7 @@ describe('AgentMediaToolsRegistrar', () => {
   }
 
   function createRegistrarHarness() {
-    const registry = new AgentToolRegistryService();
+    const registry = new AgentToolRegistryService(new AgentStateService());
     const eventBus = new EventBusService();
     const state: ProfileState = {
       alias: '',
@@ -852,6 +853,7 @@ describe('AgentMediaToolsRegistrar', () => {
       createTestEnv(),
       workspaceCtx,
       recordingTelemetry([]),
+      new AgentStateService(),
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;

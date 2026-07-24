@@ -41,6 +41,7 @@ import {
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
+import { registerStateServices } from '../../../../state/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async () => ({ path: '/mock/rg', source: 'system-path' })),
@@ -292,6 +293,7 @@ describe('GrepTool', () => {
         strict: true,
         additionalServices: (reg) => {
           const kaos = createFakeKaos();
+          registerStateServices(reg);
           reg.defineInstance(IHostProcessService, createTestProcessService(kaos));
           reg.defineInstance(IHostFileSystem, createTestFs(kaos));
           reg.defineInstance(IHostEnvironment, createTestEnv(kaos));

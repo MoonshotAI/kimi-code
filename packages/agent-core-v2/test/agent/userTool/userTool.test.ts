@@ -4,6 +4,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
@@ -81,6 +83,7 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
@@ -161,6 +164,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixChild.set(IAgentStateService, new AgentStateService());
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
@@ -220,6 +224,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(IAgentStateService, new AgentStateService());
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);

@@ -56,6 +56,7 @@ import { SelectToolsTool } from '#/agent/toolSelect/tools/select-tools';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
+import { registerStateServices } from '../../state/stubs';
 import { stubToolExecutor } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 
@@ -300,6 +301,7 @@ function registerSharedServices(
   loop: FakeLoopService,
   eventBus: RecordingEventBus,
 ): void {
+  registerStateServices(reg);
   reg.defineInstance(IEventBus, eventBus);
   reg.defineInstance(IAgentLoopService, loop);
   reg.defineInstance(IAgentContextMemoryService, contextMemory);

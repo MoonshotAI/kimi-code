@@ -18,13 +18,17 @@
  * the agent's lifetime. Resolution outcomes are memoized per (file, provider)
  * for step/retry stability — except a transient upload failure, which
  * degrades only the current request to the tag form so a later step retries
- * the upload instead of freezing the fallback. Bound at Agent scope.
+ * the upload instead of freezing the fallback. The plain-data state
+ * (`resolved`) is registered into `agentState` (`IAgentStateService`) and
+ * read/written through it. Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, Message } from '#/kosong/contract/message';
@@ -50,16 +54,26 @@ const VIDEO_UNAVAILABLE_TEXT =
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+export const mediaResolvedKey = defineState<Map<string, ContentPart>>(
+  'media.resolved',
+  () => new Map(),
+);
+
 export class AgentVideoResolverService implements IAgentVideoResolverService {
   declare readonly _serviceBrand: undefined;
-
-  private readonly resolved = new Map<string, ContentPart>();
 
   constructor(
     @IFileService private readonly files: IFileService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-  ) {}
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(mediaResolvedKey);
+  }
+
+  private get resolved(): Map<string, ContentPart> {
+    return this.states.get(mediaResolvedKey);
+  }
 
   async resolve(
     messages: readonly Message[],

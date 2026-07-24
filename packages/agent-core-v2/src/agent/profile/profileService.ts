@@ -17,8 +17,8 @@
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
  * (used by `userTool`; intentionally not persisted, re-derived on resume); the
- * live overlay is cached in a field and falls back to the Model when unset, so
- * no restore-ordering coupling with `userTool` arises. Profile and client
+ * live overlay is held in `agentState` and falls back to the Model when unset,
+ * so no restore-ordering coupling with `userTool` arises. Profile and client
  * policy are persisted independently. The `agent.status.updated`
  * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
  * `usageOps`). `chdir` and
@@ -43,12 +43,16 @@
  * typo in one agent file cannot legitimize the same typo in another, and
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
- * Bound at Agent scope.
+ * The mutable plain-data state (`optionsValue` / `activeToolNamesOverlay` /
+ * `agentsMdWarning` / the two emitted-warning dedupe sets / `activeProfile`)
+ * is registered into `agentState` (`IAgentStateService`) and read/written
+ * through it. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -80,6 +84,7 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -139,14 +144,33 @@ function describeInactiveToolPattern(
   }
 }
 
+export const profileOptionsValueKey = defineState<ProfileServiceOptions>(
+  'profile.optionsValue',
+  () => ({}),
+);
+export const profileActiveToolNamesOverlayKey = defineState<readonly string[] | undefined>(
+  'profile.activeToolNamesOverlay',
+  () => undefined as readonly string[] | undefined,
+);
+export const profileAgentsMdWarningKey = defineState<string | undefined>(
+  'profile.agentsMdWarning',
+  () => undefined as string | undefined,
+);
+export const profileEmittedThinkingEffortWarningsKey = defineState<Set<string>>(
+  'profile.emittedThinkingEffortWarnings',
+  () => new Set(),
+);
+export const profileEmittedToolPatternWarningsKey = defineState<Set<string>>(
+  'profile.emittedToolPatternWarnings',
+  () => new Set(),
+);
+export const profileActiveProfileKey = defineState<ResolvedAgentProfile | undefined>(
+  'profile.activeProfile',
+  () => undefined as ResolvedAgentProfile | undefined,
+);
+
 export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
-
-  private optionsValue: ProfileServiceOptions = {};
-  private activeToolNamesOverlay: readonly string[] | undefined;
-  private agentsMdWarning: string | undefined;
-  private readonly emittedThinkingEffortWarnings = new Set<string>();
-  private readonly emittedToolPatternWarnings = new Set<string>();
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -154,8 +178,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       (this.wire.getModel(ActiveToolsModel) as ActiveToolsState)
     );
   }
-
-  private activeProfile: ResolvedAgentProfile | undefined;
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -175,8 +197,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(profileOptionsValueKey);
+    this.states.register(profileActiveToolNamesOverlayKey);
+    this.states.register(profileAgentsMdWarningKey);
+    this.states.register(profileEmittedThinkingEffortWarningsKey);
+    this.states.register(profileEmittedToolPatternWarningsKey);
+    this.states.register(profileActiveProfileKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
@@ -191,6 +220,46 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
+  }
+
+  private get optionsValue(): ProfileServiceOptions {
+    return this.states.get(profileOptionsValueKey);
+  }
+
+  private set optionsValue(value: ProfileServiceOptions) {
+    this.states.set(profileOptionsValueKey, value);
+  }
+
+  private get activeToolNamesOverlay(): readonly string[] | undefined {
+    return this.states.get(profileActiveToolNamesOverlayKey);
+  }
+
+  private set activeToolNamesOverlay(value: readonly string[] | undefined) {
+    this.states.set(profileActiveToolNamesOverlayKey, value);
+  }
+
+  private get agentsMdWarning(): string | undefined {
+    return this.states.get(profileAgentsMdWarningKey);
+  }
+
+  private set agentsMdWarning(value: string | undefined) {
+    this.states.set(profileAgentsMdWarningKey, value);
+  }
+
+  private get emittedThinkingEffortWarnings(): Set<string> {
+    return this.states.get(profileEmittedThinkingEffortWarningsKey);
+  }
+
+  private get emittedToolPatternWarnings(): Set<string> {
+    return this.states.get(profileEmittedToolPatternWarningsKey);
+  }
+
+  private get activeProfile(): ResolvedAgentProfile | undefined {
+    return this.states.get(profileActiveProfileKey);
+  }
+
+  private set activeProfile(value: ResolvedAgentProfile | undefined) {
+    this.states.set(profileActiveProfileKey, value);
   }
 
   configure(options: ProfileServiceOptions): void {

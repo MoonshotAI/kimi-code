@@ -20,6 +20,8 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
@@ -72,6 +74,7 @@ describe('AgentContextInjectorService', () => {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.defineInstance(IWireService, stubWire());
+        reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },

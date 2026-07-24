@@ -25,10 +25,15 @@
  * compacts and re-enqueues it — so the loop only learns caught-or-not, while
  * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
- * reads the step budget from `config`. Bound at Agent scope. The `turnEvents`
- * import is load-bearing beyond the prompt-text helper: it loads the
- * `DomainEventMap` augmentation for the `turn.*` / delta events published
- * here, which lives with the event definitions.
+ * reads the step budget from `config`. The plain-data loop state
+ * (`pendingTurns`, `activeTurnJob`, `nextReservedTurnId`,
+ * `lastRequestTraceId`, `disposing`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; the mechanism resources
+ * (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
+ * `settleWaiters`, `activeRequestTrace`) stay plain fields. Bound at Agent
+ * scope. The `turnEvents` import is load-bearing beyond the prompt-text
+ * helper: it loads the `DomainEventMap` augmentation for the `turn.*` / delta
+ * events published here, which lives with the event definitions.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -38,6 +43,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
@@ -52,6 +58,7 @@ import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } 
 import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
@@ -89,6 +96,21 @@ import { cancelTurn, promptTurn, TurnModel } from './turnOps';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
+export const loopPendingTurnsKey = defineState<TurnJob[]>('loop.pendingTurns', () => []);
+export const loopActiveTurnJobKey = defineState<TurnJob | undefined>(
+  'loop.activeTurnJob',
+  () => undefined as TurnJob | undefined,
+);
+export const loopNextReservedTurnIdKey = defineState<number | undefined>(
+  'loop.nextReservedTurnId',
+  () => undefined as number | undefined,
+);
+export const loopLastRequestTraceIdKey = defineState<string | undefined>(
+  'loop.lastRequestTraceId',
+  () => undefined as string | undefined,
+);
+export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
+
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
@@ -100,13 +122,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly standaloneStepQueue = new StepRequestQueue();
   private readonly pendingAssignments = new Map<StepRequest, ReturnType<typeof createControlledPromise<import('./loop').StepAssignment>>>();
   private readonly errorHandlers: LoopErrorHandler[] = [];
-  private readonly pendingTurns: TurnJob[] = [];
-  private activeTurnJob: TurnJob | undefined;
-  private nextReservedTurnId: number | undefined;
   private readonly settleWaiters: Array<() => void> = [];
   private activeRequestTrace: LLMRequestTrace | undefined;
-  private lastRequestTraceId: string | undefined;
-  private disposing = false;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -117,8 +134,50 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(loopPendingTurnsKey);
+    this.states.register(loopActiveTurnJobKey);
+    this.states.register(loopNextReservedTurnIdKey);
+    this.states.register(loopLastRequestTraceIdKey);
+    this.states.register(loopDisposingKey);
+  }
+
+  private get pendingTurns(): TurnJob[] {
+    return this.states.get(loopPendingTurnsKey);
+  }
+
+  private get activeTurnJob(): TurnJob | undefined {
+    return this.states.get(loopActiveTurnJobKey);
+  }
+
+  private set activeTurnJob(value: TurnJob | undefined) {
+    this.states.set(loopActiveTurnJobKey, value);
+  }
+
+  private get nextReservedTurnId(): number | undefined {
+    return this.states.get(loopNextReservedTurnIdKey);
+  }
+
+  private set nextReservedTurnId(value: number | undefined) {
+    this.states.set(loopNextReservedTurnIdKey, value);
+  }
+
+  private get lastRequestTraceId(): string | undefined {
+    return this.states.get(loopLastRequestTraceIdKey);
+  }
+
+  private set lastRequestTraceId(value: string | undefined) {
+    this.states.set(loopLastRequestTraceIdKey, value);
+  }
+
+  private get disposing(): boolean {
+    return this.states.get(loopDisposingKey);
+  }
+
+  private set disposing(value: boolean) {
+    this.states.set(loopDisposingKey, value);
   }
 
   override dispose(): void {

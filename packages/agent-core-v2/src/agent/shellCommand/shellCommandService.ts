@@ -15,14 +15,20 @@
  * missed `shell.started` can still route the chunk. A failure text that was
  * never streamed (empty stdout/stderr) is emitted as a `shell.output` chunk
  * before `shell.completed`, so live consumers see the output too.
+ *
+ * The plain-data state (`shellCommandTasks`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; `shellCommandControllers`
+ * stays an instance field (per-command `AbortController`s, not plain data).
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
@@ -73,17 +79,28 @@ declare module '#/app/event/eventBus' {
 
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
+export const shellCommandTasksKey = defineState<Map<string, string>>(
+  'shellCommand.tasks',
+  () => new Map(),
+);
+
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
-  private readonly shellCommandTasks = new Map<string, string>();
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentPromptService private readonly promptService: IAgentPromptService,
     @IEventBus private readonly eventBus: IEventBus,
-  ) { }
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(shellCommandTasksKey);
+  }
+
+  private get shellCommandTasks(): Map<string, string> {
+    return this.states.get(shellCommandTasksKey);
+  }
 
   async run(input: RunShellCommandInput): Promise<RunShellCommandResult> {
     this.appendShellInput(input.command);

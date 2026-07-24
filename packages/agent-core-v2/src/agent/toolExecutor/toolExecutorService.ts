@@ -7,13 +7,18 @@
  * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
  * events through `event`, records telemetry through `telemetry`, truncates
  * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. Bound at Agent scope.
+ * diagnostics through `log`. The mutable dup-type tracking state
+ * (`toolCallDupTypes`, `dupTypeTurnId`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; the emitters, the hook
+ * slot, and the describer/guard registration slots stay plain fields. Bound
+ * at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
@@ -41,6 +46,7 @@ import type {
   ToolDidExecuteContext,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -99,6 +105,15 @@ type ToolExecutionStreamEvent =
       readonly settled: SettledToolExecutionResult;
     };
 
+export const toolExecutorToolCallDupTypesKey = defineState<Map<string, ToolCallDupType>>(
+  'toolExecutor.toolCallDupTypes',
+  () => new Map(),
+);
+export const toolExecutorDupTypeTurnIdKey = defineState<number | undefined>(
+  'toolExecutor.dupTypeTurnId',
+  () => undefined as number | undefined,
+);
+
 export class AgentToolExecutorService implements IAgentToolExecutorService {
   declare readonly _serviceBrand: undefined;
 
@@ -114,8 +129,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
   private toolCallGuard: ToolCallGuard | undefined;
-  private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
-  private dupTypeTurnId: number | undefined;
 
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
     this.toolCallDupTypes.set(toolCallId, dupType);
@@ -148,8 +161,24 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
+    @IAgentStateService private readonly states: IAgentStateService,
     @ILogService private readonly log?: ILogService,
-  ) {}
+  ) {
+    this.states.register(toolExecutorToolCallDupTypesKey);
+    this.states.register(toolExecutorDupTypeTurnIdKey);
+  }
+
+  private get toolCallDupTypes(): Map<string, ToolCallDupType> {
+    return this.states.get(toolExecutorToolCallDupTypesKey);
+  }
+
+  private get dupTypeTurnId(): number | undefined {
+    return this.states.get(toolExecutorDupTypeTurnIdKey);
+  }
+
+  private set dupTypeTurnId(value: number | undefined) {
+    this.states.set(toolExecutorDupTypeTurnIdKey, value);
+  }
 
   async *execute(
     calls: ToolCall[],

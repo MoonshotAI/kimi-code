@@ -12,6 +12,8 @@ import { PermissionModeInjection } from '#/agent/permissionMode/injection/permis
 import { AgentPermissionModeService } from '#/agent/permissionMode/permissionModeService';
 import { PermissionModeModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -58,6 +60,7 @@ beforeEach(() => {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentContextInjectorService, injectorStub);
+  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
@@ -179,6 +182,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
       },
       injectAfterCompaction: async () => {},
     });
+    ix2.set(IAgentStateService, new AgentStateService());
     disposables.add(ix2.createInstance(PermissionModeInjection, svc));
     if (restoredProvider === undefined) throw new Error('expected restored provider');
 
