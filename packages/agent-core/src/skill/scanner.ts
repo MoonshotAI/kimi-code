@@ -196,44 +196,48 @@ export async function discoverSkills(
       // A SKILL.md placed directly at a plugin skill root (e.g. plugin root fallback)
       // is treated as a single skill bundle. This only applies to plugin-derived roots,
       // not to user/project skill directories.
-      if (root.plugin !== undefined) {
-        const rootSkillMd = path.join(dirPath, 'SKILL.md');
-        if (await isFile(rootSkillMd)) {
+      const rootSkillMd = path.join(dirPath, 'SKILL.md');
+      const isBundleDir = await isFile(rootSkillMd);
+      if (isBundleDir && root.plugin !== undefined) {
+        await parseAndRegister({
+          parse,
+          byName,
+          skillMdPath: rootSkillMd,
+          skillDirName: path.basename(dirPath),
+          root,
+          onDiscoveredSkill: options.onDiscoveredSkill,
+          warn,
+          skip,
+        });
+      }
+
+      // When the root itself is a skill bundle (it holds SKILL.md), its other
+      // .md files are payload (references, glossaries), not flat skills.
+      // Flat .md registration only makes sense for collection dirs.
+      if (!isBundleDir) {
+        for (const entry of entries) {
+          if (!entry.endsWith('.md')) continue;
+          if (entry === 'SKILL.md') continue;
+          const skillName = entry.slice(0, -'.md'.length);
+          if (directorySkills.has(skillName)) {
+            warn(
+              `Ignoring flat skill ${path.join(dirPath, entry)} because ${path.join(dirPath, skillName, 'SKILL.md')} exists with the same name`,
+            );
+            continue;
+          }
+          const skillMdPath = path.join(dirPath, entry);
+          if (!(await isFile(skillMdPath))) continue;
           await parseAndRegister({
             parse,
             byName,
-            skillMdPath: rootSkillMd,
-            skillDirName: path.basename(dirPath),
+            skillMdPath,
+            skillDirName: skillName,
             root,
             onDiscoveredSkill: options.onDiscoveredSkill,
             warn,
             skip,
           });
         }
-      }
-
-      for (const entry of entries) {
-        if (!entry.endsWith('.md')) continue;
-        if (entry === 'SKILL.md') continue;
-        const skillName = entry.slice(0, -'.md'.length);
-        if (directorySkills.has(skillName)) {
-          warn(
-            `Ignoring flat skill ${path.join(dirPath, entry)} because ${path.join(dirPath, skillName, 'SKILL.md')} exists with the same name`,
-          );
-          continue;
-        }
-        const skillMdPath = path.join(dirPath, entry);
-        if (!(await isFile(skillMdPath))) continue;
-        await parseAndRegister({
-          parse,
-          byName,
-          skillMdPath,
-          skillDirName: skillName,
-          root,
-          onDiscoveredSkill: options.onDiscoveredSkill,
-          warn,
-          skip,
-        });
       }
     }
 
