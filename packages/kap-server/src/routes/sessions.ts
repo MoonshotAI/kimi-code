@@ -14,7 +14,7 @@
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/goal         current goal (null when none)
- *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
+ *   GET    /sessions/{session_id}/warnings     session-level notices
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
@@ -35,12 +35,14 @@
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
  *
- * `GET /sessions/{id}/warnings` surfaces the only v1 warning
- * (`agents-md-oversized`) by projecting the main agent's
- * `IAgentProfileService.getAgentsMdWarning()` — computed and cached when the
- * agent binds a profile (via `prepareSystemPromptContext`) — into the v1
- * `{ code, message, severity }` wire shape. An unbound main agent yields an
- * empty list, matching v1's "no warning" case.
+ * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
+ * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
+ * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
+ * — computed and cached when the agent binds a profile) and the
+ * secondary-model early-validation warning (projected from the Session-scope
+ * `ISessionSecondaryModelWarningService` — computed and cached when the main
+ * agent is created). An unbound main agent or a valid/unset secondary model
+ * yields an empty list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -86,6 +88,7 @@ import {
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionSecondaryModelWarningService,
   IEventService,
   IWorkspaceAliases,
   IWorkspaceService,
@@ -997,14 +1000,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       try {
-        // Surface the v2 `agents-md-oversized` notice in the v1 wire shape. The
-        // warning is computed (and cached) by `IAgentProfileService` when the main
-        // agent binds a profile; an unbound main agent yields `undefined` → `[]`,
-        // matching v1's "no warning" case.
+        // Surface v2 notices in the v1 wire shape. The agents-md warning is
+        // computed (and cached) by `IAgentProfileService` when the main agent
+        // binds a profile; the secondary-model warning is computed (and
+        // cached) by `ISessionSecondaryModelWarningService` when the main
+        // agent is created. An unbound main agent / unset secondary model
+        // yields `undefined` → that entry drops out, matching v1's "no
+        // warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings =
-          agentsMdWarning === undefined
+        const secondaryModelWarning = session.accessor
+          .get(ISessionSecondaryModelWarningService)
+          .getSecondaryModelWarning();
+        const warnings = [
+          ...(agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1012,7 +1021,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ];
+              ]),
+          ...(secondaryModelWarning === undefined
+            ? []
+            : [
+                {
+                  code: secondaryModelWarning.code,
+                  message: secondaryModelWarning.message,
+                  severity: 'warning' as const,
+                },
+              ]),
+        ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
