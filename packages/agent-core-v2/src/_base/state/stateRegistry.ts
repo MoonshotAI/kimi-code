@@ -9,9 +9,13 @@
  * up front (`register`), read and replaced (`get` / `set`), and observed
  * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
  * debugging: `entries()` returns the live key/value references for in-process
- * readers, and `snapshot()` returns a JSON-safe deep copy (Maps become plain
- * objects or entry arrays, Sets become arrays, functions are dropped,
- * circular references become `'(circular)'`) for RPC / inspector export. Misuse (duplicate registration, reading or writing an
+ * readers, and `snapshot()` returns a JSON-safe deep copy for RPC / inspector
+ * export: Maps become plain objects or entry arrays, Sets become arrays,
+ * functions are dropped, circular references become `'(circular)'`, and
+ * instances with a custom prototype (service references, tools, Promises)
+ * collapse to a `'(ClassName)'` marker — plain data is recursed, resource
+ * graphs are not, so a value that reaches into the DI object graph cannot
+ * fan the copy out until the heap is exhausted. Misuse (duplicate registration, reading or writing an
  * unregistered key) is a caller bug and raises `BugIndicatingError`.
  *
  * Values are stored as-is — the container does not freeze or clone, so
@@ -127,6 +131,15 @@ function toJsonSafe(value: unknown, seen: WeakSet<object>): unknown {
     }
     if (value instanceof Set) {
       return [...value.values()].map((item) => toJsonSafe(item, seen));
+    }
+    // Plain objects (literal / interface-shaped) are recursed; instances with
+    // a custom prototype (services, tools, AbortControllers, Promises, Errors)
+    // are resource graphs, not data — walking them fans out across the whole
+    // DI object graph and can exhaust the heap, so they collapse to a marker.
+    const proto: unknown = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      const ctor = (value as { constructor?: { name?: string } }).constructor;
+      return `(${ctor?.name ?? 'object'})`;
     }
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {

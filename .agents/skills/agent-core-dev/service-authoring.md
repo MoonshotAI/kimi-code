@@ -203,6 +203,17 @@ A scoped Service may expose a factory method that returns a **new** instance of 
 - `readonly` public fields only for immutable exposed state; prefer a getter (`get level()`) when the value can change.
 - Keep state minimal — a Service owns only the state that matches its scope's identity (design.md §2). Anything else belongs in a different Service.
 
+### Runtime state goes into the per-scope state container
+
+Session/Agent-scope Services register their runtime state into the scope's state container (`ISessionStateService` / `IAgentStateService`, both over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
+
+- Declare keys in the domain file and export them: `export const interactionPendingKey = defineState<Map<string, Pending>>('interaction.pending', () => new Map())` — `<domain>.<field>` naming, factory initializers.
+- Inject `@ISessionStateService private readonly states` (or the Agent token) and `this.states.register(key)` per key at the top of the constructor.
+- Replace the field with accessors: a getter for collections only mutated in place (`this.foo.add(...)` keeps working — the container stores references, never clones); add a setter routed through `states.set` for reassigned scalars. Call sites stay unchanged.
+- Values may carry functions/resources (the `interaction.Pending` precedent — `snapshot()` drops functions); keep only mechanism fields as instance fields: Emitters, hook slots, disposable slots, in-flight Promise locks/waiter arrays, abort handles, caches, queue instances.
+- `snapshot()` recurses plain data only: values with a custom prototype (service references, tool instances, Promises) collapse to a `'(ClassName)'` marker — this is the guard that keeps a resource graph reachable from a registered value from blowing up the heap during export.
+- Durable, replayable state does NOT belong here — it stays on wire Models. The container is memory-only.
+
 ## Events
 
 v2 has two distinct event mechanisms. Pick by audience:

@@ -136,6 +136,31 @@ describe('StateRegistry', () => {
     registry.register(sharedKey);
     expect(registry.snapshot()).toEqual({ 'test.shared': { a: { v: 1 }, b: { v: 1 } } });
   });
+
+  it('collapses class instances to a marker in snapshots but keeps recursing plain data', () => {
+    class FakeService {
+      constructor(readonly dep: object) {}
+    }
+    // A resource graph reachable from plain data: plain -> class -> plain…
+    // The class boundary stops the walk, so the deep plain tail never copied.
+    const service = new FakeService({ deep: { tail: 'unreachable' } });
+    const mixedKey = defineState('test.mixed', () => ({
+      plain: { nested: [1, { ok: true }] },
+      controller: new AbortController(),
+      tool: service,
+      nullProto: Object.assign(Object.create(null) as Record<string, unknown>, { v: 1 }),
+    }));
+    const registry = new StateRegistry();
+    registry.register(mixedKey);
+    expect(registry.snapshot()).toEqual({
+      'test.mixed': {
+        plain: { nested: [1, { ok: true }] },
+        controller: '(AbortController)',
+        tool: '(FakeService)',
+        nullProto: { v: 1 },
+      },
+    });
+  });
 });
 
 describe('state services (scoped)', () => {
