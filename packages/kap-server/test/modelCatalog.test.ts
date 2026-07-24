@@ -147,6 +147,15 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     ]);
   });
 
+  it('hides the synthesized secondary-model derived entry from /models', async () => {
+    await boot(
+      `${CATALOG_TOML}\n[secondary_model]\nmodel = "turbo"\nmax_output_size = 8192\n`,
+    );
+    const { status, body } = await getJson<{ items: { model: string }[] }>('/api/v1/models');
+    expect(status).toBe(200);
+    expect(body.data.items.map((item) => item.model)).toEqual(['k2', 'turbo', 'gpt4o']);
+  });
+
   it('lists models without refreshing providers', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],

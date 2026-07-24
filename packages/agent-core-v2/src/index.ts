@@ -97,6 +97,7 @@ export * from '#/kosong/protocol/protocol';
 export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
+import '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
@@ -115,6 +116,15 @@ export {
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
+export type { SecondaryModelConfig } from '#/app/kosongConfig/configSection';
+// The secondary-model derived-entry overlay: the edge (kap-server's
+// `GET /models` route) hides the reserved id from pickers, and tests drive
+// the overlay directly — re-export from the package root.
+export {
+  SECONDARY_DERIVED_MODEL_ID,
+  secondaryModelOverlay,
+  secondaryModelPatch,
+} from '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
@@ -273,6 +283,9 @@ export * from '#/session/mcp/sessionMcp';
 export * from '#/session/mcp/sessionMcpService';
 export * from '#/session/subagent/subagent';
 export * from '#/session/subagent/subagentService';
+import '#/session/subagent/flag';
+export * from '#/session/subagent/secondaryModelWarning';
+export * from '#/session/subagent/secondaryModelWarningService';
 export * from '#/session/subagent/tools/subagent-task';
 export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
 export * from '#/session/subagent/mirrorAgentRun';

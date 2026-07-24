@@ -320,6 +320,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" is not configured in config.toml.`,
+        { details: { model: id } },
       );
     }
     trace.capture(TRACE.configuredModel, configuredModel);
