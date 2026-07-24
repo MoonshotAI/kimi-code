@@ -1,0 +1,120 @@
+@match: while read -r line; do echo "$line"; done < file
+while read -r line; do echo "$line"; done < file
+===
+@match: foo() { x; } > out
+foo() { x; } > out
+===
+@match: if a; then b; fi > out
+if a; then b; fi > out
+===
+@match: cat > $"out"
+cat > $"out"
+===
+@match: diff <(cmd) >(other)
+diff <(cmd) >(other)
+===
+@match: cmd > out 2>&1
+cmd > out 2>&1
+===
+@match: cmd &>> log
+cmd &>> log
+===
+@known-diff redirect-readwrite: exec 3<>file
+exec 3<>file
+---
+hasError: false
+program [0,12] "exec 3<>file"
+  redirected_statement [0,12] "exec 3<>file"
+    command [0,4] "exec"
+      command_name [0,4] "exec"
+        word [0,4] "exec"
+    file_redirect [5,12] "3<>file"
+      file_descriptor [5,6] "3"
+      (<>) [6,8] "<>"
+      word [8,12] "file"
+===
+@match: > out
+> out
+===
+@match: cmd 2>/dev/null
+cmd 2>/dev/null
+===
+@match: cmd >&-
+cmd >&-
+===
+@match: cmd >| file
+cmd >| file
+===
+@known-diff redirect-readwrite: cmd <>file
+cmd <>file
+---
+hasError: false
+program [0,10] "cmd <>file"
+  redirected_statement [0,10] "cmd <>file"
+    command [0,3] "cmd"
+      command_name [0,3] "cmd"
+        word [0,3] "cmd"
+    file_redirect [4,10] "<>file"
+      (<>) [4,6] "<>"
+      word [6,10] "file"
+===
+@match: cmd < in
+cmd < in
+===
+@match: cmd <&0-
+cmd <&0-
+===
+@match: cmd > out
+cmd > out
+===
+@match: cmd 2>&1 >/dev/null
+cmd 2>&1 >/dev/null
+===
+@match: > a cmd x
+> a cmd x
+===
+@match: (ls) > out
+(ls) > out
+===
+@match: ! ls > out
+! ls > out
+===
+@match: cmd > out arg
+cmd > out arg
+===
+@match: 2>&1 whoami
+2>&1 whoami
+===
+@match: echo "foobar" >&2
+echo "foobar" >&2
+===
+@match: exec {VIRTWL[0]} {VIRTWL[1]} <&- >&-
+exec {VIRTWL[0]} {VIRTWL[1]} <&- >&-
+===
+@match: exec {VIRTWL[0]}<&- {VIRTWL[1]}>&-
+exec {VIRTWL[0]}<&- {VIRTWL[1]}>&-
+===
+@match: x <x a b c
+x <x a b c
+===
+@match: Z="${A#*<B>}"
+Z="${A#*<B>}"
+===
+@match: C="${D%</E>*}"
+C="${D%</E>*}"
+===
+@match: some-command ${foo:+--arg <(printf '%s\n' "$foo")}
+some-command ${foo:+--arg <(printf '%s\n' "$foo")}
+===
+@match: echo $(< some-file)
+echo $(< some-file)
+===
+@match: exec {fd}<&-
+exec {fd}<&-
+===
+@match: exec {a[0]}<&- {b[1]}>&-
+exec {a[0]}<&- {b[1]}>&-
+===
+@match: exec {a[0]}<&-
+exec {a[0]}<&-
+===
