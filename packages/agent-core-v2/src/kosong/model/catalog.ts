@@ -54,6 +54,7 @@ import type { ModelRequester } from './modelRequester';
  */
 export interface AuthProvider {
   readonly canRefresh?: boolean;
+  readonly disableCompletionBudget?: boolean;
 
   getAuth(options?: { readonly force?: boolean }): Promise<ProviderRequestAuth | undefined>;
 }

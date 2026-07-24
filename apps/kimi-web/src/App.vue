@@ -40,7 +40,12 @@ import { openDialogCount } from './composables/dialogStack';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
-import type { AppConfig, ThinkingLevel } from './api/types';
+import type {
+  AppConfig,
+  OAuthLoginOptions,
+  OAuthLoginProvider,
+  ThinkingLevel,
+} from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
@@ -316,6 +321,8 @@ const showModelPicker = ref(false);
 const showProviders = ref(false);
 
 const showLogin = ref(false);
+const loginProvider = ref<OAuthLoginProvider>();
+const loginPreserveDefaultModel = ref(true);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -384,8 +391,19 @@ async function openProviders(): Promise<void> {
   }
 }
 
-function openLogin(): void {
+function openLogin(
+  provider?: OAuthLoginProvider,
+  preserveDefaultModel = true,
+): void {
+  loginProvider.value = provider;
+  loginPreserveDefaultModel.value = preserveDefaultModel;
   showLogin.value = true;
+}
+
+function closeLogin(): void {
+  showLogin.value = false;
+  loginProvider.value = undefined;
+  loginPreserveDefaultModel.value = true;
 }
 
 async function handleSelectModel(modelId: string): Promise<void> {
@@ -467,20 +485,31 @@ async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
 }
 
 // LoginDialog callbacks — delegates to composable
-async function handleStartOAuthLogin() {
-  return client.startOAuthLogin();
+async function handleStartOAuthLogin(
+  provider: OAuthLoginProvider,
+  options: OAuthLoginOptions,
+) {
+  const result = await client.startOAuthLogin(provider, options);
+  if (result?.status === 'denied') {
+    await client.checkAuth();
+  }
+  return result;
 }
 
-async function handlePollOAuthLogin() {
-  return client.pollOAuthLogin();
+async function handlePollOAuthLogin(provider: OAuthLoginProvider) {
+  const result = await client.pollOAuthLogin(provider);
+  if (result?.status === 'denied') {
+    await client.checkAuth();
+  }
+  return result;
 }
 
-async function handleCancelOAuthLogin() {
-  return client.cancelOAuthLogin();
+async function handleCancelOAuthLogin(provider: OAuthLoginProvider) {
+  return client.cancelOAuthLogin(provider);
 }
 
 async function handleLoginSuccess(): Promise<void> {
-  showLogin.value = false;
+  closeLogin();
   // Re-check auth state and reload sessions now that we're authenticated
   await client.checkAuth();
   await client.load();
@@ -703,10 +732,16 @@ function openPr(url: string): void {
           <h1>{{ t('app.authPageTitle') }}</h1>
           <p>{{ t('app.authPageMessage') }}</p>
         </div>
-        <Button class="auth-page-btn" variant="primary" @click="openLogin">
-          <Icon name="log-in" size="md" />
-          <span>{{ t('app.authPageLogin') }}</span>
-        </Button>
+        <div class="auth-page-actions">
+          <Button class="auth-page-btn" variant="primary" @click="openLogin('managed:kimi-code', false)">
+            <Icon name="log-in" size="md" />
+            <span>{{ t('app.authPageLoginKimi') }}</span>
+          </Button>
+          <Button class="auth-page-btn" variant="secondary" @click="openLogin('openai-codex', false)">
+            <Icon name="log-in" size="md" />
+            <span>{{ t('app.authPageLoginChatGpt') }}</span>
+          </Button>
+        </div>
       </div>
     </section>
     <div
@@ -990,8 +1025,8 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :accent="client.accent.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
-      :account-model="client.defaultModel.value"
+      :oauth-providers="client.oauthProviders.value"
+      :oauth-logout-pending="client.oauthLogoutPending.value"
       :notify="client.notifyOnComplete.value"
       :notify-question="client.notifyOnQuestion.value"
       :notify-approval="client.notifyOnApproval.value"
@@ -1012,8 +1047,8 @@ function openPr(url: string): void {
       @set-sound="client.setSoundOnComplete($event)"
       @set-conversation-toc="client.setConversationToc($event)"
       @update-config="handleUpdateConfig($event)"
-      @login="() => { showSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @login="() => { showSettings = false; openLogin(undefined, true); }"
+      @logout="client.logout($event)"
       @open-onboarding="() => { showSettings = false; openOnboarding(); }"
       @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false"
@@ -1028,7 +1063,7 @@ function openPr(url: string): void {
       @add="handleAddProvider($event)"
       @refresh="handleRefreshProvider($event)"
       @delete="confirmDeleteProvider($event)"
-      @open-login="() => { showProviders = false; openLogin(); }"
+      @open-login="(provider) => { showProviders = false; openLogin(provider, true); }"
       @close="showProviders = false"
     />
 
@@ -1108,7 +1143,8 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
+      :oauth-providers="client.oauthProviders.value"
+      :oauth-logout-pending="client.oauthLogoutPending.value"
       :conversation-toc="client.conversationToc.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
@@ -1119,18 +1155,21 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-conversation-toc="client.setConversationToc($event)"
-      @login="() => { showMobileSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @login="() => { showMobileSettings = false; openLogin(undefined, true); }"
+      @logout="client.logout($event)"
     />
     </div>
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <LoginDialog
       v-if="showLogin"
+      :initial-provider="loginProvider"
+      :oauth-providers="client.oauthProviders.value"
+      :preserve-default-model="loginPreserveDefaultModel"
       :on-start-o-auth-login="handleStartOAuthLogin"
       :on-poll-o-auth-login="handlePollOAuthLogin"
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
       @success="handleLoginSuccess"
-      @close="showLogin = false"
+      @close="closeLogin"
     />
   </div>
 </template>
@@ -1207,6 +1246,16 @@ function openPr(url: string): void {
   font-size: var(--ui-font-size-lg);
   line-height: 1.55;
   color: var(--dim);
+}
+.auth-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+.auth-page-btn {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .app {
   --preview-w: 460px;
@@ -1336,7 +1385,12 @@ function openPr(url: string): void {
     font-size: 26px;
   }
   .auth-page-btn {
+    flex: none;
     width: 100%;
+  }
+  .auth-page-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>

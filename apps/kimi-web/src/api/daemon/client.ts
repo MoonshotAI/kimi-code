@@ -10,6 +10,7 @@ import type {
   AppMessage,
   AppMessageRole,
   AppModel,
+  AppOAuthProvider,
   AppProvider,
   ProviderRefreshResult,
   AppSession,
@@ -27,7 +28,10 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  OAuthLoginOptions,
+  OAuthLoginProvider,
   OAuthLoginStartResult,
+  OAuthLoginStatus,
   Page,
   PageRequest,
   PromptSubmission,
@@ -1300,8 +1304,20 @@ export class DaemonKimiWebApi implements KimiWebApi {
     providersCount: number;
     defaultModel: string | null;
     managedProvider: { status: string } | null;
+    oauthProviders: AppOAuthProvider[];
   }> {
     const data = await this.http.get<WireAuthResult>('/auth');
+    const oauthProviders =
+      data.oauth_providers ??
+      (data.managed_provider === null
+        ? []
+        : [
+            {
+              name: data.managed_provider.name,
+              status: data.managed_provider.status,
+              active: data.ready,
+            },
+          ]);
     return {
       ready: data.ready,
       providersCount: data.providers_count,
@@ -1309,11 +1325,31 @@ export class DaemonKimiWebApi implements KimiWebApi {
       managedProvider: data.managed_provider
         ? { status: data.managed_provider.status }
         : null,
+      oauthProviders: oauthProviders.map((provider) => ({
+        name: provider.name,
+        status: provider.status,
+        active: provider.active,
+        entitlementStatus: provider.entitlement_status,
+      })),
     };
   }
 
-  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
-    const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+  async startOAuthLogin(
+    provider: OAuthLoginProvider,
+    options: OAuthLoginOptions,
+  ): Promise<OAuthLoginStartResult> {
+    const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {
+      provider,
+      preserve_default_model: options.preserveDefaultModel,
+    });
+    if (data.status === 'denied') {
+      return {
+        flowId: data.flow_id,
+        provider: data.provider,
+        status: 'denied',
+        errorMessage: data.error_message,
+      };
+    }
     if (data.status === 'authenticated') {
       return {
         flowId: data.flow_id,
@@ -1334,28 +1370,32 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async pollOAuthLogin(): Promise<{
+  async pollOAuthLogin(provider: OAuthLoginProvider): Promise<{
     flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+    status: OAuthLoginStatus;
     resolvedAt?: string;
+    errorMessage?: string;
   } | null> {
     // data may be null if no flow is active
-    const data = await this.http.get<WireOAuthLoginPollResult | null>('/oauth/login');
+    const data = await this.http.get<WireOAuthLoginPollResult | null>('/oauth/login', { provider });
     if (!data) return null;
     return {
       flowId: data.flow_id,
       status: data.status,
       resolvedAt: data.resolved_at,
+      errorMessage: data.error_message,
     };
   }
 
-  async cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }> {
-    const data = await this.http.delete<WireOAuthCancelResult>('/oauth/login');
+  async cancelOAuthLogin(
+    provider: OAuthLoginProvider,
+  ): Promise<{ cancelled: boolean; status: string }> {
+    const data = await this.http.delete<WireOAuthCancelResult>('/oauth/login', { provider });
     return { cancelled: data.cancelled, status: data.status };
   }
 
-  async logout(): Promise<{ loggedOut: boolean }> {
-    const data = await this.http.post<WireLogoutResult>('/oauth/logout', {});
+  async logout(provider: string): Promise<{ loggedOut: boolean }> {
+    const data = await this.http.post<WireLogoutResult>('/oauth/logout', { provider });
     return { loggedOut: data.logged_out };
   }
 

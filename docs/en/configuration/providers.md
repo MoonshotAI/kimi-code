@@ -35,7 +35,7 @@ Two paths when adding:
 - **Custom registry (api.json)**: paste a custom registry URL and Bearer token; the CLI automatically creates the `providers` / `models` entries. On later startup, providers from the same registry URL are refreshed together, so upstream provider additions, removals, and model metadata changes are synced.
 
 ::: warning
-Kimi Code OAuth managed accounts logged in via `/login` do not appear in `/provider`. Use `/login` and `/logout` to manage them.
+OAuth accounts logged in via `/login`, including Kimi Code and ChatGPT Plus/Pro, do not appear in `/provider`. Use `/login` and `/logout` to manage them.
 :::
 
 The same operations are also available in non-interactive environments via the shell command: [`kimi provider`](../reference/kimi-command.md#kimi-provider).
@@ -154,7 +154,7 @@ To route Vertex requests through a custom (e.g. proxied) endpoint, set `base_url
 
 ## OAuth and credential injection
 
-The Kimi Code managed service uses OAuth rather than static API keys. After running `/login`, the built-in authentication toolchain automatically writes and refreshes credentials — no manual configuration is needed in `config.toml` for this.
+The Kimi Code managed service and ChatGPT Plus/Pro provider use OAuth rather than static API keys. After running `/login`, the built-in authentication toolchain automatically writes and refreshes credentials — no manual configuration is needed in `config.toml` for this.
 
 ## Next steps
 

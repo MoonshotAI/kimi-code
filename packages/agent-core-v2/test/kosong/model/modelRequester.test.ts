@@ -178,6 +178,18 @@ describe('ModelRequesterImpl request execution', () => {
     expect(options?.responseFormat).toEqual({ type: 'json_object' });
   });
 
+  it('omits the completion budget when the model disables it', async () => {
+    const provider = new FakeChatProvider();
+    const requester = new ModelRequesterImpl(
+      modelWith({ ...staticAuth(), disableCompletionBudget: true }),
+      registryReturning(provider),
+    );
+
+    await collect(requester.request(INPUT, undefined, { maxCompletionTokens: 1024 }));
+
+    expect(provider.calls[0]?.options?.maxCompletionTokens).toBeUndefined();
+  });
+
   it('omits the thinking intent when no effort is requested', async () => {
     const provider = new FakeChatProvider();
     const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));

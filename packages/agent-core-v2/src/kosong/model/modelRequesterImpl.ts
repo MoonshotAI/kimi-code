@@ -118,7 +118,9 @@ export class ModelRequesterImpl implements ModelRequester {
         params?.thinkingEffort === undefined
           ? undefined
           : { effort: params.thinkingEffort, keep: params.thinkingKeep },
-      maxCompletionTokens: params?.maxCompletionTokens,
+      maxCompletionTokens: this.authProvider.disableCompletionBudget
+        ? undefined
+        : params?.maxCompletionTokens,
       usedContextTokens: params?.usedContextTokens,
       maxContextTokens: params?.maxContextTokens,
       onRequestStart: () => {

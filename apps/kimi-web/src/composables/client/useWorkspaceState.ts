@@ -432,6 +432,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.authReady = result.ready;
       rawState.defaultModel = result.defaultModel;
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
+      rawState.oauthProviders = result.oauthProviders;
       connectIssue.value = null;
       return 'proceed';
     } catch (err) {
@@ -2489,15 +2490,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     });
   }
 
-  /** Logout from the managed Kimi provider. Re-checks auth and reloads sessions. */
-  async function logout(): Promise<void> {
+  /** Logout from one OAuth provider. Re-checks auth and reloads client state. */
+  async function logout(provider: string): Promise<void> {
+    if (rawState.oauthLogoutPending[provider] === true) return;
+    rawState.oauthLogoutPending = { ...rawState.oauthLogoutPending, [provider]: true };
     try {
       const api = getKimiWebApi();
-      await api.logout();
+      await api.logout(provider);
       await checkAuth();
       await load();
-    } catch (err) {
-      pushOperationFailure('logout', err);
+    } catch (error) {
+      pushOperationFailure('logout', error);
+    } finally {
+      const next = { ...rawState.oauthLogoutPending };
+      delete next[provider];
+      rawState.oauthLogoutPending = next;
     }
   }
 

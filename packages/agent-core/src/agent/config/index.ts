@@ -261,6 +261,10 @@ export class ConfigState {
     return this.tryResolvedProviderConfig()?.maxOutputSize;
   }
 
+  get disableCompletionBudget(): boolean {
+    return this.tryResolvedProviderConfig()?.disableCompletionBudget === true;
+  }
+
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
     return this.agent.modelProvider?.resolveProviderConfig(this._modelAlias);

@@ -411,10 +411,12 @@ export class Agent {
     // is applied in ConfigState.provider so compaction shares it. See get provider().
     const provider = this.config.provider;
     const loopControl = this.kimiConfig?.loopControl;
-    const completionBudgetConfig = resolveCompletionBudget({
-      maxOutputSize: this.config.maxOutputSize,
-      reservedContextSize: loopControl?.reservedContextSize,
-    });
+    const completionBudgetConfig = this.config.disableCompletionBudget
+      ? undefined
+      : resolveCompletionBudget({
+          maxOutputSize: this.config.maxOutputSize,
+          reservedContextSize: loopControl?.reservedContextSize,
+        });
     return new KosongLLM({
       provider,
       systemPrompt: this.config.systemPrompt,

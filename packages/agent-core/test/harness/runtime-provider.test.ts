@@ -255,6 +255,41 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     expect(resolved.maxOutputSize).toBe(384000);
   });
 
+  it('ignores openai-codex maxOutputSize because ChatGPT codex rejects max_output_tokens', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          'openai-codex': {
+            type: 'openai_responses',
+            apiKey: '',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            oauth: {
+              storage: 'file',
+              key: 'oauth/openai-codex',
+              oauthHost: 'https://auth.openai.com',
+            },
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'openai-codex/gpt-5.5': {
+            provider: 'openai-codex',
+            model: 'gpt-5.5',
+            maxContextSize: 353000,
+            maxOutputSize: 128000,
+          },
+        },
+      },
+      model: 'openai-codex/gpt-5.5',
+    });
+
+    expect(resolved.maxOutputSize).toBeUndefined();
+    expect(resolved.disableCompletionBudget).toBe(true);
+    expect(resolved.provider).not.toHaveProperty('maxOutputTokens');
+  });
+
   it('forwards alias.maxOutputSize to the anthropic provider config as defaultMaxTokens', () => {
     const resolved = resolveRuntimeProvider({
       config: {

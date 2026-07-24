@@ -63,6 +63,7 @@ describe('server-v2 GET /api/v1/auth', () => {
       providers_count: 0,
       default_model: null,
       managed_provider: null,
+      oauth_providers: [],
     });
   });
 
@@ -87,6 +88,7 @@ describe('server-v2 GET /api/v1/auth', () => {
       providers_count: 1,
       default_model: 'x',
       managed_provider: null,
+      oauth_providers: [],
     });
   });
 
@@ -129,6 +131,9 @@ describe('server-v2 GET /api/v1/auth', () => {
       name: 'managed:kimi-code',
       status: 'unauthenticated',
     });
+    expect(summary.oauth_providers).toEqual([
+      { name: 'managed:kimi-code', status: 'unauthenticated', active: false },
+    ]);
     // No default_model → still not ready, even though the provider exists.
     expect(summary.ready).toBe(false);
   });

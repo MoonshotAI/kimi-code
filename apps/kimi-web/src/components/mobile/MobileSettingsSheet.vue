@@ -9,7 +9,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
+import type { AppModel, AppOAuthProvider, AppSession, ThinkingLevel } from '../../api/types';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
@@ -23,6 +23,7 @@ import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import { formatTokens } from '../../lib/formatTokens';
 import Button from '../ui/Button.vue';
+import Badge from '../ui/Badge.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 
@@ -37,7 +38,8 @@ const props = withDefaults(
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
     uiFontSize?: number;
-    authReady?: boolean;
+    oauthProviders?: AppOAuthProvider[];
+    oauthLogoutPending?: Record<string, boolean>;
     conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
@@ -47,7 +49,8 @@ const props = withDefaults(
   {
     colorScheme: 'system',
     uiFontSize: 14,
-    authReady: false,
+    oauthProviders: () => [],
+    oauthLogoutPending: () => ({}),
     serverVersion: '',
     models: () => [],
   },
@@ -64,7 +67,7 @@ const emit = defineEmits<{
   setUiFontSize: [size: number];
   setConversationToc: [on: boolean];
   login: [];
-  logout: [];
+  logout: [provider: string];
 }>();
 
 function onColorScheme(v: string): void {
@@ -138,9 +141,22 @@ function onLogin(): void {
   emit('update:modelValue', false);
 }
 
-function onLogout(): void {
-  emit('logout');
-  emit('update:modelValue', false);
+function oauthProviderLabel(provider: string): string {
+  if (provider === 'managed:kimi-code' || provider === 'kimi-code') {
+    return t('settings.kimiCodeAccount');
+  }
+  if (provider === 'openai-codex') return t('settings.chatGptAccount');
+  return provider;
+}
+
+function oauthStatusLabel(status: string): string {
+  return status === 'authenticated'
+    ? t('settings.accountAuthenticated')
+    : t('settings.accountUnauthenticated');
+}
+
+function onLogout(provider: string): void {
+  emit('logout', provider);
 }
 
 // ---------------------------------------------------------------------------
@@ -377,14 +393,37 @@ watch(
     </button>
 
     <!-- Account: sign in / out -->
-    <button v-if="authReady" type="button" class="srow acct out" @click="onLogout">
+    <button
+      v-for="provider in oauthProviders"
+      :key="provider.name"
+      type="button"
+      class="srow acct out"
+      :disabled="oauthLogoutPending[provider.name] === true"
+      @click="onLogout(provider.name)"
+    >
       <span class="srow-main">
-        <span class="srow-label">{{ t('sidebar.signOut') }}</span>
+        <span class="srow-label">{{ oauthProviderLabel(provider.name) }}</span>
+        <span class="account-badges">
+          <Badge
+            :variant="provider.status === 'authenticated' ? 'success' : 'warning'"
+            size="sm"
+            dot
+          >{{ oauthStatusLabel(provider.status) }}</Badge>
+          <Badge
+            v-if="provider.entitlementStatus === 'membership_required'"
+            variant="warning"
+            size="sm"
+            dot
+          >{{ t('settings.accountMembershipRequired') }}</Badge>
+        </span>
       </span>
+      <span class="acct-action">{{ t('sidebar.signOut') }}</span>
     </button>
-    <button v-else type="button" class="srow acct in" @click="onLogin">
+    <button type="button" class="srow acct in" @click="onLogin">
       <span class="srow-main">
-        <span class="srow-label">{{ t('sidebar.signIn') }}</span>
+        <span class="srow-label">
+          {{ oauthProviders.length === 0 ? t('sidebar.signIn') : t('settings.signInAnotherAccount') }}
+        </span>
       </span>
     </button>
 
@@ -480,6 +519,12 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+.account-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
 }
 .srow-label { font-size: var(--text-base); color: var(--color-text); }
 .srow-sub {
@@ -577,6 +622,8 @@ watch(
 /* Account rows */
 .srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
 .srow.acct.out .srow-label { color: var(--color-danger); }
+.srow.acct:disabled { opacity: 0.55; cursor: wait; }
+.acct-action { flex: none; font-size: var(--text-sm); color: var(--color-danger); }
 
 /* Context meter (96px prototype) */
 .ctx-meter {

@@ -61,6 +61,7 @@ import type {
   AppNoticeDetail,
   AppMessage,
   AppModel,
+  AppOAuthProvider,
   AppProvider,
   AppQuestionRequest,
   AppSession,
@@ -341,6 +342,8 @@ export interface ExtendedState extends KimiClientState {
   authReady: boolean;
   defaultModel: string | null;
   managedProviderStatus: string | null;
+  oauthProviders: AppOAuthProvider[];
+  oauthLogoutPending: Record<string, boolean>;
   // Workspace state
   workspaces: AppWorkspace[];
   activeWorkspaceId: string | null;
@@ -406,6 +409,8 @@ const rawState: ExtendedState = reactive({
   authReady: false,
   defaultModel: null,
   managedProviderStatus: null,
+  oauthProviders: [],
+  oauthLogoutPending: {},
   workspaces: [],
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
   fsHome: null,
@@ -2263,6 +2268,8 @@ const sessionCost = computed<number>(() => {
 const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
+const oauthProviders = computed<AppOAuthProvider[]>(() => rawState.oauthProviders);
+const oauthLogoutPending = computed<Record<string, boolean>>(() => rawState.oauthLogoutPending);
 const config = computed<AppConfig | null>(() => rawState.config);
 
 /** path → status map for quick badge lookup in the file tree */
@@ -2950,6 +2957,8 @@ export function useKimiWebClient() {
     authReady,
     defaultModel,
     managedProviderStatus,
+    oauthProviders,
+    oauthLogoutPending,
 
     // Config state + actions
     config,

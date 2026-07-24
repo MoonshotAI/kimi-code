@@ -427,10 +427,12 @@ export class FullCompaction {
           : undefined;
       const provider = applyCompletionBudget({
         provider: this.agent.config.provider,
-        budget: resolveCompletionBudget({
-          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
-          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
-        }),
+        budget: this.agent.config.disableCompletionBudget
+          ? undefined
+          : resolveCompletionBudget({
+              maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
+              reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+            }),
         capability,
       });
       const instruction = this.buildInstruction(data.instruction);

@@ -76,8 +76,17 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider);
-      requestLog(req)?.info({ provider: req.body.provider, action: 'login' }, 'oauth login started');
+      const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider, {
+        preserveDefaultModel: req.body.preserve_default_model,
+      });
+      requestLog(req)?.info(
+        {
+          provider: req.body.provider,
+          preserveDefaultModel: req.body.preserve_default_model,
+          action: 'login',
+        },
+        'oauth login started',
+      );
       reply.send(okEnvelope(result, req.id));
     },
   );
@@ -140,7 +149,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       path: '/oauth/logout',
       body: oauthLogoutRequestSchema,
       success: { data: oauthLogoutResponseSchema },
-      description: 'Logout the managed OAuth provider',
+      description: 'Logout an OAuth provider',
       tags: ['auth'],
     },
     async (req, reply) => {

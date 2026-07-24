@@ -178,6 +178,8 @@ kimi web --port 58628    # 指定绑定端口
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
 
+在「设置 > 账户」中，web UI 会列出所有已配置的 OAuth 账户，并支持按供应商单独退出登录。
+
 ::: info 提示
 `kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
 :::

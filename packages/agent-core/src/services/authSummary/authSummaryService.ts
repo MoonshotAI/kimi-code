@@ -38,22 +38,28 @@ export class AuthSummaryService
     const providers = config.providers ?? {};
     const providers_count = Object.keys(providers).length;
     const default_model = nonEmpty(config.defaultModel);
+    const activeProvider =
+      default_model === null
+        ? undefined
+        : config.models?.[default_model]?.provider ?? config.defaultProvider;
 
     let managed_provider: AuthSummary['managed_provider'] = null;
-    if (providers[MANAGED_PROVIDER_NAME] !== undefined) {
-      const hasToken = await this._hasCachedToken(MANAGED_PROVIDER_NAME);
-      managed_provider = {
-        name: MANAGED_PROVIDER_NAME,
-        status: hasToken ? 'authenticated' : 'unauthenticated',
-      };
+    const oauth_providers: AuthSummary['oauth_providers'] = [];
+    for (const [name, provider] of Object.entries(providers)) {
+      if (provider.oauth === undefined) continue;
+      const hasToken = await this._hasCachedToken(name);
+      const status = hasToken ? 'authenticated' : 'unauthenticated';
+      oauth_providers.push({ name, status, active: name === activeProvider });
+      if (name === MANAGED_PROVIDER_NAME) managed_provider = { name, status };
     }
 
+    const activeOAuthProvider = oauth_providers.find((provider) => provider.active);
     const ready =
       providers_count >= 1 &&
       default_model !== null &&
-      (managed_provider === null || managed_provider.status !== 'revoked');
+      (activeOAuthProvider === undefined || activeOAuthProvider.status === 'authenticated');
 
-    return { ready, providers_count, default_model, managed_provider };
+    return { ready, providers_count, default_model, managed_provider, oauth_providers };
   }
 
   async ensureReady(modelOverride?: string): Promise<void> {

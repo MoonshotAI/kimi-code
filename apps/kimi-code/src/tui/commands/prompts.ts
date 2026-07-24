@@ -15,7 +15,10 @@ import type {
 import { ApiKeyInputDialogComponent, type ApiKeyInputResult } from '../components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
-import { ModelSelectorComponent } from '../components/dialogs/model-selector';
+import {
+  defaultThinkingEffortFor,
+  ModelSelectorComponent,
+} from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
 import type { SlashCommandHost } from './dispatch';
 
@@ -230,12 +233,12 @@ export function runModelSelector(
 ): Promise<{ alias: string; thinking: ThinkingEffort } | undefined> {
   return new Promise((resolve) => {
     const firstAlias = Object.keys(modelDict)[0] ?? '';
-    const caps = modelDict[firstAlias]?.capabilities ?? [];
-    const initialThinking = caps.includes('always_thinking') || caps.includes('thinking');
+    const firstModel = modelDict[firstAlias];
     const selector = new ModelSelectorComponent({
       models: modelDict,
       currentValue: firstAlias,
-      currentThinkingEffort: initialThinking ? 'on' : 'off',
+      currentThinkingEffort:
+        firstModel === undefined ? 'off' : defaultThinkingEffortFor(firstModel),
       searchable: true,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();

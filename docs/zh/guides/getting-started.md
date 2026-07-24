@@ -100,9 +100,10 @@ kimi -c
 /login
 ```
 
-`/login` 会弹出平台选择器，支持两种方式：
+`/login` 会弹出平台选择器，支持以下方式：
 
 - **Kimi Code（OAuth）** — 验证码流程，在任意设备打开链接、登录并输入验证码即可授权
+- **OpenAI ChatGPT Plus/Pro（OAuth）** — 使用 ChatGPT 订阅登录，并选择内置的 Codex 模型
 - **Kimi Platform API 密钥** — 输入来自 `platform.kimi.com` 或 `platform.kimi.ai` 的 API 密钥
 
 需要退出登录时，输入 `/logout` 清除当前凭证。

@@ -18,6 +18,8 @@
  *    `notifyConfigChanged()` (the load-bearing test-harness contract).
  */
 
+import { Buffer } from 'node:buffer';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
@@ -428,6 +430,45 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('k1');
       expect(model.authProvider.canRefresh).toBe(true);
       await expect(model.authProvider.getAuth()).resolves.toEqual({ apiKey: 'tok-1' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('builds ChatGPT request headers for OpenAI Codex OAuth models', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'account-123' },
+      }),
+      'utf-8',
+    ).toString('base64url');
+    const accessToken = `header.${payload}.signature`;
+    const { host, catalog } = createHost(
+      {
+        providers: {
+          'openai-codex': {
+            type: 'openai_responses',
+            oauth: { storage: 'file', key: 'oauth/openai-codex' },
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+          },
+        },
+        models: {
+          codex: { provider: 'openai-codex', model: 'gpt-test', maxContextSize: 353000 },
+        },
+      },
+      stubModelOAuthTokens(stubTokenProvider([accessToken])),
+    );
+    try {
+      const model = catalog.get('codex');
+      expect(model.authProvider.disableCompletionBudget).toBe(true);
+      await expect(model.authProvider.getAuth()).resolves.toEqual({
+        apiKey: accessToken,
+        headers: {
+          'ChatGPT-Account-Id': 'account-123',
+          'OpenAI-Beta': 'responses=experimental',
+          originator: 'kimi-code',
+        },
+      });
     } finally {
       host.dispose();
     }

@@ -5020,6 +5020,26 @@ command = "vim"
     await expect(selection).resolves.toBeUndefined();
   });
 
+  it('selects the declared default effort when the shared model selector opens', async () => {
+    const { driver } = await makeDriver();
+    const selection = runModelSelector(driver as any, {
+      codex: {
+        provider: 'openai-codex',
+        model: 'gpt-test',
+        maxContextSize: 353_000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'high',
+      },
+    });
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('\r');
+
+    await expect(selection).resolves.toEqual({ alias: 'codex', thinking: 'high' });
+  });
+
   it('deletes Kitty inline images when /new clears the transcript', async () => {
     setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
     const { driver, harness } = await makeDriver(makeSession({ id: 'ses-1' }));

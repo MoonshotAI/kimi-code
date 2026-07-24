@@ -6,19 +6,18 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
-import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppModel } from '../../api/types';
+import type { AppConfig, AppModel, AppOAuthProvider, AppSession } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
 import Button from '../ui/Button.vue';
+import Badge from '../ui/Badge.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 import Select from '../ui/Select.vue';
-import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -26,8 +25,8 @@ const props = defineProps<{
   colorScheme: ColorScheme;
   accent: Accent;
   uiFontSize: number;
-  authReady: boolean;
-  accountModel?: string | null;
+  oauthProviders: AppOAuthProvider[];
+  oauthLogoutPending: Record<string, boolean>;
   /** Browser-notification-on-completion preference. */
   notify: boolean;
   /** Browser-notification-on-question (needs answer) preference. */
@@ -62,7 +61,7 @@ const emit = defineEmits<{
   setSound: [on: boolean];
   setConversationToc: [on: boolean];
   login: [];
-  logout: [];
+  logout: [provider: string];
   openOnboarding: [];
   openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
@@ -85,6 +84,20 @@ const daemonEndpoint = serverEndpointLabel();
 const backendLabel = computed(() =>
   props.backend === 'v2' ? 'v2 (kap-server)' : 'v1 (server)',
 );
+
+function oauthProviderLabel(provider: string): string {
+  if (provider === 'managed:kimi-code' || provider === 'kimi-code') {
+    return t('settings.kimiCodeAccount');
+  }
+  if (provider === 'openai-codex') return t('settings.chatGptAccount');
+  return provider;
+}
+
+function oauthStatusLabel(status: string): string {
+  return status === 'authenticated'
+    ? t('settings.accountAuthenticated')
+    : t('settings.accountUnauthenticated');
+}
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
 // Reuse the Composer's permission labels (status.permission*) so the
 // default-permission names stay in sync with the toolbar.
@@ -452,16 +465,42 @@ function archiveTime(iso: string): string {
         <section v-show="activeTab === 'account'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.account') }}</h3>
-            <div class="row">
-              <span class="rlabel">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
-              <Tooltip :text="accountModel">
-                <span v-if="authReady && accountModel" class="rvalue">{{ accountModel }}</span>
-              </Tooltip>
+            <div v-if="oauthProviders.length > 0" class="account-list">
+              <div v-for="provider in oauthProviders" :key="provider.name" class="account-row">
+                <div class="account-main">
+                  <span class="rlabel">{{ oauthProviderLabel(provider.name) }}</span>
+                  <span class="account-meta">
+                    <Badge
+                      :variant="provider.status === 'authenticated' ? 'success' : 'warning'"
+                      size="sm"
+                      dot
+                    >
+                      {{ oauthStatusLabel(provider.status) }}
+                    </Badge>
+                    <Badge
+                      v-if="provider.entitlementStatus === 'membership_required'"
+                      variant="warning"
+                      size="sm"
+                      dot
+                    >{{ t('settings.accountMembershipRequired') }}</Badge>
+                  </span>
+                </div>
+                <Button
+                  variant="danger-soft"
+                  size="sm"
+                  :loading="oauthLogoutPending[provider.name] === true"
+                  @click="emit('logout', provider.name)"
+                >{{ t('sidebar.signOut') }}</Button>
+              </div>
+            </div>
+            <div v-else class="row">
+              <span class="rlabel">{{ t('sidebar.notSignedIn') }}</span>
             </div>
             <div class="actions">
               <Button variant="secondary" size="sm" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</Button>
-              <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
-              <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
+              <Button variant="primary" size="sm" @click="emit('login')">
+                {{ oauthProviders.length === 0 ? t('sidebar.signIn') : t('settings.signInAnotherAccount') }}
+              </Button>
             </div>
           </section>
         </section>
@@ -786,6 +825,19 @@ function archiveTime(iso: string): string {
 }
 
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.account-list { display: flex; flex-direction: column; }
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 58px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-line);
+}
+.account-row:last-child { border-bottom: none; }
+.account-main { min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.account-meta { min-width: 0; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 
 @media (max-width: 640px) {
   .sd { flex-direction: column; }
@@ -801,6 +853,7 @@ function archiveTime(iso: string): string {
     align-items: flex-start;
     flex-direction: column;
   }
+  .account-row { align-items: flex-start; }
   .select-wrap {
     width: 100%;
     max-width: none;

@@ -792,15 +792,39 @@ export interface KimiWebApi {
     providersCount: number;
     defaultModel: string | null;
     managedProvider: { status: string } | null;
+    oauthProviders: AppOAuthProvider[];
   }>;
-  startOAuthLogin(): Promise<OAuthLoginStartResult>;
-  pollOAuthLogin(): Promise<{
+  startOAuthLogin(
+    provider: OAuthLoginProvider,
+    options: OAuthLoginOptions,
+  ): Promise<OAuthLoginStartResult>;
+  pollOAuthLogin(provider: OAuthLoginProvider): Promise<{
     flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+    status: OAuthLoginStatus;
     resolvedAt?: string;
+    errorMessage?: string;
   } | null>;
-  cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
-  logout(): Promise<{ loggedOut: boolean }>;
+  cancelOAuthLogin(provider: OAuthLoginProvider): Promise<{ cancelled: boolean; status: string }>;
+  logout(provider: string): Promise<{ loggedOut: boolean }>;
+}
+
+export type OAuthLoginProvider = 'managed:kimi-code' | 'openai-codex';
+export type OAuthLoginStatus =
+  | 'pending'
+  | 'authenticated'
+  | 'denied'
+  | 'expired'
+  | 'cancelled';
+
+export interface OAuthLoginOptions {
+  preserveDefaultModel: boolean;
+}
+
+export interface AppOAuthProvider {
+  name: string;
+  status: string;
+  active: boolean;
+  entitlementStatus?: 'membership_required';
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
@@ -820,4 +844,10 @@ export type OAuthLoginStartResult =
       flowId: string;
       provider: string;
       status: 'authenticated';
+    }
+  | {
+      flowId: string;
+      provider: string;
+      status: 'denied';
+      errorMessage: string;
     };
