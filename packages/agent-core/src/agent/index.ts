@@ -68,6 +68,9 @@ export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
+/** In-process listener for {@link Agent.onEvent}. */
+export type AgentEventListener = (event: AgentEvent) => void;
+
 export interface AgentOptions {
   readonly kaos: Kaos;
   readonly config?: KimiConfig;
@@ -663,8 +666,29 @@ export class Agent {
     };
   }
 
+  private readonly eventListeners = new Set<AgentEventListener>();
+
+  /**
+   * Subscribe to this agent's events in-process; returns an unsubscribe
+   * function. Listener failures are swallowed so event fan-out can never
+   * break the agent loop.
+   */
+  onEvent(listener: AgentEventListener): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
+  }
+
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listener failures must not break the agent loop.
+      }
+    }
     void this.rpc?.emitEvent?.(event);
   }
 

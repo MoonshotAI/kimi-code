@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
 import type { ResolvedAgentProfile } from '../../src/profile';
-import type { SDKSessionRPC } from '../../src/rpc';
+import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import {
@@ -207,6 +207,44 @@ describe('SessionSubagentHost', () => {
       { event: 'SubagentStart', childLlmCallCount: 0 },
       { event: 'SubagentStop', childLlmCallCount: 1 },
     ]);
+  });
+
+  it('exposes a live event subscription for the spawned child', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Completed the subagent task with enough implementation detail and verification context for the parent agent to continue without repeating the work. '.repeat(
+        2,
+      );
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: summary });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the fix',
+      description: 'Fix bug',
+      runInBackground: false,
+      signal,
+    });
+
+    expect(handle.subscribeToEvents).toBeTypeOf('function');
+    const events: AgentEvent[] = [];
+    const unsubscribe = handle.subscribeToEvents!((event) => {
+      events.push(event);
+    });
+    child.agent.emitEvent({ type: 'warning', message: 'child live event' });
+    expect(events).toEqual([{ type: 'warning', message: 'child live event' }]);
+
+    unsubscribe();
+    child.agent.emitEvent({ type: 'warning', message: 'after unsubscribe' });
+    expect(events).toHaveLength(1);
+
+    await handle.completion;
   });
 
   it('ignores blocking results from subagent lifecycle hooks', async () => {
