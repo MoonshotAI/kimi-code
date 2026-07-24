@@ -27,7 +27,9 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 function stripAnsi(text: string): string {
-  return text.replaceAll(/\[[0-9;]*m/g, '');
+  return text
+    .replaceAll(/\[[0-9;]*m/g, '')
+    .replaceAll(/]8;[^]*/g, '');
 }
 
 function makeProgram(): Command {

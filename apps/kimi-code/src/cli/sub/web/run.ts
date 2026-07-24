@@ -21,6 +21,7 @@ import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import {
@@ -200,7 +201,8 @@ function formatReadyLine(
   const notice = dangerousBypassAuth
     ? `${formatDangerNoticeLines().join('\n')}\n`
     : '';
-  return `${notice}Kimi server: ${buildOpenableUrl(origin, token)}\n`;
+  const href = buildOpenableUrl(origin, token);
+  return `${notice}Kimi server: ${toTerminalHyperlink(href, href)}\n`;
 }
 
 /**
@@ -342,10 +344,12 @@ export function formatReadyBanner(
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
   const url = (text: string): string => chalk.hex(darkColors.accent)(text);
   // Render the `#token=…` fragment in a de-emphasized gray so the host/port
-  // stands out while the full URL stays selectable for copying.
+  // stands out while the full URL stays selectable for copying. Wrap the whole
+  // line in an OSC 8 terminal hyperlink so supported terminals can click to open.
   const urlWithDimToken = (href: string): string => {
     const [base, frag] = splitTokenFragment(href);
-    return frag === '' ? url(base) : url(base) + dim(frag);
+    const display = frag === '' ? url(base) : url(base) + dim(frag);
+    return toTerminalHyperlink(display, href);
   };
 
   const port = Number(new URL(origin).port);
