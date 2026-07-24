@@ -22,6 +22,7 @@ import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/i
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
 import { type AnyService } from '../panels';
+import { fetchTranscriptPlan, type TranscriptPlanInfo } from '../transcript/api';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
 import { ScopePanels } from './ServicePanels';
 
@@ -144,11 +145,14 @@ export function Inspector({
             <ScopePanels scope="session" proxyFor={proxyFor} />
           </>
         ) : (
-          <ScopePanels
-            scope="agent"
-            proxyFor={proxyFor}
-            onError={(error) => noteAgentError(effectiveAgent, error)}
-          />
+          <>
+            <PlanCard sessionId={sessionId} agentId={effectiveAgent} />
+            <ScopePanels
+              scope="agent"
+              proxyFor={proxyFor}
+              onError={(error) => noteAgentError(effectiveAgent, error)}
+            />
+          </>
         )}
       </div>
     </div>
@@ -323,4 +327,135 @@ function payloadField(
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Plan lookup — `GET /api/v1/sessions/{id}/transcript/plan`: the reviewed plan
+// of one ExitPlanMode tool call, queried by tool_call_id (copy it from a tool
+// frame in the chat view). Read-only, fetched on demand like everything else
+// here.
+// ---------------------------------------------------------------------------
+
+function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }) {
+  const { baseUrl, config } = useConnection();
+  const [toolCallId, setToolCallId] = useState('');
+  const [result, setResult] = useState<readonly TranscriptPlanInfo[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(false);
+
+  // A plan belongs to one agent's transcript — stale results from another
+  // session/agent are misleading, so reset on switch.
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [sessionId, agentId]);
+
+  const query = async () => {
+    setLoading(true);
+    try {
+      setError(null);
+      const token = config.token.trim();
+      const id = toolCallId.trim();
+      setResult(
+        await fetchTranscriptPlan({
+          baseUrl,
+          token: token === '' ? undefined : token,
+          sessionId,
+          agentId,
+          toolCallId: id === '' ? undefined : id,
+        }),
+      );
+    } catch (error) {
+      setResult(null);
+      setError(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-950/40">
+      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
+        <span className="text-[12px] font-medium text-neutral-200">Plan lookup</span>
+        <Badge tone="sky">{agentId}</Badge>
+      </div>
+      <div className="px-3 py-2">
+        <div className="flex gap-1.5">
+          <input
+            className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-[11px] text-neutral-100 outline-none focus:border-sky-600"
+            placeholder="tool_call_id (empty = all plans)"
+            value={toolCallId}
+            onChange={(e) => setToolCallId(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void query();
+            }}
+          />
+          <ActionButton disabled={loading} onClick={() => void query()}>
+            {loading ? 'Loading…' : 'Query'}
+          </ActionButton>
+        </div>
+        {error !== null ? (
+          <div className="mt-2">
+            <ErrorLine error={error} />
+          </div>
+        ) : null}
+        {result !== null ? (
+          result.length === 0 ? (
+            <div className="mt-2 text-[11px] text-neutral-600 italic">no plans on this agent</div>
+          ) : (
+            result.map((entry) => <PlanEntryView key={entry.toolCallId} entry={entry} />)
+          )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PlanEntryView({ entry }: { entry: TranscriptPlanInfo }) {
+  const review = entry.review;
+  return (
+    <div className="mt-2">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-[10px] text-neutral-400 select-all">{entry.toolCallId}</span>
+        <Badge tone="neutral">{entry.source}</Badge>
+        {review !== undefined ? (
+          <Badge
+            tone={
+              review.state === 'approved' ? 'green' : review.state === 'pending' ? 'amber' : 'red'
+            }
+          >
+            {review.state}
+          </Badge>
+        ) : null}
+        <span className="font-mono text-[10px] text-neutral-500">{entry.turnId}</span>
+      </div>
+      {entry.path !== undefined ? (
+        <div className="mb-1 break-all font-mono text-[10px] text-neutral-500">{entry.path}</div>
+      ) : null}
+      {review?.selectedOption !== undefined ? (
+        <div className="mb-1 text-[11px] text-neutral-400">
+          <span className="text-neutral-600">selected: </span>
+          {review.selectedOption}
+        </div>
+      ) : null}
+      {review?.feedback !== undefined ? (
+        <div className="mb-1 text-[11px] text-neutral-400">
+          <span className="text-neutral-600">feedback: </span>
+          {review.feedback}
+        </div>
+      ) : null}
+      {entry.options !== undefined ? (
+        <div className="mb-1 flex flex-wrap gap-1.5">
+          {entry.options.map((option) => (
+            <Badge key={option.label} tone="violet">
+              {option.label}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+      <pre className="max-h-72 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px] whitespace-pre-wrap text-neutral-300">
+        {entry.plan}
+      </pre>
+    </div>
+  );
 }

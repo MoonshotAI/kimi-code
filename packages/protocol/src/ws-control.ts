@@ -106,10 +106,21 @@ export const agentFilterSchema = z.record(z.string(), z.array(z.string()).min(1)
 
 export type AgentFilter = z.infer<typeof agentFilterSchema>;
 
+/**
+ * `client_hello` is the handshake: only `client_id` is required. The
+ * subscription fields below are legacy compatibility — new clients send just
+ * `client_id` here and use `subscribe` frames (which carry the same
+ * per-session cursors / agent allowlist).
+ * @deprecated Inline subscriptions on `client_hello` are kept for older
+ * clients; prefer `subscribe`.
+ */
 export const clientHelloPayloadSchema = z.object({
   client_id: z.string(),
-  subscriptions: z.array(z.string()),
+  /** @deprecated Legacy inline subscriptions — use `subscribe` instead. */
+  subscriptions: z.array(z.string()).optional(),
+  /** @deprecated Legacy inline replay cursors — use `subscribe` instead. */
   cursors: cursorsBySessionSchema.optional(),
+  /** @deprecated Legacy inline agent allowlist — use `subscribe` instead. */
   agent_filter: agentFilterSchema.optional(),
 });
 

@@ -27,6 +27,7 @@ import {
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -472,6 +473,10 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
+      stubPair(ISessionSecondaryModelWarningService, {
+        _serviceBrand: undefined,
+        getSecondaryModelWarning: () => undefined,
+      } as ISessionSecondaryModelWarningService),
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),

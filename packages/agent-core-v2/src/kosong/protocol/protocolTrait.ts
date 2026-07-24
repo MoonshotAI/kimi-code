@@ -193,9 +193,9 @@ export interface ProtocolTrait {
   reasoningKey?(ctx: TraitContext): string | undefined;
 
   /**
-   * Declared capability for one model. Resolution order is definition →
-   * traits → base: the registry asks traits in order (last declarer wins)
-   * and falls back to the base catalog when every hook returns `undefined`.
+   * Declared capability for one model. Resolution order is traits → base:
+   * the registry asks traits in order (last declarer wins) and falls back to
+   * the base catalog when every hook returns `undefined`.
    */
   capability?(modelName: string, ctx: TraitContext): ModelCapability | undefined;
 

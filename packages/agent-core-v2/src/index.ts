@@ -79,6 +79,8 @@ export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
+export * from '#/session/sessionActivity/sessionActivity';
+export * from '#/session/sessionActivity/sessionActivityService';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
@@ -95,6 +97,7 @@ export * from '#/kosong/protocol/protocol';
 export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
+import '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
@@ -113,12 +116,26 @@ export {
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
+export type { SecondaryModelConfig } from '#/app/kosongConfig/configSection';
+// The secondary-model derived-entry overlay: the edge (kap-server's
+// `GET /models` route) hides the reserved id from pickers, and tests drive
+// the overlay directly — re-export from the package root.
+export {
+  SECONDARY_DERIVED_MODEL_ID,
+  secondaryModelOverlay,
+  secondaryModelPatch,
+} from '#/app/kosongConfig/secondaryModelOverlay';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
 export * from '#/app/kosongConfig/oauthTokenAdapter';
 export * from '#/app/kosongConfig/discovery';
 export * from '#/app/kosongConfig/discoveryService';
+export * from '#/app/kosongConfig/errors';
+export * from '#/app/kosongConfig/modelsDevImport';
+export * from '#/app/kosongConfig/modelsDevImportService';
+export * from '#/app/kosongConfig/modelsDevUpstream';
+export * from '#/app/kosongConfig/modelsDev';
 // kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.
@@ -271,6 +288,9 @@ export * from '#/session/mcp/sessionMcp';
 export * from '#/session/mcp/sessionMcpService';
 export * from '#/session/subagent/subagent';
 export * from '#/session/subagent/subagentService';
+import '#/session/subagent/flag';
+export * from '#/session/subagent/secondaryModelWarning';
+export * from '#/session/subagent/secondaryModelWarningService';
 export * from '#/session/subagent/tools/subagent-task';
 export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
 export * from '#/session/subagent/mirrorAgentRun';

@@ -21,7 +21,11 @@
  */
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
-import type { ExecutableTool, ToolSource } from '#/tool/toolContract';
+import type {
+  ExecutableTool,
+  ToolDisclosure,
+  ToolSource,
+} from '#/tool/toolContract';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyExecutableTool = ExecutableTool<any>;
@@ -31,6 +35,7 @@ export type ToolCtor<T extends AnyExecutableTool = AnyExecutableTool> = new (...
 
 export interface ToolContributionOptions {
   readonly source?: ToolSource;
+  readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly staticArgs?: (accessor: ServicesAccessor) => readonly unknown[];
 }

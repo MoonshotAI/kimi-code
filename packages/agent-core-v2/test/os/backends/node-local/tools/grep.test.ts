@@ -281,12 +281,12 @@ afterEach(() => {
 });
 
 describe('GrepTool', () => {
-  it('registers through the production tool contribution and DI path', () => {
+  it('registers contribution metadata through the production DI path', () => {
     const savedContributions = [...getToolContributions()];
     const disposables = new DisposableStore();
     try {
       _clearToolContributionsForTests();
-      registerTool(ProductionGrepTool);
+      registerTool(ProductionGrepTool, { source: 'user', disclosure: 'deferred' });
 
       const ix = createServices(disposables, {
         strict: true,
@@ -308,9 +308,11 @@ describe('GrepTool', () => {
 
       ix.get(IAgentBuiltinToolsRegistrar);
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
+      const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');
 
       expect(tool).toBeInstanceOf(ProductionGrepTool);
       expect(tool?.name).toBe('Grep');
+      expect(info).toMatchObject({ source: 'user', disclosure: 'deferred' });
     } finally {
       disposables.dispose();
       _clearToolContributionsForTests();
