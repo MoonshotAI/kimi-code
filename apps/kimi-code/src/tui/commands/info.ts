@@ -150,6 +150,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     thinkingEffort: appState.thinkingEffort,
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
+    swarmMode: appState.swarmMode,
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,

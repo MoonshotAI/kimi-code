@@ -44,6 +44,7 @@ export interface StatusReportOptions {
   readonly thinkingEffort: ThinkingEffort;
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
+  readonly swarmMode: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
@@ -106,12 +107,14 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
+  const swarmMode = options.status?.swarmMode ?? options.swarmMode;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
     { label: 'Directory', value: options.workDir },
     { label: 'Permissions', value: permission },
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
+    { label: 'Swarm mode', value: swarmMode ? 'on' : 'off' },
     { label: 'Session', value: sessionId },
   ];
   const title = options.sessionTitle?.trim();
