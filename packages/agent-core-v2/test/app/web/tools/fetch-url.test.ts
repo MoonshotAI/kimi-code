@@ -90,31 +90,42 @@ describe('FetchURLTool abort signal', () => {
 });
 
 describe('FetchURLTool output note', () => {
-  async function runKind(kind: UrlFetchResult['kind']): Promise<string> {
+  async function runKind(kind: UrlFetchResult['kind'], imageUrl?: string): Promise<ExecutableToolResult> {
     const fetch = vi
       .fn<UrlFetcher['fetch']>()
-      .mockResolvedValue({ content: 'BODY', kind } satisfies UrlFetchResult);
+      .mockResolvedValue({ content: 'BODY', kind, imageUrl } satisfies UrlFetchResult);
     const tool = new FetchURLTool({ fetch });
-    const result = await execute(tool, 'https://example.com', new AbortController().signal);
-    expect(result.isError).toBe(false);
-    if (typeof result.output !== 'string') throw new Error('expected string output');
-    return result.output;
+    return execute(tool, 'https://example.com', new AbortController().signal);
   }
 
   it('puts the passthrough note and citation reminder at the front of output', async () => {
-    const output = await runKind('passthrough');
-    expect(output).toBe(
+    const result = await runKind('passthrough');
+    expect(result.isError).toBe(false);
+    if (typeof result.output !== 'string') throw new Error('expected string output');
+    expect(result.output).toBe(
       'The returned content is the full response body, returned verbatim. ' +
         'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).\n\nBODY',
     );
   });
 
   it('puts the extracted note and citation reminder at the front of output', async () => {
-    const output = await runKind('extracted');
-    expect(output).toBe(
+    const result = await runKind('extracted');
+    expect(result.isError).toBe(false);
+    if (typeof result.output !== 'string') throw new Error('expected string output');
+    expect(result.output).toBe(
       'The returned content is the main text extracted from the page. ' +
         'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).\n\nBODY',
     );
+  });
+
+  it('returns image as ContentPart[] when kind is image', async () => {
+    const result = await runKind('image', 'data:image/png;base64,abc123');
+    expect(result.isError).toBe(false);
+    if (typeof result.output === 'string') throw new Error('expected ContentPart[] output');
+    expect(result.output).toEqual([
+      { type: 'text', text: 'BODY' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+    ]);
   });
 });
 

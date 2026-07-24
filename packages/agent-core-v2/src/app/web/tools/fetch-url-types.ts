@@ -10,11 +10,13 @@
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
 export interface UrlFetchResult {
   readonly content: string;
   readonly kind: UrlFetchKind;
+  /** When the fetched URL is an image, the image data as a base64 data URL. */
+  readonly imageUrl?: string;
 }
 
 export interface UrlFetcher {

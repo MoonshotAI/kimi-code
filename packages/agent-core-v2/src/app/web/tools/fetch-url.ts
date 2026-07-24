@@ -58,7 +58,19 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId, signal });
+      const { content, kind, imageUrl } = await this.fetcher.fetch(args.url, { toolCallId, signal });
+
+      // When the fetcher returns an image, emit it as an image_url content part
+      // so the model can see it directly.
+      if (kind === 'image' && imageUrl !== undefined) {
+        return {
+          isError: false,
+          output: [
+            { type: 'text', text: content },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        };
+      }
 
       if (!content) {
         return {
