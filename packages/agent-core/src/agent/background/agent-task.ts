@@ -12,6 +12,10 @@ export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly agentId?: string;
   /** Subagent profile name. */
   readonly subagentType?: string;
+  /** Effective model alias of the subagent run, when resolved. */
+  readonly modelAlias?: string;
+  /** Effective thinking effort of the subagent run, when resolved. */
+  readonly thinkingEffort?: string;
 }
 
 export class AgentBackgroundTask implements BackgroundTask {
@@ -19,6 +23,8 @@ export class AgentBackgroundTask implements BackgroundTask {
   readonly idPrefix: string = 'agent';
   readonly agentId: string;
   readonly subagentType: string;
+  readonly modelAlias?: string;
+  readonly thinkingEffort?: string;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -28,6 +34,8 @@ export class AgentBackgroundTask implements BackgroundTask {
   ) {
     this.agentId = handle.agentId;
     this.subagentType = handle.profileName;
+    this.modelAlias = handle.modelAlias;
+    this.thinkingEffort = handle.thinkingEffort;
   }
 
   async start(sink: BackgroundTaskSink): Promise<void> {
@@ -65,6 +73,8 @@ export class AgentBackgroundTask implements BackgroundTask {
       kind: 'agent',
       agentId: this.agentId,
       subagentType: this.subagentType,
+      modelAlias: this.modelAlias,
+      thinkingEffort: this.thinkingEffort,
     };
   }
 }

@@ -49,6 +49,31 @@ export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteIt
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
 }
 
+const SUBAGENT_MODEL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'list', description: 'Show current subagent model bindings' },
+  { value: 'set', description: 'Bind a model for a subagent type' },
+  { value: 'clear', description: 'Remove a binding' },
+];
+
+/** Argument autocompletion for the `/subagent-model` command. */
+export function subagentModelArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  const subMatch = argumentPrefix.match(/^(set|clear)\s+(\S*)$/i);
+  if (subMatch !== null) {
+    const types: readonly ArgCompletionSpec[] = [
+      { value: 'coder', description: 'General software engineering subagent' },
+      { value: 'explore', description: 'Read-only exploration subagent' },
+      { value: 'plan', description: 'Read-only planning subagent' },
+    ];
+    return (
+      completeLeadingArg(types, subMatch[2] ?? '')?.map((item) => ({
+        ...item,
+        value: `${subMatch[1]} ${item.value}`,
+      })) ?? null
+    );
+  }
+  return completeLeadingArg(SUBAGENT_MODEL_ARG_COMPLETIONS, argumentPrefix);
+}
+
 /** Argument autocompletion for the `/add-dir` command. */
 export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   if (isPathLikeAddDirArgument(argumentPrefix)) {
@@ -253,6 +278,16 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
     argumentHint: '[list] | <path>',
     completeArgs: addDirArgumentCompletions,
+  },
+  {
+    name: 'subagent-model',
+    aliases: [],
+    description: 'Manage per-workspace model bindings for subagent types',
+    priority: 60,
+    availability: 'idle-only',
+    argumentHint: '[list] | set <type> | clear <type>',
+    completeArgs: subagentModelArgumentCompletions,
+    experimentalFlag: 'subagent-model-selection',
   },
   {
     name: 'experiments',

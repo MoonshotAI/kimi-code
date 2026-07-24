@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -15,6 +16,7 @@ import { collectGitContext } from '../../src/session/git-context';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SessionSubagentHost,
+  SUBAGENT_MODEL_UNAVAILABLE_MESSAGE,
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
   type QueuedSubagentTask,
@@ -1128,7 +1130,103 @@ describe('SessionSubagentHost', () => {
     expect(userTextMessages(histories[1] ?? [])).toEqual(['Implement the retry-safe change']);
   });
 
-  it('realigns a resumed subagent to the parent agent current model', async () => {
+  it('keeps a resumed subagent on its configured model (sticky, experiment on)', async () => {
+    const twoModelConfig = {
+      providers: {},
+      models: {
+        'subagent-model': {
+          provider: 'test-provider',
+          model: 'subagent-model',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const parent = testAgent({
+      initialConfig: twoModelConfig,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'subagent-model-selection': true,
+      }),
+    });
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent({ initialConfig: twoModelConfig });
+    child.configure({ tools: ['Read'] });
+    // The child was originally spawned with a different model than the
+    // parent's current one. Sticky semantics: resume keeps it.
+    child.agent.config.update({ modelAlias: 'subagent-model' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
+    });
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.resume('agent-0', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Continue from context',
+      description: 'Continue work',
+      runInBackground: false,
+      signal,
+    });
+
+    await handle.completion;
+    expect(child.agent.config.modelAlias).toBe('subagent-model');
+    expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
+    expect(handle.modelAlias).toBe('subagent-model');
+  });
+
+  it('fails to resume a subagent whose configured model is no longer resolvable (experiment on)', async () => {
+    const parent = testAgent({
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'subagent-model-selection': true,
+      }),
+    });
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent();
+    child.configure({ tools: ['Read'] });
+    // The child was originally spawned with a model that is no longer present
+    // in the current configuration.
+    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.resume('agent-0', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Continue from context',
+        description: 'Continue work',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+  });
+
+  it('realigns a resumed subagent to the parent model when the experiment is off', async () => {
     const parent = testAgent();
     parent.configure();
     parent.agent.permission.setMode('yolo');
@@ -1165,10 +1263,65 @@ describe('SessionSubagentHost', () => {
     });
 
     await handle.completion;
-    // resume must realign the child to the parent agent's current model rather
-    // than leave it on the stale model from its initial spawn.
+    // With the experiment off, resume keeps the pre-change realign behavior.
     expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     expect(child.agent.config.modelAlias).not.toBe('stale-model-from-initial-spawn');
+    expect(handle.modelAlias).toBe(parent.agent.config.modelAlias);
+  });
+
+  it('passes an explicit model alias and thinking effort to a spawned child', async () => {
+    const twoModelConfig = {
+      providers: {},
+      models: {
+        'subagent-model': {
+          provider: 'test-provider',
+          model: 'subagent-model',
+          maxContextSize: 1_000_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    const parent = testAgent({ initialConfig: twoModelConfig });
+    parent.configure();
+    parent.newEvents();
+
+    const child = testAgent({ type: 'sub', initialConfig: twoModelConfig });
+    child.configure();
+    const summary =
+      'Completed the delegated work on the explicitly selected model and effort, returning a detailed implementation and verification summary so the parent can continue without repeating the work. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+    const host = new SessionSubagentHost(fakeSession(parent.agent, child.agent), 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the fix',
+      description: 'Fix bug',
+      runInBackground: false,
+      signal,
+      modelAlias: 'subagent-model',
+      thinkingEffort: 'high',
+    });
+    await handle.completion;
+
+    expect(child.agent.config.modelAlias).toBe('subagent-model');
+    expect(child.agent.config.thinkingEffort).toBe('high');
+    expect(handle.modelAlias).toBe('subagent-model');
+    expect(handle.thinkingEffort).toBe('high');
+    expect(parent.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.spawned',
+        args: expect.objectContaining({
+          subagentId: 'agent-0',
+          modelAlias: 'subagent-model',
+          thinkingEffort: 'high',
+        }),
+      }),
+    );
   });
 });
 

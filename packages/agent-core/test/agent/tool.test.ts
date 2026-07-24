@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,11 +6,15 @@ import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
+import type { Agent } from '../../src/agent';
+import { createSubagentBindingCallbacks } from '../../src/agent/tool/subagent-binding';
+import { readSubagentBinding } from '../../src/config/workspace-local';
 import type { KimiConfig } from '../../src/config';
 import { HookEngine } from '../../src/session/hooks';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
+import { testKaos } from '../fixtures/test-kaos';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -522,6 +526,107 @@ describe('Agent tools', () => {
     } finally {
       rmSync(sessionDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('createSubagentBindingCallbacks', () => {
+  const TWO_MODELS = {
+    'kimi-code/k3': { provider: 'p', model: 'k3', maxContextSize: 1_000_000 },
+    'sub2/glm-5.2-x': {
+      provider: 'p',
+      model: 'glm',
+      maxContextSize: 1_000_000,
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high'],
+    },
+  };
+
+  function makeProject(): string {
+    const root = mkdtempSync(join(tmpdir(), 'subagent-binding-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    return root;
+  }
+
+  function fakeAgent(requestQuestion?: (request: unknown) => Promise<unknown>): Agent {
+    return {
+      rpc: requestQuestion === undefined ? {} : { requestQuestion: vi.fn(requestQuestion) },
+      kimiConfig: { providers: {}, models: TWO_MODELS },
+    } as unknown as Agent;
+  }
+
+  it('omits askBinding when the agent cannot question the user', () => {
+    const { askBinding } = createSubagentBindingCallbacks(fakeAgent(), testKaos, makeProject());
+    expect(askBinding).toBeUndefined();
+  });
+
+  it('asks once, persists the chosen model and effort, and returns the binding', async () => {
+    const root = makeProject();
+    const answers: Record<string, string> = {};
+    const requestQuestion = vi.fn(async (request: unknown) => {
+      const questions = (request as { questions: Array<{ question: string }> }).questions;
+      const question = questions[0]!.question;
+      const answer = question.includes('no model binding')
+        ? 'sub2/glm-5.2-x'
+        : 'high';
+      answers[question] = answer;
+      return { answers: { [question]: answer } };
+    });
+    const agent = fakeAgent(requestQuestion);
+    const { askBinding } = createSubagentBindingCallbacks(agent, testKaos, root);
+
+    const binding = await askBinding!('coder');
+
+    expect(requestQuestion).toHaveBeenCalledTimes(2);
+    expect(binding).toEqual({ model: 'sub2/glm-5.2-x', thinkingEffort: 'high' });
+    await expect(readSubagentBinding(testKaos, root, 'coder')).resolves.toEqual({
+      model: 'sub2/glm-5.2-x',
+      thinkingEffort: 'high',
+      inherit: undefined,
+    });
+  });
+
+  it('records an explicit inherit choice without asking for effort', async () => {
+    const root = makeProject();
+    const requestQuestion = vi.fn(async (request: unknown) => {
+      const questions = (request as { questions: Array<{ question: string }> }).questions;
+      return { answers: { [questions[0]!.question]: 'Keep inheriting from the main agent' } };
+    });
+    const { askBinding } = createSubagentBindingCallbacks(fakeAgent(requestQuestion), testKaos, root);
+
+    const binding = await askBinding!('explore');
+
+    expect(requestQuestion).toHaveBeenCalledTimes(1);
+    expect(binding).toEqual({ inherit: true });
+    await expect(readSubagentBinding(testKaos, root, 'explore')).resolves.toEqual({
+      model: undefined,
+      thinkingEffort: undefined,
+      inherit: true,
+    });
+  });
+
+  it('returns undefined and persists nothing when the user dismisses the question', async () => {
+    const root = makeProject();
+    const requestQuestion = vi.fn(async () => null);
+    const { askBinding } = createSubagentBindingCallbacks(fakeAgent(requestQuestion), testKaos, root);
+
+    const binding = await askBinding!('coder');
+
+    expect(binding).toBeUndefined();
+    await expect(readSubagentBinding(testKaos, root, 'coder')).resolves.toBeUndefined();
+  });
+
+  it('skips the effort question for models without declared efforts', async () => {
+    const root = makeProject();
+    const requestQuestion = vi.fn(async (request: unknown) => {
+      const questions = (request as { questions: Array<{ question: string }> }).questions;
+      return { answers: { [questions[0]!.question]: 'kimi-code/k3' } };
+    });
+    const { askBinding } = createSubagentBindingCallbacks(fakeAgent(requestQuestion), testKaos, root);
+
+    const binding = await askBinding!('coder');
+
+    expect(requestQuestion).toHaveBeenCalledTimes(1);
+    expect(binding).toEqual({ model: 'kimi-code/k3', thinkingEffort: undefined });
   });
 });
 
