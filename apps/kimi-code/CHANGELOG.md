@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 0.29.2
+
+### Patch Changes
+
+- [#2119](https://github.com/MoonshotAI/kimi-code/pull/2119) [`f06eb5c`](https://github.com/MoonshotAI/kimi-code/commit/f06eb5c60e0a4e51162d1854dda1db41892b457c) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Allow hosts to defer registered user-tool schemas until needed. Set `disclosure: "deferred"` when registering a tool.
+
+- [#2120](https://github.com/MoonshotAI/kimi-code/pull/2120) [`0d00a07`](https://github.com/MoonshotAI/kimi-code/commit/0d00a07c02e334ca904077b2ea8c56cf58b44586) Thanks [@yicun](https://github.com/yicun)! - web: Fix copying selected chat text over plain HTTP from replacing the clipboard with an event placeholder.
+
 ## 0.29.1
 
 ### Patch Changes
