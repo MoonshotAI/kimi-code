@@ -33,6 +33,7 @@ import { ChatProviderError } from '#/kosong/contract/errors';
 import type { ChatProvider } from '#/kosong/contract/provider';
 import {
   IProtocolAdapterRegistry,
+  type CapabilityResolutionContext,
   type ExplainedCapability,
   type Protocol,
   type ProtocolAdapterConfig,
@@ -98,14 +99,20 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return protocol;
   }
 
-  resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
-    return this.explainCapability(protocol, modelName, providerType).capability;
+  resolveCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+    context?: CapabilityResolutionContext,
+  ): ModelCapability {
+    return this.explainCapability(protocol, modelName, providerType, context).capability;
   }
 
   explainCapability(
     protocol: Protocol,
     modelName: string,
     providerType?: string,
+    context?: CapabilityResolutionContext,
   ): ExplainedCapability {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     let traitCapability: ModelCapability | undefined;
@@ -130,6 +137,9 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       protocol,
       providerType,
       modelName,
+      catalogProvider: context?.catalogProvider,
+      catalogModel: context?.catalogModel,
+      providerOptions: context?.providerOptions,
     });
     if (registeredCapability !== undefined) return registeredCapability;
 

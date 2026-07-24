@@ -149,6 +149,53 @@ describe('resolveRuntimeProvider model metadata', () => {
     });
   });
 
+  it('uses explicit catalog coordinates for an OpenAI-compatible provider', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          deepseek: {
+            type: 'openai',
+            catalogProvider: 'deepseek',
+            apiKey: 'test-key',
+          },
+        },
+        models: {
+          custom: {
+            provider: 'deepseek',
+            model: 'production-reasoner',
+            catalogModel: 'deepseek-reasoner',
+            maxContextSize: 128_000,
+          },
+        },
+      },
+      model: 'custom',
+      catalog: {
+        deepseek: {
+          models: {
+            'deepseek-reasoner': {
+              id: 'deepseek-reasoner',
+              limit: { context: 128_000 },
+              reasoning: true,
+              tool_call: true,
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai',
+      model: 'production-reasoner',
+    });
+    expect(resolved.modelCapabilities).toMatchObject({
+      thinking: true,
+      tool_use: true,
+      max_context_tokens: 128_000,
+    });
+  });
+
   it('falls back to the legacy static table when the catalog misses', () => {
     const resolved = resolveRuntimeProvider({
       config: {

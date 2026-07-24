@@ -103,14 +103,6 @@ const KNOWN_WIRE_TYPES = [
   'vertexai',
 ] as const satisfies readonly ProviderType[];
 
-const CATALOG_CAPABILITY_PROVIDER_IDS: Partial<Record<ProviderType, readonly string[]>> = {
-  anthropic: ['anthropic'],
-  openai: ['openai'],
-  openai_responses: ['openai'],
-  'google-genai': ['google'],
-  vertexai: ['google-vertex', 'google-vertex-anthropic'],
-};
-
 function isWireType(value: unknown): value is ProviderType {
   return typeof value === 'string' && (KNOWN_WIRE_TYPES as readonly string[]).includes(value);
 }
@@ -468,20 +460,16 @@ function normalizeCatalogFamilyKey(key: string): string {
  */
 export function getCatalogModelCapability(
   catalog: Catalog | undefined,
-  wire: ProviderType,
+  providerId: string,
   modelName: string,
 ): ModelCapability | undefined {
   if (catalog === undefined) return undefined;
-  const providerIds = CATALOG_CAPABILITY_PROVIDER_IDS[wire];
-  if (providerIds === undefined) return undefined;
-  for (const providerId of providerIds) {
-    const models = catalog[providerId]?.models;
-    if (models === undefined) continue;
-    const exact = models[modelName] ?? models[modelName.toLowerCase()];
-    if (exact !== undefined) {
-      const model = catalogModelToCapability(exact);
-      if (model !== undefined) return model.capability;
-    }
+  const models = catalog[providerId]?.models;
+  if (models === undefined) return undefined;
+  const exact = models[modelName] ?? models[modelName.toLowerCase()];
+  if (exact !== undefined) {
+    const model = catalogModelToCapability(exact);
+    if (model !== undefined) return model.capability;
   }
   for (const normalize of [
     normalizeCatalogPlatformKey,
@@ -489,14 +477,10 @@ export function getCatalogModelCapability(
     normalizeCatalogFamilyKey,
   ]) {
     const target = normalize(modelName);
-    for (const providerId of providerIds) {
-      const models = catalog[providerId]?.models;
-      if (models === undefined) continue;
-      for (const [key, entry] of Object.entries(models)) {
-        if (normalize(key) !== target) continue;
-        const model = catalogModelToCapability(entry);
-        if (model !== undefined) return model.capability;
-      }
+    for (const [key, entry] of Object.entries(models)) {
+      if (normalize(key) !== target) continue;
+      const model = catalogModelToCapability(entry);
+      if (model !== undefined) return model.capability;
     }
   }
   return undefined;

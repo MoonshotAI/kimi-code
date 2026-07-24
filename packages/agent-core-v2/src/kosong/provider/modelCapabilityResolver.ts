@@ -6,9 +6,13 @@
  */
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import type { ExplainedCapability, Protocol } from '#/kosong/protocol/protocol';
+import type {
+  CapabilityResolutionContext,
+  ExplainedCapability,
+  Protocol,
+} from '#/kosong/protocol/protocol';
 
-export interface ModelCapabilityQuery {
+export interface ModelCapabilityQuery extends CapabilityResolutionContext {
   readonly protocol: Protocol;
   readonly providerType?: string;
   readonly modelName: string;

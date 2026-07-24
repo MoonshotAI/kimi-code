@@ -124,6 +124,7 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `google-genai`, `vertexai` |
+| `catalog_provider` | `string` | No | Exact provider id in the bundled [models.dev](https://models.dev/) snapshot used for capability metadata. It does not change the API protocol selected by `type`. Usually written automatically by `/provider`; set it by hand for an OpenAI-compatible third-party provider such as `deepseek` |
 | `api_key` | `string` | No | API key, written in plain text in the config file |
 | `base_url` | `string` | No | API base URL |
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow — normally no need to write this by hand |
@@ -148,6 +149,7 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | --- | --- | --- | --- |
 | `provider` | `string` | Yes | Name of the provider to use; must be defined in `providers` |
 | `model` | `string` | Yes | Model identifier sent to the server when calling the API |
+| `catalog_model` | `string` | No | Exact model id used for capability lookup under the provider's `catalog_provider`. Omit it when `model` is already the canonical models.dev id; set it when the server-facing name is a deployment alias |
 | `max_context_size` | `integer` | Yes | Maximum context length in tokens; must be at least 1 |
 | `max_input_size` | `integer` | No | Declared per-request input limit when it sits below the total window (e.g. gpt-5: 400k window, 272k input). Compaction, context-overflow checks, and usage ratios prefer it; completion budgeting keeps the total window. Resolution clamps it to `max_context_size` |
 | `max_output_size` | `integer` | No | Per-request output token cap (maps to `max_tokens`). Currently only the `anthropic` provider honors it. When set for a Claude model, this explicit value overrides the built-in server-side maximum |

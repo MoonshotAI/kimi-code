@@ -106,7 +106,11 @@ describe('applyCatalogProvider', () => {
     });
 
     expect(result.defaultModel).toBe('anthropic/m1');
-    expect(config.providers['anthropic']).toMatchObject({ type: 'anthropic', apiKey: 'sk' });
+    expect(config.providers['anthropic']).toMatchObject({
+      type: 'anthropic',
+      catalogProvider: 'anthropic',
+      apiKey: 'sk',
+    });
     expect(config.models?.['anthropic/m1']).toMatchObject({
       provider: 'anthropic',
       model: 'm1',

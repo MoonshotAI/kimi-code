@@ -24,6 +24,15 @@ import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 import { loadBuiltInCatalog } from './built-in-catalog';
 
+const DEFAULT_CATALOG_PROVIDER_BY_TYPE: Readonly<Partial<Record<ProviderType, string>>> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  openai_responses: 'openai',
+  'google-genai': 'google',
+  vertexai: 'google-vertex',
+  kimi: 'moonshotai',
+};
+
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
 }
@@ -158,7 +167,12 @@ export class ProviderManager implements ModelProvider {
     return {
       providerName,
       provider,
-      modelCapabilities: resolveModelCapabilities(effectiveAlias, provider, this.catalog),
+      modelCapabilities: resolveModelCapabilities(
+        effectiveAlias,
+        provider,
+        this.catalog,
+        providerConfig.catalogProvider ?? DEFAULT_CATALOG_PROVIDER_BY_TYPE[providerConfig.type],
+      ),
       alwaysThinking: (effectiveAlias.capabilities ?? []).some(
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
@@ -249,10 +263,13 @@ function resolveModelCapabilities(
   alias: ModelAlias,
   provider: KosongProviderConfig,
   catalog?: Catalog,
+  catalogProvider?: string,
 ): ModelCapability {
   const declared = new Set((alias.capabilities ?? []).map((c) => c.trim().toLowerCase()));
   const detected =
-    getCatalogModelCapability(catalog, provider.type, provider.model) ??
+    (catalogProvider === undefined
+      ? undefined
+      : getCatalogModelCapability(catalog, catalogProvider, alias.catalogModel ?? provider.model)) ??
     getModelCapability(provider.type, provider.model);
 
   return {

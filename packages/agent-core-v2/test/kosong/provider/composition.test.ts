@@ -333,6 +333,32 @@ describe('resolveCapability', () => {
       registration.dispose();
     }
   });
+
+  it('forwards explicit catalog identity and provider mode to capability sources', () => {
+    let captured: Parameters<Parameters<typeof registerModelCapabilityResolver>[0]>[0] | undefined;
+    const registration = registerModelCapabilityResolver((query) => {
+      captured = query;
+      return undefined;
+    });
+
+    try {
+      registry.resolveCapability('google-genai', 'deployment-name', 'google-genai', {
+        catalogProvider: 'google-vertex',
+        catalogModel: 'gemini-canonical',
+        providerOptions: { vertexai: true, project: 'example-project' },
+      });
+      expect(captured).toMatchObject({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        modelName: 'deployment-name',
+        catalogProvider: 'google-vertex',
+        catalogModel: 'gemini-canonical',
+        providerOptions: { vertexai: true, project: 'example-project' },
+      });
+    } finally {
+      registration.dispose();
+    }
+  });
 });
 
 describe('explainCapability', () => {

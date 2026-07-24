@@ -651,7 +651,7 @@ describe('getCatalogModelCapability', () => {
     expect(capability).toMatchObject({ image_in: false, audio_in: true });
   });
 
-  it('returns undefined for an unmapped wire', () => {
+  it('returns undefined for an unknown provider id', () => {
     const catalog = {
       anthropic: {
         models: {
@@ -663,7 +663,7 @@ describe('getCatalogModelCapability', () => {
       },
     };
 
-    expect(getCatalogModelCapability(catalog, 'kimi', 'claude-example')).toBeUndefined();
+    expect(getCatalogModelCapability(catalog, 'missing-provider', 'claude-example')).toBeUndefined();
   });
 });
 

@@ -88,6 +88,12 @@ export interface ExplainedCapability {
   readonly source: InspectionSource;
 }
 
+export interface CapabilityResolutionContext {
+  readonly catalogProvider?: string;
+  readonly catalogModel?: string;
+  readonly providerOptions?: ProtocolProviderOptions;
+}
+
 export interface IProtocolAdapterRegistry {
   readonly _serviceBrand: undefined;
 
@@ -128,6 +134,7 @@ export interface IProtocolAdapterRegistry {
     protocol: Protocol,
     modelName: string,
     providerType?: string,
+    context?: CapabilityResolutionContext,
   ): ModelCapability;
 
   /**
@@ -139,6 +146,7 @@ export interface IProtocolAdapterRegistry {
     protocol: Protocol,
     modelName: string,
     providerType?: string,
+    context?: CapabilityResolutionContext,
   ): ExplainedCapability;
 
   /**

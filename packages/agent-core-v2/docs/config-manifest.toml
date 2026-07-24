@@ -220,6 +220,7 @@ merge_all_available_skills = true
   # aliases: string[]
   # provider: string
   # model: string
+  # catalog_model: string
   # max_context_size: integer
   # max_input_size: integer
   # max_output_size: integer
@@ -276,6 +277,7 @@ merge_all_available_skills = true
   # base_url: string
   # custom_headers: record<string, string>
   # default_model: string
+  # catalog_provider: string
   # type: string
   # api_key: string
   # oauth: object

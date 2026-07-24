@@ -15,7 +15,7 @@ Kimi Code CLI 支持同时接入多家 LLM 平台——用 Kimi Code 托管服�
 | `google-genai` | Google GenAI | Gemini API |
 | `vertexai` | Google GenAI on Vertex | Google Cloud Vertex AI |
 
-所有供应商默认以流式方式与模型交互。thinking、视觉、工具调用等能力按模型名前缀自动匹配，通常不需要手动声明。
+所有供应商默认以流式方式与模型交互。Kimi Code 会先从随 CLI 发布的 models.dev 快照读取能力元数据，再回退到内置模型匹配规则。对官方端点，`type` 会自动选择对应的目录供应商；对只是共用协议的第三方端点，需要显式设置 `catalog_provider`，而 `type` 仍只负责选择 API 协议。
 
 **凭证优先级**：`api_key` 直接字段 > `[providers.<name>.env]` 子表键 > 两者都缺时启动报错。CLI 不会从 shell 环境变量自动取凭证——详见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 
@@ -59,7 +59,7 @@ api_key = "sk-xxxxx"
 
 ## `anthropic`
 
-用于对接 Claude API。Kimi Code 会先从随 CLI 发布的 models.dev 目录快照中自动识别视觉、工具调用及 Thinking 能力，再回退到内置模型匹配规则；只有两者都无法覆盖的自定义模型，才需要在 `[models.<alias>]` 里显式声明 `capabilities`。
+用于对接 Claude API。默认的 `anthropic` 目录身份让 Kimi Code 先从随 CLI 发布的 models.dev 快照中自动识别视觉、工具调用及 Thinking 能力，再回退到内置模型匹配规则；只有两者都无法覆盖的自定义模型，才需要在 `[models.<alias>]` 里显式声明 `capabilities`。
 
 - 默认 `base_url`：跟随 Anthropic SDK 默认值
 - 凭证键名：`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`
@@ -92,6 +92,24 @@ type = "openai"
 base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
+
+配置 OpenAI 兼容的第三方端点时，保留 `type = "openai"`，因为它决定在线协议；同时把 `catalog_provider` 设为 models.dev 中用于读取能力元数据的精确供应商 ID。如果端点暴露的是部署别名而不是规范模型 ID，再在模型条目上设置 `catalog_model`：
+
+```toml
+[providers.deepseek]
+type = "openai"
+catalog_provider = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = "sk-xxxxx"
+
+[models.production-reasoner]
+provider = "deepseek"
+model = "production-reasoner"
+catalog_model = "deepseek-reasoner"
+max_context_size = 128000
+```
+
+查找只会在指定供应商内精确进行。Kimi Code 不会根据配置中的供应商名称猜厂商，也不会扫描其他供应商寻找同名模型。如果端点本来就使用 `deepseek-reasoner`，可以省略 `catalog_model`。
 
 ## `openai_responses`
 

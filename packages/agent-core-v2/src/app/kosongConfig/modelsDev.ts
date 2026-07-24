@@ -124,12 +124,13 @@ const KNOWN_WIRE_TYPES = [
 /** The enumerated subset of {@link ProviderType} the models.dev import knows. */
 type KnownWireType = (typeof KNOWN_WIRE_TYPES)[number];
 
-const MODELS_DEV_CAPABILITY_PROVIDER_IDS: Partial<Record<KnownWireType, readonly string[]>> = {
-  anthropic: ['anthropic'],
-  openai: ['openai'],
-  openai_responses: ['openai'],
-  'google-genai': ['google'],
-  vertexai: ['google-vertex', 'google-vertex-anthropic'],
+const DEFAULT_MODELS_DEV_PROVIDER_BY_TYPE: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  openai_responses: 'openai',
+  'google-genai': 'google',
+  vertexai: 'google-vertex',
+  kimi: 'moonshotai',
 };
 
 function isWireType(value: unknown): value is KnownWireType {
@@ -476,22 +477,32 @@ export interface ModelsDevCapabilityMatch {
   readonly providerId: string;
 }
 
+export function resolveModelsDevCapabilityProvider(query: {
+  readonly protocol: ProviderType;
+  readonly providerType?: string;
+  readonly catalogProvider?: string;
+  readonly vertexai?: boolean;
+}): string | undefined {
+  return (
+    query.catalogProvider ??
+    (query.vertexai === true
+      ? 'google-vertex'
+      : DEFAULT_MODELS_DEV_PROVIDER_BY_TYPE[query.providerType ?? query.protocol])
+  );
+}
+
 export function getModelsDevModelCapability(
   catalog: ModelsDevCatalog | undefined,
-  wire: ProviderType,
+  providerId: string,
   modelName: string,
 ): ModelsDevCapabilityMatch | undefined {
-  if (catalog === undefined || !isWireType(wire)) return undefined;
-  const providerIds = MODELS_DEV_CAPABILITY_PROVIDER_IDS[wire];
-  if (providerIds === undefined) return undefined;
-  for (const providerId of providerIds) {
-    const models = catalog[providerId]?.models;
-    if (models === undefined) continue;
-    const exact = models[modelName] ?? models[modelName.toLowerCase()];
-    if (exact !== undefined) {
-      const model = modelsDevModelToCapability(exact);
-      if (model !== undefined) return { capability: model.capability, providerId };
-    }
+  if (catalog === undefined) return undefined;
+  const models = catalog[providerId]?.models;
+  if (models === undefined) return undefined;
+  const exact = models[modelName] ?? models[modelName.toLowerCase()];
+  if (exact !== undefined) {
+    const model = modelsDevModelToCapability(exact);
+    if (model !== undefined) return { capability: model.capability, providerId };
   }
   for (const normalize of [
     normalizeModelsDevPlatformKey,
@@ -499,14 +510,10 @@ export function getModelsDevModelCapability(
     normalizeModelsDevFamilyKey,
   ]) {
     const target = normalize(modelName);
-    for (const providerId of providerIds) {
-      const models = catalog[providerId]?.models;
-      if (models === undefined) continue;
-      for (const [key, entry] of Object.entries(models)) {
-        if (normalize(key) !== target) continue;
-        const model = modelsDevModelToCapability(entry);
-        if (model !== undefined) return { capability: model.capability, providerId };
-      }
+    for (const [key, entry] of Object.entries(models)) {
+      if (normalize(key) !== target) continue;
+      const model = modelsDevModelToCapability(entry);
+      if (model !== undefined) return { capability: model.capability, providerId };
     }
   }
   return undefined;

@@ -23,7 +23,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
 import { IConfigService } from '#/app/config/config';
-import { getModelsDevModelCapability } from '#/app/kosongConfig/modelsDev';
+import {
+  getModelsDevModelCapability,
+  resolveModelsDevCapabilityProvider,
+} from '#/app/kosongConfig/modelsDev';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -202,6 +205,38 @@ describe('getModelsDevModelCapability', () => {
   });
 });
 
+describe('resolveModelsDevCapabilityProvider', () => {
+  it('uses an explicit catalog provider before protocol defaults', () => {
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'openai',
+        providerType: 'openai',
+        catalogProvider: 'deepseek',
+      }),
+    ).toBe('deepseek');
+  });
+
+  it('maps compatible protocols to their official catalog providers', () => {
+    expect(resolveModelsDevCapabilityProvider({ protocol: 'openai' })).toBe('openai');
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'openai',
+        providerType: 'kimi',
+      }),
+    ).toBe('moonshotai');
+  });
+
+  it('uses the Vertex catalog when the google-genai provider runs in Vertex mode', () => {
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        vertexai: true,
+      }),
+    ).toBe('google-vertex');
+  });
+});
+
 function fetchJson(doc: unknown): typeof fetch {
   return (async () =>
     new Response(JSON.stringify(doc), {
@@ -320,6 +355,7 @@ describe('IModelsDevImportService', () => {
     const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
     expect(providers['openai']).toMatchObject({
       type: 'openai',
+      catalogProvider: 'openai',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: 'sk-test',
     });

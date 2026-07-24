@@ -11,17 +11,28 @@ import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
 import {
   getModelsDevModelCapability,
   type ModelsDevCatalog,
+  resolveModelsDevCapabilityProvider,
 } from './modelsDev';
 import { loadBuiltInModelsDevCatalog } from './modelsDevUpstream';
 
 let catalog: ModelsDevCatalog | undefined | null = null;
 
-registerModelCapabilityResolver(({ protocol, providerType, modelName }) => {
+registerModelCapabilityResolver((query) => {
   if (catalog === null) {
     catalog = loadBuiltInModelsDevCatalog(BUILT_IN_MODELS_DEV_JSON);
   }
-  const wire = providerType === 'vertexai' ? providerType : protocol;
-  const match = getModelsDevModelCapability(catalog, wire, modelName);
+  const providerId = resolveModelsDevCapabilityProvider({
+    protocol: query.protocol,
+    providerType: query.providerType,
+    catalogProvider: query.catalogProvider,
+    vertexai: query.providerOptions?.vertexai,
+  });
+  if (providerId === undefined) return undefined;
+  const match = getModelsDevModelCapability(
+    catalog,
+    providerId,
+    query.catalogModel ?? query.modelName,
+  );
   if (match === undefined) return undefined;
   return {
     capability: match.capability,

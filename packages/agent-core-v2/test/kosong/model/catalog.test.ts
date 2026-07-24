@@ -33,7 +33,10 @@ import '#/kosong/provider/bases/anthropic/index';
 import '#/kosong/provider/bases/google-genai/index';
 import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/protocolAdapterRegistry';
-import { registerModelCapabilityResolver } from '#/kosong/provider/modelCapabilityResolver';
+import {
+  type ModelCapabilityQuery,
+  registerModelCapabilityResolver,
+} from '#/kosong/provider/modelCapabilityResolver';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 import {
@@ -313,6 +316,60 @@ describe('Model assembly (pure data)', () => {
       expect(catalog.get('g').providerOptions).toBeUndefined();
     } finally {
       host.dispose();
+    }
+  });
+
+  it('passes Vertex mode and explicit catalog coordinates to capability sources', () => {
+    let captured: ModelCapabilityQuery | undefined;
+    const registration = registerModelCapabilityResolver((query) => {
+      captured = query;
+      return {
+        capability: {
+          image_in: true,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000,
+        },
+        source: { kind: 'builtin', detail: 'test catalog source' },
+      };
+    });
+    const { host, catalog } = createHost({
+      providers: {
+        vertex: {
+          type: 'google-genai',
+          catalogProvider: 'google-vertex',
+          env: { GOOGLE_CLOUD_PROJECT: 'my-project', GOOGLE_CLOUD_LOCATION: 'us-central1' },
+        },
+      },
+      models: {
+        v: {
+          provider: 'vertex',
+          model: 'deployment-name',
+          catalogModel: 'gemini-canonical',
+          maxContextSize: 1_000,
+        },
+      },
+    });
+
+    try {
+      expect(catalog.get('v').capabilities.thinking).toBe(true);
+      expect(captured).toMatchObject({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        modelName: 'deployment-name',
+        catalogProvider: 'google-vertex',
+        catalogModel: 'gemini-canonical',
+        providerOptions: {
+          vertexai: true,
+          project: 'my-project',
+          location: 'us-central1',
+        },
+      });
+    } finally {
+      host.dispose();
+      registration.dispose();
     }
   });
 

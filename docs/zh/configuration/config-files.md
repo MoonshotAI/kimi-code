@@ -124,6 +124,7 @@ timeout = 5
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | 供应商类型：`kimi`、`anthropic`、`openai`、`openai_responses`、`google-genai`、`vertexai` |
+| `catalog_provider` | `string` | 否 | 随 CLI 发布的 [models.dev](https://models.dev/) 快照中的精确供应商 ID，用于读取能力元数据，不会改变 `type` 选择的 API 协议。通常由 `/provider` 自动写入；手动配置 DeepSeek 等 OpenAI 兼容供应商时可显式设置，例如 `deepseek` |
 | `api_key` | `string` | 否 | API 密钥，明文写在配置文件里 |
 | `base_url` | `string` | 否 | API 基础 URL |
 | `oauth` | `table` | 否 | OAuth 凭据引用（`storage`、`key` 两个字段），由登录流程自动注入，通常无需手写 |
@@ -148,6 +149,7 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | --- | --- | --- | --- |
 | `provider` | `string` | 是 | 使用的供应商名称，必须在 `providers` 中定义 |
 | `model` | `string` | 是 | 调用 API 时实际传给服务端的模型 ID |
+| `catalog_model` | `string` | 否 | 在供应商的 `catalog_provider` 下查能力时使用的精确模型 ID。`model` 已经是 models.dev 中的规范 ID 时可省略；服务端使用部署别名时需要设置 |
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
 | `max_input_size` | `integer` | 否 | 模型声明的单次请求输入上限（当低于总窗口时，如 gpt-5 的 400k 窗口 / 272k 输入）。压缩、上下文溢出检查和用量比率优先使用它；补全预算仍使用总窗口。解析时会被钳制到不超过 `max_context_size` |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取。为 Claude 模型设置后，这个显式值会覆盖内置的服务端最大值 |
