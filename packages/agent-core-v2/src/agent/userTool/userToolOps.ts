@@ -40,7 +40,8 @@ function equalRegistration(a: UserToolRegistration, b: UserToolRegistration): bo
   return (
     a.name === b.name &&
     a.description === b.description &&
-    a.parameters === b.parameters
+    a.parameters === b.parameters &&
+    a.disclosure === b.disclosure
   );
 }
 
