@@ -6,6 +6,7 @@ import type { Agent } from '..';
 import {
   collectLoadedDynamicToolNames,
 } from '../context/dynamic-tools';
+import type { ContextMessage } from '../context/types';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -260,6 +261,7 @@ export class ToolManager {
     });
     this.userTools.delete(name);
     this.deferredUserTools.delete(name);
+    this.pendingLoadedDynamicTools.delete(name);
     this.enabledTools.delete(name);
   }
 
@@ -575,8 +577,8 @@ export class ToolManager {
   }
 
   /**
-   * The loaded-tools ledger: every name whose full definition has been
-   * delivered to the conversation via a `tools`-carrying message, plus the
+   * The active loaded-tools ledger: every still-loadable name whose full
+   * definition has been delivered via a `tools`-carrying message, plus the
    * defer-window pending set. History is the single source of truth, so the
    * ledger survives resume (records replay rebuilds the history), keeps its
    * state across undo (schema messages have `injection` origin and are not
@@ -584,9 +586,54 @@ export class ToolManager {
    * the folded history — the model re-selects what it still needs).
    */
   loadedDynamicToolNames(): ReadonlySet<string> {
+    const names = this.allLoadedDynamicToolNames();
+    for (const name of names) {
+      if (!this.isLoadedDynamicToolActive(name)) names.delete(name);
+    }
+    return names;
+  }
+
+  shapeDynamicToolHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
+    let shaped: ContextMessage[] | undefined;
+    for (let i = 0; i < messages.length; i += 1) {
+      const message = messages[i]!;
+      const tools = message.tools;
+      if (tools === undefined || tools.length === 0) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+
+      const kept = tools.filter((tool) => this.isLoadedDynamicToolActive(tool.name));
+      if (kept.length === tools.length) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+      shaped ??= messages.slice(0, i);
+      if (kept.length > 0) {
+        shaped.push({ ...message, tools: kept });
+        continue;
+      }
+
+      const { tools: _tools, ...rest } = message;
+      void _tools;
+      if (rest.content.length > 0 || rest.toolCalls.length > 0) shaped.push(rest);
+    }
+    return shaped ?? messages;
+  }
+
+  private allLoadedDynamicToolNames(): Set<string> {
     const names = collectLoadedDynamicToolNames(this.agent.context.history);
     for (const name of this.pendingLoadedDynamicTools) names.add(name);
     return names;
+  }
+
+  private isLoadedDynamicToolActive(name: string): boolean {
+    if (isMcpToolName(name)) return true;
+    return (
+      this.deferredUserTools.has(name) &&
+      this.userTools.has(name) &&
+      this.enabledTools.has(name)
+    );
   }
 
   /** Mark names loaded ahead of their schema message landing in history. */
@@ -643,7 +690,7 @@ export class ToolManager {
   missingToolMessage(name: string): string | undefined {
     if (!this.progressiveDisclosure) return undefined;
     const registered = this.loadableDynamicToolNames().includes(name);
-    const loaded = this.loadedDynamicToolNames().has(name);
+    const loaded = this.allLoadedDynamicToolNames().has(name);
     if (registered && !loaded) {
       return (
         `Tool "${name}" is available but not loaded. ` +

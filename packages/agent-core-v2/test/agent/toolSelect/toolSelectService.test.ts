@@ -627,6 +627,23 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       MCP_BETA,
     ]);
   });
+
+  it('shapeHistory removes a deferred user schema after unregister', () => {
+    const h = createHarness();
+    const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
+    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+    registration.dispose();
+
+    expect(h.sut.shapeHistory(h.contextMemory.get())).toEqual([]);
+    expect(h.sut.load([USER_DEFERRED])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      unknown: [USER_DEFERRED],
+    });
+    expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
+      USER_DEFERRED,
+    ]);
+  });
 });
 
 describe('AgentToolSelectService.load', () => {

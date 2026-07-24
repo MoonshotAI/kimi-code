@@ -368,6 +368,48 @@ describe('disclosure mode — select_tools three branches and dispatch', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('stops exposing a loaded deferred user tool after unregister', async () => {
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn() });
+    ctx.configure({
+      tools: ['Read'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    await registerDeferredDashboard(ctx);
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'loading dashboard tool' },
+      selectCall('call-1', [DASHBOARD_TOOL]),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'loaded' });
+    await runTurn(ctx, 'load the dashboard tool');
+    expect(schemaMessages(ctx)).toHaveLength(1);
+
+    await ctx.rpc.unregisterTool({ name: DASHBOARD_TOOL });
+    expect(ctx.agent.tools.loadedDynamicToolNames().has(DASHBOARD_TOOL)).toBe(false);
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'calling removed tool' },
+      dashboardCall('call-2', 'Operations'),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await runTurn(ctx, 'continue');
+
+    const firstCallAfterRemoval = ctx.llmCalls.at(-2)!;
+    expect(
+      firstCallAfterRemoval.history.some((message) =>
+        message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
+      ),
+    ).toBe(false);
+    expect(firstCallAfterRemoval.tools.map((tool) => tool.name)).not.toContain(DASHBOARD_TOOL);
+    expect(historyText(ctx)).toContain(`<tools_removed>\n${DASHBOARD_TOOL}\n</tools_removed>`);
+    expect(toolResultTexts(ctx).join('\n')).toContain(
+      `Tool "${DASHBOARD_TOOL}" was loaded but is no longer registered or active.`,
+    );
+    expect(schemaMessages(ctx)).toHaveLength(1);
+  });
+
   it('keeps the top-level tools snapshot stable across select_tools loads', async () => {
     const persistence = new InMemoryAgentRecordPersistence();
     const ctx = testAgent({ experimentalFlags: toolSelectFlagOn(), persistence });

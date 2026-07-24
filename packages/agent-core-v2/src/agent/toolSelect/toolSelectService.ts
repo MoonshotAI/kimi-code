@@ -219,7 +219,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     const info = this.toolRegistry.list().find((entry) => entry.name === name);
     if (info !== undefined) return this.toolPolicy.isToolActive(name, info.source);
     if (isMcpToolName(name)) return this.toolPolicy.isToolActive(name, 'mcp');
-    return true;
+    return false;
   }
 
   private isDynamicallyLoadable(info: ToolInfo): boolean {
