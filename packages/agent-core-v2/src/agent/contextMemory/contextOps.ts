@@ -333,7 +333,11 @@ export function isFullyUndoable(cut: UndoCut, count: number): boolean {
   return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
-export type UndoUnavailableReason = 'empty' | 'compaction_boundary' | 'insufficient';
+export type UndoUnavailableReason =
+  | 'empty'
+  | 'compaction_boundary'
+  | 'insufficient'
+  | 'checkpoint_lost';
 
 export type UndoPrecheck =
   | { readonly ok: true }
@@ -365,6 +369,8 @@ export function formatUndoUnavailableMessage(
       return 'Nothing to undo: would cross a compaction boundary';
     case 'insufficient':
       return `Nothing to undo: only ${precheck.undoable} of ${precheck.requested} requested turn(s) available`;
+    case 'checkpoint_lost':
+      return 'Nothing to undo: conversation state checkpoints are incomplete';
   }
 }
 

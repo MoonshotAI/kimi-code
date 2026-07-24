@@ -2,7 +2,7 @@
  * `undo` domain (L6) — `IAgentConversationUndoService` implementation.
  *
  * Owns idle conversation undo coordination and restored observable state.
- * Coordinates `contextMemory`, conversation reconciliation, `fullCompaction`,
+ * Coordinates `contextMemory`, undo participants, `fullCompaction`,
  * `loop`, `prompt`, Agent and Session identity, `sessionMetadata`, `event`,
  * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
  */
@@ -12,7 +12,7 @@ import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
+import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import {
   computeUndoCut,
   formatUndoUnavailableMessage,
@@ -59,8 +59,8 @@ export class AgentConversationUndoService
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentConversationUndoReconciliationRegistry
-    private readonly participants: IAgentConversationUndoReconciliationRegistry,
+    @IAgentConversationUndoParticipantRegistry
+    private readonly participants: IAgentConversationUndoParticipantRegistry,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -75,7 +75,7 @@ export class AgentConversationUndoService
 
   availability(): UndoAvailability {
     const cut = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER);
-    const maxTurns = Math.min(cut.removedCount, this.checkpointDepth());
+    const maxTurns = Math.min(cut.removedCount, this.checkpointDepth().depth);
     return {
       maxTurns,
       stoppedAtCompaction: cut.stoppedAtCompaction || maxTurns < cut.removedCount,
@@ -122,13 +122,17 @@ export class AgentConversationUndoService
     }
   }
 
-  private checkpointDepth(): number {
+  private checkpointDepth(): { depth: number; model: string } {
     let depth = Number.POSITIVE_INFINITY;
+    let model = '';
     for (const def of CHECKPOINTED_MODELS) {
       const state = this.wire.getModel(def) as Checkpointed<unknown>;
-      depth = Math.min(depth, state.checkpoints.length);
+      if (state.checkpoints.length < depth) {
+        depth = state.checkpoints.length;
+        model = def.name;
+      }
     }
-    return depth;
+    return { depth, model };
   }
 
   private busyError(reason: 'loop' | 'compaction'): Error2 {
@@ -153,21 +157,26 @@ export class AgentConversationUndoService
         },
       );
     }
-    const depth = this.checkpointDepth();
+    const { depth, model } = this.checkpointDepth();
     if (depth >= turns) return;
+    // A compaction explains missing checkpoints (they are cleared at the
+    // boundary); without one, a checkpointed model failed to track an anchor.
+    const fullCut = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER);
+    const reason = fullCut.stoppedAtCompaction ? 'compaction_boundary' : 'checkpoint_lost';
     throw new Error2(
       ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       formatUndoUnavailableMessage({
         ok: false,
-        reason: 'compaction_boundary',
+        reason,
         requested: turns,
         undoable: depth,
       }),
       {
         details: {
-          reason: 'compaction_boundary',
+          reason,
           requestedCount: turns,
           undoableCount: depth,
+          model,
         },
       },
     );

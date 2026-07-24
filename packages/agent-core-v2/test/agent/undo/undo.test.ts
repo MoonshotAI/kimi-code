@@ -9,8 +9,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentConversationUndoReconciliationRegistry } from '#/agent/contextMemory/conversationUndoReconciliation';
+import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { contextApplyCompaction } from '#/agent/contextMemory/contextOps';
+import {
+  CHECKPOINTED_MODELS,
+  type Checkpointed,
+} from '#/agent/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -24,6 +28,7 @@ import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryCon
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { TodoModel, todoSet } from '#/session/todo/todoOps';
+import { defineModel } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, telemetryServices, type TestAgentContext } from '../../harness';
@@ -205,6 +210,34 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
   });
 
+  it('attributes a checkpoint depth failure to the limiting model', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    ctx.appendTurnExchange('u1', 'a1');
+    // A checkpointed model that never tracks anchors (no reducers) drags the
+    // depth to 0 without any compaction in history.
+    const defective = defineModel<Checkpointed<unknown>>('testDefective', () => ({
+      current: null,
+      checkpoints: [],
+    }));
+    CHECKPOINTED_MODELS.push(defective);
+
+    try {
+      await expect(undo.undo(1)).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
+        details: {
+          reason: 'checkpoint_lost',
+          requestedCount: 1,
+          undoableCount: 0,
+          model: 'testDefective',
+        },
+      });
+    } finally {
+      CHECKPOINTED_MODELS.splice(CHECKPOINTED_MODELS.indexOf(defective), 1);
+    }
+    expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
@@ -265,7 +298,7 @@ describe('AgentConversationUndoService', () => {
       order.push('flush');
       await originalFlush?.();
     });
-    const participants = ctx.get(IAgentConversationUndoReconciliationRegistry);
+    const participants = ctx.get(IAgentConversationUndoParticipantRegistry);
     participants.register({
       id: 'test.state',
       reconcileAfterUndo: async () => {
@@ -304,7 +337,7 @@ describe('AgentConversationUndoService', () => {
         await originalFlush();
       });
       const reconciled: string[] = [];
-      const participants = ctx.get(IAgentConversationUndoReconciliationRegistry);
+      const participants = ctx.get(IAgentConversationUndoParticipantRegistry);
       participants.register({
         id: 'test.flush-failure-state',
         reconcileAfterUndo: async () => {
@@ -345,7 +378,7 @@ describe('AgentConversationUndoService', () => {
     let calls = 0;
     let active = 0;
     let maxActive = 0;
-    ctx.get(IAgentConversationUndoReconciliationRegistry).register({
+    ctx.get(IAgentConversationUndoParticipantRegistry).register({
       id: 'test.serial-state',
       reconcileAfterUndo: async () => {
         calls += 1;

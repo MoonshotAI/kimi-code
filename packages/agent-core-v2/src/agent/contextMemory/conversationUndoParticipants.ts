@@ -10,35 +10,35 @@ import { createDecorator } from '#/_base/di/instantiation';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
-export interface AgentConversationUndoReconciliationParticipant {
+export interface AgentConversationUndoParticipant {
   readonly id: string;
   reconcileAfterUndo(): Promise<void>;
 }
 
-export interface IAgentConversationUndoReconciliationRegistry {
+export interface IAgentConversationUndoParticipantRegistry {
   readonly _serviceBrand: undefined;
 
-  register(participant: AgentConversationUndoReconciliationParticipant): IDisposable;
-  list(): readonly AgentConversationUndoReconciliationParticipant[];
+  register(participant: AgentConversationUndoParticipant): IDisposable;
+  list(): readonly AgentConversationUndoParticipant[];
 }
 
-export const IAgentConversationUndoReconciliationRegistry =
-  createDecorator<IAgentConversationUndoReconciliationRegistry>(
-    'agentConversationUndoReconciliationRegistry',
+export const IAgentConversationUndoParticipantRegistry =
+  createDecorator<IAgentConversationUndoParticipantRegistry>(
+    'agentConversationUndoParticipantRegistry',
   );
 
-class AgentConversationUndoReconciliationRegistry
+class AgentConversationUndoParticipantRegistry
   extends Disposable
-  implements IAgentConversationUndoReconciliationRegistry
+  implements IAgentConversationUndoParticipantRegistry
 {
   declare readonly _serviceBrand: undefined;
 
-  private readonly participants = new Map<string, AgentConversationUndoReconciliationParticipant>();
+  private readonly participants = new Map<string, AgentConversationUndoParticipant>();
 
-  register(participant: AgentConversationUndoReconciliationParticipant): IDisposable {
+  register(participant: AgentConversationUndoParticipant): IDisposable {
     if (this.participants.has(participant.id)) {
       throw new Error(
-        `Conversation undo reconciliation participant "${participant.id}" is already registered`,
+        `Conversation undo participant "${participant.id}" is already registered`,
       );
     }
     this.participants.set(participant.id, participant);
@@ -49,15 +49,15 @@ class AgentConversationUndoReconciliationRegistry
     });
   }
 
-  list(): readonly AgentConversationUndoReconciliationParticipant[] {
+  list(): readonly AgentConversationUndoParticipant[] {
     return [...this.participants.values()];
   }
 }
 
 registerScopedService(
   LifecycleScope.Agent,
-  IAgentConversationUndoReconciliationRegistry,
-  AgentConversationUndoReconciliationRegistry,
+  IAgentConversationUndoParticipantRegistry,
+  AgentConversationUndoParticipantRegistry,
   InstantiationType.Eager,
-  'conversationUndoReconciliation',
+  'conversationUndoParticipants',
 );
