@@ -1364,6 +1364,18 @@ onBeforeUnmount(() => {
 }
 .btn-new-chat :deep(.ui-kbd) { margin-left: auto; }
 
+.btn-new-chat :deep(.ui-kbd),
+.search :deep(.ui-kbd) {
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.btn-new-chat:hover :deep(.ui-kbd),
+.btn-new-chat:focus-visible :deep(.ui-kbd),
+.search:hover :deep(.ui-kbd),
+.search:focus-visible :deep(.ui-kbd) {
+  opacity: 1;
+}
+
 .search {
   grid-column: 1 / -1;
   display: flex;
