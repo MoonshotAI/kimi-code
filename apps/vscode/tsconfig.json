@@ -15,5 +15,11 @@
     }
   },
   "include": ["src/**/*", "shared/**/*", "test/**/*"],
-  "exclude": ["dist", "node_modules", "webview-ui", "test/settings-store.test.ts"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "webview-ui",
+    "test/question-dialog.test.ts",
+    "test/settings-store.test.ts"
+  ]
 }

@@ -7,33 +7,40 @@ export function QuestionDialog() {
   const [customInput, setCustomInput] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(1);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  // For now, only handle the first question
-  const question = pendingQuestion?.questions?.[0];
+  const question = pendingQuestion?.questions?.[questionIndex];
 
   useEffect(() => {
     if (pendingQuestion) {
       setShowCustom(false);
       setCustomInput("");
       setSelectedIndex(1);
+      setQuestionIndex(0);
+      setAnswers({});
     }
   }, [pendingQuestion?.id]);
 
   if (!pendingQuestion || !question) return null;
 
-  const handleSelect = async (optionLabel: string) => {
-    const answers: Record<string, string> = {
-      [question.question]: optionLabel,
-    };
-    await respondQuestion(answers);
+  const handleAnswer = async (answer: string) => {
+    const nextAnswers = { ...answers, [question.question]: answer };
+    const nextQuestionIndex = questionIndex + 1;
+    if (nextQuestionIndex < pendingQuestion.questions.length) {
+      setAnswers(nextAnswers);
+      setQuestionIndex(nextQuestionIndex);
+      setShowCustom(false);
+      setCustomInput("");
+      setSelectedIndex(1);
+      return;
+    }
+    await respondQuestion(nextAnswers);
   };
 
   const handleCustomSubmit = async () => {
     if (!customInput.trim()) return;
-    const answers: Record<string, string> = {
-      [question.question]: customInput.trim(),
-    };
-    await respondQuestion(answers);
+    await handleAnswer(customInput.trim());
   };
 
   const options = question.options || [];
@@ -42,6 +49,11 @@ export function QuestionDialog() {
   return (
     <div className={cn("mb-0.5 border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden bg-background flex flex-col shrink")}>
       <div className="p-2 space-y-2">
+        {pendingQuestion.questions.length > 1 && (
+          <div className="text-[10px] text-muted-foreground">
+            Question {questionIndex + 1} of {pendingQuestion.questions.length}
+          </div>
+        )}
         {question.header && <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{question.header}</div>}
         <div className="text-xs font-semibold text-foreground">{question.question}</div>
         <div className="space-y-1.5">
@@ -49,7 +61,7 @@ export function QuestionDialog() {
             <button
               key={idx}
               onClick={() => {
-                void handleSelect(option.label);
+                void handleAnswer(option.label);
               }}
               onMouseEnter={() => setSelectedIndex(idx + 1)}
               className={cn(

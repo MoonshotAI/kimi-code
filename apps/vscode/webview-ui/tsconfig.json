@@ -20,5 +20,5 @@
       "shared/*": ["../shared/*"]
     }
   },
-  "include": ["src", "../test/settings-store.test.ts"]
+  "include": ["src", "../test/question-dialog.test.ts", "../test/settings-store.test.ts"]
 }
