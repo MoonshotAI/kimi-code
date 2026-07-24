@@ -233,6 +233,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    showSessionTitleInFooter: false,
     goal: null,
     mcpServersSummary: null,
     banner: undefined,
@@ -1736,6 +1737,8 @@ export class KimiTUI {
   async switchToSession(session: Session, statusMessage: string): Promise<void> {
     this.resetSessionRuntime();
     await this.setSession(session);
+    // /titleon is session-only: a session switch (including /fork) resets it.
+    this.setAppState({ showSessionTitleInFooter: false });
     await this.syncRuntimeState(session);
     this.updateTerminalTitle();
     try {
@@ -1808,7 +1811,8 @@ export class KimiTUI {
 
     this.resetSessionRuntime();
     await this.setSession(session);
-    this.setAppState({ sessionId: session.id });
+    // /titleon is session-only: a new session resets it.
+    this.setAppState({ sessionId: session.id, showSessionTitleInFooter: false });
     try {
       await this.activateRuntime();
       await this.syncRuntimeState(session);

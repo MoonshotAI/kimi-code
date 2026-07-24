@@ -171,6 +171,8 @@ describe('built-in slash command registry', () => {
         'status',
         'theme',
         'title',
+        'titleoff',
+        'titleon',
         'undo',
         'usage',
         'version',

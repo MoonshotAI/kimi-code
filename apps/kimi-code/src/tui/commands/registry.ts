@@ -319,6 +319,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'titleon',
+    aliases: [],
+    description: 'Show session title in the footer (this session only)',
+    priority: 60,
+    availability: 'always',
+  },
+  {
+    name: 'titleoff',
+    aliases: [],
+    description: 'Hide session title from the footer',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'usage',
     aliases: [],
     description: 'Show session tokens + context window + plan quotas',

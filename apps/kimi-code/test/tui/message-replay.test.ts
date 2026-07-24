@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import type { AppState } from '#/tui/types';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
@@ -41,7 +42,10 @@ interface ReplayDriver {
   readonly streamingUI: StreamingUIController;
   readonly sessionEventHandler: SessionEventHandler;
   init(): Promise<boolean>;
+  setAppState(patch: Partial<AppState>): void;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
+  reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
+  createNewSession(): Promise<void>;
 }
 
 function makeStartupInput(): KimiTUIStartupInput {
@@ -1309,5 +1313,34 @@ describe('KimiTUI resume message replay', () => {
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');
+  });
+});
+
+describe('session title footer toggle lifecycle', () => {
+  it('resets showSessionTitleInFooter on session switch', async () => {
+    const driver = await replayIntoDriver([]);
+    driver.setAppState({ showSessionTitleInFooter: true });
+
+    await driver.switchToSession(makeSession([]), 'Switched session.');
+
+    expect(driver.state.appState.showSessionTitleInFooter).toBe(false);
+  });
+
+  it('resets showSessionTitleInFooter on a new session', async () => {
+    const driver = await replayIntoDriver([]);
+    driver.setAppState({ showSessionTitleInFooter: true });
+
+    await driver.createNewSession();
+
+    expect(driver.state.appState.showSessionTitleInFooter).toBe(false);
+  });
+
+  it('preserves showSessionTitleInFooter across /reload (same-session reload)', async () => {
+    const driver = await replayIntoDriver([]);
+    driver.setAppState({ showSessionTitleInFooter: true });
+
+    await driver.reloadCurrentSessionView(makeSession([]), 'Session reloaded.');
+
+    expect(driver.state.appState.showSessionTitleInFooter).toBe(true);
   });
 });

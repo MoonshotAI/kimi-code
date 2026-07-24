@@ -51,6 +51,8 @@ import {
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
+  handleTitleOffCommand,
+  handleTitleOnCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
 import { handleUndoCommand } from './undo';
@@ -89,6 +91,8 @@ export {
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
+  handleTitleOffCommand,
+  handleTitleOnCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
 export { handleWebCommand } from './web';
@@ -329,6 +333,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'title':
       await handleTitleCommand(host, args);
+      return;
+    case 'titleon':
+      handleTitleOnCommand(host);
+      return;
+    case 'titleoff':
+      handleTitleOffCommand(host);
       return;
     case 'yolo':
       await handleYoloCommand(host, args);

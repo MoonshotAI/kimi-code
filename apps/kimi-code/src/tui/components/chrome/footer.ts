@@ -30,6 +30,7 @@ import {
 } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
+const MAX_FOOTER_TITLE_LENGTH = 40;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
@@ -306,6 +307,17 @@ export class FooterComponent implements Component {
     const git = this.gitCache.getStatus();
     if (git !== null) {
       left.push(formatFooterGitBadge(git, colors));
+    }
+
+    if (state.showSessionTitleInFooter && state.sessionTitle) {
+      // /title accepts pasted multiline text; keep the footer on one line
+      // (same collapse as the session picker's singleLine).
+      const title = state.sessionTitle.replaceAll(/\s+/g, ' ').trim();
+      if (title.length > 0) {
+        left.push(
+          chalk.hex(colors.textDim)(truncateToWidth(title, MAX_FOOTER_TITLE_LENGTH, '…')),
+        );
+      }
     }
 
     const leftLine = left.join('  ');
