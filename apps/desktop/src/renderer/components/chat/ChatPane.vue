@@ -1719,6 +1719,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   padding: 12px 0;
   min-height: 28px;
+  /* Keep the load-older chrome out of transcript selections (Cmd/Ctrl+A). */
+  user-select: none;
 }
 .top-sentinel-loading {
   opacity: 0.8;

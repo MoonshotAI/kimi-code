@@ -19,6 +19,10 @@ interface MenuStrings {
   window: string;
   closeWindow: string;
   file: string;
+  edit: string;
+  selectAll: string;
+  substitutions: string;
+  speech: string;
   newChat: string;
   openFolder: string;
   aboutApp: string;
@@ -47,6 +51,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     window: '窗口',
     closeWindow: '关闭窗口',
     file: '文件',
+    edit: '编辑',
+    selectAll: '全选',
+    substitutions: '替换',
+    speech: '语音',
     newChat: '新建会话',
     openFolder: '打开文件夹…',
     aboutApp: '关于 Kimi Code',
@@ -73,6 +81,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     window: 'Window',
     closeWindow: 'Close Window',
     file: 'File',
+    edit: 'Edit',
+    selectAll: 'Select All',
+    substitutions: 'Substitutions',
+    speech: 'Speech',
     newChat: 'New chat',
     openFolder: 'Open Folder…',
     aboutApp: 'About Kimi Code',
@@ -451,6 +463,56 @@ export function menuTemplate(
       }
     : { role: 'windowMenu' };
 
+  // The edit menu is built item-by-item instead of the editMenu role because
+  // of Select All: the role's native CmdOrCtrl+A accelerator intercepts the
+  // key BEFORE the renderer (selecting the whole document, sidebar included),
+  // so a custom item keeps the chord but forwards to the renderer's scoped
+  // select-all — same wiring pattern as New Chat / Open Folder. Everything
+  // else mirrors Electron's editMenu expansion verbatim (editing roles stay
+  // native; mac keeps its pasteAndMatchStyle / Substitutions / Speech items).
+  const editMenu: MenuItemConstructorOptions = {
+    id: 'edit-menu',
+    label: strings.edit,
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      ...(isMac ? [{ role: 'pasteAndMatchStyle' as const }] : []),
+      { role: 'delete' },
+      ...(isMac ? [] : [{ type: 'separator' as const }]),
+      {
+        id: 'select-all',
+        label: strings.selectAll,
+        accelerator: 'CommandOrControl+A',
+        click: () => {
+          sendToRenderer(IPC.menuAction, 'select-all');
+        },
+      },
+      ...(isMac
+        ? [
+            { type: 'separator' as const },
+            {
+              label: strings.substitutions,
+              submenu: [
+                { role: 'showSubstitutions' as const },
+                { type: 'separator' as const },
+                { role: 'toggleSmartQuotes' as const },
+                { role: 'toggleSmartDashes' as const },
+                { role: 'toggleTextReplacement' as const },
+              ],
+            },
+            {
+              label: strings.speech,
+              submenu: [{ role: 'startSpeaking' as const }, { role: 'stopSpeaking' as const }],
+            },
+          ]
+        : []),
+    ],
+  };
+
   // TODO(help-menu): add What's New (changelog), Send Feedback, and Start
   // Performance Trace items — tracked in docs/native-todos.md.
   const helpMenu: MenuItemConstructorOptions = {
@@ -473,19 +535,19 @@ export function menuTemplate(
     ],
   };
 
-  const template: MenuItemConstructorOptions[] = [appMenu, fileMenu, { role: 'editMenu' }, viewMenu, windowMenu, helpMenu];
+  const template: MenuItemConstructorOptions[] = [appMenu, fileMenu, editMenu, viewMenu, windowMenu, helpMenu];
   if (!suspended) return template;
   // Shortcut recording: strip every key equivalent outright. On macOS a
   // DISABLED item's accelerator can still fire while the menu is closed
   // (menuNeedsUpdate refreshes state on the key press), so silencing must
-  // remove the accelerators, not the items: every non-editMenu item becomes
+  // remove the accelerators, not the items: every non-edit-menu item becomes
   // a plain label — no role, no accelerator, no click — which has no key
-  // equivalent at all. editMenu stays functional (copy/paste); its
+  // equivalent at all. The edit menu stays functional (copy/paste); its
   // accelerators are harmless during recording and already reserved.
   const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.map((item) => {
       if (item.type === 'separator') return item;
-      if (item.role === 'editMenu') return item;
+      if (item.id === 'edit-menu') return item;
       return {
         label: item.label,
         submenu: Array.isArray(item.submenu) ? silence(item.submenu as MenuItemConstructorOptions[]) : undefined,

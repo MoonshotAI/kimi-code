@@ -16,6 +16,7 @@ import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
 
@@ -1559,6 +1560,29 @@ function composerPopupOpen(): boolean {
 // the composer, anywhere — must not interrupt the turn.
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
+// The last click target — select-all attention signal, see onKeyDown.
+let lastPointerTarget: EventTarget | null = null;
+function onDocumentPointerDown(event: PointerEvent): void {
+  lastPointerTarget = event.target;
+}
+
+// Select-all region routing, shared by the keydown path and the desktop's
+// native Select All menu item (whose accelerator shadows the keydown there):
+// the right detail panel owns the selection when the attended element is
+// inside it, the transcript otherwise. Focus usually stays on <body> after
+// clicking non-focusable panel text, so the last click is the signal when
+// the given target is body.
+function selectAllRegion(target: EventTarget | null): void {
+  const attended = target instanceof Element && target !== document.body ? target : lastPointerTarget;
+  const panel = closestRegion(attended, '.global-preview');
+  if (panel) {
+    selectContentsOf(panel);
+    return;
+  }
+  const chat = panesRef.value?.querySelector('.chat');
+  if (chat) selectContentsOf(chat);
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   // Escape is owned by whatever sits above the conversation: a modal layer
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
@@ -1585,6 +1609,14 @@ function onKeyDown(event: KeyboardEvent): void {
       armEscUndo();
       handleInterrupt();
     }
+    return;
+  }
+  // Cmd/Ctrl+A outside a text field selects the region the user is attending
+  // to (see selectAllRegion). The browser default would also paint the
+  // selection across the sidebar and panel chrome.
+  if (isSelectAllKeyEvent(event) && !props.overlayOpen && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    selectAllRegion(event.target);
   }
 }
 
@@ -1630,6 +1662,8 @@ onMounted(() => {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
+      // Capture: clicks swallowed mid-bubble still update the attention signal.
+      document.addEventListener('pointerdown', onDocumentPointerDown, true);
       document.addEventListener('compositionstart', handleCompositionStart);
       document.addEventListener('compositionend', handleCompositionEnd);
     }
@@ -1660,6 +1694,7 @@ onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('pointerdown', onDocumentPointerDown, true);
     document.removeEventListener('compositionstart', handleCompositionStart);
     document.removeEventListener('compositionend', handleCompositionEnd);
   }
@@ -1704,7 +1739,7 @@ function onAbortOutcome(aborted: boolean): void {
   maybeFireAutoUndo();
 }
 
-defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome });
+defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion });
 </script>
 
 <template>

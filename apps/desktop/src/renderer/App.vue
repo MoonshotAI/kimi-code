@@ -48,6 +48,7 @@ import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThi
 import { stripSkillPrefix } from './lib/slashCommands';
 import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
+import { selectContentsOf } from './lib/transcriptSelectAll';
 import { useFullscreen } from './composables/useFullscreen';
 import { useVibrancy } from './composables/useVibrancy';
 import { useTrayAttention } from './composables/useTrayAttention';
@@ -222,6 +223,12 @@ onMounted(() => {
   offMenuAction =
     (window as { kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void } })
       .kimiDesktop?.onMenuAction?.((menuId) => {
+      // The edit menu's Select All forwards here (its accelerator shadows the
+      // keydown, so the conversation pane never sees the chord on desktop).
+      if (menuId === 'select-all') {
+        selectAllFromMenu();
+        return;
+      }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
       if (actionId === undefined) return;
       // Menu clicks bypass the keydown dispatcher, so apply the same overlay
@@ -334,6 +341,27 @@ function runShortcutAction(id: string): void {
       void openWorkspaceInDefaultApp();
       break;
   }
+}
+
+// The native Select All menu item forwards here (click or shadowed
+// accelerator). Mirror the keydown path without a key event: editable focus
+// keeps the field's own select-all, an open overlay keeps the document-wide
+// default, otherwise the conversation region routing decides.
+function selectAllFromMenu(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    active.select();
+    return;
+  }
+  if (active instanceof HTMLElement && active.isContentEditable) {
+    selectContentsOf(active);
+    return;
+  }
+  if (anyOverlayOpen.value) {
+    selectContentsOf(document.body);
+    return;
+  }
+  conversationPaneRef.value?.selectAllRegion(active);
 }
 
 function onShortcutKeydown(e: KeyboardEvent): void {

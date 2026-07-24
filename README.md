@@ -92,6 +92,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **更新品牌图标**：设计源文件在 `KIMI CODE LOGO/`（设计师交付，整目录替换后跑 `pnpm build:icons`，重新生成 `apps/desktop/build/` 图标、web favicon 与组件内联品牌标；几何约定见 `scripts/build-brand-icons.mjs` 头注释）。macOS Tahoe 深色/玻璃图标需另在 Icon Composer（Xcode 26）手工制作 `AppIcon.icon` 放入 `apps/desktop/build/`，打包时自动编译嵌入；没有该文件则全平台保持 `.icns` 静态图标。
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token（动效除 `--duration-*` / `--ease-*` 外，含设计师导出图标动画的 `--anim-*` 例外，见 §02 Motion），并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **主进程原生界面文案**：新增用户可见字符串（托盘、通知、对话框等）要 en/zh 双语——主进程无 i18n runtime，用 `apps/desktop/src/main/tray.ts` 同款字符串表，应用语言经 `kimi:locale` 通道同步（OS 语言兜底）。细则见 `AGENTS.md` 的"硬约束"。
+- **应用菜单（menu.ts）**：编辑菜单不用 `editMenu` 角色而是手工拼装——原生菜单加速键会先于 renderer 截获按键；「全选」保留 CmdOrCtrl+A 加速键但经 `kimi:menu-action` 转发 renderer 的作用域全选（只选中中间 transcript 或注意力所在面板）。改动菜单时保持该契约，其余编辑项镜像 Electron editMenu 展开（`tests/main/menu.test.ts` 钉住）。
 - **注释克制**：密度对齐所在文件，不写复述代码的注释；设计决策与 bug 根因进 spec / commit message，不进代码。细则见 `AGENTS.md` 的"硬约束"。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
 

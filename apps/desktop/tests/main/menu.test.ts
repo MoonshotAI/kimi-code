@@ -62,6 +62,13 @@ const ELECTRON_ROLE_ACCELERATORS: Record<string, { apple?: string; other?: strin
   about: {},
   zoom: {},
   front: {},
+  delete: {},
+  showSubstitutions: {},
+  toggleSmartQuotes: {},
+  toggleSmartDashes: {},
+  toggleTextReplacement: {},
+  startSpeaking: {},
+  stopSpeaking: {},
 };
 
 /** Electron accelerator string → our canonical keymap binding. */
@@ -85,11 +92,6 @@ function installedRoles(isMac: boolean): string[] {
   const roles = new Set<string>();
   for (const item of walkItems(menuTemplate(isMac, 'en'))) {
     if (typeof item.role === 'string') roles.add(item.role);
-  }
-  // editmenu children (Electron's editmenu submenu; mac adds pasteAndMatchStyle)
-  if (roles.delete('editMenu')) {
-    for (const r of ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']) roles.add(r);
-    if (isMac) roles.add('pasteAndMatchStyle');
   }
   // windowmenu children (non-mac expansion: minimize / zoom / close)
   if (roles.delete('windowMenu')) {
@@ -265,24 +267,67 @@ describe('menuTemplate', () => {
     expect(fileItems.find((item) => item.id === 'open-folder')?.accelerator).toBeUndefined();
   });
 
-  it('strips every accelerator except editMenu while suspended (shortcut recording)', () => {
+  it('strips every accelerator outside the edit menu while suspended (shortcut recording)', () => {
     // A DISABLED item's accelerator can still fire on macOS, so the suspended
-    // template removes key equivalents outright: no accelerator, no role
-    // (editMenu keeps both so copy/paste stays functional).
+    // template removes key equivalents outright: no accelerator, no role. The
+    // edit menu keeps both so copy/paste stays functional (its accelerators
+    // are reserved anyway).
     const template = menuTemplate(true, 'en', false, {}, true);
-    const walk = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
-      items.flatMap((item) => [
-        item,
-        ...(Array.isArray(item.submenu) ? walk(item.submenu as MenuItemConstructorOptions[]) : []),
-      ]);
-    for (const item of walk(template)) {
-      if (item.role === 'editMenu') continue;
+    const edit = template.find((item) => item.id === 'edit-menu');
+    expect(edit).toBeDefined();
+    const editItems = new Set(walkItems(submenuItems(edit as MenuItemConstructorOptions)));
+    for (const item of walkItems(template)) {
+      if (item === edit || editItems.has(item)) continue;
       expect(item.role, item.label).toBeUndefined();
       expect(item.accelerator, item.label).toBeUndefined();
     }
+    // …the edit menu keeps its roles and accelerators (copy/paste, Select All)…
+    expect([...editItems].some((item) => item.role !== undefined)).toBe(true);
+    expect([...editItems].some((item) => item.accelerator !== undefined)).toBe(true);
     // …and the default (unsuspended) template keeps roles and accelerators.
     const normal = menuTemplate(true, 'en');
-    expect(walk(normal).some((item) => item.accelerator !== undefined)).toBe(true);
+    expect(walkItems(normal).some((item) => item.accelerator !== undefined)).toBe(true);
+  });
+
+  it('replaces the selectAll role with a wired custom item (the role accelerator would shadow the renderer keydown)', () => {
+    for (const [locale, menuLabel, itemLabel] of [
+      ['zh', '编辑', '全选'],
+      ['en', 'Edit', 'Select All'],
+    ] as const) {
+      const edit = menuTemplate(true, locale).find((item) => item.id === 'edit-menu');
+      expect(edit).toMatchObject({ label: menuLabel });
+      const items = submenuItems(edit as MenuItemConstructorOptions);
+      // The role must not come back — its native accelerator selects the
+      // whole document before the renderer sees the key.
+      expect(items.some((item) => item.role === 'selectAll')).toBe(false);
+      const selectAll = items.find((item) => item.id === 'select-all');
+      expect(selectAll).toMatchObject({ label: itemLabel, accelerator: 'CommandOrControl+A' });
+      expect(typeof selectAll?.click).toBe('function');
+    }
+    // The chord stays reserved on both platforms, so no custom keymap binding
+    // can silently lose to the menu.
+    for (const platform of ['MacIntel', 'Win32']) {
+      stubPlatform(platform);
+      expect(isReservedBinding(canonicalFromAccelerator('CommandOrControl+A'))).toBe(true);
+    }
+  });
+
+  it('keeps the remaining editMenu items (delete on both platforms; mac Substitutions/Speech)', () => {
+    // Mirrors Electron v43's editmenu expansion: only Select All is replaced.
+    for (const isMac of [true, false]) {
+      const edit = menuTemplate(isMac, 'en').find((item) => item.id === 'edit-menu');
+      const items = walkItems(submenuItems(edit as MenuItemConstructorOptions));
+      expect(items.some((item) => item.role === 'delete')).toBe(true);
+      for (const role of ['undo', 'redo', 'cut', 'copy', 'paste']) {
+        expect(items.some((item) => item.role === role)).toBe(true);
+      }
+      const macOnly = ['pasteAndMatchStyle', 'showSubstitutions', 'startSpeaking', 'stopSpeaking'];
+      for (const role of macOnly) {
+        expect(items.some((item) => item.role === role), `${role} (isMac=${isMac})`).toBe(isMac);
+      }
+      expect(items.some((item) => item.label === 'Substitutions')).toBe(isMac);
+      expect(items.some((item) => item.label === 'Speech')).toBe(isMac);
+    }
   });
 
   it('Help menu carries working Documentation / Console links, bilingually', () => {
