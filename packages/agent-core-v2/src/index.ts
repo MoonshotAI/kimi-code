@@ -3,6 +3,8 @@
  * layer) so importing the package loads all scoped-registry registrations.
  */
 
+import '#/app/sessionIndex/legacySessionIndexStoreService';
+
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/extensions';
@@ -75,6 +77,14 @@ export type {
   KimiThinkingConfig,
 } from '#/kosong/provider/providers/kimi/kimi.contrib';
 
+export {
+  SESSION_INDEX_KEY,
+  SESSION_INDEX_SCOPE,
+  parseSessionIndexLine,
+  readSessionIndexEntries,
+  readSessionIndexWorkDirs,
+  type SessionIndexLine,
+} from '#/app/sessionIndex/legacySessionIndexPersistence';
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/session/sessionMetadata/sessionMetadata';
