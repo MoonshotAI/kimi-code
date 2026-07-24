@@ -106,7 +106,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
     undo: (count) => {
       const cut = computeUndoCut(messages, count);
       if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        messages.splice(cut.cutIndex, messages.length - cut.cutIndex);
+        messages.splice(cut.cutIndex);
       }
       return cut;
     },

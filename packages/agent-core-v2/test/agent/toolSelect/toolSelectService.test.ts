@@ -223,6 +223,10 @@ class FakeLoopService implements IAgentLoopService {
     throw new Error('unused in this suite');
   }
 
+  tryAcquireQuiescence(): IDisposable | undefined {
+    return toDisposable(() => {});
+  }
+
   hasPendingRequests(): boolean {
     return false;
   }

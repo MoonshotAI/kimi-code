@@ -7,13 +7,14 @@
  * reference-only fact.
  *
  * The Model holds the persistent, replayable fields — whether plan mode is
- * active, the plan id, and the last recorded revision version per plan id.
- * The lifecycle records keep exactly v1's field set (`{ id }`); the plan file
- * path is NOT persisted — it is derived from the id at read time
- * (`planService.planFilePathFor`), matching v1's `restoreEnter`. Plan
- * content is recorded separately: every ExitPlanMode submit snapshots the
- * plan file into blob storage and persists a `plan.revision` record carrying
- * only the reference (`{ id, version, path, sha256, bytes }`, `path`
+ * active, the plan id, and the last recorded revision version per plan id —
+ * wrapped in `contextMemory`'s checkpoint protocol so plan mode stays aligned
+ * with conversation undo. The lifecycle records keep exactly v1's field set
+ * (`{ id }`); the plan file path is NOT persisted — it is derived from the id
+ * at read time (`planService.planFilePathFor`), matching v1's `restoreEnter`.
+ * Plan content is recorded separately: every ExitPlanMode submit snapshots
+ * the plan file into blob storage and persists a `plan.revision` record
+ * carrying only the reference (`{ id, version, path, sha256, bytes }`, `path`
  * homeDir-relative) — never the content. `revisionCount` tracks the latest
  * version per plan id so `recordRevision` can mint the next version
  * replay-consistently; it is kept across enter/exit so a re-entered plan id
@@ -34,7 +35,10 @@
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import {
+  defineCheckpointedModel,
+  type Checkpointed,
+} from '#/agent/contextMemory/conversationTime';
 
 export interface PlanState {
   readonly active: boolean;
@@ -42,14 +46,16 @@ export interface PlanState {
   readonly revisionCount?: Readonly<Record<string, number>>;
 }
 
-export const PlanModel = defineModel<PlanState>('plan', () => ({ active: false }));
+export type PlanModelState = Checkpointed<PlanState>;
+
+export const PlanModel = defineCheckpointedModel('plan', (): PlanState => ({ active: false }));
 
 export const planModeEnter = PlanModel.defineOp('plan_mode.enter', {
   schema: z.object({ id: z.string() }),
   apply: (s, p) =>
-    s.active && s.id === p.id
+    s.current.active && s.current.id === p.id
       ? s
-      : { active: true, id: p.id, revisionCount: s.revisionCount },
+      : { ...s, current: { active: true, id: p.id, revisionCount: s.current.revisionCount } },
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: true }),
 });
 
@@ -64,13 +70,19 @@ declare module '#/wire/types' {
 
 export const planModeCancel = PlanModel.defineOp('plan_mode.cancel', {
   schema: z.object({ id: z.string().optional() }),
-  apply: (s) => (s.active === false ? s : { active: false, revisionCount: s.revisionCount }),
+  apply: (s) =>
+    s.current.active
+      ? { ...s, current: { active: false, revisionCount: s.current.revisionCount } }
+      : s,
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });
 
 export const planModeExit = PlanModel.defineOp('plan_mode.exit', {
   schema: z.object({ id: z.string().optional() }),
-  apply: (s) => (s.active === false ? s : { active: false, revisionCount: s.revisionCount }),
+  apply: (s) =>
+    s.current.active
+      ? { ...s, current: { active: false, revisionCount: s.current.revisionCount } }
+      : s,
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });
 
@@ -98,7 +110,10 @@ export const planRevision = PlanModel.defineOp('plan.revision', {
   }),
   apply: (s, p) => ({
     ...s,
-    revisionCount: { ...s.revisionCount, [p.id]: p.version },
+    current: {
+      ...s.current,
+      revisionCount: { ...s.current.revisionCount, [p.id]: p.version },
+    },
   }),
   toEvent: (p) => ({
     type: 'plan.revision' as const,

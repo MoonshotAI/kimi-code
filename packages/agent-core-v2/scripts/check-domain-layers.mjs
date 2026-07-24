@@ -217,6 +217,11 @@ const DOMAIN_LAYER = new Map([
   ['sessionExport', 6],
   ['interaction', 6],
   ['sessionMetadata', 6],
+  // `undo` owns the undo pipeline (quiesce → context.undo → reconcile): it
+  // coordinates L4 agent domains (loop / prompt / contextMemory /
+  // fullCompaction), L5 task delivery, and `sessionMetadata`, so it sits in
+  // L6 beside the other cross-agent coordinators.
+  ['undo', 6],
   ['sessionActivity', 6],
   ['session', 6],
   ['terminal', 6],

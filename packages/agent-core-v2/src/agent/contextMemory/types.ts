@@ -33,6 +33,7 @@ export interface PluginCommandOrigin {
 export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
+  readonly ownerPromptId?: string;
 }
 
 export interface ShellCommandOrigin {

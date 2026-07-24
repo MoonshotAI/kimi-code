@@ -21,6 +21,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -185,7 +186,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
     await ctx.untilTurnEnd();
 
-    ctx.get(IAgentContextMemoryService).undo(1);
+    await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
     expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
       false,

@@ -14,7 +14,6 @@ import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { formatUndoUnavailableMessage, precheckUndo } from '#/agent/contextMemory/contextOps';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
@@ -157,13 +156,6 @@ export class AgentPromptService implements IAgentPromptService {
 
   async retry(): Promise<Turn | undefined> { return (await this.loop.enqueue(new RetryStepRequest()).assigned).turn; }
 
-  undo(count: number): number {
-    if (count <= 0) return 0;
-    const check = precheckUndo(this.context.get(), count);
-    if (!check.ok) throw new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, formatUndoUnavailableMessage(check), { details: { reason: check.reason, requestedCount: count, undoableCount: check.undoable } });
-    return this.context.undo(count).removedCount;
-  }
-
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
     if (this.active !== undefined) this.abort(this.active.id);
@@ -229,8 +221,15 @@ export class AgentPromptService implements IAgentPromptService {
     return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
   }
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
-    for (const caption of captions) this.reminders.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
-    if (message.content.length > 0) this.context.append(message);
+    const ownerPromptId = message.id ?? newMessageId();
+    for (const caption of captions) {
+      this.reminders.appendSystemReminder(caption, {
+        kind: 'injection',
+        variant: 'image_compression',
+        ownerPromptId,
+      });
+    }
+    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;

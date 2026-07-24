@@ -42,6 +42,7 @@ import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -74,6 +75,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IBlobStore private readonly blobs: IBlobStore,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IEventBus eventBus: IEventBus,
     @IWireService private readonly wire: IWireService,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -90,6 +92,15 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       this.wire.hooks.onDidRestore.register('plan', async (_ctx, next) => {
         this.restoreTelemetryMode();
         await next();
+      }),
+    );
+    this._register(
+      eventBus.subscribe('context.undone', () => {
+        this.restoreTelemetryMode();
+        eventBus.publish({
+          type: 'agent.status.updated',
+          planMode: this.isActive,
+        });
       }),
     );
 
@@ -151,19 +162,17 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private get isActive(): boolean {
-    return this.wire.getModel(PlanModel).active;
+    return this.wire.getModel(PlanModel).current.active;
   }
 
   private currentPlanFilePath(): PlanFilePath {
-    const state = this.wire.getModel(PlanModel);
+    const state = this.wire.getModel(PlanModel).current;
     if (!state.active || state.id === undefined) return null;
     return this.planFilePathFor(state.id);
   }
 
   private restoreTelemetryMode(): void {
-    if (this.isActive) {
-      this.telemetryContext.set({ mode: 'plan' });
-    }
+    this.telemetryContext.set({ mode: this.isActive ? 'plan' : 'agent' });
   }
 
   private createPlanId(): string {
@@ -210,7 +219,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   async recordRevision(): Promise<void> {
-    const state = this.wire.getModel(PlanModel);
+    const state = this.wire.getModel(PlanModel).current;
     if (!state.active || state.id === undefined) return;
     const id = state.id;
     const content = await this.hostFs.readText(this.planFilePathFor(id));
@@ -231,7 +240,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   async status(): Promise<PlanData> {
-    const state = this.wire.getModel(PlanModel);
+    const state = this.wire.getModel(PlanModel).current;
     if (!state.active || state.id === undefined) return null;
     const path = this.planFilePathFor(state.id);
     let content = '';

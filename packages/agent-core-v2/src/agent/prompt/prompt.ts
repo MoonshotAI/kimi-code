@@ -55,7 +55,6 @@ export interface IAgentPromptService {
   abort(promptId: string, reason?: Error): boolean;
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
-  undo(count: number): number;
   clear(): void;
   readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
 }

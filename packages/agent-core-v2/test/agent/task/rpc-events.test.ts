@@ -25,6 +25,9 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
@@ -711,6 +714,109 @@ describe('AgentTaskService — notification delivery', () => {
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('re-delivers a terminal task notification removed by undo when output is unavailable', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-undo-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(persistedAgent());
+      await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.appendUserTurn('start the background task');
+      agent.context.appendUserMessage.mockClear();
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+      await vi.waitFor(() => {
+        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      });
+      vi.spyOn(manager, 'getOutputSnapshot').mockRejectedValueOnce(
+        new Error('output unavailable'),
+      );
+
+      await ctx.get(IAgentConversationUndoService).undo(1);
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
+      expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toHaveLength(1);
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('preserves a queued notification when undo rejects an active turn', async () => {
+    const fixture = createAgentTaskService();
+    const { ctx, manager } = fixture;
+    const loop = ctx.get(IAgentLoopService);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-notification-undo', async (_hookCtx, next) => {
+      markStarted();
+      await canFinish;
+      await next();
+    });
+
+    try {
+      ctx.appendTurnExchange('kept prompt', 'kept answer');
+      const active = (
+        await loop.enqueue(
+          new MessageStepRequest(
+            {
+              role: 'user',
+              content: [{ type: 'text', text: 'remove me' }],
+              toolCalls: [],
+              origin: { kind: 'user' },
+            },
+            { admission: 'newTurn' },
+          ),
+        ).assigned
+      ).turn;
+      await started;
+      const taskId = registerProcess(manager, immediateProcess(0, 'done'), 'echo done', 'done');
+      await vi.waitFor(() => {
+        expect(manager.getTask(taskId)?.status).toBe('completed');
+        expect(loop.hasPendingRequests()).toBe(true);
+      });
+      expect(notifiedCount(ctx)).toBe(0);
+
+      await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_BUSY,
+        details: { reason: 'loop' },
+      });
+      expect(active.signal.aborted).toBe(false);
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toEqual([]);
+
+      ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
+      ctx.mockNextResponse({ type: 'text', text: 'turn completed' });
+      release();
+      await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toEqual([
+        expect.objectContaining({
+          origin: expect.objectContaining({ taskId, status: 'completed' }),
+        }),
+      ]);
+      expect(notifiedCount(ctx)).toBe(1);
+    } finally {
+      release();
+      hook.dispose();
+      await ctx.get(ISessionMetadata).ready;
+      await ctx.dispose();
     }
   });
 

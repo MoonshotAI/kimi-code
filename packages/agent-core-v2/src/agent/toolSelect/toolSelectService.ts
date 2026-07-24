@@ -66,12 +66,17 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     this._register(
       eventBus.subscribe('context.spliced', (splice) => {
         if (splice.deleteCount === 0 || this.pendingLoaded.size === 0) return;
-        const landed = collectLoadedDynamicToolNames(this.context.get());
-        for (const name of this.pendingLoaded) {
-          if (!landed.has(name)) this.pendingLoaded.delete(name);
-        }
+        this.dropPendingLoadedNotLanded();
       }),
     );
+  }
+
+  private dropPendingLoadedNotLanded(): void {
+    if (this.pendingLoaded.size === 0) return;
+    const landed = collectLoadedDynamicToolNames(this.context.get());
+    for (const name of this.pendingLoaded) {
+      if (!landed.has(name)) this.pendingLoaded.delete(name);
+    }
   }
 
   enabled(): boolean {

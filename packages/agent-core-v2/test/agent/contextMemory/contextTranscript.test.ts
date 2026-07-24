@@ -172,6 +172,25 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['message A', 'reply A']);
   });
 
+  it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
+    const result = reduceContextTranscript([
+      appendMessage(
+        userMessage('compressed image', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-1',
+        }),
+      ),
+      appendMessage({ ...userMessage('undo me', { kind: 'user' }), id: 'prompt-1' }),
+      appendMessage(assistantMessage('undone answer')),
+      undo(1),
+      appendMessage(userMessage('keep me', { kind: 'user' })),
+      appendMessage(assistantMessage('kept answer')),
+    ]);
+
+    expect(texts(result)).toEqual(['keep me', 'kept answer']);
+  });
+
   it('undo stops at a compaction summary', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),
