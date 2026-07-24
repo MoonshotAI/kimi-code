@@ -4081,6 +4081,36 @@ command = "vim"
     });
   });
 
+  it('shows a quota note after installing a quota-consuming official plugin', async () => {
+    const session = makeSession({
+      installPlugin: vi.fn(async () => ({
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '3.3.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hasErrors: false,
+        source: 'zip-url',
+        originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    // Official sources skip the trust prompt, so the install runs immediately.
+    driver.handleUserInput(
+      '/plugins install https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
+      expect(transcript).toContain('Note: This plugin consumes your quota.');
+    });
+  });
+
   it('does not install when the third-party trust prompt is dismissed', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
@@ -4147,6 +4177,7 @@ command = "vim"
       const transcript = stripSgr(renderTranscript(driver));
       expect(transcript).toContain('Installed Demo');
       expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
+      expect(transcript).not.toContain('Note: This plugin consumes your quota.');
     });
     // Installing closes the panel so the success notice / reload tip is visible.
     await vi.waitFor(() => {
@@ -4195,6 +4226,50 @@ command = "vim"
       const rendered = stripSgr(panel.render(120).join('\n'));
       expect(rendered).toContain('Kimi Datasource');
       expect(rendered).not.toContain('Installing');
+    });
+  });
+
+  it('skips the trust prompt for a loopback mirror of the official CDN path', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-datasource',
+            tier: 'official',
+            displayName: 'Kimi Datasource',
+            // The dev marketplace server serves sources under the official CDN
+            // path shape on loopback.
+            source: 'http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = marketplacePath;
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins marketplace');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+    });
+    // The pinned Kimi WebBridge row leads the Official tab, so move down to
+    // the Kimi Datasource entry before installing.
+    panel.handleInput('\u001B[B');
+    panel.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        'http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip',
+      );
     });
   });
 

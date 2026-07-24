@@ -164,6 +164,17 @@ describe('plugins selector dialogs', () => {
     expect(isOfficialPluginSource('not a url')).toBe(false);
   });
 
+  it('treats loopback mirrors of the official CDN path as trusted install sources', () => {
+    // The dev marketplace server mirrors the official CDN layout on loopback.
+    expect(isOfficialPluginSource('http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    expect(isOfficialPluginSource('http://localhost/kimi-code/plugins/official/x.zip')).toBe(true);
+    expect(isOfficialPluginSource('http://[::1]:8080/kimi-code/plugins/official/x.zip')).toBe(true);
+    // The path shape must match exactly, and non-loopback hosts stay unofficial.
+    expect(isOfficialPluginSource('http://127.0.0.1/kimi-code/plugins/curated/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://127.0.0.1/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
+  });
+
   it('opens on the Installed tab with the four panel tabs', () => {
     const { panel } = makePanel({ installed: [superpowers] });
     const out = strip(renderRaw(panel));

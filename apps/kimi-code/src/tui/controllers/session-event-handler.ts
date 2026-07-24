@@ -73,6 +73,7 @@ import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
+import { PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
@@ -119,6 +120,7 @@ export interface SessionEventHost {
 
 export class SessionEventHandler {
   readonly subAgentEventHandler: SubAgentEventHandler;
+  private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
   constructor(private readonly host: SessionEventHost) {
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
@@ -126,6 +128,13 @@ export class SessionEventHandler {
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
       syncBackgroundAgentBadge: () => {
         this.syncBackgroundTaskBadge();
+      },
+    });
+    this.pluginUpdateNotifier = new PluginUpdateNotifier({
+      getSession: () => this.host.session,
+      workDir: host.state.appState.workDir,
+      notify: (message) => {
+        this.host.showStatus(message, 'warning');
       },
     });
   }
@@ -142,6 +151,7 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
+  private pluginCommandTurns: Map<string, string> = new Map();
   private pendingModelBlockedFallback: GoalChange | undefined;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
@@ -158,6 +168,7 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
+    this.pluginCommandTurns.clear();
     this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
@@ -293,9 +304,11 @@ export class SessionEventHandler {
   // Private handlers
   // ---------------------------------------------------------------------------
 
-  private handleTurnBegin(_event: TurnStartedEvent): void {
-    void _event;
+  private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasAssistantText = false;
+    if (event.origin?.kind === 'plugin_command') {
+      this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
+    }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
@@ -348,6 +361,13 @@ export class SessionEventHandler {
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
+    // The plugin command turn has fully ended — surface a pending update
+    // notice if the marketplace advertises a newer version.
+    const pluginCommandPluginId = this.pluginCommandTurns.get(String(event.turnId));
+    if (pluginCommandPluginId !== undefined) {
+      this.pluginCommandTurns.delete(String(event.turnId));
+      this.pluginUpdateNotifier.handlePluginCommandCompleted(pluginCommandPluginId);
+    }
     this.scheduleQueuedGoalPromotion();
   }
 
@@ -582,6 +602,11 @@ export class SessionEventHandler {
       synthetic: event.synthetic,
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    if (matchedCall !== undefined) {
+      // The tool call's output is complete — if it belongs to a plugin MCP
+      // server, surface a pending plugin update notice.
+      this.pluginUpdateNotifier.handleMcpToolCompleted(matchedCall.name);
+    }
     this.subAgentEventHandler.handleAgentSwarmToolResult(
       event.toolCallId,
       resultData,
