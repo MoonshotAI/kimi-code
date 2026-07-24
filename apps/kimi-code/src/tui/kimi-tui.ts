@@ -1317,7 +1317,11 @@ export class KimiTUI {
     if (this.state.appState.goal?.status === 'active') {
       void session.steer(sdkInput).catch((error: unknown) => {
         const message = formatErrorMessage(error);
-        this.showError(`Failed to steer: ${message}`);
+        // Same reset as the prompt path: beginSessionRequest already moved the
+        // TUI to the waiting phase, and no turn events may follow a failed
+        // steer (e.g. the session is gone), which would leave the UI stuck
+        // queueing input behind a request that never completes.
+        this.failSessionRequest(`Failed to steer: ${message}`);
       });
       return;
     }

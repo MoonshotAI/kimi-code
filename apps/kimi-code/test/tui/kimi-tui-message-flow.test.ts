@@ -1689,6 +1689,24 @@ command = "vim"
     ]);
   });
 
+  it('resets the streaming phase when steering mid-goal input fails', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('hello mid-goal');
+
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to steer: session closed');
+  });
+
   it('steers a queued message at a turn boundary while a goal is active', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.goal = makeActiveGoalSnapshot();
