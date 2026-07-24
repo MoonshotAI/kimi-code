@@ -6,9 +6,11 @@ import type {
   SessionNotification,
   ToolCallContent,
   ToolKind,
+  Usage,
 } from '@agentclientprotocol/sdk';
 import type {
   AssistantDeltaEvent,
+  SessionUsage,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -20,6 +22,36 @@ import type {
 
 import { displayBlockToAcpContent, toolResultToAcpContent } from './convert';
 import type { AcpStopReason } from './types';
+
+/**
+ * Map an SDK {@link SessionUsage} to the ACP `Usage` payload carried on
+ * `PromptResponse.usage`.
+ *
+ * The SDK's `total` bucket is cumulative token usage across the session,
+ * which is exactly what ACP's `Usage` fields document ("across all turns"
+ * / "across session"). Returns `undefined` when the SDK reports no total —
+ * the adapter then omits `usage` rather than sending a zeroed payload,
+ * matching the field's optional contract.
+ *
+ * Field mapping (SDK `TokenUsage` → ACP `Usage`):
+ *  - `inputOther`          → `inputTokens`
+ *  - `output`              → `outputTokens`
+ *  - `inputCacheRead`      → `cachedReadTokens`
+ *  - `inputCacheCreation`  → `cachedWriteTokens`
+ *  - sum of the four       → `totalTokens`
+ */
+export function sessionUsageToAcpUsage(usage: SessionUsage): Usage | undefined {
+  const total = usage.total;
+  if (total === undefined) return undefined;
+  return {
+    inputTokens: total.inputOther,
+    outputTokens: total.output,
+    cachedReadTokens: total.inputCacheRead,
+    cachedWriteTokens: total.inputCacheCreation,
+    totalTokens:
+      total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation,
+  };
+}
 
 /**
  * Build an ACP `session/update` notification with an
