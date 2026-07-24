@@ -172,7 +172,7 @@ export function extractUsage(usage: unknown): TokenUsage | null {
   }
 
   return {
-    inputOther: promptTokens - cached,
+    inputOther: Math.max(promptTokens - cached, 0),
     output: completionTokens,
     inputCacheRead: cached,
     inputCacheCreation: 0,

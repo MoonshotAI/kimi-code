@@ -2162,6 +2162,19 @@ describe('extractUsage', () => {
     });
   });
 
+  it('keeps uncached input non-negative when cached tokens are reported without prompt tokens', () => {
+    const usage = extractUsage({
+      completion_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 50 },
+    });
+    expect(usage).toEqual({
+      inputOther: 0,
+      output: 20,
+      inputCacheRead: 50,
+      inputCacheCreation: 0,
+    });
+  });
+
   it('returns null for null/undefined', () => {
     const undef: unknown = undefined;
     expect(extractUsage(null)).toBeNull();

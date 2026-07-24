@@ -1205,6 +1205,32 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('keeps uncached input non-negative when cached tokens are reported without input tokens', async () => {
+      const stream = new OpenAIResponsesStreamedMessage(
+        {
+          id: 'resp_partial_usage',
+          status: 'completed',
+          output: [],
+          usage: {
+            output_tokens: 5,
+            input_tokens_details: { cached_tokens: 10 },
+          },
+        },
+        false,
+      );
+
+      for await (const part of stream) {
+        void part;
+      }
+
+      expect(stream.usage).toEqual({
+        inputOther: 0,
+        output: 5,
+        inputCacheRead: 10,
+        inputCacheCreation: 0,
+      });
+    });
+
     it('yields ToolCall from non-stream response with function_call output item', async () => {
       const provider = createProvider();
       (provider as any)._stream = false;
