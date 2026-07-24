@@ -375,23 +375,18 @@ function undoLimitFromError(
 ): (UndoAvailability & { readonly requestedCount: number }) | undefined {
   if (!isKimiError(error)) return undefined;
   const details = error.details;
-  const reason = details?.['reason'];
-  const requestedCount = details?.['requestedCount'];
-  const maxCount = details?.['undoableCount'];
-  if (typeof requestedCount !== 'number' || typeof maxCount !== 'number') {
+  if (details?.['reason'] !== 'undo_limit') return undefined;
+  const requestedCount = details['requestedCount'];
+  const maxCount = details['undoableCount'];
+  const stoppedAtCompaction = details['stoppedAtCompaction'];
+  if (
+    typeof requestedCount !== 'number' ||
+    typeof maxCount !== 'number' ||
+    typeof stoppedAtCompaction !== 'boolean'
+  ) {
     return undefined;
   }
-
-  if (reason === 'undo_limit') {
-    const stoppedAtCompaction = details?.['stoppedAtCompaction'];
-    if (typeof stoppedAtCompaction !== 'boolean') return undefined;
-    return { requestedCount, maxCount, stoppedAtCompaction };
-  }
-
-  if (reason !== 'empty' && reason !== 'compaction_boundary' && reason !== 'insufficient') {
-    return undefined;
-  }
-  return { requestedCount, maxCount, stoppedAtCompaction: reason === 'compaction_boundary' };
+  return { requestedCount, maxCount, stoppedAtCompaction };
 }
 
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
