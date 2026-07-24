@@ -204,9 +204,11 @@ kimi doctor
 
 | 命令 | 说明 |
 | --- | --- |
-| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml` |
+| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml`，并检查 CLI 是否为最新版本 |
 | `kimi doctor config [path]` | 只校验 `config.toml`；传入 `path` 时使用该文件而不是默认文件 |
 | `kimi doctor tui [path]` | 只校验 `tui.toml`；传入 `path` 时使用该文件而不是默认文件 |
+
+默认运行还会执行与 `kimi update` 相同的更新检查，结果显示为一行 `version`：已是最新显示 `OK`；有更新版本（附 `kimi update` 提示）、检查失败（例如离线）或当前版本不是正式发布构建时显示 `WARN`。`WARN` 结果不影响退出码。
 
 显式传入路径时，文件必须存在。所有被检查的文件都有效或被跳过时，退出码为 `0`；任何指定文件缺失或配置无效时，退出码为 `1`。
 

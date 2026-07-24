@@ -8,8 +8,12 @@ import {
   type KimiConfigValidationIssue,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
+import { valid } from 'semver';
 import { z } from 'zod';
 
+import { refreshUpdateCache } from '#/cli/update/refresh';
+import { selectUpdateTarget } from '#/cli/update/select';
+import type { UpdateCache } from '#/cli/update/types';
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
 
 interface WritableLike {
@@ -29,6 +33,7 @@ export interface DoctorDeps {
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
   readonly validateConfigToml?: (text: string, path: string) => MaybePromise<void>;
+  readonly refreshUpdateCache?: () => Promise<UpdateCache>;
 }
 
 export interface DoctorOptions {
@@ -44,9 +49,9 @@ interface CheckSpec {
 }
 
 interface CheckResult {
-  readonly label: CheckSpec['label'];
+  readonly label: CheckSpec['label'] | 'version';
   readonly path: string;
-  readonly status: 'OK' | 'SKIP' | 'ERROR';
+  readonly status: 'OK' | 'SKIP' | 'WARN' | 'ERROR';
   readonly message?: string;
 }
 
@@ -60,13 +65,22 @@ interface ResolvedDoctorDeps {
   readonly fileExists: (path: string) => boolean;
   readonly readTextFile: (path: string) => Promise<string>;
   readonly validateConfigToml: (text: string, path: string) => MaybePromise<void>;
+  readonly refreshUpdateCache: () => Promise<UpdateCache>;
 }
 
-export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Promise<number> {
+export async function handleDoctor(
+  deps: DoctorDeps,
+  options: DoctorOptions,
+  currentVersion: string,
+): Promise<number> {
   const resolved = resolveDeps(deps);
   const cwd = resolved.cwd();
   const specs = await buildCheckSpecs(resolved, options, cwd);
-  const results = await Promise.all(specs.map((spec) => checkTomlFile(resolved, spec)));
+  const checks: Promise<CheckResult>[] = specs.map((spec) => checkTomlFile(resolved, spec));
+  if (options.target === undefined) {
+    checks.push(checkVersion(resolved, currentVersion));
+  }
+  const results = await Promise.all(checks);
 
   const issueCount = results.filter((result) => result.status === 'ERROR').length;
   const text = issueCount === 0 ? formatSuccess(results) : formatFailure(results, issueCount);
@@ -78,12 +92,16 @@ export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Pr
   return issueCount === 0 ? 0 : 1;
 }
 
-export function registerDoctorCommand(parent: Command, deps?: Partial<DoctorDeps>): void {
+export function registerDoctorCommand(
+  parent: Command,
+  version: string,
+  deps?: Partial<DoctorDeps>,
+): void {
   const doctor = parent
     .command('doctor')
     .description('Validate Kimi Code configuration files.')
     .action(async () => {
-      await runDoctorCommand(deps, {});
+      await runDoctorCommand(deps, {}, version);
     });
 
   doctor
@@ -91,7 +109,7 @@ export function registerDoctorCommand(parent: Command, deps?: Partial<DoctorDeps
     .description('Validate config.toml.')
     .argument('[path]', 'Validate this file as config.toml instead of the default path.')
     .action(async (path: string | undefined) => {
-      await runDoctorCommand(deps, { target: 'config', path });
+      await runDoctorCommand(deps, { target: 'config', path }, version);
     });
 
   doctor
@@ -99,16 +117,17 @@ export function registerDoctorCommand(parent: Command, deps?: Partial<DoctorDeps
     .description('Validate tui.toml.')
     .argument('[path]', 'Validate this file as tui.toml instead of the default path.')
     .action(async (path: string | undefined) => {
-      await runDoctorCommand(deps, { target: 'tui', path });
+      await runDoctorCommand(deps, { target: 'tui', path }, version);
     });
 }
 
 async function runDoctorCommand(
   deps: Partial<DoctorDeps> | undefined,
   options: DoctorOptions,
+  version: string,
 ): Promise<void> {
   const resolved = resolveDeps(deps);
-  const code = await handleDoctor(resolved, options);
+  const code = await handleDoctor(resolved, options, version);
   if (code !== 0) resolved.exit(code);
 }
 
@@ -131,6 +150,7 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     validateConfigToml:
       deps?.validateConfigToml ??
       ((text, filePath) => getConfigRpc().validateConfigToml({ text, filePath })),
+    refreshUpdateCache: deps?.refreshUpdateCache ?? (() => refreshUpdateCache()),
   };
 }
 
@@ -216,6 +236,42 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
   }
 }
 
+async function checkVersion(
+  deps: ResolvedDoctorDeps,
+  currentVersion: string,
+): Promise<CheckResult> {
+  const display = currentVersion.startsWith('v') ? currentVersion : `v${currentVersion}`;
+  let cache: UpdateCache;
+  try {
+    cache = await deps.refreshUpdateCache();
+  } catch (error) {
+    return {
+      label: 'version',
+      path: display,
+      status: 'WARN',
+      message: `Failed to check for updates: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (valid(currentVersion) === null) {
+    return {
+      label: 'version',
+      path: display,
+      status: 'WARN',
+      message: 'Current version is not valid semver (non-release build?); comparison skipped.',
+    };
+  }
+  const target = selectUpdateTarget(currentVersion, cache.latest);
+  if (target === null) {
+    return { label: 'version', path: `${display} (up to date)`, status: 'OK' };
+  }
+  return {
+    label: 'version',
+    path: `${display} → v${target.version} available`,
+    status: 'WARN',
+    message: 'Run `kimi update` to upgrade.',
+  };
+}
+
 async function resolveConfigTargetPath(
   deps: ResolvedDoctorDeps,
   input: string | undefined,
@@ -242,7 +298,7 @@ function formatSuccess(results: readonly CheckResult[]): string {
     '',
     ...formatResults(results),
     '',
-    'All checked config files are valid.',
+    'No configuration issues found.',
     '',
   ].join('\n');
 }

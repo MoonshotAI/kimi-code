@@ -204,9 +204,11 @@ kimi doctor
 
 | Command | Description |
 | --- | --- |
-| `kimi doctor` | Validate the default `config.toml` and `tui.toml` |
+| `kimi doctor` | Validate the default `config.toml` and `tui.toml`, and check whether the CLI is up to date |
 | `kimi doctor config [path]` | Validate only `config.toml`, using `path` instead of the default file when provided |
 | `kimi doctor tui [path]` | Validate only `tui.toml`, using `path` instead of the default file when provided |
+
+The default run also performs the same update check as `kimi update` and reports it as a `version` row: `OK` when the CLI is up to date, `WARN` when a newer version exists (with a hint to run `kimi update`), when the check fails (for example offline), or when the current version is not a release build. A `WARN` result never affects the exit code.
 
 When an explicit path is passed, the file must exist. The command exits with `0` when all checked files are valid or skipped, and `1` when any requested file is missing or invalid.
 
