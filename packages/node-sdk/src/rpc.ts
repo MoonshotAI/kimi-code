@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   ErrorCodes,
+  getModelInputTokenLimit,
   makeErrorPayload,
   type AgentContextData,
   type ApprovalRequest,
@@ -579,7 +580,7 @@ export abstract class SDKRpcClientBase {
       agentId,
     });
     const capability = config.modelCapabilities;
-    const maxContextTokens = capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
+    const maxContextTokens = getModelInputTokenLimit(capability);
     const contextTokens = context.tokenCount;
     // Deliberately unclamped: >100% is the documented overflow signal on this
     // path (see acp-adapter's formatContextUsage), unlike the schema-bounded

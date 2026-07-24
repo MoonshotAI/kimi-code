@@ -1,13 +1,39 @@
 /**
- * `ModelCapability` type and `UNKNOWN_CAPABILITY` default — pure
+ * `ModelCapability` type, input-limit resolution, and `UNKNOWN_CAPABILITY` default — pure
  * type/helper layer. Per-wire `getModelCapability` tables live in
  * `capability-providers.test.ts`.
  */
 
-import { UNKNOWN_CAPABILITY, isUnknownCapability, type ModelCapability } from '#/capability';
+import {
+  UNKNOWN_CAPABILITY,
+  getModelInputTokenLimit,
+  isUnknownCapability,
+  type ModelCapability,
+} from '#/capability';
 import { describe, expect, it } from 'vitest';
 
 describe('ModelCapability / UNKNOWN_CAPABILITY', () => {
+  const capability: ModelCapability = {
+    image_in: false,
+    video_in: false,
+    audio_in: false,
+    thinking: false,
+    tool_use: true,
+    max_context_tokens: 128_000,
+  };
+
+  it.each([
+    [
+      'returns 64000 when an input cap is declared',
+      { ...capability, max_input_tokens: 64_000 },
+      64_000,
+    ],
+    ['returns 128000 when only the total context window is declared', capability, 128_000],
+    ['returns 0 when capability data is unavailable', undefined, 0],
+  ])('%s', (_name, value, expected) => {
+    expect(getModelInputTokenLimit(value)).toBe(expected);
+  });
+
   it('UNKNOWN_CAPABILITY has all boolean fields false', () => {
     expect(UNKNOWN_CAPABILITY.image_in).toBe(false);
     expect(UNKNOWN_CAPABILITY.video_in).toBe(false);

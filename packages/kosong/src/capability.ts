@@ -33,6 +33,11 @@ export interface ModelCapability {
   readonly dynamically_loaded_tools?: boolean;
 }
 
+/** Return the model's prompt/input limit, or 0 when the limit is unknown. */
+export function getModelInputTokenLimit(capability: ModelCapability | undefined): number {
+  return capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
+}
+
 const UNKNOWN_CAPABILITY_MARKER = Symbol.for('moonshot-ai.kosong.UNKNOWN_CAPABILITY');
 
 /**

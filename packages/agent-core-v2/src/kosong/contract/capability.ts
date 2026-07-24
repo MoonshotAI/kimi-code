@@ -5,9 +5,10 @@
  * so callers can gate requests against what the model accepts without
  * dispatching the request and watching it fail upstream.
  *
- * `UNKNOWN_CAPABILITY` is the marker value returned when nothing is known
- * about a model: `max_context_tokens: 0` means "unknown"; callers that do
- * not gate on context length can ignore the field.
+ * `getModelInputTokenLimit` resolves the prompt/input ceiling before callers
+ * make compaction or status decisions. `UNKNOWN_CAPABILITY` is the marker
+ * value returned when nothing is known about a model:
+ * `max_context_tokens: 0` means "unknown".
  */
 
 export interface ModelCapability {
@@ -19,6 +20,10 @@ export interface ModelCapability {
   readonly max_context_tokens: number;
   readonly max_input_tokens?: number;
   readonly dynamically_loaded_tools?: boolean;
+}
+
+export function getModelInputTokenLimit(capability: ModelCapability | undefined): number {
+  return capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
 }
 
 const UNKNOWN_CAPABILITY_MARKER = Symbol.for('moonshot-ai.kosong.UNKNOWN_CAPABILITY');

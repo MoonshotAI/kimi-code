@@ -20,6 +20,7 @@ import {
   IAgentProfileService,
   IAgentUsageService,
   IWireService,
+  getModelInputTokenLimit,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
@@ -134,7 +135,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const measured = wire.getModel(ContextSizeModel);
   const contextTokens = Math.max(contextSize.get().size, measured.tokens);
   const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const maxContextTokens = getModelInputTokenLimit(capabilities);
   const model = profile.getModel();
   return { usage, contextTokens, maxContextTokens, model };
 }

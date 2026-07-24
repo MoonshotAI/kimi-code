@@ -40,7 +40,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isUnknownCapability } from '#/kosong/contract/capability';
+import {
+  getModelInputTokenLimit,
+  isUnknownCapability,
+  type ModelCapability,
+} from '#/kosong/contract/capability';
 import { APIConnectionError } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
 import type {
@@ -304,6 +308,29 @@ describe('resolveCapability', () => {
       true,
     );
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
+  });
+});
+
+describe('getModelInputTokenLimit', () => {
+  const capability: ModelCapability = {
+    image_in: false,
+    video_in: false,
+    audio_in: false,
+    thinking: false,
+    tool_use: true,
+    max_context_tokens: 128_000,
+  };
+
+  it.each([
+    [
+      'returns 64000 when an input cap is declared',
+      { ...capability, max_input_tokens: 64_000 },
+      64_000,
+    ],
+    ['returns 128000 when only the total context window is declared', capability, 128_000],
+    ['returns 0 when capability data is unavailable', undefined, 0],
+  ])('%s', (_name, value, expected) => {
+    expect(getModelInputTokenLimit(value)).toBe(expected);
   });
 });
 
