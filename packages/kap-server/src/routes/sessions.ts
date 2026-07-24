@@ -14,7 +14,7 @@
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/goal         current goal (null when none)
- *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
+ *   GET    /sessions/{session_id}/warnings     session-level notices
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
@@ -35,12 +35,14 @@
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
  *
- * `GET /sessions/{id}/warnings` surfaces the only v1 warning
- * (`agents-md-oversized`) by projecting the main agent's
- * `IAgentProfileService.getAgentsMdWarning()` — computed and cached when the
- * agent binds a profile (via `prepareSystemPromptContext`) — into the v1
- * `{ code, message, severity }` wire shape. An unbound main agent yields an
- * empty list, matching v1's "no warning" case.
+ * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
+ * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
+ * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
+ * — computed and cached when the agent binds a profile) and the
+ * secondary-model early-validation warning (projected from the Session-scope
+ * `ISessionSecondaryModelWarningService` — computed and cached when the main
+ * agent is created). An unbound main agent or a valid/unset secondary model
+ * yields an empty list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -65,9 +67,9 @@
  * **cwd resolution (gap G3 closed)**: the session's frozen work dir is
  * persisted on its metadata document (`ISessionMetadata`) and surfaced on the
  * `ISessionIndex` summary, so `metadata.cwd` comes from the session itself —
- * not from `IWorkspaceRegistry`. Sessions whose workspace was unregistered keep
+ * not from `IWorkspaceService`. Sessions whose workspace was unregistered keep
  * their original cwd and stay listed / gettable (matching v1, which stores
- * `workDir` on the session). `IWorkspaceRegistry` is consulted only as a
+ * `workDir` on the session). `IWorkspaceService` is consulted only as a
  * back-compat fallback for sessions written before `cwd` was persisted.
  */
 
@@ -77,19 +79,19 @@ import {
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentLifecycleService,
   IAgentRPCService,
-  IAgentActivityView,
   IAuthSummaryService,
+  ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
-  ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionSecondaryModelWarningService,
   IEventService,
-  IWorkspaceRegistry,
+  IWorkspaceAliases,
+  IWorkspaceService,
   isError2,
   Error2,
   toProtocolMessage,
@@ -128,7 +130,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface SessionRouteHost {
@@ -274,7 +276,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
 
-      const registry = core.accessor.get(IWorkspaceRegistry);
+      const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
@@ -358,7 +360,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const pageSize = raw.page_size;
       const archivedOnly = raw.archived_only === true;
 
-      const workspaces = await core.accessor.get(IWorkspaceRegistry).list();
+      const workspaces = await core.accessor.get(IWorkspaceService).list();
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
 
       // v1 resolves `workspace_id` to its root and 40410s when it is unknown;
@@ -385,7 +387,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const workspaceIds =
         raw.workspace_id === undefined
           ? undefined
-          : await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(raw.workspace_id);
+          : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
       const page = await core.accessor.get(ISessionIndex).list({
         workspaceIds,
         includeArchived: archivedOnly ? true : raw.include_archive,
@@ -485,7 +487,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         // Persisted session with no `cwd` on disk and no registered workspace
         // to fall back to (predates gap-G3 persistence) — cannot project cwd.
@@ -532,7 +534,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         reply.send(
           errEnvelope(
@@ -837,7 +839,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // registry is only a back-compat fallback for sessions written before
         // `cwd` was persisted, defaulting to '' (matches the prior adapter).
         const roots = new Map(
-          (await core.accessor.get(IWorkspaceRegistry).list()).map((w) => [w.id, w.root]),
+          (await core.accessor.get(IWorkspaceService).list()).map((w) => [w.id, w.root]),
         );
         const projected = window.map((summary) =>
           toWireSession(
@@ -997,14 +999,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       try {
-        // Surface the v2 `agents-md-oversized` notice in the v1 wire shape. The
-        // warning is computed (and cached) by `IAgentProfileService` when the main
-        // agent binds a profile; an unbound main agent yields `undefined` → `[]`,
-        // matching v1's "no warning" case.
+        // Surface v2 notices in the v1 wire shape. The agents-md warning is
+        // computed (and cached) by `IAgentProfileService` when the main agent
+        // binds a profile; the secondary-model warning is computed (and
+        // cached) by `ISessionSecondaryModelWarningService` when the main
+        // agent is created. An unbound main agent / unset secondary model
+        // yields `undefined` → that entry drops out, matching v1's "no
+        // warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings =
-          agentsMdWarning === undefined
+        const secondaryModelWarning = session.accessor
+          .get(ISessionSecondaryModelWarningService)
+          .getSecondaryModelWarning();
+        const warnings = [
+          ...(agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1012,7 +1020,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ];
+              ]),
+          ...(secondaryModelWarning === undefined
+            ? []
+            : [
+                {
+                  code: secondaryModelWarning.code,
+                  message: secondaryModelWarning.message,
+                  severity: 'warning' as const,
+                },
+              ]),
+        ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -1078,11 +1096,11 @@ export interface SessionFacts {
 }
 
 /**
- * Resolve a session's live wire facts, derived on demand from the agents'
- * activity views: `busy` = any agent with an active turn or background task;
- * the reason is the main agent's latest turn outcome (`blocked` folds into
- * `failed`). Nothing is booked at session level — a cold session (no live
- * handle) is not busy and carries no outcome.
+ * Resolve a session's live wire facts from the core `ISessionActivityView`
+ * aggregate (`busy` = any agent with an active turn or background task; the
+ * reason is the main agent's latest turn outcome, `blocked` folds into
+ * `failed`). A cold session (no live handle) is not busy and carries no
+ * outcome.
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
@@ -1093,33 +1111,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       pendingInteraction: 'none',
     };
   }
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
-  const interactions = handle.accessor.get(ISessionInteractionService);
-  let busy = false;
-  for (const agent of agents.list()) {
-    const state = agent.accessor.get(IAgentActivityView).state();
-    if (state.turn !== undefined || state.background.length > 0) {
-      busy = true;
-      break;
-    }
-  }
-  const reason = mainActivity?.lastTurn?.reason;
-  const pendingInteraction = resolvePendingInteraction(interactions);
-  return {
-    busy,
-    mainTurnActive: mainActivity?.turn !== undefined,
-    pendingInteraction,
-    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
-  };
-}
-
-function resolvePendingInteraction(
-  interactions: ISessionInteractionService,
-): SessionPendingInteraction {
-  if (interactions.listPending('approval').length > 0) return 'approval';
-  if (interactions.listPending('question').length > 0) return 'question';
-  return 'none';
+  return handle.accessor.get(ISessionActivityView).state();
 }
 
 /**

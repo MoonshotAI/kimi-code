@@ -73,15 +73,13 @@ async function main(): Promise<void> {
     console.log('[session] created ->', session.id);
     const agent = klient.session(session.id).agent('main');
 
-    await klient.global.models.set({
+    await klient.global.kosong.addProvider({
       id: SEEDED_MODEL_ID,
-      config: {
-        model: seedModel,
-        apiKey: seedKey,
-        baseUrl: process.env['KIMI_EXAMPLE_BASE_URL'],
-        protocol: (process.env['KIMI_EXAMPLE_PROTOCOL'] ?? 'openai') as 'openai',
-        maxContextSize: 262_144,
-      },
+      model: seedModel,
+      protocol: (process.env['KIMI_EXAMPLE_PROTOCOL'] ?? 'openai'),
+      baseUrl: process.env['KIMI_EXAMPLE_BASE_URL'] ?? 'http://127.0.0.1:1',
+      auth: { method: 'api-key', apiKey: seedKey },
+      maxContextSize: 262_144,
     });
     await agent.setModel(SEEDED_MODEL_ID);
     console.log('[model]   bound   ->', await agent.getModel());

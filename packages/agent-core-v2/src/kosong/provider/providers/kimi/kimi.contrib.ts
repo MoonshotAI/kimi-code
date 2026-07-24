@@ -31,12 +31,15 @@
  *       round-trips from the contract message into the wire shape (the base
  *       conversion never emits `extras`), and message-level `tools`
  *       declarations are embedded into the message;
- *     - reasoning: `reasoningKey` names the wire field carrying reasoning
- *       content (`reasoning_content`, used for both inbound extraction and
- *       outbound replay); `preserveThinking` force-replays it in a
- *       `keep: 'all'` session with thinking not disabled — it reads the
- *       already-seeded request kwargs (the thinking config `withThinking`
- *       just encoded), so it decides per request, not per instance;
+ *     - reasoning: the trait deliberately does NOT pin `reasoningKey` — the
+ *       base auto-detects the endpoint's reasoning dialect from inbound
+ *       responses (`reasoning_content` by default, `reasoning` on newer vLLM)
+ *       and echoes that field on outbound replay; operator config
+ *       (`reasoning_key`) or a trait declaration still pins when present.
+ *       `preserveThinking` force-replays the field in a `keep: 'all'` session
+ *       with thinking not disabled — it reads the already-seeded request
+ *       kwargs (the thinking config `withThinking` just encoded), so it
+ *       decides per request, not per instance;
  *     - usage: `extractUsage` finds the usage payload of a Kimi stream chunk
  *       either at the top level (the base's default location) or inside
  *       `choices[0].usage`; returning `undefined` defers to the base default
@@ -84,8 +87,6 @@ import { normalizeKimiToolSchema } from './kimi-schema';
 export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
 export const KIMI_BASE_URL_ENV = 'KIMI_BASE_URL';
 export const KIMI_DEFAULT_BASE_URL = 'https://api.moonshot.ai/v1';
-
-export const KIMI_REASONING_KEY = 'reasoning_content';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 
@@ -198,8 +199,6 @@ export const kimiOpenAITrait: ProtocolTrait = {
     }
     return undefined;
   },
-
-  reasoningKey: () => KIMI_REASONING_KEY,
 
   withMaxCompletionTokens: (maxCompletionTokens) => ({
     max_completion_tokens: maxCompletionTokens,

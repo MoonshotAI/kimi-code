@@ -162,7 +162,7 @@ describe('AgentTranscript', () => {
     expect(appendAtOffset('hello wo', 6, 'world')).toEqual({ text: 'hello world', changed: true });
   });
 
-  it('tracks pending interactions as a derived index (both channels)', () => {
+  it('tracks pending interactions as a derived index (entity channel)', () => {
     const tx = new AgentTranscript('main');
     const interaction = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-1',
@@ -170,23 +170,20 @@ describe('AgentTranscript', () => {
       toolCallId: 'call-1',
       state,
     });
-    // Authoritative channel: the global entity.
     tx.apply([turn1, { op: 'interaction.upsert', interaction: interaction('pending') }]);
     expect(tx.listPendingInteractions()).toEqual(['appr-1']);
     tx.apply([{ op: 'interaction.upsert', interaction: interaction('approved') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
 
-    // Legacy channel: an inline interaction frame (older producers).
-    const legacyFrame = (state: 'pending' | 'answered') => ({
-      kind: 'interaction' as const,
-      frameId: 'i-appr-2',
+    // An entity without an anchor tool call tracks pending the same way.
+    const unanchored = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-2',
-      interactionKind: 'question' as const,
+      interactionKind: 'question',
       state,
     });
-    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('pending') }]);
+    tx.apply([{ op: 'interaction.upsert', interaction: unanchored('pending') }]);
     expect(tx.listPendingInteractions()).toEqual(['appr-2']);
-    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('answered') }]);
+    tx.apply([{ op: 'interaction.upsert', interaction: unanchored('answered') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
@@ -215,9 +212,137 @@ describe('AgentTranscript', () => {
     expect(tx.getTodo('todo')?.items).toHaveLength(0);
   });
 
-  it('items.remove clears anchored interactions and their pending entries (legacy semantics)', () => {
-    // Removing a turn removes its inline interaction frames; the interaction
-    // entity anchored to a tool call inside the turn dies with its anchor.
+  it('upserts prompt queue entities by id, idempotently', () => {
+    const tx = new AgentTranscript('main');
+    const queued = {
+      promptId: 'p1',
+      status: 'queued' as const,
+      userMessageId: 'u1',
+      createdAt: '2026-07-22T00:00:00.000Z',
+    };
+    expect(tx.apply([{ op: 'prompt.upsert', prompt: queued }]).accepted).toHaveLength(1);
+    // Re-applying the identical entity is a no-op (idempotent upsert).
+    expect(tx.apply([{ op: 'prompt.upsert', prompt: queued }]).accepted).toHaveLength(0);
+    // Same id, new state: whole-entity replace.
+    const running = { ...queued, status: 'running' as const, steeredAt: '2026-07-22T00:00:01.000Z' };
+    expect(tx.apply([{ op: 'prompt.upsert', prompt: running }]).accepted).toHaveLength(1);
+    expect(tx.getPrompt('p1')?.status).toBe('running');
+    expect(tx.getPrompt('p1')?.steeredAt).toBe('2026-07-22T00:00:01.000Z');
+
+    // Prompts are global snapshot entities: they survive a snapshot/reset
+    // roundtrip (the full-refresh convergence path).
+    const snapshot = tx.snapshot();
+    expect(snapshot.prompts).toEqual([running]);
+    const fresh = new AgentTranscript('main');
+    fresh.receive([{ op: 'reset', agentId: 'main', snapshot }]);
+    expect(fresh.getPrompt('p1')).toEqual(running);
+    expect([...fresh.getPrompts().keys()]).toEqual(['p1']);
+  });
+
+  it('step upserts carry usage/timing and the terminal header clears retry', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      turn1,
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: {
+          kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'running',
+          retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, errorName: 'RateLimit', errorMessage: 'slow down' },
+        },
+      },
+    ]);
+    expect(tx.getTurn('t1')?.steps[0]?.retry?.errorName).toBe('RateLimit');
+
+    // Same identity fields but new usage/timing: must not be swallowed as a
+    // no-op (the equality check covers the extension fields).
+    const completed = tx.apply([
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: {
+          kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'completed',
+          usage: { inputOther: 10, output: 5, inputCacheRead: 3, inputCacheCreation: 2 },
+          finishReason: 'stop',
+          timing: { llmFirstTokenLatencyMs: 120 },
+        },
+      },
+    ]);
+    expect(completed.accepted).toHaveLength(1);
+    const step = tx.getTurn('t1')?.steps[0];
+    expect(step?.usage?.output).toBe(5);
+    expect(step?.timing?.llmFirstTokenLatencyMs).toBe(120);
+    // step.upsert replaces the whole header: no `retry` key means cleared.
+    expect(step?.retry).toBeUndefined();
+  });
+
+  it('turn upserts carry durationMs and the terminal error', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([turn1]);
+    const failed = tx.apply([
+      { op: 'turn.upsert', turn: { ...turn1.turn, state: 'failed', durationMs: 1500, error: 'boom' } },
+    ]);
+    expect(failed.accepted).toHaveLength(1);
+    const turn = tx.getTurn('t1');
+    expect(turn?.durationMs).toBe(1500);
+    expect(turn?.error).toBe('boom');
+  });
+
+  it('tool frames keep streamed inputText and the newest progress update', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply(toolFrame('running'));
+    const streamed = (frame: Partial<ToolCallFrame> & Pick<ToolCallFrame, 'inputText' | 'state'>): TranscriptOperation => ({
+      op: 'frame.upsert',
+      turnId: 't1',
+      stepId: 't1.1',
+      frame: {
+        kind: 'tool', frameId: 't1.1.call_1', toolCallId: 'call_1', name: 'Read',
+        ...frame,
+      },
+    });
+    // Delta accumulation: inputText grows while the frame stays running.
+    expect(tx.apply([streamed({ inputText: '{"path"', state: 'running' })]).accepted).toHaveLength(1);
+    tx.apply([streamed({ inputText: '{"path":"/a"}', state: 'running' })]);
+    // `tool.call.started` lands with the parsed input but keeps the raw text.
+    tx.apply([
+      streamed({ inputText: '{"path":"/a"}', state: 'running', input: { path: '/a' } }),
+      streamed({
+        inputText: '{"path":"/a"}',
+        state: 'running',
+        input: { path: '/a' },
+        progress: { kind: 'progress', percent: 50 },
+      }),
+    ]);
+    const frame = tx.getTurn('t1')?.steps[0]?.frames.find((f) => f.kind === 'tool');
+    expect(frame?.kind === 'tool' && frame.input).toEqual({ path: '/a' });
+    expect(frame?.kind === 'tool' && frame.inputText).toBe('{"path":"/a"}');
+    expect(frame?.kind === 'tool' && frame.progress).toEqual({ kind: 'progress', percent: 50 });
+  });
+
+  it('task upserts carry resultSummary/error/stateReason/usage', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false, outputTail: '' } },
+    ]);
+    const done = tx.apply([
+      {
+        op: 'task.upsert',
+        task: {
+          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
+          resultSummary: 'scanned 12 files',
+          usage: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
+        },
+      },
+    ]);
+    expect(done.accepted).toHaveLength(1);
+    const task = tx.getTask('task1');
+    expect(task?.resultSummary).toBe('scanned 12 files');
+    expect(task?.usage?.inputOther).toBe(100);
+  });
+
+  it('items.remove clears anchored interactions and their pending entries', () => {
+    // The interaction entity anchored to a tool call inside a removed turn
+    // dies with its anchor.
     const tx = new AgentTranscript('main');
     tx.apply([
       turn1,
@@ -313,6 +438,33 @@ describe('AgentTranscript', () => {
     // Clearing the last badge normalizes `modes` away entirely.
     tx.apply([{ op: 'meta.merge', meta: { modes: { swarm: null } } }]);
     expect(tx.getMeta().modes).toBeUndefined();
+  });
+
+  it('meta.merge shallow-merges the agent status key one level deep', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      { op: 'meta.merge', meta: { agent: { model: 'k2', permission: 'auto' } } },
+      // Status slices arrive piecemeal: a later op carries only the fields
+      // that changed, and the earlier fields must survive.
+      { op: 'meta.merge', meta: { agent: { contextTokens: 1234 } } },
+    ]);
+    expect(tx.getMeta().agent).toEqual({ model: 'k2', permission: 'auto', contextTokens: 1234 });
+
+    // Same-named fields are overwritten by the newer slice.
+    tx.apply([
+      { op: 'meta.merge', meta: { agent: { model: 'k3', phase: { kind: 'idle' } } } },
+    ]);
+    expect(tx.getMeta().agent).toEqual({
+      model: 'k3',
+      permission: 'auto',
+      contextTokens: 1234,
+      phase: { kind: 'idle' },
+    });
+
+    // An op without the agent key leaves it untouched.
+    tx.apply([{ op: 'meta.merge', meta: { activity: 'turn' } }]);
+    expect(tx.getMeta().agent?.model).toBe('k3');
+    expect(tx.getMeta().activity).toBe('turn');
   });
 
   it('snapshot immutability: later applies do not mutate earlier reads', () => {

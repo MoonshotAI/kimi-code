@@ -1,11 +1,32 @@
 /**
  * `task` domain (L5) — `AgentTaskService` implementation.
  *
- * Owns task lifecycle, retained output, persistence, restoration, and terminal
- * notification delivery. Coordinates App-level task handles, `loop`,
- * `contextMemory`, `contextInjector`, `config`, Agent and Session identity,
- * atomic-document and file storage, `eventBus`, `wire`, and `telemetry`;
- * notification delivery follows conversation undo through the checkpoint and
+ * Owns the agent's registry of running and restored tasks:
+ * registers and drives tasks to completion, retains a bounded output ring,
+ * persists task state and output through task persistence rooted at the
+ * agent's own scope (v1's per-agent `<sessionDir>/agents/<id>/tasks/`
+ * layout), lets only the main agent read through the previous v2
+ * session-level task root without writing back to it, reads
+ * limits through `config`, records lifecycle and broadcasts through `wire`
+ * (persisted `task.started` / `task.terminated` Ops into `TaskModel`, the
+ * terminated record carrying a bounded tail of the task's retained output as
+ * `outputTail`, plus the matching signals), restores ghosts through a single
+ * `wire.hooks.onDidRestore` hook
+ * (wire replay -> disk load -> reconcile, in that order), delivers live
+ * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
+ * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
+ * following step; idle ones launch a fresh turn themselves, matching v1's
+ * `turn.steer`, so the model consumes the notification without waiting for
+ * the user), silently appends restored notifications through `contextMemory`,
+ * re-surfaces active tasks through `contextInjector` after compaction, and
+ * requests every owned task to stop on session close (`stopAllOnExit` — v1's
+ * `stopBackgroundTasksOnExit`) with configurable SIGTERM grace and SIGKILL
+ * escalation. `keepAliveOnExit` skips task-manager teardown so independently
+ * living external work such as processes can continue; Session-scoped agents
+ * remain governed by the Session lifecycle. Scope disposal paths that bypass
+ * graceful close synchronously cancel/abort work and immediately attempt a
+ * best-effort force-stop to reduce the risk of surviving child processes.
+ * Notification delivery follows conversation undo through the checkpoint and
  * reconciliation contracts. Bound at Agent scope.
  */
 
@@ -138,6 +159,8 @@ interface ManagedTask {
 }
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+
+const TERMINAL_OUTPUT_TAIL_BYTES = 4 * 1024;
 
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
@@ -995,7 +1018,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     void this.notifyAgentTask(info).catch((error) => {
       this.log.error('task notification delivery failed', { taskId: info.taskId, error });
     });
-    this.recordTaskTerminated(info);
+    this.recordTaskTerminated(info, this.retainedOutputTail(entry));
+  }
+
+  private retainedOutputTail(entry: ManagedTask): string | undefined {
+    if (entry.outputChunks.length === 0) return undefined;
+    const retained = Buffer.from(entry.outputChunks.join(''), 'utf-8');
+    const offset = Math.max(0, retained.byteLength - TERMINAL_OUTPUT_TAIL_BYTES);
+    return retained.subarray(offset).toString('utf-8');
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
@@ -1006,8 +1036,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  private recordTaskTerminated(info: AgentTaskInfo): void {
-    this.wire.dispatch(taskTerminated({ info }));
+  private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+    this.wire.dispatch(taskTerminated({ info, outputTail }));
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,

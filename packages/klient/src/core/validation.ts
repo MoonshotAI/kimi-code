@@ -8,9 +8,9 @@
 
 import { z } from 'zod';
 
-import type { ProcedureContract } from '#/contract/types';
+import type { ProcedureContract, StreamingProcedureContract } from '#/contract/types';
 
-export type ValidationPhase = 'input' | 'output' | 'event';
+export type ValidationPhase = 'input' | 'output' | 'event' | 'chunk';
 
 export class KlientValidationError extends Error {
   constructor(
@@ -33,7 +33,7 @@ export class KlientValidationError extends Error {
 /** Parse the positional-args tuple; returns the normalized args to send. */
 export function parseInput(
   procedure: string,
-  contract: ProcedureContract,
+  contract: ProcedureContract | StreamingProcedureContract,
   args: unknown[],
 ): unknown[] {
   const result = contract.input.safeParse(args);
@@ -52,6 +52,19 @@ export function parseOutput(
   const result = contract.output.safeParse(data);
   if (!result.success) {
     throw new KlientValidationError('output', procedure, result.error.issues, data);
+  }
+  return result.data;
+}
+
+/** Validate one streamed chunk; throws on mismatch. */
+export function parseChunk(
+  procedure: string,
+  contract: StreamingProcedureContract,
+  data: unknown,
+): unknown {
+  const result = contract.chunk.safeParse(data);
+  if (!result.success) {
+    throw new KlientValidationError('chunk', procedure, result.error.issues, data);
   }
   return result.data;
 }

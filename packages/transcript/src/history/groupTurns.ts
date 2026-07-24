@@ -5,14 +5,27 @@
  * This is a best-effort reconstruction — the live path (engine events) is the
  * high-fidelity one. Known limitations, accepted by design:
  *  - step granularity collapses to "one assistant message = one step";
+ *  - live-only detail is never backfilled: step usage / finishReason /
+ *    timing / retry, turn durationMs / error, tool inputText / progress, and
+ *    task resultSummary / error / stateReason / usage exist only on live
+ *    engine events — persisted context messages do not carry them;
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - interaction frames do not appear (approvals are not persisted as
  *    context messages);
+ *  - only the turn tree is built here: tasks / interactions / todos / meta
+ *    (goal, plan, swarm) are NOT context messages — the companion fold
+ *    (`foldWireRecordFacts` in `foldFacts.ts`) rebuilds them from the
+ *    non-`context.*` wire records on top of this base snapshot;
  *  - when the source supplies journal-recovered turn identity, it remains
  *    authoritative across hidden retries and same-turn steers; callers with
- *    only flat legacy messages use 0-based best-effort grouping.
+ *    only flat legacy messages use 0-based best-effort grouping — **0-based,
+ *    matching the engine's live turn numbering** — which can drift from the
+ *    engine's ids when hidden origins (e.g. retries) make the engine consume
+ *    an ordinal that grouping cannot see. Alignment is what makes a rebuilt
+ *    slice safe to merge into a live store (backfill): the engine's next
+ *    turn continues at `t<turnCount>` without colliding.
  *
  * The input type is structural so the engine's `ContextMessage` is directly
  * assignable without a dependency from this package onto the engine.
@@ -136,7 +149,7 @@ export function groupMessagesIntoSnapshot(
               : source.kind === 'file'
                 ? { kind: 'file', fileId: source.file_id }
                 : undefined,
-          // base64 bytes are deliberately dropped — never shipped on the wire.
+          // base64 bytes are deliberately dropped — never shipped to clients.
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
@@ -263,9 +276,11 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  // Approvals / questions are never persisted, so a cold rebuild carries no
-  // interaction entities (same as the pre-entity frame model).
-  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
+  // The entity slots stay empty here: tasks / interactions / todos / meta are
+  // not context messages — `foldWireRecordFacts` fills them from the
+  // non-`context.*` wire records on top of this base snapshot. Prompts stay
+  // empty too: the wire journal carries no prompt records (see foldFacts).
+  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 function groupMessagesByStableTurn(
@@ -417,7 +432,7 @@ function groupMessagesByStableTurn(
     if (ordinal === undefined || emittedMarkerOrdinals.has(ordinal)) continue;
     items.push(...entries);
   }
-  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
+  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 // ---------------------------------------------------------------- helpers

@@ -243,7 +243,7 @@ domain: `sessionLifecycle`   (owning scope: App)
     ├─ hostEnvironment   @App  direct  — gates scope creation on the probe
     ├─ sessionIndex      @App  direct  — persisted read model for cold resumes
     ├─ storage           @App  direct  — atomic docs + append logs
-    ├─ workspaceRegistry @App  direct  — resolves a session's workspace
+    ├─ workspace        @App  direct  — resolves a session's workspace
     └─ event             @App  direct  — broadcasts session-level facts (e.g. archived)
 ```
 

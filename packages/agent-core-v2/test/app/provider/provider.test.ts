@@ -1,176 +1,33 @@
 /**
- * `provider` domain tests — covers `ProviderService` CRUD over the `providers`
- * config section, schema registration, and the delete-via-replace semantics.
+ * `provider` config-section tests — the `providers` section registration
+ * (schema + env bindings + strip hook, self-registered by the app/kosongConfig
+ * persistence wrapper) and the TOML/env helper transforms.
+ *
+ * The registry itself (`ProviderService`) is a pure in-memory store covered
+ * by `test/kosong/provider/providerService.test.ts`; persistence through the
+ * config bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
-import { Emitter } from '#/_base/event';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { type ConfigChangedEvent, IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import {
+  ENV_MODEL_PROVIDER_KEY,
+  PROVIDERS_SECTION,
   providersEnvBindings,
   providersFromToml,
   providersToToml,
   stripProvidersEnv,
-} from '#/kosong/provider/configSection';
-import {
-  ENV_MODEL_PROVIDER_KEY,
-  IProviderService,
-  type ProviderConfig,
-  PROVIDERS_SECTION,
-} from '#/kosong/provider/provider';
-import { ProviderService } from '#/kosong/provider/providerService';
+} from '#/app/kosongConfig/configSection';
 
-describe('ProviderService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
-  let registry: ConfigRegistry;
-  let providers: Record<string, ProviderConfig>;
-  let defaultProvider: string | undefined;
-  let configSet: ReturnType<typeof vi.fn>;
-  let configReplace: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    registry = new ConfigRegistry();
-    providers = {};
-    defaultProvider = undefined;
-    configSet = vi.fn().mockResolvedValue(undefined);
-    configReplace = vi.fn().mockResolvedValue(undefined);
-    ix = createServices(disposables, {
-      additionalServices: (reg) => {
-        reg.defineInstance(IConfigRegistry, registry);
-        reg.definePartialInstance(IConfigService, {
-          get: ((domain: string) => {
-            if (domain === PROVIDERS_SECTION) return providers;
-            if (domain === 'defaultProvider') return defaultProvider;
-            return undefined;
-          }) as IConfigService['get'],
-          set: configSet as unknown as IConfigService['set'],
-          replace: configReplace as unknown as IConfigService['replace'],
-          onDidChangeConfiguration: (() => ({ dispose: () => { } })) as IConfigService['onDidChangeConfiguration'],
-        });
-        reg.define(IProviderService, ProviderService);
-      },
-    });
-  });
-  afterEach(() => disposables.dispose());
-
-  it('registers the providers section schema on construction', () => {
-    ix.get(IProviderService);
+describe('providers config section', () => {
+  it('self-registers the schema with the env bindings and strip hook', () => {
+    const registry = new ConfigRegistry();
     expect(registry.getSection(PROVIDERS_SECTION)).toMatchObject({
       domain: PROVIDERS_SECTION,
       env: providersEnvBindings,
       stripEnv: stripProvidersEnv,
     });
-  });
-
-  it('set delegates to config.set with a single-provider patch', async () => {
-    const svc = ix.get(IProviderService);
-    await svc.set('p1', { type: 'openai', apiKey: 'sk' });
-    expect(configSet).toHaveBeenCalledWith(PROVIDERS_SECTION, {
-      p1: { type: 'openai', apiKey: 'sk' },
-    });
-  });
-
-  it('get reads a single provider from config', () => {
-    providers['p1'] = { type: 'openai', apiKey: 'sk' };
-    const svc = ix.get(IProviderService);
-    expect(svc.get('p1')).toEqual({ type: 'openai', apiKey: 'sk' });
-    expect(svc.get('missing')).toBeUndefined();
-  });
-
-  it('list returns all providers', () => {
-    providers['p1'] = { type: 'openai' };
-    providers['p2'] = { type: 'kimi' };
-    const svc = ix.get(IProviderService);
-    expect(svc.list()).toEqual({
-      p1: { type: 'openai' },
-      p2: { type: 'kimi' },
-    });
-  });
-
-  it('delete removes the provider and replaces the whole section', async () => {
-    providers['p1'] = { type: 'openai' };
-    providers['p2'] = { type: 'kimi' };
-    const svc = ix.get(IProviderService);
-    await svc.delete('p1');
-    expect(configReplace).toHaveBeenCalledWith(PROVIDERS_SECTION, {
-      p2: { type: 'kimi' },
-    });
-  });
-
-  it('delete is a no-op when the provider is absent', async () => {
-    const svc = ix.get(IProviderService);
-    await svc.delete('missing');
-    expect(configReplace).not.toHaveBeenCalled();
-  });
-
-  it('delete clears defaultProvider when removing the default provider', async () => {
-    providers['p1'] = { type: 'openai' };
-    providers['p2'] = { type: 'kimi' };
-    defaultProvider = 'p1';
-    const svc = ix.get(IProviderService);
-    await svc.delete('p1');
-    expect(configReplace).toHaveBeenCalledWith(PROVIDERS_SECTION, {
-      p2: { type: 'kimi' },
-    });
-    expect(configReplace).toHaveBeenCalledWith('defaultProvider', undefined);
-  });
-
-  it('delete leaves defaultProvider when removing a different provider', async () => {
-    providers['p1'] = { type: 'openai' };
-    providers['p2'] = { type: 'kimi' };
-    defaultProvider = 'p2';
-    const svc = ix.get(IProviderService);
-    await svc.delete('p1');
-    expect(configReplace).not.toHaveBeenCalledWith('defaultProvider', expect.anything());
-  });
-
-  it('forwards providers section changes as onDidChangeProviders with a diff', () => {
-    const configEvents = disposables.add(new Emitter<ConfigChangedEvent>());
-    const local = createServices(disposables, {
-      additionalServices: (reg) => {
-        reg.defineInstance(IConfigRegistry, registry);
-        reg.definePartialInstance(IConfigService, {
-          get: (() => undefined) as unknown as IConfigService['get'],
-          onDidChangeConfiguration: configEvents.event,
-        });
-        reg.define(IProviderService, ProviderService);
-      },
-    });
-    const svc = local.get(IProviderService);
-    const diffs: { added: readonly string[]; removed: readonly string[]; changed: readonly string[] }[] = [];
-    disposables.add(svc.onDidChangeProviders((e) => diffs.push(e)));
-
-    configEvents.fire({
-      domain: PROVIDERS_SECTION,
-      source: 'set',
-      value: { p1: { type: 'openai' } },
-      previousValue: {},
-    });
-    configEvents.fire({
-      domain: PROVIDERS_SECTION,
-      source: 'set',
-      value: { p1: { type: 'kimi' } },
-      previousValue: { p1: { type: 'openai' } },
-    });
-    configEvents.fire({
-      domain: PROVIDERS_SECTION,
-      source: 'set',
-      value: {},
-      previousValue: { p1: { type: 'kimi' } },
-    });
-    configEvents.fire({ domain: 'models', source: 'set', value: {}, previousValue: {} });
-
-    expect(diffs).toEqual([
-      { added: ['p1'], removed: [], changed: [] },
-      { added: [], removed: [], changed: ['p1'] },
-      { added: [], removed: ['p1'], changed: [] },
-    ]);
   });
 });
 

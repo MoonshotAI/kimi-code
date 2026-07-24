@@ -56,11 +56,11 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `sessions` | `list` | ISessionIndex.list | GET |
 | `sessions` | `get` | ISessionIndex.get | GET |
 | `sessions` | `countActive` | ISessionIndex.countActive | GET |
-| `workspaces` | `list` | IWorkspaceRegistry.list | GET |
-| `workspaces` | `get` | IWorkspaceRegistry.get | GET |
-| `workspaces` | `createOrTouch` | IWorkspaceRegistry.createOrTouch | POST |
-| `workspaces` | `update` | IWorkspaceRegistry.update | POST |
-| `workspaces` | `delete` | IWorkspaceRegistry.delete | POST |
+| `workspaces` | `list` | IWorkspaceService.list | GET |
+| `workspaces` | `get` | IWorkspaceService.get | GET |
+| `workspaces` | `createOrTouch` | IWorkspaceService.createOrTouch | POST |
+| `workspaces` | `update` | IWorkspaceService.update | POST |
+| `workspaces` | `delete` | IWorkspaceService.delete | POST |
 | `config` | `get` / `getAll` / `inspect` | IConfigService.* | GET |
 | `config` | `set` / `replace` / `reload` | IConfigService.* | POST |
 | `providers` | `list` / `get` | IProviderService.* | GET |

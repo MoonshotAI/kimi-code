@@ -15,6 +15,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
@@ -25,6 +26,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
@@ -44,9 +46,13 @@ import {
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
+  MODELS_SECTION,
+  SECONDARY_MODEL_EFFORT_ENV,
+  SECONDARY_MODEL_ENV,
+  SECONDARY_MODEL_SECTION,
   THINKING_SECTION,
-  type ThinkingConfig,
-} from '#/kosong/model/thinking';
+} from '#/app/kosongConfig/configSection';
+import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
   MAX_RUNNING_TASKS_ENV,
@@ -54,20 +60,43 @@ import {
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
 } from '#/agent/task/configSection';
+import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
+  resolveSecondaryModel,
+  resolveSubagentBinding,
   resolveSubagentTimeoutMs,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
+  wrapSubagentModelError,
 } from '#/session/subagent/configSection';
+import {
+  SERVICES_SECTION,
+  WEB_FETCH_API_KEY_ENV,
+  WEB_FETCH_BASE_URL_ENV,
+  WEB_SEARCH_API_KEY_ENV,
+  WEB_SEARCH_BASE_URL_ENV,
+  type ServicesConfig,
+} from '#/app/auth/configSection';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
+import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
+import '#/agent/mcp/configSection';
+import {
+  MCP_SECTION,
+  MCP_STARTUP_TIMEOUT_ENV,
+  MCP_TOOL_TIMEOUT_ENV,
+  McpSectionSchema,
+  type McpSection,
+} from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 const TEST_OS_ENV = {
@@ -77,6 +106,10 @@ const TEST_OS_ENV = {
   shellName: 'bash',
   shellPath: '/bin/bash',
 } as const;
+
+function secondaryModelFlags(enabled = true) {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
@@ -460,6 +493,158 @@ describe('ConfigService env overlay (live)', () => {
 
     await config.replace('defaultModel', undefined);
     expect(config.get<string>('defaultModel')).toBeUndefined();
+
+    disposables.dispose();
+  });
+});
+
+describe('services config section env bindings', () => {
+  function createConfig(env: Record<string, string>): {
+    config: IConfigService;
+    disposables: DisposableStore;
+  } {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    return { config: ix.get(IConfigService), disposables };
+  }
+
+  it('resolves moonshot_search / moonshot_fetch fields from KIMI_WEB_* env vars', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+      [WEB_SEARCH_API_KEY_ENV]: 'env-search-key',
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+    await config.ready;
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)).toEqual({
+      moonshotSearch: { baseUrl: 'https://search-env.example/search', apiKey: 'env-search-key' },
+      moonshotFetch: { baseUrl: 'https://fetch-env.example/fetch', apiKey: 'env-fetch-key' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not inherit persisted credentials when env selects a service endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        apiKey: 'file-search-key',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { Authorization: 'Bearer configured-search-secret' },
+      },
+      moonshotFetch: {
+        baseUrl: 'https://file.example/fetch',
+        apiKey: 'file-fetch-key',
+        oauth: { storage: 'file', key: 'oauth/fetch' },
+        customHeaders: { Authorization: 'Bearer configured-fetch-secret' },
+      },
+    });
+    Object.assign(env, {
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+      [WEB_SEARCH_API_KEY_ENV]: 'env-search-key',
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)).toEqual({
+      moonshotSearch: {
+        baseUrl: 'https://search-env.example/search',
+        apiKey: 'env-search-key',
+      },
+      moonshotFetch: {
+        baseUrl: 'https://fetch-env.example/fetch',
+        apiKey: 'env-fetch-key',
+      },
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses an env API key instead of persisted OAuth for a configured endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { 'X-Service': 'search' },
+      },
+    });
+    env[WEB_SEARCH_API_KEY_ENV] = 'env-search-key';
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch).toEqual({
+      baseUrl: 'https://file.example/search',
+      apiKey: 'env-search-key',
+      customHeaders: { 'X-Service': 'search' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('ignores blank env values instead of masking the file value', async () => {
+    const { config, disposables } = createConfig({ [WEB_SEARCH_BASE_URL_ENV]: '   ' });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch).toEqual({
+      baseUrl: 'https://file.example/search',
+    });
+
+    disposables.dispose();
+  });
+
+  it('strips env-derived fields before persisting a round-tripped effective value', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
+    });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    const effective = config.get<ServicesConfig>(SERVICES_SECTION);
+    expect(effective?.moonshotFetch).toEqual({
+      baseUrl: 'https://fetch-env.example/fetch',
+      apiKey: 'env-fetch-key',
+    });
+
+    await config.replace(SERVICES_SECTION, effective);
+    expect(config.inspect<ServicesConfig>(SERVICES_SECTION).userValue).toEqual({
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('clears the section on replace(undefined) even with env vars set', async () => {
+    const { config, disposables } = createConfig({
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+    });
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: { baseUrl: 'https://file.example/search' },
+    });
+
+    await config.replace(SERVICES_SECTION, undefined);
+
+    expect(config.inspect<ServicesConfig>(SERVICES_SECTION).userValue).toBeUndefined();
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch?.baseUrl).toBe(
+      'https://search-env.example/search',
+    );
 
     disposables.dispose();
   });
@@ -1044,14 +1229,113 @@ describe('task config section', () => {
     disposables.dispose();
   });
 
-  it('resolvePrintBackgroundMode falls back to keepAliveOnExit then exit', async () => {
+  it('resolvePrintBackgroundMode falls back to keepAliveOnExit then steer', async () => {
     const env: Record<string, string> = {};
     const { config, disposables } = await createTaskConfig(env);
 
-    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+    expect(resolvePrintBackgroundMode(config)).toBe('steer');
 
     env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
     expect(resolvePrintBackgroundMode(config)).toBe('drain');
+
+    disposables.dispose();
+  });
+});
+
+describe('applyPrintModeConfigDefaults', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('fills unset keys into the memory layer with effectively unbounded values', async () => {
+    const { config, disposables } = await createConfig({});
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(0);
+    expect(resolveSubagentTimeoutMs(config)).toBe(0);
+    expect(config.inspect('task').memoryValue).toMatchObject({ bashTaskTimeoutS: 0 });
+    expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toMatchObject({
+      maxStepsPerTurn: 0,
+    });
+    expect(config.inspect('subagent').memoryValue).toMatchObject({ timeoutMs: 0 });
+
+    disposables.dispose();
+  });
+
+  it('does not override keys the user set explicitly', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[task]\nbash_task_timeout_s = 30\n\n' +
+        '[loop_control]\nmax_steps_per_turn = 7\n\n' +
+        '[subagent]\ntimeout_ms = 5000\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(30);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(7);
+    expect(resolveSubagentTimeoutMs(config)).toBe(5000);
+    expect(config.inspect('task').memoryValue).toBeUndefined();
+    expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toBeUndefined();
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('treats a legacy [background] bash_task_timeout_s as user-set', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[background]\nbash_task_timeout_s = 15\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(15);
+
+    disposables.dispose();
+  });
+
+  it('keeps sibling user keys of a filled section visible', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_retries_per_step = 5\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolvePrintBackgroundMode(config)).toBe('drain');
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toMatchObject({
+      maxRetriesPerStep: 5,
+      maxStepsPerTurn: 0,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not override the subagent timeout env override', async () => {
+    const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '3000' };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(3000);
 
     disposables.dispose();
   });
@@ -1134,6 +1418,320 @@ describe('subagent config section', () => {
     delete env[SUBAGENT_TIMEOUT_ENV];
     expect(config.get<SubagentConfig>(SUBAGENT_SECTION)).toEqual({
       timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+
+    disposables.dispose();
+  });
+
+  it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+
+    const noModel = await createConfig({});
+    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    noModel.disposables.dispose();
+
+    const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
+    // Pointer-only recipe: bind the pointed entry directly; thinking resolves
+    // naturally (no inheriting the caller's level).
+    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/secondary',
+      thinking: undefined,
+    });
+    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    withModel.disposables.dispose();
+
+    const withEffort = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+    // Patch fields bind the synthesized derived entry; default_effort is the
+    // explicit subagent thinking.
+    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      thinking: 'low',
+    });
+    // default_effort only applies together with the secondary model.
+    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    withEffort.disposables.dispose();
+
+    const withFactPatch = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
+    );
+    expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      thinking: undefined,
+    });
+    withFactPatch.disposables.dispose();
+  });
+
+  it('inherits the caller binding when the secondary-model experiment is disabled', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+
+    disposables.dispose();
+  });
+
+  it('preserves the coded error contract when adding secondary-model guidance', () => {
+    const cause = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/bad" is not configured in config.toml.',
+      { details: { model: 'provider/bad' } },
+    );
+
+    const result = wrapSubagentModelError(cause, 'provider/bad', 'provider/main');
+
+    expect(toErrorPayload(result)).toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+      message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      details: {
+        model: 'provider/bad',
+        secondaryModel: 'provider/bad',
+        secondaryModelConfig: {
+          section: 'secondaryModel.model',
+          environment: SECONDARY_MODEL_ENV,
+        },
+      },
+      cause: {
+        code: ErrorCodes.CONFIG_INVALID,
+        details: { model: 'provider/bad' },
+      },
+    });
+  });
+
+  it('passes through config-invalid failures that are not a missing bound alias', () => {
+    // A malformed [models.*] entry fails without details.model.
+    const malformed = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/secondary" must declare a wire protocol (config: models.<id>.protocol).',
+    );
+    expect(wrapSubagentModelError(malformed, 'provider/secondary', 'provider/main')).toBe(malformed);
+
+    // A missing alias that is not the bound model.
+    const unrelated = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/other" is not configured in config.toml.',
+      { details: { model: 'provider/other' } },
+    );
+    expect(wrapSubagentModelError(unrelated, 'provider/secondary', 'provider/main')).toBe(unrelated);
+  });
+});
+
+describe('secondaryModel config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('reads model/default_effort from config.toml and lets the env vars win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(
+      env,
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('low');
+
+    env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
+    env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('high');
+
+    // Blank env values are ignored.
+    env[SECONDARY_MODEL_ENV] = '  ';
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SECONDARY_MODEL_ENV]: 'provider/env-secondary' };
+    const { config, disposables } = await createConfig(
+      env,
+      '[secondary_model]\nmodel = "provider/raw-secondary"\n',
+    );
+
+    // A client echoing the env-overlaid section back.
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
+
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
+    expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
+      model: 'provider/raw-secondary',
+    });
+
+    disposables.dispose();
+  });
+
+  it('propagates overlay-induced models changes to section events on runtime set', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[models.k2]\nprovider = "kimi"\nmodel = "kimi-k2"\n',
+    );
+    const domains: string[] = [];
+    config.onDidSectionChange((e) => domains.push(e.domain));
+
+    // Runtime set with patch fields: the derived entry appears in the
+    // effective models view AND the models section event fires — the
+    // persistence bridge re-hydrates the registry from that event.
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'k2', maxOutputSize: 8192 });
+    const models = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
+    expect(models[SECONDARY_DERIVED_MODEL_ID]).toBeDefined();
+    expect(domains).toContain(SECONDARY_MODEL_SECTION);
+    expect(domains).toContain(MODELS_SECTION);
+
+    // Removing the patch retracts the derived entry and fires again.
+    domains.length = 0;
+    await config.replace(SECONDARY_MODEL_SECTION, { model: 'k2' });
+    const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
+    expect(after[SECONDARY_DERIVED_MODEL_ID]).toBeUndefined();
+    expect(domains).toContain(MODELS_SECTION);
+
+    disposables.dispose();
+  });
+});
+
+describe('mcp config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('is unset by default and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '60000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(60000);
+
+    disposables.dispose();
+  });
+
+  it('accepts the Node.js timer upper boundary', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_647,
+        toolTimeoutMs: 2_147_483_647,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects config timeouts above the Node.js timer limit', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_648,
+        toolTimeoutMs: 2_147_483_648,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('falls back to config when env timeouts exceed the Node.js timer limit', async () => {
+    const env: Record<string, string> = {
+      [MCP_STARTUP_TIMEOUT_ENV]: '2147483648',
+      [MCP_TOOL_TIMEOUT_ENV]: '2147483648',
+    };
+    const { config, disposables } = await createConfig(
+      env,
+      '[mcp]\nstartup_timeout_ms = 5000\ntool_timeout_ms = 60000\n',
+    );
+    try {
+      expect(config.get<McpSection | undefined>(MCP_SECTION)).toEqual({
+        startupTimeoutMs: 5000,
+        toolTimeoutMs: 60000,
+      });
+    } finally {
+      disposables.dispose();
+    }
+  });
+
+  it('reads startup_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(5000);
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '7000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('reads tool_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\ntool_timeout_ms = 60000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = '90000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(90000);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [MCP_STARTUP_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+
+    // A client echoing the env-overlaid section back.
+    await config.set(MCP_SECTION, { startupTimeoutMs: 7000 });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+    // …but persistence keeps the raw value.
+    expect(config.inspect<McpSection>(MCP_SECTION).userValue).toEqual({
+      startupTimeoutMs: 5000,
     });
 
     disposables.dispose();

@@ -1,5 +1,5 @@
 /**
- * Left sidebar — two columns: the workspace registry (`IWorkspaceRegistry`)
+ * Left sidebar — two columns: the workspace catalog (`IWorkspaceService`)
  * and the sessions of the selected workspace (`ISessionIndex`). Clicking a
  * session opens it in the main view. Lists refresh on a slow poll only: the
  * core-event stream that used to trigger a debounced refresh went away with
@@ -10,11 +10,33 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceRegistry, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceService, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 
+import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';
+import { useSessionActivities } from '../activity/useSessionActivity';
+import type { SessionWorkFacts } from '../activity/store';
 import { Badge, ErrorLine, relTime } from '../ui';
+
+/**
+ * Default model for a fresh session: the configured global `defaultModel`
+ * first (the same fallback the profile bind uses), then the first connected
+ * provider's `default_model`. `undefined` means the server has nothing to
+ * offer — the session stays model-less and the chat surfaces
+ * `model.not_configured` as before.
+ */
+async function resolveDefaultModel(klient: InspectClient): Promise<string | undefined> {
+  const configured: unknown = await klient.core(IConfigService).get('defaultModel');
+  if (typeof configured === 'string' && configured !== '') return configured;
+  const providers = await klient.core(IModelCatalog).listProviders();
+  const withDefault = providers.filter((p) => p.default_model !== undefined);
+  return (withDefault.find((p) => p.status === 'connected') ?? withDefault[0])?.default_model;
+}
 
 export function Sidebar({
   activeSessionId,
@@ -26,10 +48,11 @@ export function Sidebar({
   const { klient, baseUrl, config } = useConnection();
   const queryClient = useQueryClient();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const activities = useSessionActivities();
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => klient.core(IWorkspaceRegistry).list(),
+    queryFn: () => klient.core(IWorkspaceService).list(),
     refetchInterval: 15_000,
   });
 
@@ -46,22 +69,43 @@ export function Sidebar({
   const sortedSessions = (sessions.data?.items ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt);
 
   const createSession = async (ws: Workspace | null) => {
-    const cwd = window.prompt('Working directory for the new session:', ws?.root ?? '');
-    if (cwd === null || cwd.trim() === '') return;
+    // With a workspace, the server derives workDir from workspace.root, so no cwd is needed.
+    let body: string;
+    if (ws !== null) {
+      body = JSON.stringify({ workspace_id: ws.id });
+    } else {
+      const cwd = window.prompt('Working directory for the new session:', '');
+      if (cwd === null || cwd.trim() === '') return;
+      body = JSON.stringify({ metadata: { cwd: cwd.trim() } });
+    }
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (config.token.trim() !== '') headers['authorization'] = `Bearer ${config.token.trim()}`;
     const res = await fetch(`${baseUrl}/api/v1/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ workspace_id: ws?.id, metadata: { cwd: cwd.trim() } }),
+      body,
     });
     const envelope = (await res.json()) as { code: number; msg: string; data: { id: string } };
     if (envelope.code !== 0) {
       window.alert(`create session failed: ${envelope.msg}`);
       return;
     }
+    const sessionId = envelope.data.id;
+    // The REST create route ignores agent_config, so bind the default model
+    // over the channel — the same resume + setModel path the Model Catalog's
+    // "+ Session" button uses. Best-effort: a failure leaves the session
+    // model-less instead of blocking the creation flow.
+    try {
+      const model = await resolveDefaultModel(klient);
+      if (model !== undefined) {
+        await klient.core(ISessionLifecycleService).resume(sessionId);
+        await klient.session(sessionId).agent('main').service(IAgentProfileService).setModel(model);
+      }
+    } catch (error) {
+      console.warn('failed to set the default model on the new session', error);
+    }
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    onSelectSession(envelope.data.id);
+    onSelectSession(sessionId);
   };
 
   return (
@@ -106,6 +150,7 @@ export function Sidebar({
             <SessionRow
               key={s.id}
               s={s}
+              activity={activities.get(s.id)}
               active={s.id === activeSessionId}
               onClick={() => onSelectSession(s.id)}
             />
@@ -160,7 +205,17 @@ function WorkspaceRow({
   );
 }
 
-function SessionRow({ s, active, onClick }: { s: SessionSummary; active: boolean; onClick: () => void }) {
+function SessionRow({
+  s,
+  active,
+  activity,
+  onClick,
+}: {
+  s: SessionSummary;
+  active: boolean;
+  activity?: SessionWorkFacts | undefined;
+  onClick: () => void;
+}) {
   return (
     <div
       className={`cursor-pointer px-3 py-2 hover:bg-neutral-800/60 ${active ? 'bg-sky-950/60' : ''}`}
@@ -170,6 +225,12 @@ function SessionRow({ s, active, onClick }: { s: SessionSummary; active: boolean
         <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">
           {s.title ?? s.lastPrompt ?? s.id}
         </span>
+        {activity?.busy ? <Badge tone="green">running</Badge> : null}
+        {activity?.pendingInteraction === 'approval' ? <Badge tone="amber">approval</Badge> : null}
+        {activity?.pendingInteraction === 'question' ? <Badge tone="sky">question</Badge> : null}
+        {activity !== undefined && !activity.busy && activity.lastTurnReason === 'failed' ? (
+          <Badge tone="red">failed</Badge>
+        ) : null}
         {s.archived ? <Badge tone="neutral">archived</Badge> : null}
       </div>
       <div className="mt-0.5 flex items-center gap-2 text-[10px] text-neutral-500">
