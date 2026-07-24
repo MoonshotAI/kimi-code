@@ -243,6 +243,7 @@ export interface TUIStartupOptions {
   readonly yolo: boolean;
   readonly auto: boolean;
   readonly plan: boolean;
+  readonly swarm: boolean;
   readonly model?: string;
   /** Resolved profile name from --agent/--agent-file; bound to the startup session only. */
   readonly agentProfile?: string;
