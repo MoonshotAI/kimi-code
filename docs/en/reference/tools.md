@@ -46,6 +46,22 @@ File tools handle reading, writing, and searching the local filesystem — the f
 
 Foreground mode blocks the current turn until the command completes or times out, and the TUI streams stdout and stderr into the running `Bash` tool card while the command is still active. By default, a foreground command that hits its timeout is not killed — it keeps running as a background task (bounded by the 600s default background timeout); to restore kill-on-timeout, set [`bash_auto_background_on_timeout`](../configuration/config-files.md#background) to `false` under `[background]`. The 600s background default is configurable via [`bash_task_timeout_s`](../configuration/config-files.md#background) (`0` = no timeout) and defaults to no timeout in print mode (`kimi -p`). Background mode returns a task ID immediately and automatically notifies the Agent when the task finishes. stdin is always closed — interactive commands receive EOF immediately. A two-phase termination strategy (SIGTERM → 5-second grace period → SIGKILL) ensures reliable process cleanup when a task is stopped or hits its background timeout. On Windows, Git Bash is used by default.
 
+### Windows path handling
+
+On Windows, `Bash` runs through Git Bash, a POSIX-compatible environment (it uses Unix-style commands and paths) rather than PowerShell. Pass POSIX-style paths to POSIX programs such as `tar`; otherwise a Windows drive prefix can be interpreted as a remote path (`host:path`).
+
+```sh
+# In Git Bash, use a POSIX-style path.
+tar -cf /e/work/archive.tar sample.txt
+
+# Do not pass a Windows drive path to a POSIX program such as tar.
+# It can be interpreted as a remote path and fail with
+# "tar: Cannot connect to E: resolve failed".
+tar -cf E:\work\archive.tar sample.txt
+```
+
+For commands that require Windows-native path behavior or PowerShell-specific syntax, invoke PowerShell explicitly instead of assuming that `Bash` runs in PowerShell.
+
 ## Web Tools
 
 | Tool | Default Approval | Description |

@@ -46,6 +46,22 @@
 
 前台模式会阻塞当前轮次，直到命令结束或超时；命令运行期间，TUI 会把 stdout 和 stderr 流式显示在正在运行的 `Bash` 工具卡片中。前台命令超时后默认不会被终止，而是转为后台任务继续运行（受 600 秒默认后台超时约束）；如需恢复超时即终止的行为，将 `[background]` 的 [`bash_auto_background_on_timeout`](../configuration/config-files.md#background) 设为 `false`。600 秒的默认后台超时可通过 [`bash_task_timeout_s`](../configuration/config-files.md#background) 配置（`0` = 无超时），且在 print 模式（`kimi -p`）下默认无超时。后台模式立即返回任务 ID，任务结束时自动通知 Agent。stdin 始终被关闭，交互式命令会立即收到 EOF。任务被停止或后台超时时采用两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL），确保进程可靠结束。Windows 平台默认使用 Git Bash。
 
+### Windows 路径处理
+
+在 Windows 上，`Bash` 通过 Git Bash 运行；Git Bash 是 POSIX 兼容环境（使用 Unix 风格的命令和路径），并非 PowerShell。向 `tar` 等 POSIX 程序传递路径时，应使用 POSIX 风格；否则 Windows 盘符前缀可能会被当作远程路径（`host:path`）解析。
+
+```sh
+# 在 Git Bash 中使用 POSIX 风格路径。
+tar -cf /e/work/archive.tar sample.txt
+
+# 不要将 Windows 盘符路径传给 tar 等 POSIX 程序。
+# 它可能被当作远程路径，并报错：
+# "tar: Cannot connect to E: resolve failed"。
+tar -cf E:\work\archive.tar sample.txt
+```
+
+如需 Windows 原生路径行为或 PowerShell 专用语法，请显式调用 PowerShell，而不要假设 `Bash` 在 PowerShell 中运行。
+
 ## 网络类
 
 | 工具 | 默认审批 | 说明 |
