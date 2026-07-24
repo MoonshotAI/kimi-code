@@ -17,6 +17,7 @@ describe('status panel report lines', () => {
       thinkingEffort: 'on',
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: true,
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -33,6 +34,7 @@ describe('status panel report lines', () => {
         thinkingEffort: 'high',
         permission: 'auto',
         planMode: true,
+        swarmMode: false,
         contextTokens: 3000,
         maxContextTokens: 12000,
         contextUsage: 0.25,
@@ -56,6 +58,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('Directory    /tmp/project');
     expect(output).toContain('Permissions  auto');
     expect(output).toContain('Plan mode    on');
+    expect(output).toContain('Swarm mode   off');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
     expect(output).toContain('Context window');
@@ -78,6 +81,7 @@ describe('status panel report lines', () => {
       thinkingEffort: 'off',
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
@@ -116,6 +120,7 @@ describe('status panel report lines', () => {
       thinkingEffort: 'off',
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
