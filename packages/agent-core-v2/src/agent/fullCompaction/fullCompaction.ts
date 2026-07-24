@@ -24,7 +24,6 @@ export interface IAgentFullCompactionService {
 
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
-  cancel(): Promise<void>;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;

@@ -270,17 +270,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     return true;
   }
 
-  async cancel(): Promise<void> {
-    const active = this._compacting;
-    if (active === null) return;
-    if (!active.abortController.signal.aborted) {
-      active.abortController.abort();
-    }
-    try {
-      await active.promise;
-    } catch {}
-  }
-
   private reserveCompactionSlot(source: CompactionBeginData['source']): boolean {
     if (source === 'manual') {
       this.compactionCountInTurn = 0;
@@ -337,8 +326,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     };
   }
 
-  /** Scope disposal is the fallback abort path; normal agent teardown aborts
-   *  and awaits the exposed task before disposing the scope. */
+  /** Scope disposal is the abort path: tear down any in-flight compaction. */
   override dispose(): void {
     if (this._compacting !== null && !this._compacting.abortController.signal.aborted) {
       this._compacting.abortController.abort();

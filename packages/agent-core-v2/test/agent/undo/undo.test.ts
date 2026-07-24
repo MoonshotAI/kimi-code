@@ -152,9 +152,6 @@ describe('AgentConversationUndoService', () => {
       trigger: 'manual',
       tokenCount: 2,
     });
-    const cancel = vi.spyOn(compaction, 'cancel').mockImplementation(async () => {
-      abortController.abort();
-    });
 
     try {
       await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
@@ -164,7 +161,6 @@ describe('AgentConversationUndoService', () => {
       expect(abortController.signal.aborted).toBe(false);
       expect(ctx.context.get()).toBe(history);
     } finally {
-      cancel.mockRestore();
       active.mockRestore();
     }
   });
