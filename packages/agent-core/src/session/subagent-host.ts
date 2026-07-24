@@ -4,7 +4,7 @@ import {
   type TokenUsage,
 } from '@moonshot-ai/kosong';
 
-import type { Agent } from '../agent';
+import type { Agent, AgentEventListener } from '../agent';
 import type { PromptOrigin } from '../agent/context';
 import { ErrorCodes } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
@@ -128,11 +128,17 @@ type SubagentCompletion = {
   readonly usage?: TokenUsage;
 };
 
+export type SubagentEventListener = AgentEventListener;
+
+export type SubscribeToSubagentEvents = (callback: SubagentEventListener) => () => void;
+
 export type SubagentHandle = {
   readonly agentId: string;
   readonly profileName: string;
   readonly resumed: boolean;
   readonly completion: Promise<SubagentCompletion>;
+  /** Subscribe to the child agent's live events; the returned function unsubscribes. */
+  readonly subscribeToEvents?: SubscribeToSubagentEvents;
 };
 
 export class SessionSubagentHost {
@@ -173,6 +179,7 @@ export class SessionSubagentHost {
       profileName: profile.name,
       resumed: false,
       completion,
+      subscribeToEvents: agent.onEvent.bind(agent),
     };
   }
 
@@ -189,7 +196,13 @@ export class SessionSubagentHost {
         throw error;
       }
     });
-    return { agentId, profileName, resumed: true, completion };
+    return {
+      agentId,
+      profileName,
+      resumed: true,
+      completion,
+      subscribeToEvents: child.onEvent.bind(child),
+    };
   }
 
   async retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
@@ -211,7 +224,13 @@ export class SessionSubagentHost {
         throw error;
       }
     });
-    return { agentId, profileName, resumed: true, completion };
+    return {
+      agentId,
+      profileName,
+      resumed: true,
+      completion,
+      subscribeToEvents: child.onEvent.bind(child),
+    };
   }
 
   private async ensureIdleSubagent(
