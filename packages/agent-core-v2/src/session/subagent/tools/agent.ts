@@ -64,6 +64,7 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
@@ -80,6 +81,7 @@ import {
   resolveSubagentTimeoutMs,
   wrapSubagentModelError,
 } from '../configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '../flag';
 import { SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
@@ -185,6 +187,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -209,11 +212,16 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       this.toolRegistry.listReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
+      this.flags.enabled(SECONDARY_MODEL_FLAG_ID),
     );
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
     }
-    const modelLines = buildSubagentModelDescriptions(this.config, this.profile.data().modelAlias);
+    const modelLines = buildSubagentModelDescriptions(
+      this.config,
+      this.flags,
+      this.profile.data().modelAlias,
+    );
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
     }
@@ -302,6 +310,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
       const binding = resolveSubagentBinding(
         this.config,
+        this.flags,
         { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
         args.model ?? profile.modelPreference,
       );
@@ -505,6 +514,7 @@ function buildProfileDescriptions(
     name: string,
     source: ToolReference['source'],
   ) => boolean,
+  showModelPreferences: boolean,
 ): string {
   return profiles
     .map((profile) => {
@@ -513,7 +523,7 @@ function buildProfileDescriptions(
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
       const headerLines =
-        profile.modelPreference === undefined
+        !showModelPreferences || profile.modelPreference === undefined
           ? header
           : `${header}\n  Model preference: ${profile.modelPreference}`;
       const activeTools = resolveActiveToolNames(profile);

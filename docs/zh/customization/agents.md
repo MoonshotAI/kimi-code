@@ -109,7 +109,7 @@ disallowedTools:
 
 未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略；加上 `tools` 的逗号分隔写法和 `name` 缺省回退到文件名，Claude Code 与 OpenCode 风格的 Agent 文件一般可直接加载 —— 只含 `description` 和正文的最小文件可跨工具通用。
 
-`model_preference` 仅对 `kimi web` 与实验性 `kimi -p` 中新启动的子 Agent 生效，TUI 目前会忽略它。该字段不用于填写具体模型 alias，已恢复的子 Agent 也会保持原模型。主 Agent 会在 profile 描述中看到这项偏好，因此仍可在某项任务需要不同选择时显式传入 `model`。
+`model_preference` 仅在次主力模型实验功能启用时对新启动的子 Agent 生效。在 `kimi web` 下，设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`；在实验性 `kimi -p` 下，必需的 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用该功能。TUI 目前会忽略此字段。该字段不用于填写具体模型 alias，已恢复的子 Agent 也会保持原模型。主 Agent 会在 profile 描述中看到这项偏好，因此仍可在某项任务需要不同选择时显式传入 `model`。
 
 目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法 —— 否则 CLI 会报错并退出。
 

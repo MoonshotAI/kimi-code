@@ -1,8 +1,9 @@
 /**
  * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` implementation.
  *
- * Runs the secondary-model check once per session when the main agent appears
- * (`agentLifecycle` onDidCreate, or an already-present main at construction):
+ * When enabled through `flag`, runs the secondary-model check once per session
+ * when the main agent appears (`agentLifecycle` onDidCreate, or an
+ * already-present main at construction):
  * resolves the pointed entry through the kosong `modelCatalog` and, when the
  * recipe carries patch fields, checks `default_effort` against the patched
  * `supportEfforts` (what the derived entry will carry) — on failure, caches a
@@ -23,6 +24,7 @@ import {
 } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import {
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
@@ -55,6 +57,7 @@ export class SessionSecondaryModelWarningService
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     super();
@@ -85,7 +88,7 @@ export class SessionSecondaryModelWarningService
   }
 
   private computeWarning(): SecondaryModelWarning | undefined {
-    const secondary = resolveSecondaryModel(this.config);
+    const secondary = resolveSecondaryModel(this.config, this.flags);
     if (secondary?.model === undefined) return undefined;
     let model: Model;
     try {

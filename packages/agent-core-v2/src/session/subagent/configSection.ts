@@ -12,8 +12,9 @@
  * and render the timeout message with `formatSubagentTimeoutDescription`.
  *
  * The model half of the spawn binding is the secondary model (the section
- * and type in `app/kosongConfig` — `[secondary_model]` on disk): when set, newly spawned subagents bind to it
- * by default instead of inheriting the caller's model, and the
+ * and type in `app/kosongConfig` — `[secondary_model]` on disk): when its
+ * experiment is enabled and the model is set, newly spawned subagents bind to
+ * it by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
  * `model` parameter. When unset, spawning behavior is unchanged (subagents
  * inherit the caller's model). A recipe with patch fields binds the
@@ -33,6 +34,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type { IFlagService } from '#/app/flag/flag';
 import {
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
@@ -49,6 +51,8 @@ import {
   type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
+
+import { SECONDARY_MODEL_FLAG_ID } from './flag';
 
 export const SUBAGENT_SECTION = 'subagent';
 
@@ -100,16 +104,19 @@ export type SubagentModelChoice = AgentModelPreference;
 
 export function resolveSecondaryModel(
   config: IConfigService,
+  flags: IFlagService,
 ): SecondaryModelConfig | undefined {
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return undefined;
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
 }
 
 export function resolveSubagentBinding(
   config: IConfigService,
+  flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: SubagentModelChoice,
 ): { model: string; thinking?: string } {
-  const secondary = resolveSecondaryModel(config);
+  const secondary = resolveSecondaryModel(config, flags);
   if (requested !== 'primary' && secondary?.model !== undefined) {
     return {
       model:
@@ -124,9 +131,10 @@ export function resolveSubagentBinding(
 
 export function buildSubagentModelDescriptions(
   config: IConfigService,
+  flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondaryModel = resolveSecondaryModel(config)?.model;
+  const secondaryModel = resolveSecondaryModel(config, flags)?.model;
   if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
   return [
     'Available models (pass via model):',

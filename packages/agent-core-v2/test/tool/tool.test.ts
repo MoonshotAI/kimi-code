@@ -6,6 +6,8 @@ import { Readable, type Writable } from 'node:stream';
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { IFlagService } from '#/app/flag/flag';
+import { MASTER_ENV } from '#/app/flag/flagService';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
@@ -13,6 +15,10 @@ import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
+import {
+  SECONDARY_MODEL_FLAG_ENV,
+  SECONDARY_MODEL_FLAG_ID,
+} from '#/session/subagent/flag';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -64,6 +70,7 @@ import {
   configServices,
   createCommandRunner,
   createTestAgent,
+  appService,
   execEnvServices,
   externalHookServices,
   homeDirServices,
@@ -75,8 +82,16 @@ import {
   type TestAgentServiceOverride,
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
+import { stubFlag } from '../app/flag/stubs';
 
 const signal = new AbortController().signal;
+
+function secondaryModelFlags(enabled = true): TestAgentServiceOverride {
+  return appService(
+    IFlagService,
+    stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID),
+  );
+}
 
 function agentSchemaProperties<T = unknown>(): Record<string, T> {
   return (
@@ -495,6 +510,7 @@ describe('Agent tool description', () => {
 
   afterEach(async () => {
     await ctx.dispose();
+    vi.unstubAllEnvs();
   });
 
   function agentDescription(): string {
@@ -675,8 +691,9 @@ describe('Agent tool description', () => {
     );
   });
 
-  it('shows the model preference for an agent type that defines one', () => {
+  it('shows the model preference for an agent type when the experiment is enabled', () => {
     ctx = createTestAgent(
+      secondaryModelFlags(),
       sessionService(
         ISessionAgentProfileCatalog,
         profileCatalogWithPreference('coder', 'primary'),
@@ -686,13 +703,27 @@ describe('Agent tool description', () => {
     expect(agentDescription()).toContain('- coder: coder agent\n  Model preference: primary');
   });
 
+  it('hides model preferences when the experiment is disabled', () => {
+    ctx = createTestAgent(
+      secondaryModelFlags(false),
+      sessionService(
+        ISessionAgentProfileCatalog,
+        profileCatalogWithPreference('coder', 'primary'),
+      ),
+    );
+
+    expect(agentDescription()).not.toContain('Model preference:');
+  });
+
   it('omits the models section when no secondary model is configured', () => {
     ctx = createTestAgent();
 
     expect(agentDescription()).not.toContain('Available models');
   });
 
-  it('lists both selectable models when a secondary model is configured', () => {
+  it('lists both selectable models when the secondary-model env flag is enabled', () => {
+    vi.stubEnv(MASTER_ENV, '0');
+    vi.stubEnv(SECONDARY_MODEL_FLAG_ENV, '1');
     ctx = createTestAgent({
       initialConfig: { secondaryModel: { model: 'provider/secondary' } },
     });
@@ -702,6 +733,14 @@ describe('Agent tool description', () => {
     expect(description).toContain('Available models (pass via model):');
     expect(description).toContain('- secondary: provider/secondary (default)');
     expect(description).toContain('- primary: mock-model');
+  });
+
+  it('omits the models section when configured but the experiment is disabled', () => {
+    ctx = createTestAgent(secondaryModelFlags(false), {
+      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+    });
+
+    expect(agentDescription()).not.toContain('Available models');
   });
 });
 
@@ -909,9 +948,15 @@ describe('Agent tool execution contract', () => {
 
   it('spawns the subagent on the configured secondary model by default', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
-    });
+    const context = createAgentToolContext(
+      lifecycle,
+      secondaryModelFlags(),
+      {
+        initialConfig: {
+          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+        },
+      },
+    );
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -930,7 +975,7 @@ describe('Agent tool execution contract', () => {
 
   it('binds the pointed entry directly with natural thinking when the recipe has no patch', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: { secondaryModel: { model: 'provider/secondary' } },
     });
 
@@ -951,9 +996,15 @@ describe('Agent tool execution contract', () => {
 
   it('spawns on the caller model when the tool call opts into "primary"', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
-    });
+    const context = createAgentToolContext(
+      lifecycle,
+      secondaryModelFlags(),
+      {
+        initialConfig: {
+          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+        },
+      },
+    );
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -979,6 +1030,7 @@ describe('Agent tool execution contract', () => {
         ISessionAgentProfileCatalog,
         profileCatalogWithPreference('coder', 'primary'),
       ),
+      secondaryModelFlags(),
       {
         initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
@@ -1007,6 +1059,7 @@ describe('Agent tool execution contract', () => {
         ISessionAgentProfileCatalog,
         profileCatalogWithPreference('coder', 'primary'),
       ),
+      secondaryModelFlags(),
       {
         initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
@@ -1050,7 +1103,7 @@ describe('Agent tool execution contract', () => {
 
   it('points at the secondary model config when the configured alias is invalid', async () => {
     const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: { secondaryModel: { model: 'provider/bad' } },
     });
 
@@ -1970,7 +2023,7 @@ describe('AgentSwarm tool description', () => {
   });
 
   it('lists both selectable models when a secondary model is configured', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: { secondaryModel: { model: 'provider/secondary' } },
     });
 
@@ -2084,9 +2137,15 @@ describe('AgentSwarm tool execution contract', () => {
       run: runSwarm as ISessionSwarmService['run'],
       cancel: () => {},
     };
-    ctx = createTestAgent(swarmServices(swarmService), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
-    });
+    ctx = createTestAgent(
+      swarmServices(swarmService),
+      secondaryModelFlags(),
+      {
+        initialConfig: {
+          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+        },
+      },
+    );
 
     await executeTool(agentSwarmTool(ctx), {
       turnId: 0,
@@ -2138,6 +2197,7 @@ describe('AgentSwarm tool execution contract', () => {
         ISessionAgentProfileCatalog,
         profileCatalogWithPreference('explore', 'primary'),
       ),
+      secondaryModelFlags(),
       {
         initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
       },
@@ -2184,9 +2244,15 @@ describe('AgentSwarm tool execution contract', () => {
       run: runSwarm as ISessionSwarmService['run'],
       cancel: () => {},
     };
-    ctx = createTestAgent(swarmServices(swarmService), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
-    });
+    ctx = createTestAgent(
+      swarmServices(swarmService),
+      secondaryModelFlags(),
+      {
+        initialConfig: {
+          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+        },
+      },
+    );
 
     await executeTool(agentSwarmTool(ctx), {
       turnId: 0,

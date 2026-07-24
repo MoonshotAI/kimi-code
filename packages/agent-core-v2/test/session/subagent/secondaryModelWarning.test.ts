@@ -7,6 +7,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { SECONDARY_MODEL_SECTION } from '#/app/kosongConfig/configSection';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -20,7 +21,9 @@ import {
   SECONDARY_MODEL_INVALID_WARNING_CODE,
 } from '#/session/subagent/secondaryModelWarning';
 import { SessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarningService';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 
+import { stubFlag } from '../../app/flag/stubs';
 import { StubConfigService } from '../../kosong/stubs';
 
 describe('SessionSecondaryModelWarningService', () => {
@@ -43,13 +46,17 @@ describe('SessionSecondaryModelWarningService', () => {
     disposables.dispose();
   });
 
-  function setup(configValues: Record<string, unknown>): void {
+  function setup(configValues: Record<string, unknown>, flagEnabled = true): void {
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       onDidCreate: onDidCreate.event,
       get: (agentId: string) => handles.get(agentId),
     } as unknown as IAgentLifecycleService);
     ix.stub(IConfigService, new StubConfigService(configValues));
+    ix.stub(
+      IFlagService,
+      stubFlag((id) => flagEnabled && id === SECONDARY_MODEL_FLAG_ID),
+    );
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (id: string) => {
@@ -77,6 +84,14 @@ describe('SessionSecondaryModelWarningService', () => {
 
   it('stays silent when no secondary model is configured', () => {
     setup({});
+    const svc = ix.get(ISessionSecondaryModelWarningService);
+    createMain();
+    expect(svc.getSecondaryModelWarning()).toBeUndefined();
+    expect(published).toHaveLength(0);
+  });
+
+  it('stays silent when the secondary-model experiment is disabled', () => {
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/typo' } }, false);
     const svc = ix.get(ISessionSecondaryModelWarningService);
     createMain();
     expect(svc.getSecondaryModelWarning()).toBeUndefined();

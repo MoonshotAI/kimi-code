@@ -190,7 +190,9 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `secondary_model`
 
-The secondary model is a second model pointer next to the primary `default_model` — typically a cheaper model that features can bind to when they do not need the main model. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"secondary"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model. This section currently takes effect only under `kimi web` and under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI ignores it.
+The secondary model is a second model pointer next to the primary `default_model` — typically a cheaper model that features can bind to when they do not need the main model. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"secondary"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model.
+
+This feature is experimental and disabled by default. Under `kimi web`, enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`. Under `kimi -p`, `KIMI_CODE_EXPERIMENTAL_FLAG=1` is already required to select the v2 engine and also enables this feature. The interactive TUI ignores the configuration.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -209,7 +211,7 @@ max_output_size = 8192
 
 `model` / `default_effort` can be overridden by the `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` environment variables, which take higher priority than `config.toml`.
 
-The configuration is validated when a session starts: an unresolvable `model`, or a `default_effort` not listed by the (patched) model, produces a startup warning (also returned by the session-warnings API). The check is advisory — a broken secondary model still fails at spawn time, with the same source hint attached to the spawn error.
+When the experiment is enabled, the configuration is validated as the session starts: an unresolvable `model`, or a `default_effort` not listed by the (patched) model, produces a startup warning (also returned by the session-warnings API). The check is advisory — a broken secondary model still fails at spawn time, with the same source hint attached to the spawn error.
 
 ## `thinking`
 

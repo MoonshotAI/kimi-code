@@ -190,7 +190,9 @@ display_name = "Kimi for Coding (custom)"
 
 ## `secondary_model`
 
-次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子代理派生：设置后，新派生的子代理（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子代理继承主 Agent 的模型。该配置目前仅在 `kimi web`，以及 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的 `kimi -p` 下生效；交互式 TUI 会忽略该配置。
+次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
+
+该功能目前是实验功能，默认关闭。在 `kimi web` 下，通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用；在 `kimi -p` 下，选择 v2 引擎本就需要 `KIMI_CODE_EXPERIMENTAL_FLAG=1`，该 master flag 也会启用本功能。交互式 TUI 会忽略该配置。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -209,7 +211,7 @@ max_output_size = 8192
 
 `model` / `default_effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
 
-会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子代理时失败，派生错误中同样附带配置来源提示。
+实验功能启用后，会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子 Agent 时失败，派生错误中同样附带配置来源提示。
 
 ## `thinking`
 

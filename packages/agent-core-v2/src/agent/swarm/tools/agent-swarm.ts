@@ -24,6 +24,7 @@ import {
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -128,6 +129,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
@@ -137,6 +139,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   get description(): string {
     const modelLines = buildSubagentModelDescriptions(
       this.config,
+      this.flags,
       this.profile.data().modelAlias,
     );
     return modelLines === undefined
@@ -198,6 +201,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       if (own.modelAlias !== undefined) {
         binding = resolveSubagentBinding(
           this.config,
+          this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           args.model ?? targetProfile.modelPreference,
         );

@@ -26,6 +26,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
@@ -95,6 +96,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 const TEST_OS_ENV = {
@@ -104,6 +106,10 @@ const TEST_OS_ENV = {
   shellName: 'bash',
   shellPath: '/bin/bash',
 } as const;
+
+function secondaryModelFlags(enabled = true) {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
@@ -1421,11 +1427,11 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noModel = await createConfig({});
-    expect(resolveSubagentBinding(noModel.config, own)).toEqual({
+    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
-    expect(resolveSubagentBinding(noModel.config, own, 'secondary')).toEqual({
+    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -1434,11 +1440,11 @@ describe('subagent config section', () => {
     const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
     // Pointer-only recipe: bind the pointed entry directly; thinking resolves
     // naturally (no inheriting the caller's level).
-    expect(resolveSubagentBinding(withModel.config, own)).toEqual({
+    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/secondary',
       thinking: undefined,
     });
-    expect(resolveSubagentBinding(withModel.config, own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -1450,12 +1456,12 @@ describe('subagent config section', () => {
     );
     // Patch fields bind the synthesized derived entry; default_effort is the
     // explicit subagent thinking.
-    expect(resolveSubagentBinding(withEffort.config, own)).toEqual({
+    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
     });
     // default_effort only applies together with the secondary model.
-    expect(resolveSubagentBinding(withEffort.config, own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -1465,11 +1471,26 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
     );
-    expect(resolveSubagentBinding(withFactPatch.config, own)).toEqual({
+    expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: undefined,
     });
     withFactPatch.disposables.dispose();
+  });
+
+  it('inherits the caller binding when the secondary-model experiment is disabled', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+
+    disposables.dispose();
   });
 
   it('preserves the coded error contract when adding secondary-model guidance', () => {
@@ -1542,17 +1563,17 @@ describe('secondaryModel config section', () => {
       env,
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
-    expect(resolveSecondaryModel(config)?.model).toBe('provider/secondary');
-    expect(resolveSecondaryModel(config)?.defaultEffort).toBe('low');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('low');
 
     env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
     env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
-    expect(resolveSecondaryModel(config)?.model).toBe('provider/env-secondary');
-    expect(resolveSecondaryModel(config)?.defaultEffort).toBe('high');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('high');
 
     // Blank env values are ignored.
     env[SECONDARY_MODEL_ENV] = '  ';
-    expect(resolveSecondaryModel(config)?.model).toBe('provider/secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
 
     disposables.dispose();
   });
@@ -1567,7 +1588,7 @@ describe('secondaryModel config section', () => {
     // A client echoing the env-overlaid section back.
     await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
 
-    expect(resolveSecondaryModel(config)?.model).toBe('provider/env-secondary');
+    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
     expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
       model: 'provider/raw-secondary',
     });
