@@ -19,6 +19,7 @@ import {
   type ManagedUsageReport,
   type ManagedUsageRow,
 } from '#/tui/components/messages/usage-panel';
+import { isManagedUsageProvider } from '#/tui/constant/kimi-tui';
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
@@ -247,7 +248,7 @@ export class FooterComponent implements Component {
   private planUsageTimer: ReturnType<typeof setTimeout> | null = null;
   private planUsageTimerKey: string | null = null;
   private planUsageGeneration = 0;
-  private planUsageInFlight = false;
+  private planUsageInFlightGeneration: number | null = null;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -459,20 +460,28 @@ export class FooterComponent implements Component {
   }
 
   /**
-   * Keeps the plan-usage poller in sync with the footer config. The poll
-   * runs only when the feature is enabled and a fetcher was injected;
-   * a refresh-period change restarts the schedule.
+   * Keeps the plan-usage poller in sync with footer config and the active
+   * model/provider. Leaving the managed provider clears stale quota data
+   * immediately; switching models restarts the fetch for the new state.
    */
   private syncPlanUsageTimer(config: FooterConfig): void {
-    if (!config.showPlanUsage || this.planUsageFetcher === null) {
+    const providerKey = this.state.availableModels[this.state.model]?.provider;
+    if (
+      !config.showPlanUsage ||
+      this.planUsageFetcher === null ||
+      !isManagedUsageProvider(providerKey)
+    ) {
       this.stopPlanUsageTimer();
       this.planUsageReport = null;
       return;
     }
 
-    const key = String(config.planUsageRefreshSeconds);
+    const key = [String(config.planUsageRefreshSeconds), this.state.model, providerKey].join('\u0000');
     if (key === this.planUsageTimerKey) return;
     this.stopPlanUsageTimer();
+    // Never render quota fetched for a previous model/provider while the new
+    // request is in flight.
+    this.planUsageReport = null;
     this.planUsageTimerKey = key;
     void this.pollPlanUsage(this.planUsageGeneration);
   }
@@ -505,11 +514,20 @@ export class FooterComponent implements Component {
 
   private async pollPlanUsage(generation: number): Promise<void> {
     const fetcher = this.planUsageFetcher;
-    if (fetcher === null || this.planUsageInFlight) return;
-    this.planUsageInFlight = true;
+    if (
+      fetcher === null ||
+      generation !== this.planUsageGeneration ||
+      this.planUsageInFlightGeneration === generation
+    ) {
+      return;
+    }
+    this.planUsageInFlightGeneration = generation;
     let succeeded = false;
     try {
       const result = await fetcher();
+      // Model/provider changes start a new generation. Ignore any response
+      // from the previous state so it cannot overwrite fresh quota data.
+      if (generation !== this.planUsageGeneration) return;
       if (result === undefined) {
         // Not a managed provider (anymore): hide the segment entirely.
         if (this.planUsageReport !== null) {
@@ -528,7 +546,9 @@ export class FooterComponent implements Component {
       // Injected fetchers report errors in-band; a throw is treated the
       // same — keep the last successful report.
     } finally {
-      this.planUsageInFlight = false;
+      if (this.planUsageInFlightGeneration === generation) {
+        this.planUsageInFlightGeneration = null;
+      }
       this.schedulePlanUsagePoll(
         generation,
         succeeded
