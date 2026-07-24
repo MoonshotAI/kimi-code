@@ -63,6 +63,8 @@ export interface AgentProfileContext {
   readonly now?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
+  readonly productName?: string;
+  readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
 }
 
