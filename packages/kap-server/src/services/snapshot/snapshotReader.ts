@@ -18,6 +18,7 @@
  * resolve to empty / `'idle'` (a cold session owns no runtime interaction).
  */
 
+import { createReadStream } from 'node:fs';
 import { readFile, stat as fsStat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -281,30 +282,60 @@ interface ContextRecord {
 }
 
 /**
- * Parse a `wire.jsonl` file. A torn final line (crash mid-flush) is dropped;
- * corruption anywhere else throws so the route surfaces 50001. The leading
- * `metadata` envelope and any non-`context.*` record are returned as-is and
- * filtered by the reducer's `default` branch.
+ * Parse a `wire.jsonl` file. Streams the file line-by-line (chunk-buffered,
+ * never the whole file plus a per-line string array in memory — cold snapshot
+ * and transcript rebuilds read logs that can reach hundreds of MB). A torn
+ * final line (crash mid-flush) is dropped; corruption anywhere else throws so
+ * the route surfaces 50001. The leading `metadata` envelope and any
+ * non-`context.*` record are returned as-is and filtered by the reducer's
+ * `default` branch. Missing file rejects with ENOENT, same as `readFile`.
  */
 export async function readWireRecords(wirePath: string): Promise<ContextRecord[]> {
-  const raw = await readFile(wirePath, 'utf8');
-  const lines = raw.split('\n');
   const records: ContextRecord[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]!;
-    if (line.endsWith('\r')) line = line.slice(0, -1);
-    if (line.length === 0) continue;
-    try {
-      records.push(JSON.parse(line) as ContextRecord);
-    } catch (parseError) {
-      if (i === lines.length - 1) break;
-      throw new Error(
-        `wire.jsonl: corrupted line ${i + 1} in ${wirePath}: ${String(parseError)}`,
-        { cause: parseError },
+  let buffered = '';
+  let lineNumber = 0;
+  const stream = createReadStream(wirePath, { encoding: 'utf8' });
+  for await (const chunk of stream) {
+    buffered += chunk;
+    let newlineIndex = buffered.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const record = parseWireLine(
+        buffered.slice(0, newlineIndex),
+        ++lineNumber,
+        wirePath,
+        false,
       );
+      buffered = buffered.slice(newlineIndex + 1);
+      if (record !== undefined) records.push(record);
+      newlineIndex = buffered.indexOf('\n');
     }
   }
+  if (buffered.length > 0) {
+    const record = parseWireLine(buffered, ++lineNumber, wirePath, true);
+    if (record !== undefined) records.push(record);
+  }
   return records;
+}
+
+function parseWireLine(
+  raw: string,
+  lineNumber: number,
+  wirePath: string,
+  allowTruncated: boolean,
+): ContextRecord | undefined {
+  const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+  if (line.length === 0) return undefined;
+  try {
+    return JSON.parse(line) as ContextRecord;
+  } catch (parseError) {
+    // Tolerate a truncated trailing line — last write may have crashed
+    // mid-flush; everything before is still well-formed.
+    if (allowTruncated) return undefined;
+    throw new Error(
+      `wire.jsonl: corrupted line ${lineNumber} in ${wirePath}: ${String(parseError)}`,
+      { cause: parseError },
+    );
+  }
 }
 
 async function resolveBlobRef(

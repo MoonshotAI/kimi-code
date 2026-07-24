@@ -49,7 +49,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentRecord } from '../../agent/records';
+import { FileSystemAgentRecordPersistence, type AgentRecord } from '../../agent/records';
 import type { ContextMessage } from '../../agent/context';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import {
@@ -324,27 +324,16 @@ function rawToolResultContent(output: ExecutableToolResult['output']): ContentPa
 }
 
 /**
- * Parse a `wire.jsonl` file. A torn FINAL line (crash mid-flush) is dropped,
- * matching `FileSystemAgentRecordPersistence.read`; corruption anywhere else
- * throws so the caller can fall back to the live context view.
+ * Parse a `wire.jsonl` file. Streams the file line-by-line through the same
+ * crash-tolerant reader as `FileSystemAgentRecordPersistence.read` — a torn
+ * FINAL line (crash mid-flush) is dropped; corruption anywhere else throws so
+ * the caller can fall back to the live context view. A missing file yields no
+ * records (same as a fresh log).
  */
 export async function readWireRecords(wirePath: string): Promise<AgentRecord[]> {
-  const raw = await readFile(wirePath, 'utf8');
-  const lines = raw.split('\n');
   const records: AgentRecord[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]!;
-    if (line.endsWith('\r')) line = line.slice(0, -1);
-    if (line.length === 0) continue;
-    try {
-      records.push(JSON.parse(line) as AgentRecord);
-    } catch (parseError) {
-      if (i === lines.length - 1) break;
-      throw new Error(
-        `wire.jsonl: corrupted line ${i + 1} in ${wirePath}: ${String(parseError)}`,
-        { cause: parseError },
-      );
-    }
+  for await (const record of new FileSystemAgentRecordPersistence(wirePath).read()) {
+    records.push(record);
   }
   return records;
 }
