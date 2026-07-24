@@ -35,6 +35,11 @@ const PLUGIN_MCP_TOOL_NAME_PREFIX = `${MCP_TOOL_NAME_PREFIX}plugin-`;
 // (pluginMcpRuntimeName in packages/agent-core/src/plugin/manager.ts).
 const PLUGIN_MCP_RUNTIME_NAME = /^plugin-([a-z0-9][a-z0-9_-]{0,63}):/;
 
+/** Cheap name check for plugin-provided MCP tools (`mcp__plugin-…`). */
+export function isPluginMcpToolName(toolName: string): boolean {
+  return toolName.startsWith(PLUGIN_MCP_TOOL_NAME_PREFIX);
+}
+
 /**
  * Mirror of sanitizeMcpNamePart in packages/agent-core/src/mcp/tool-naming.ts.
  * MCP tool names on the wire carry the sanitized server name; the collapse
@@ -53,10 +58,12 @@ function mcpToolServerSegment(toolName: string): string | undefined {
 }
 
 /**
- * Shows a one-time "update detected" notice after the user finishes invoking
- * an outdated plugin (a plugin MCP tool call or a `/<plugin>:<command>` turn).
- * The last notified version is persisted, so a plugin is re-notified only when
- * the marketplace advertises a newer version than the one already shown.
+ * Shows a one-time "update detected" notice for outdated plugins. Callers
+ * report completed plugin usage (a plugin MCP tool name, or the plugin id of
+ * a `/<plugin>:<command>` turn — both reported once the turn's output has
+ * ended); the notifier checks the marketplace and persists the last notified
+ * version, so a plugin is re-notified only when the marketplace advertises a
+ * newer version than the one already shown.
  *
  * All entry points are fire-and-forget: the notice is a background nicety and
  * any failure (offline marketplace, missing state file, …) is swallowed.
@@ -71,7 +78,7 @@ export class PluginUpdateNotifier {
   handleMcpToolCompleted(toolName: string): void {
     // Cheap bail before touching the RPC layer — most tools are not MCP tools,
     // let alone plugin ones.
-    if (!toolName.startsWith(PLUGIN_MCP_TOOL_NAME_PREFIX)) return;
+    if (!isPluginMcpToolName(toolName)) return;
     void this.resolvePluginId(toolName)
       .then((pluginId) => (pluginId === undefined ? undefined : this.checkAndNotify(pluginId)))
       .catch(() => {});

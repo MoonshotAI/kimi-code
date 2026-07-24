@@ -33,7 +33,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 | `/plugins mcp enable <id> <server>` | 启用 plugin 声明的 MCP server |
 | `/plugins mcp disable <id> <server>` | 禁用 plugin 声明的 MCP server |
 
-**Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。当你用完一个已过时的 plugin（其 MCP 工具或 `/<plugin>:<command>` 斜杠命令）后，也会出现一次性提示，引导你到 `/plugins` 更新；每个新的 marketplace 版本只提醒一次。**Official** 和 **Third-party** tab 按 tier 列出 marketplace plugin；**Custom** tab 从 URL 安装。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
+**Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。当一个使用了过时 plugin（其 MCP 工具或 `/<plugin>:<command>` 斜杠命令）的 turn 结束后，也会出现一次性提示，引导你到 `/plugins` 更新；每个新的 marketplace 版本只提醒一次。**Official** 和 **Third-party** tab 按 tier 列出 marketplace plugin；**Custom** tab 从 URL 安装。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
 
 ### 从 GitHub 安装
 
