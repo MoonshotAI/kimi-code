@@ -1,6 +1,8 @@
 /**
- * Audit side panel for the chat view: replays how the visible
- * `TranscriptChatStore` was built, entry by entry.
+ * Audit panel — the `Audit` tab of the chat view's right dock
+ * (`RightPanel`): replays how the visible `TranscriptChatStore` was built,
+ * entry by entry. It used to be a standalone column docked inside the chat
+ * view.
  *
  *  - Timeline (draggable slider + entry list): every REST page load, WS
  *    frame (`transcript.ops` / `transcript.reset`), loss signal, and user
@@ -92,7 +94,7 @@ export function AuditPanel({ trail }: { trail: AuditTrail }) {
   }, [current, currentPos, entries, tab]);
 
   return (
-    <div className="flex w-[460px] shrink-0 flex-col border-l border-neutral-800">
+    <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-2">
         <span className="text-[12px] font-medium text-neutral-200">Transcript audit</span>
         <Badge tone="neutral">{entries.length} entries</Badge>

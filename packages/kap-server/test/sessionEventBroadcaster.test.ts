@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import type {
   AgentActivityState,
   IScopeHandle,
+  ISessionStateService,
   Scope,
   SessionActivityCause,
   SessionActivityChangedEvent,
@@ -30,6 +31,7 @@ import {
   ISessionMetadata,
   MAIN_AGENT_ID,
   SessionInteractionService,
+  StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -44,6 +46,10 @@ import { TranscriptService } from '../src/services/transcript/transcriptService'
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
+
+class TestSessionStateService extends StateRegistry implements ISessionStateService {
+  declare readonly _serviceBrand: undefined;
+}
 
 /** The fake bus carries wire agent events and v2-internal ones alike. */
 type FakeBusEvent = { type: string };
@@ -122,7 +128,7 @@ class FakeAgentHandle {
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
   /** Real interaction kernel — served at the session accessor. */
-  readonly interactions = new SessionInteractionService();
+  readonly interactions = new SessionInteractionService(new TestSessionStateService());
   /**
    * Mirrors the activity view's publication: every turn boundary re-emits an
    * `agent.activity.updated` on the same bus, nested inside the boundary

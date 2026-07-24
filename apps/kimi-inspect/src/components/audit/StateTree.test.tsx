@@ -97,4 +97,17 @@ describe('StateTree', () => {
     }
     expect(html).not.toContain('{"kind"');
   });
+
+  it('collapses multiline strings into a hover-preview button', () => {
+    const root = plainNode({ note: 'line one\nline two\nline three', single: 'one-liner' });
+    const html = renderToStaticMarkup(<StateTree root={root} defaultDepth={1} />);
+    // The multiline value renders as a compact button: first-line preview +
+    // line count, with the remaining lines NOT inlined into the tree (they
+    // only appear in the hover panel, which needs a real mouse to open).
+    expect(html).toContain('&quot;line one&quot; ⏎ 3');
+    expect(html).not.toContain('line two');
+    expect(html).not.toContain('line three');
+    // Single-line strings keep the inline rendering.
+    expect(html).toContain('&quot;one-liner&quot;');
+  });
 });

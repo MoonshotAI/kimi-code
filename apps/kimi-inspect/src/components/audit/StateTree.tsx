@@ -5,7 +5,10 @@
  * collapsible tree, colored by the structural diff against the previous
  * trail entry: added = green, removed = red + strikethrough, modified =
  * amber (`old → new` on leaves). Every field is rendered — long strings
- * are tail-truncated (`tailTrunc`) but no key is ever dropped.
+ * are tail-truncated (`tailTrunc`) but no key is ever dropped, and a string
+ * containing newlines collapses into one compact button (first-line preview
+ * + line count) whose hover pops a `fixed` full-text panel at the button's
+ * right edge.
  *
  * The tree is driven entirely by a `DiffNode` root: diff mode passes
  * `diffValue(prev, next)`, plain state mode passes `plainNode(value)`.
@@ -16,7 +19,7 @@
  * unreadable one-line JSON dump.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { elementId, type DiffNode, type DiffStatus } from '../../audit/diff';
 import { tailTrunc } from '../../audit/truncate';
@@ -68,12 +71,90 @@ function Leaf({ value, tone }: { value: unknown; tone: DiffStatus }) {
   if (value === null) return <span className={className}>null</span>;
   if (value === undefined) return <span className={className}>undefined</span>;
   if (typeof value === 'string') {
+    if (value.includes('\n')) return <MultilineString value={value} tone={tone} />;
     return <span className={`${className} whitespace-pre-wrap break-all`}>"{tailTrunc(value)}"</span>;
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return <span className={className}>{String(value)}</span>;
   }
   return <span className={className}>{JSON.stringify(value) ?? 'unknown'}</span>;
+}
+
+/**
+ * Multiline string leaf: rendered as one compact button (first-line preview
+ * + line count) so a prompt or tool output never stretches the tree. Hovering
+ * the button pops a `fixed` panel at its right edge with the full text —
+ * `fixed` because the tree sits inside an `overflow-y-auto` column that
+ * would clip an absolutely-positioned popup. A 150 ms close delay lets the
+ * pointer travel from the button into the panel (to scroll or select).
+ * `popupStyle` keeps the whole panel inside the viewport: the total height
+ * is capped by the space left below the clamped top edge, and the panel
+ * flips to the button's left side when the remaining right space is cramped.
+ */
+function popupStyle(rect: DOMRect): React.CSSProperties {
+  const margin = 8;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const maxHeight = Math.max(160, Math.floor(vh * 0.7));
+  const top = Math.max(margin, Math.min(rect.top, vh - maxHeight - margin));
+  const rightSpace = vw - rect.right - margin * 2;
+  if (rightSpace >= 320) {
+    return { left: rect.right + margin, top, maxHeight, width: Math.min(560, rightSpace) };
+  }
+  const leftSpace = rect.left - margin * 2;
+  return {
+    right: vw - rect.left + margin,
+    top,
+    maxHeight,
+    width: Math.min(560, Math.max(280, leftSpace)),
+  };
+}
+
+function MultilineString({ value, tone }: { value: string; tone: DiffStatus }) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  const lines = value.split('\n');
+  const firstLine = lines[0] ?? '';
+  const preview = firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+
+  const open = (e: React.MouseEvent<HTMLButtonElement>) => {
+    clearTimeout(closeTimer.current);
+    setRect(e.currentTarget.getBoundingClientRect());
+  };
+  const scheduleClose = () => {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setRect(null), 150);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`${TEXT_TONE[tone]} cursor-pointer rounded border border-neutral-700 bg-neutral-900 px-1 hover:border-sky-600`}
+        onMouseEnter={open}
+        onMouseLeave={scheduleClose}
+      >
+        {`"${preview}" ⏎ ${lines.length}`}
+      </button>
+      {rect !== null ? (
+        <div
+          className="fixed z-50 flex flex-col rounded border border-neutral-700 bg-neutral-950 shadow-xl"
+          style={popupStyle(rect)}
+          onMouseEnter={() => clearTimeout(closeTimer.current)}
+          onMouseLeave={scheduleClose}
+        >
+          <div className="shrink-0 border-b border-neutral-800 px-3 py-1 text-[10px] text-neutral-500">
+            {lines.length} lines · {value.length} chars
+          </div>
+          <pre className="min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-all text-neutral-200">
+            {tailTrunc(value, 5000)}
+          </pre>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function Node({

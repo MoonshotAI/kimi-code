@@ -93,6 +93,49 @@ describe('StateRegistry', () => {
     expect(seen).toEqual([]);
     expect(registry.get(countKey)).toBe(1);
   });
+
+  it('snapshots Maps as plain objects and Sets as arrays', () => {
+    const richKey = defineState('test.rich', () => ({
+      map: new Map([['a', 1]]),
+      set: new Set(['x', 'y']),
+      list: [1, 2],
+      flag: true,
+    }));
+    const registry = new StateRegistry();
+    registry.register(richKey);
+    expect(registry.snapshot()).toEqual({
+      'test.rich': { map: { a: 1 }, set: ['x', 'y'], list: [1, 2], flag: true },
+    });
+  });
+
+  it('snapshots non-string-keyed Maps as entry arrays', () => {
+    const id = { id: 1 };
+    const pairKey = defineState('test.pairs', () => new Map<object, string>([[id, 'one']]));
+    const registry = new StateRegistry();
+    registry.register(pairKey);
+    expect(registry.snapshot()).toEqual({ 'test.pairs': [[{ id: 1 }, 'one']] });
+  });
+
+  it('drops functions and marks circular references in snapshots', () => {
+    const trickyKey = defineState('test.tricky', () => {
+      const obj: Record<string, unknown> = { fn: () => 1, value: 2 };
+      obj['self'] = obj;
+      return obj;
+    });
+    const registry = new StateRegistry();
+    registry.register(trickyKey);
+    expect(registry.snapshot()).toEqual({
+      'test.tricky': { value: 2, self: '(circular)' },
+    });
+  });
+
+  it('shares referenced objects across branches without false circular marks', () => {
+    const shared = { v: 1 };
+    const sharedKey = defineState('test.shared', () => ({ a: shared, b: shared }));
+    const registry = new StateRegistry();
+    registry.register(sharedKey);
+    expect(registry.snapshot()).toEqual({ 'test.shared': { a: { v: 1 }, b: { v: 1 } } });
+  });
 });
 
 describe('state services (scoped)', () => {

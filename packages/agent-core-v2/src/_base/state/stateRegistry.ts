@@ -7,8 +7,11 @@
  * `ISessionStateService` / `IAgentStateService`), and the `StateRegistry`
  * implementation backing them: a `Map`-backed store where keys are declared
  * up front (`register`), read and replaced (`get` / `set`), and observed
- * (`onDidChange(key)` per key, `onDidChangeAny` globally, `entries()` as a
- * debugging snapshot). Misuse (duplicate registration, reading or writing an
+ * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
+ * debugging: `entries()` returns the live key/value references for in-process
+ * readers, and `snapshot()` returns a JSON-safe deep copy (Maps become plain
+ * objects or entry arrays, Sets become arrays, functions are dropped,
+ * circular references become `'(circular)'`) for RPC / inspector export. Misuse (duplicate registration, reading or writing an
  * unregistered key) is a caller bug and raises `BugIndicatingError`.
  *
  * Values are stored as-is — the container does not freeze or clone, so

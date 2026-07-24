@@ -19,8 +19,10 @@ import {
   ISessionLifecycleService,
   ISessionMetadata,
   SessionInteractionService,
+  StateRegistry,
   type DomainEvent,
   type ISessionScopeHandle,
+  type ISessionStateService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -48,6 +50,10 @@ import {
 
 function ev(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
+}
+
+class TestSessionStateService extends StateRegistry implements ISessionStateService {
+  declare readonly _serviceBrand: undefined;
 }
 
 function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>): TranscriptTurn {
@@ -1796,7 +1802,7 @@ describe('bindSessionTranscript', () => {
   }
 
   it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
-    const interactions = new SessionInteractionService();
+    const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
@@ -1831,7 +1837,7 @@ describe('bindSessionTranscript', () => {
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(), agents),
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
     );
 
     const sub = agents.add('sub-1');
@@ -1897,7 +1903,7 @@ describe('bindSessionTranscript', () => {
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(), agents),
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
     );
 
     const sub = agents.add('sub-1');
@@ -2001,7 +2007,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
-    const interactions = new SessionInteractionService();
+    const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
     interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
 
@@ -2022,7 +2028,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('defers pendings created before their owning agent is seeded', () => {
-    const interactions = new SessionInteractionService();
+    const interactions = new SessionInteractionService(new TestSessionStateService());
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
@@ -2044,7 +2050,7 @@ describe('bindSessionTranscript', () => {
 
   it('announces pendings from live-created agents immediately (their projector is complete)', () => {
     const agents = new FakeAgents();
-    const interactions = new SessionInteractionService();
+    const interactions = new SessionInteractionService(new TestSessionStateService());
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
@@ -2100,7 +2106,7 @@ describe('bindSessionTranscript', () => {
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
     const agents = new FakeAgents();
-    const interactions = new SessionInteractionService();
+    const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
@@ -2128,7 +2134,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
       await service.whenReady('s1');
@@ -2151,7 +2157,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
       // Live events land while the backfill is still reading from disk.
@@ -2196,7 +2202,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
       // The projector writes the live running header before the disk backfill
@@ -2221,7 +2227,7 @@ describe('bindSessionTranscript', () => {
       const main = agents.add('main');
       const service = new TranscriptService({
         homeDir: '/nonexistent-home',
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       service.forSessionLive('s1');
       await service.whenReady('s1');
@@ -2271,7 +2277,7 @@ describe('bindSessionTranscript', () => {
       const main = agents.add('main');
       const service = new TranscriptService({
         homeDir: '/nonexistent-home',
-        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       service.forSessionLive('s1');
       await service.whenReady('s1');
