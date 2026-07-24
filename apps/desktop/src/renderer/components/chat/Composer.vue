@@ -1715,20 +1715,20 @@ function selectModel(modelId: string): void {
 
 .send svg {
   flex: none;
-  width: var(--p-ic-lg);
-  height: var(--p-ic-lg);
+  width: var(--composer-send-icon-size);
+  height: var(--composer-send-icon-size);
 }
 
-/* Stop button — sibling of Send, shown only while running. Red at rest so the
-   destructive action is easy to spot; fills solid danger on hover. Kept softer
-   than the filled Send so it stays the primary action. */
+/* Stop button — sibling of Send, shown only while running. Neutral wash with
+   a red glyph at rest (no border, softened to 72% alpha in dark via
+   --color-stop-glyph); fills solid danger on hover. */
 .stop {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
   border-radius: var(--radius-full);
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
-  border: 0.5px solid var(--color-danger-bd);
+  background: var(--color-subtle);
+  color: var(--color-stop-glyph);
+  border: none;
   box-shadow: var(--shadow-xs);
   padding: 0;
   display: flex;
@@ -1736,20 +1736,19 @@ function selectModel(modelId: string): void {
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.12s ease;
 }
 .stop:hover {
   background: var(--color-danger);
   color: var(--color-text-on-accent);
-  border-color: var(--color-danger);
 }
 .stop:active {
   transform: scale(0.92);
 }
 .stop svg {
   flex: none;
-  width: var(--p-ic-lg);
-  height: var(--p-ic-lg);
+  width: var(--composer-send-icon-size);
+  height: var(--composer-send-icon-size);
 }
 
 /* Bottom toolbar */
@@ -1776,9 +1775,10 @@ function selectModel(modelId: string): void {
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  overflow: hidden;
 }
-.toolbar-left { flex: 0 1 auto; }
+/* Only the left side clips; clipping the right side would shave the Send
+   button's lift shadow (the row is exactly as tall as the 32px circle). */
+.toolbar-left { flex: 0 1 auto; overflow: hidden; }
 .toolbar-right {
   flex: 1 1 0;
   justify-content: flex-end;
