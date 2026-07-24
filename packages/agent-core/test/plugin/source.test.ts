@@ -225,4 +225,99 @@ describe('resolveInstallSource', () => {
       });
     });
   });
+
+  describe('GitLab URL recognition', () => {
+    it('recognizes a bare GitLab.com URL with nested groups', () => {
+      expect(resolveInstallSource('https://gitlab.com/example/plugins/sample')).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://gitlab.com',
+        projectPath: 'example/plugins/sample',
+      });
+    });
+
+    it('recognizes a self-managed GitLab host', () => {
+      expect(resolveInstallSource('https://gitlab.example.com/team/sample')).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://gitlab.example.com',
+        projectPath: 'team/sample',
+      });
+    });
+
+    it.each(['mygitlab.example.com', 'gitlab01.example.com'])(
+      'recognizes a self-managed hostname containing GitLab: %s',
+      (hostname) => {
+        expect(resolveInstallSource(`https://${hostname}/team/sample`)).toEqual({
+          kind: 'gitlab',
+          baseUrl: `https://${hostname}`,
+          projectPath: 'team/sample',
+        });
+      },
+    );
+
+    it('uses a .git suffix to recognize an arbitrary self-managed host', () => {
+      expect(resolveInstallSource('https://code.example.com/team/sample.git')).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://code.example.com',
+        projectPath: 'team/sample',
+      });
+    });
+
+    it('recognizes tree, release, and commit URLs', () => {
+      expect(
+        resolveInstallSource('https://code.example.com/team/sample/-/tree/feat%231'),
+      ).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://code.example.com',
+        projectPath: 'team/sample',
+        ref: { kind: 'branch', value: 'feat#1' },
+      });
+      expect(
+        resolveInstallSource('https://code.example.com/team/sample/-/releases/v1.2.3'),
+      ).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://code.example.com',
+        projectPath: 'team/sample',
+        ref: { kind: 'tag', value: 'v1.2.3' },
+      });
+      expect(
+        resolveInstallSource('https://code.example.com/team/sample/-/commit/abc1234'),
+      ).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://code.example.com',
+        projectPath: 'team/sample',
+        ref: { kind: 'sha', value: 'abc1234' },
+      });
+    });
+
+    it('treats the latest-release permalink as a bare repository URL', () => {
+      expect(
+        resolveInstallSource(
+          'https://gitlab.example.com/team/sample/-/releases/permalink/latest',
+        ),
+      ).toEqual({
+        kind: 'gitlab',
+        baseUrl: 'https://gitlab.example.com',
+        projectPath: 'team/sample',
+      });
+    });
+
+    it.each([
+      [
+        'versioned release asset',
+        'https://gitlab.example.com/team/sample/-/releases/v1/downloads/plugin.zip',
+      ],
+      [
+        'latest release asset',
+        'https://gitlab.example.com/team/sample/-/releases/permalink/latest/downloads/plugin.zip',
+      ],
+    ])('leaves a %s URL as a zip source', (_description, url) => {
+      expect(resolveInstallSource(url)).toEqual({ kind: 'zip-url', path: url });
+    });
+
+    it('leaves existing GitLab archive URLs as zip URLs', () => {
+      const url =
+        'https://gitlab.example.com/team/sample/-/archive/main/sample-main.zip';
+      expect(resolveInstallSource(url)).toEqual({ kind: 'zip-url', path: url });
+    });
+  });
 });

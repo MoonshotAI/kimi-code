@@ -19,6 +19,7 @@ import type { SkillRoot } from '#/app/skillCatalog/types';
 import { downloadZip, extractZip } from './archive';
 import { loadPluginCommand } from './commands';
 import { resolveGithubCommitSha, resolveGithubSource } from './github-resolver';
+import { resolveGitlabSource } from './gitlab-resolver';
 import { resolveInstallSource } from './source';
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
@@ -114,7 +115,9 @@ export class PluginManager {
                 }
                 return resolution.tarballUrl;
               })()
-            : resolved.path;
+            : resolved.kind === 'gitlab'
+              ? (await resolveGitlabSource(resolved)).tarballUrl
+              : resolved.path;
         const buffer = await downloadZip(zipUrl);
         zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
         sourceRoot = await extractZip(buffer, zipTmpDir);

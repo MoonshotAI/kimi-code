@@ -720,7 +720,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   private renderCustom(lines: string[], width: number): void {
     const colors = currentTheme.palette;
-    lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', colors));
+    lines.push(
+      mutedHintLine(' Install from a GitHub or GitLab URL (or zip URL / local path):', colors),
+    );
     lines.push('');
     lines.push(...renderUrlInputBox(this.customInput, this.focused, width, colors));
   }

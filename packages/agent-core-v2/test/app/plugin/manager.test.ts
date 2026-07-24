@@ -126,6 +126,37 @@ describe('PluginManager', () => {
     }
   });
 
+  it('installs a plugin from a GitLab release URL', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'plugin-gitlab-source-'));
+    const zipPath = join(tmpdir(), `plugin-gitlab-${Date.now()}.zip`);
+    try {
+      await writeFile(
+        join(sourceRoot, 'kimi.plugin.json'),
+        JSON.stringify({ name: 'gitlab-plugin' }),
+        'utf8',
+      );
+      execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
+      const zip = await readFile(zipPath);
+      const fetchMock = vi.fn(async () => new Response(zip));
+      vi.stubGlobal('fetch', fetchMock as typeof fetch);
+      const manager = new PluginManager({ kimiHomeDir: home });
+      const source = 'https://gitlab.example.com/team/sample/-/releases/v1.2.3';
+
+      const record = await manager.install(source);
+
+      expect(record.id).toBe('gitlab-plugin');
+      expect(record.source).toBe('zip-url');
+      expect(record.originalSource).toBe(source);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://gitlab.example.com/api/v4/projects/team%2Fsample/repository/archive.zip?sha=v1.2.3&ref_type=tags',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      await rm(sourceRoot, { recursive: true, force: true });
+      await rm(zipPath, { force: true });
+    }
+  });
+
   it('installs a github plugin through codeload', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'plugin-github-source-'));
     const zipPath = join(tmpdir(), `plugin-github-${Date.now()}.zip`);
