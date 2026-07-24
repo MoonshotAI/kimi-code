@@ -21,6 +21,8 @@
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderType } from '#/kosong/provider/provider';
 
+import { wireHasProtocolThinkingDisable } from '#/kosong/model/thinking';
+
 export interface ModelsDevModelEntry {
   readonly id?: string;
   readonly name?: string;
@@ -425,19 +427,16 @@ export function modelsDevProviderModels(entry: ModelsDevProviderEntry): ModelsDe
       // The always-thinking inference ("effort levels, no toggle, no 'none'
       // — reasoning cannot be turned off") must not fire where the wire has
       // a true protocol-level disable the effort list can never show:
-      // Anthropic and Kimi both encode off as `thinking: {type: 'disabled'}`,
-      // so marking those models always-on would hide a working off. On every
-      // other wire the same directory shape is exactly the evidence the
-      // marker exists for — gpt-5-class models reject
-      // `reasoning_effort: 'none'`, and Gemini 3's floor is
-      // `thinkingLevel: 'MINIMAL'` (still reasoning, merely with thoughts
-      // hidden) — so there the marker keeps the UI from offering an off that
-      // does not exist.
+      // Anthropic and Kimi both encode off as `thinking: {type: 'disabled'}`
+      // (kosong's `wireHasProtocolThinkingDisable` verdict), so marking those
+      // models always-on would hide a working off. On every other wire the
+      // same directory shape is exactly the evidence the marker exists for —
+      // gpt-5-class models reject `reasoning_effort: 'none'`, and Gemini 3's
+      // floor is `thinkingLevel: 'MINIMAL'` (still reasoning, merely with
+      // thoughts hidden) — so there the marker keeps the UI from offering an
+      // off that does not exist.
       const protocol = model.protocol ?? providerWire;
-      if (
-        model.alwaysThinking === true &&
-        (protocol === 'anthropic' || protocol === 'kimi')
-      ) {
+      if (model.alwaysThinking === true && wireHasProtocolThinkingDisable(protocol)) {
         const { alwaysThinking: _dropped, ...rest } = model;
         return rest as ModelsDevModel;
       }
