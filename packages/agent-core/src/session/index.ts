@@ -698,6 +698,14 @@ export class Session {
         severity: 'warning',
       });
     }
+    await this.skillsReady;
+    for (const warning of this.skills.getLoadWarnings()) {
+      warnings.push({
+        code: 'skill-load-failed',
+        message: warning.message,
+        severity: 'warning',
+      });
+    }
     return warnings;
   }
 

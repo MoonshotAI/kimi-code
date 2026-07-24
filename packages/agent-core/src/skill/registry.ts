@@ -23,11 +23,16 @@ export interface SkillRegistryOptions {
   readonly sessionId?: string;
 }
 
+export interface SkillLoadWarning {
+  readonly message: string;
+}
+
 export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
   private readonly skipped: SkippedSkill[] = [];
+  private readonly warnings: SkillLoadWarning[] = [];
   private readonly discoverImpl: typeof discoverSkills;
   private readonly onWarning: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
@@ -45,7 +50,10 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
 
     const skills = await this.discoverImpl({
       roots,
-      onWarning: this.onWarning,
+      onWarning: (message, cause) => {
+        this.warnings.push({ message });
+        this.onWarning(message, cause);
+      },
       onSkippedByPolicy: (skill) => this.skipped.push(skill),
       onDiscoveredSkill: (skill) => {
         this.indexPluginSkill(skill);
@@ -123,6 +131,10 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
 
   getSkippedByPolicy(): readonly SkippedSkill[] {
     return [...this.skipped];
+  }
+
+  getLoadWarnings(): readonly SkillLoadWarning[] {
+    return [...this.warnings];
   }
 
   getKimiSkillsDescription(): string {
