@@ -47,6 +47,16 @@ const KEEP_DEFAULT_TOML = DEFAULTED_TOML.replace('default_provider = "openai"\n'
   'default_model = "k2"',
 );
 
+/** A default_model pointing at an alias that does not exist. */
+const DANGLING_DEFAULT_TOML = [
+  'default_model = "gone"',
+  '',
+  '[providers.kimi]',
+  'type = "kimi"',
+  'api_key = "sk-test"',
+  '',
+].join('\n');
+
 const MANAGED_TOML = [
   '[providers."managed:kimi-code"]',
   'type = "kimi"',
@@ -260,10 +270,61 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.data).toEqual({
       id: 'vertex',
       type: 'vertexai',
+      // No provider-level default, but the fresh-setup seeding made this
+      // model the global default — and the projection falls back to it.
+      default_model: 'vertex/gemini-2.5-pro',
       has_api_key: false,
       status: 'unconfigured',
       models: ['vertex/gemini-2.5-pro'],
     });
+  });
+
+  it('seeds the global default_model on a fresh setup (the provider default wins)', async () => {
+    await boot();
+    const { status } = await postJson<unknown>('/api/v1/providers', CREATE_BODY);
+    expect(status).toBe(201);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
+
+    // End-to-end: the readiness probe now reports a usable daemon.
+    const auth = await getJson<{ ready: boolean; default_model: string | null }>('/api/v1/auth');
+    expect(auth.body.data).toMatchObject({ ready: true, default_model: 'my-openai/gpt-4.1' });
+  });
+
+  it('seeds the first model when the create body names no provider default', async () => {
+    await boot();
+    const { status } = await postJson<unknown>('/api/v1/providers', {
+      id: 'my-openai',
+      type: 'openai',
+      api_key: 'sk-test-openai',
+      models: [
+        { model: 'gpt-4o-mini', max_context_size: 128000 },
+        { model: 'gpt-4.1', max_context_size: 1047576 },
+      ],
+    });
+    expect(status).toBe(201);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['default_model']).toBe('my-openai/gpt-4o-mini');
+  });
+
+  it('keeps an existing global default_model on create', async () => {
+    await boot(DEFAULTED_TOML);
+    const { status } = await postJson<unknown>('/api/v1/providers', CREATE_BODY);
+    expect(status).toBe(201);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['default_model']).toBe('gpt4o');
+  });
+
+  it('leaves even a dangling default_model untouched on create', async () => {
+    await boot(DANGLING_DEFAULT_TOML);
+    const { status } = await postJson<unknown>('/api/v1/providers', CREATE_BODY);
+    expect(status).toBe(201);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['default_model']).toBe('gone');
   });
 
   it('rejects a duplicate provider id with 40921', async () => {
@@ -402,6 +463,9 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     // The last provider/model drops the whole TOML table, not an empty stub.
     expect(onDisk['providers']).toBeUndefined();
     expect(onDisk['models']).toBeUndefined();
+    // Except the seeded global default: pointers are the user's settings and
+    // deletes never garbage-collect them (it dangles until re-pointed).
+    expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
 
     const providers = await getJson<{ items: unknown[] }>('/api/v1/providers');
     expect(providers.body.data.items).toEqual([]);

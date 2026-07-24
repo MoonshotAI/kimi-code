@@ -357,6 +357,17 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     expect(config['default_model']).toBe('k2');
   });
 
+  it('seeds the global default_model from the first catalog model on a fresh setup', async () => {
+    await boot();
+    const { status } = await postJson('/api/v1/providers:import_catalog', {
+      catalog_id: 'openai',
+      api_key: 'sk-imported',
+    });
+    expect(status).toBe(201);
+    const config = await readConfigToml();
+    expect(config['default_model']).toBe('openai/gpt-4.1');
+  });
+
   it('re-imports an existing id as a refresh: credentials replaced, stale aliases dropped', async () => {
     await boot(DEFAULTED_TOML);
     const first = await postJson('/api/v1/providers:import_catalog', {
@@ -650,6 +661,18 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     const config = await readConfigToml();
     expect(config['default_provider']).toBe('kimi');
     expect(config['default_model']).toBe('k2');
+  });
+
+  it('seeds the global default_model from the first registry model on a fresh setup', async () => {
+    setCatalogUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
+    await boot();
+    const { status } = await postJson('/api/v1/providers:import_registry', {
+      url: REGISTRY_URL,
+      api_key: 'tok-1',
+    });
+    expect(status).toBe(201);
+    const config = await readConfigToml();
+    expect(config['default_model']).toBe('acme-claude/claude-opus');
   });
 
   it('re-imports the same URL as a refresh: vanished providers dropped, survivors rebuilt', async () => {

@@ -217,6 +217,20 @@ function enqueueProviderWrite<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Seed the global default model when — and only when — none is configured.
+ * Provider writes otherwise never move the default pointers, but a fresh
+ * setup has no pointer at all: the first provider added must leave the
+ * daemon usable (GET /auth's readiness requires a default model). An
+ * existing pointer is never rewritten here, not even a dangling one — it is
+ * the user's setting, not this route's to second-guess.
+ */
+async function seedDefaultModelWhenUnset(config: IConfigService, alias: string): Promise<void> {
+  const current = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+  if (current !== undefined && current.trim() !== '') return;
+  await config.replace(DEFAULT_MODEL_SECTION, alias);
+}
+
 export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Scope): void {
   const listModelsRoute = defineRoute(
     {
@@ -308,7 +322,8 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
-      description: 'Create a provider manually (type + credentials + model list)',
+      description:
+        'Create a provider manually (type + credentials + model list). When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
       tags: ['providers'],
       operationId: 'createProvider',
     },
@@ -355,6 +370,17 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           aliases[`${id}/${entry.model}`] = alias;
         }
         await config.set(MODELS_SECTION, aliases);
+
+        // A fresh setup has no default model at all: seed it with the
+        // provider's own default (or its first model) so the first provider
+        // added leaves the daemon usable. Existing pointers are never moved.
+        const firstModel = req.body.models[0];
+        if (firstModel !== undefined) {
+          await seedDefaultModelWhenUnset(
+            config,
+            provider.defaultModel ?? `${id}/${firstModel.model}`,
+          );
+        }
 
         const created = await core.accessor.get(IModelCatalog).getProvider(id);
         (reply as unknown as StatusReply).code(201).send(okEnvelope(created, req.id));
@@ -580,7 +606,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.CATALOG_UNAVAILABLE]: {},
       },
       description:
-        'Provider collection actions. Use `:refresh` for all providers or `:refresh_oauth` for OAuth-backed providers only. Use `:import_catalog` to import a models.dev directory entry as a configured provider (201): the wire protocol and endpoint come from the catalog resolution (`base_url` overrides it; required when the entry resolves to needs-base-url), all catalogued models are written as aliases, and importing an id that already exists is a refresh — the provider entry and its aliases are rewritten from the catalog (OAuth-managed providers are rejected instead). `id` overrides the catalog id as the local provider id. Use `:import_registry` to import a models.dev-shaped private registry (api.json `url` + optional Bearer `api_key`, 201): every listed provider is written with a `source` blob so scheduled refreshes rediscover it, and re-importing the same URL removes providers that disappeared upstream (the URL is the stable registry identity). For both imports the global default_provider/default_model pointers are never modified.',
+        'Provider collection actions. Use `:refresh` for all providers or `:refresh_oauth` for OAuth-backed providers only. Use `:import_catalog` to import a models.dev directory entry as a configured provider (201): the wire protocol and endpoint come from the catalog resolution (`base_url` overrides it; required when the entry resolves to needs-base-url), all catalogued models are written as aliases, and importing an id that already exists is a refresh — the provider entry and its aliases are rewritten from the catalog (OAuth-managed providers are rejected instead). `id` overrides the catalog id as the local provider id. Use `:import_registry` to import a models.dev-shaped private registry (api.json `url` + optional Bearer `api_key`, 201): every listed provider is written with a `source` blob so scheduled refreshes rediscover it, and re-importing the same URL removes providers that disappeared upstream (the URL is the stable registry identity). For both imports the global default_provider/default_model pointers are never modified — except that a default_model is seeded from the first imported model when none is configured at all (fresh setup).',
       tags: ['providers'],
       operationId: 'providerCollectionAction',
     },
@@ -966,7 +992,7 @@ async function handleImportCatalog(
     // explicit `undefined` when the wire needs none, so a stale on-disk value
     // is really cleared (the TOML transform is a raw overlay that only drops
     // keys assigned an explicit undefined). The global default pointers are
-    // deliberately left alone.
+    // deliberately left alone (aside from the fresh-setup seeding below).
     const provider: ProviderConfig = { type: resolution.wire };
     provider.baseUrl = resolution.baseUrl;
     provider.apiKey = body.api_key ?? existing?.apiKey;
@@ -986,6 +1012,13 @@ async function handleImportCatalog(
       nextModels[`${targetId}/${model.id}`] = catalogModelToRecord(targetId, model);
     }
     await config.replace(MODELS_SECTION, nextModels);
+
+    // Same fresh-setup seeding as POST /providers: an existing global
+    // default is never moved, but a setup with none becomes usable.
+    const firstCatalogModel = models[0];
+    if (firstCatalogModel !== undefined) {
+      await seedDefaultModelWhenUnset(config, `${targetId}/${firstCatalogModel.id}`);
+    }
 
     const imported = await core.accessor.get(IModelCatalog).getProvider(targetId);
     (reply as unknown as StatusReply)
@@ -1008,7 +1041,8 @@ async function handleImportCatalog(
  * in the same pass would let stale fields of kept ids survive on disk). The
  * in-memory shapes deliberately omit the default pointers so the core's
  * removal logic can never clamp them: provider writes never move
- * default_provider/default_model. An omitted `api_key` inherits the key from
+ * default_provider/default_model (aside from the fresh-setup default_model
+ * seeding at the end). An omitted `api_key` inherits the key from
  * the previous import of the same URL (the `source` blob), mirroring PUT's
  * keep-on-absent semantics; "" clears it.
  */
@@ -1119,6 +1153,15 @@ async function handleImportRegistry(
   }
   await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
   await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
+
+  // Same fresh-setup seeding as POST /providers / :import_catalog: never
+  // moves an existing global default, seeds one from the first imported
+  // model when the setup has none.
+  const firstEntry = Object.values(entries)[0];
+  const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
+  if (firstEntry !== undefined && firstModelKey !== undefined) {
+    await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModelKey}`);
+  }
 
   const imported = [];
   for (const entry of Object.values(entries)) {
