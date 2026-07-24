@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  FooterComponent,
-  type ManagedUsageFetcher,
-} from '#/tui/components/chrome/footer';
+import { FooterComponent, type ManagedUsageFetcher } from '#/tui/components/chrome/footer';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/tui/constant/kimi-tui';
 import type { AppState } from '#/tui/types';
 import type { ManagedUsageFetchResult } from '#/tui/utils/managed-usage';
@@ -75,40 +72,47 @@ describe('FooterComponent — provider-aware plan usage polling', () => {
     vi.useRealTimers();
   });
 
-  it('clears stale quota immediately and refetches when provider applicability changes', async () => {
-    vi.useFakeTimers();
-    let next: ManagedUsageFetchResult | undefined = { usage: USAGE_40 };
-    const fetcher: ManagedUsageFetcher = vi.fn(async () => next);
-    const footer = new FooterComponent(baseState());
+  it(
+    'clears stale quota immediately and refetches when provider applicability changes',
+    async () => {
+      vi.useFakeTimers();
+      let next: ManagedUsageFetchResult | undefined = { usage: USAGE_40 };
+      const fetcher: ManagedUsageFetcher = vi.fn(async () => next);
+      const footer = new FooterComponent(baseState());
 
-    try {
-      footer.setManagedUsageFetcher(fetcher);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(strip(footer.render(120)[1]!)).toContain('40%');
-      expect(fetcher).toHaveBeenCalledTimes(1);
+      try {
+        footer.setManagedUsageFetcher(fetcher);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(strip(footer.render(120)[1]!)).toContain('40%');
+        expect(fetcher).toHaveBeenCalledTimes(1);
 
-      footer.setState(
-        baseState({
-          model: 'external',
-          availableModels: {
-            external: modelAlias('openai', 'gpt-5'),
-          },
-        }),
-      );
+        next = undefined;
+        footer.setState(
+          baseState({
+            model: 'external',
+            availableModels: {
+              external: modelAlias('openai', 'gpt-5'),
+            },
+          }),
+        );
 
-      expect(strip(footer.render(120)[1]!)).not.toContain('week');
-      expect(fetcher).toHaveBeenCalledTimes(1);
+        // The old provider's quota disappears synchronously, before the new
+        // provider applicability check settles.
+        expect(strip(footer.render(120)[1]!)).not.toContain('week');
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(0);
 
-      next = { usage: USAGE_50 };
-      footer.setState(baseState());
-      await vi.advanceTimersByTimeAsync(0);
+        next = { usage: USAGE_50 };
+        footer.setState(baseState());
+        await vi.advanceTimersByTimeAsync(0);
 
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(strip(footer.render(120)[1]!)).toContain('50%');
-    } finally {
-      footer.dispose();
-    }
-  });
+        expect(fetcher).toHaveBeenCalledTimes(3);
+        expect(strip(footer.render(120)[1]!)).toContain('50%');
+      } finally {
+        footer.dispose();
+      }
+    },
+  );
 
   it('ignores an obsolete in-flight response after the active model changes', async () => {
     vi.useFakeTimers();
