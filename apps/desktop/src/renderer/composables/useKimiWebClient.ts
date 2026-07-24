@@ -20,6 +20,7 @@ import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import { detectShellDanger } from '../lib/shellDanger';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
+import type { DiffFullTexts } from '../lib/diffFullTexts';
 import {
   loadPinnedSessions,
   loadUnread,
@@ -676,6 +677,11 @@ function forgetSession(sessionId: string): void {
 const selectedDiffPath = ref<string | null>(null);
 const fileDiffLines = ref<DiffViewLine[]>([]);
 const fileDiffLoading = ref(false);
+// Full old/new texts behind the open diff (full-file syntax highlighting);
+// null → the panel highlights the stitched fragments instead.
+const fileDiffTexts = ref<DiffFullTexts | null>(null);
+// True when the open diff's file is empty (0 bytes) — see loadFileDiff.
+const fileDiffEmptyFile = ref(false);
 
 // False until the very first load() settles (success OR failure). Gates the
 // global connecting-splash so a page refresh doesn't flash a half-empty app.
@@ -2874,6 +2880,8 @@ const workspaceState = useWorkspaceState(rawState, {
   selectedDiffPath,
   fileDiffLines,
   fileDiffLoading,
+  fileDiffTexts,
+  fileDiffEmptyFile,
 });
 
 /** True when the user is actually watching this session: it is the active
@@ -3032,6 +3040,8 @@ export function useKimiWebClient() {
     fileDiff,
     selectedDiffPath,
     fileDiffLoading,
+    fileDiffTexts,
+    fileDiffEmptyFile,
     changes,
     gitInfo,
     gitDiffStats,

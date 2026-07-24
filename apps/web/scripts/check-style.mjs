@@ -6,7 +6,7 @@
 //   icon-from-registry (hand-written <svg>; Icon/Spinner/MoonSpinner + the
 //   32x22 / 32x28.x / 120x120 brand marks exempt), no-emoji-icon (moon in
 //   MoonSpinner exempt),
-//   no-hardcoded-hex (DiffView/DiffLines/Terminal domain colors + var()
+//   no-hardcoded-hex (DiffView/Terminal domain colors + var()
 //   fallbacks exempt), no-hardcoded-font (token and @font-face definitions exempt),
 //   radius-from-scale, z-from-scale, weight-from-scale.
 //
@@ -32,7 +32,6 @@ const STRICT = process.argv.includes('--strict');
 
 const DOMAIN_HEX_EXEMPT = new Set([
   'chat/DiffView.vue',
-  'chat/DiffLines.vue',
   'Terminal.vue',
 ]);
 

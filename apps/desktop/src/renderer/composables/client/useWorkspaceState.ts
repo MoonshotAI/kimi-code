@@ -34,6 +34,7 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
+import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
@@ -268,6 +269,14 @@ export interface UseWorkspaceStateDeps {
   selectedDiffPath: Ref<string | null>;
   fileDiffLines: Ref<DiffViewLine[]>;
   fileDiffLoading: Ref<boolean>;
+  /** Full old/new texts behind the open diff, for full-file syntax
+      highlighting; null while loading or when unavailable (fallback: the
+      panel highlights the stitched fragments). */
+  fileDiffTexts: Ref<DiffFullTexts | null>;
+  /** True when the open diff's file is empty (0 bytes) — git has no line
+      diff for it, so the panel shows an "empty file" state instead of the
+      misleading "no line changes". */
+  fileDiffEmptyFile: Ref<boolean>;
 }
 
 export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceStateDeps) {
@@ -314,6 +323,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectedDiffPath,
     fileDiffLines,
     fileDiffLoading,
+    fileDiffTexts,
+    fileDiffEmptyFile,
   } = deps;
   let exportInFlight = false;
   /** Monotonic selectSession serial: an off-list fetch that returns after a
@@ -410,13 +421,41 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
     selectedDiffPath.value = path;
     fileDiffLines.value = [];
+    fileDiffTexts.value = null;
+    fileDiffEmptyFile.value = false;
     fileDiffLoading.value = true;
     try {
       const api = getKimiWebApi();
       const result = await api.getFileDiff(sid, path);
-      // Guard against a stale response when the user tapped another file.
-      if (selectedDiffPath.value !== path) return;
-      fileDiffLines.value = parseDiff(result.diff);
+      // Guard against a stale response when the user tapped another file or
+      // switched sessions — later awaits re-check the same pair.
+      if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
+      const rows = parseDiff(result.diff);
+      fileDiffLines.value = rows;
+      if (rows.length === 0) {
+        // An empty (0-byte) new file has no line diff — git has nothing to
+        // add — and the generic "no line changes" state would wrongly read
+        // as "nothing changed". Read the file to tell the two apart.
+        const file = await readFileContent(path);
+        if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
+        fileDiffEmptyFile.value = file !== null && file.size === 0;
+        return;
+      }
+      // The rows are renderable now — don't keep the spinner up for the
+      // optional full-file highlighting, which fills in asynchronously and
+      // falls back to fragment mode when unavailable.
+      fileDiffLoading.value = false;
+      const texts = await buildFullDiffTexts(rows, {
+        truncated: result.truncated,
+        readNewText: async () => {
+          const file = await readFileContent(path);
+          if (!file || file.isBinary || file.encoding !== 'utf-8') return null;
+          return file.content;
+        },
+      });
+      // The file read is a second await — re-check staleness before committing.
+      if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
+      fileDiffTexts.value = texts;
     } catch (err) {
       // A single file's diff failing (a new/untracked/binary/deleted file the
       // daemon can't diff) is LOCAL to this pane, not a session-level fault — the
@@ -434,6 +473,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function clearFileDiff(): void {
     selectedDiffPath.value = null;
     fileDiffLines.value = [];
+    fileDiffTexts.value = null;
+    fileDiffEmptyFile.value = false;
     fileDiffLoading.value = false;
   }
 

@@ -1265,6 +1265,8 @@ function openPr(url: string): void {
         :changes="client.changes.value"
         :git-info="client.gitInfo.value"
         :file-diff="client.fileDiff.value"
+        :full-texts="client.fileDiffTexts.value"
+        :empty-file="client.fileDiffEmptyFile.value"
         :selected-diff-path="client.selectedDiffPath.value"
         :file-diff-loading="client.fileDiffLoading.value"
         closable

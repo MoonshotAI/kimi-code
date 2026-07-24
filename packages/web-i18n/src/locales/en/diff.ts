@@ -10,6 +10,7 @@ export default {
   back: 'Back',
   loading: 'Loading diff…',
   noDiff: 'No line changes for this file',
+  emptyFile: 'Empty file',
   list: 'List',
   tree: 'Tree',
   close: 'Close',

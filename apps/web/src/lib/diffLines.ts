@@ -1,7 +1,8 @@
-// apps/kimi-web/src/lib/diffLines.ts
-// Build line-by-line diff rows for <DiffLines/> from a before/after pair of
-// plain texts (Edit's old_string/new_string, or Write's content vs an empty
-// before). Uses a classic line-level LCS so unchanged lines line up as context.
+// apps/web/src/lib/diffLines.ts
+// Build line-by-line diff rows (DiffViewLine, rendered by HighlightedCode) from
+// a before/after pair of plain texts (Edit's old_string/new_string, or Write's
+// content vs an empty before). Uses a classic line-level LCS so unchanged
+// lines line up as context.
 
 import type { DiffViewLine } from '../types';
 
@@ -36,7 +37,7 @@ export interface DiffStats {
 
 /**
  * Line-level LCS diff between `before` and `after`, producing rows consumable
- * by <DiffLines/>. Line numbers are 1-based and advance per side like a
+ * by <HighlightedCode/>. Line numbers are 1-based and advance per side like a
  * unified diff: context lines advance both, deletions advance old, additions
  * advance new.
  *

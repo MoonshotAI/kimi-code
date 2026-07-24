@@ -6,7 +6,9 @@ import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import type { FileData, FilePreviewRequest } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
+import { MAX_HIGHLIGHT_CHARS } from '../lib/diffFullTexts';
 import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/web-ui';
+import HighlightedCode from './HighlightedCode.vue';
 
 const { t } = useI18n();
 
@@ -171,6 +173,17 @@ const sourceText = computed<string>(() => {
   if (!props.file) return '';
   return contentKind.value === 'json' ? prettyJson.value : decodedContent.value;
 });
+
+// Real 1-based line numbers for the code body's gutter (search and the line
+// jump target reference the same numbering).
+const lineNumberList = computed<number[]>(() => lines.value.map((_, i) => i + 1));
+
+// Tokenizing a near-read-limit or minified file stalls the UI — shiki's cost
+// is per character. Past the char budget the body stays a plain line-number
+// view: an undefined path means no language, so the highlighter never loads.
+const highlightPath = computed<string | undefined>(() =>
+  props.file && sourceText.value.length <= MAX_HIGHLIGHT_CHARS ? props.file.path : undefined,
+);
 
 // ---------------------------------------------------------------------------
 // Search + jump-to-line
@@ -346,50 +359,6 @@ function parseCsvLine(line: string): string[] {
 
 const csvRows = computed<string[][]>(() => lines.value.slice(0, 200).map(parseCsvLine));
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
-function languageKey(): string {
-  const f = props.file;
-  if (!f) return '';
-  const lang = f.languageId?.toLowerCase();
-  if (lang) return lang;
-  return f.path.split('.').pop()?.toLowerCase() ?? '';
-}
-
-function highlightLine(line: string): string {
-  const lang = languageKey();
-  let html = escapeHtml(line);
-
-  if (contentKind.value === 'json' || lang === 'json' || lang === 'jsonc') {
-    html = html.replace(/(&quot;[^&]*?&quot;)(\s*:)/g, '<span class="tok-key">$1</span>$2');
-    html = html.replace(/(:\s*)(&quot;[^&]*?&quot;)/g, '$1<span class="tok-string">$2</span>');
-    html = html.replace(/\b(true|false|null)\b/g, '<span class="tok-literal">$1</span>');
-    html = html.replace(/(:\s*)(-?\d+(?:\.\d+)?)/g, '$1<span class="tok-number">$2</span>');
-    return html;
-  }
-
-  if (contentKind.value === 'html' || lang === 'html' || lang === 'xml' || lang === 'svg') {
-    html = html.replace(/\s([A-Za-z_:][-A-Za-z0-9_:.]*)(=)/g, ' <span class="tok-attr">$1</span>$2');
-    html = html.replace(/(&quot;.*?&quot;)/g, '<span class="tok-string">$1</span>');
-    html = html.replace(/(&lt;\/?)([A-Za-z][\w:-]*)/g, '$1<span class="tok-tag">$2</span>');
-    return html;
-  }
-
-  html = html.replace(
-    /\b(async|await|break|case|catch|class|const|continue|else|export|extends|finally|for|from|function|if|import|interface|let|new|return|switch|throw|try|type|while)\b/g,
-    '<span class="tok-keyword">$1</span>',
-  );
-  html = html.replace(/(&quot;.*?&quot;|'.*?')/g, '<span class="tok-string">$1</span>');
-  html = html.replace(/(\/\/.*)$/g, '<span class="tok-comment">$1</span>');
-  return html;
-}
-
 // ---------------------------------------------------------------------------
 // Path display (truncate-left for long paths)
 // ---------------------------------------------------------------------------
@@ -527,35 +496,13 @@ function truncatePath(path: string, maxLen = 55): string {
           :open-file="props.openFile ? handleMarkdownOpenFile : undefined"
         />
         <div v-else class="fp-code">
-          <div class="fp-line-table">
-            <div
-              v-for="(line, idx) in lines"
-              :key="idx"
-              class="fp-line-row"
-              :class="lineClass(idx + 1)"
-              :data-line="idx + 1"
-            >
-              <span class="fp-gutter">{{ idx + 1 }}</span>
-              <span class="fp-line-text" v-html="highlightLine(line)"></span>
-            </div>
-          </div>
+          <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />
         </div>
       </div>
 
       <!-- Body: JSON -->
       <div v-else-if="contentKind === 'json'" class="fp-body fp-code">
-        <div class="fp-line-table">
-          <div
-            v-for="(line, idx) in lines"
-            :key="idx"
-            class="fp-line-row"
-            :class="lineClass(idx + 1)"
-            :data-line="idx + 1"
-          >
-            <span class="fp-gutter">{{ idx + 1 }}</span>
-            <span class="fp-line-text" v-html="highlightLine(line)"></span>
-          </div>
-        </div>
+        <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />
       </div>
 
       <!-- Body: HTML (sandboxed preview + source mode) -->
@@ -568,18 +515,7 @@ function truncatePath(path: string, maxLen = 55): string {
           :title="file.path"
         ></iframe>
         <div v-else class="fp-code">
-          <div class="fp-line-table">
-            <div
-              v-for="(line, idx) in lines"
-              :key="idx"
-              class="fp-line-row"
-              :class="lineClass(idx + 1)"
-              :data-line="idx + 1"
-            >
-              <span class="fp-gutter">{{ idx + 1 }}</span>
-              <span class="fp-line-text" v-html="highlightLine(line)"></span>
-            </div>
-          </div>
+          <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />
         </div>
       </div>
 
@@ -623,18 +559,7 @@ function truncatePath(path: string, maxLen = 55): string {
 
       <!-- Body: Text/Code (with line numbers) -->
       <div v-else-if="contentKind === 'text'" class="fp-body fp-code">
-        <div class="fp-line-table">
-          <div
-            v-for="(line, idx) in lines"
-            :key="idx"
-            class="fp-line-row"
-            :class="lineClass(idx + 1)"
-            :data-line="idx + 1"
-          >
-            <span class="fp-gutter">{{ idx + 1 }}</span>
-            <span class="fp-line-text" v-html="highlightLine(line)"></span>
-          </div>
-        </div>
+        <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />
       </div>
 
       <!-- Body: Binary / unknown -->
@@ -783,10 +708,6 @@ function truncatePath(path: string, maxLen = 55): string {
 .fp-body {
   --fp-search-hit-bg: color-mix(in srgb, var(--star) 22%, var(--bg));
   --fp-search-active-bg: color-mix(in srgb, var(--star) 36%, var(--bg));
-  --fp-token-keyword: color-mix(in srgb, var(--color-accent) 68%, var(--color-danger));
-  --fp-token-string: var(--color-success);
-  --fp-token-literal: var(--color-accent-hover);
-  --fp-token-tag: var(--color-warning);
 
   flex: 1;
   min-height: 0;
@@ -798,68 +719,26 @@ function truncatePath(path: string, maxLen = 55): string {
   padding: 16px 20px;
 }
 
-/* ---- Code / text with line numbers ---- */
+/* ---- Code / text with line numbers (shared HighlightedCode renderer) ---- */
 .fp-code {
   background: var(--bg);
 }
 
-.fp-line-table {
-  display: table;
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--ui-font-size);
-  line-height: 1.6;
-}
-
-.fp-line-row {
-  display: table-row;
-}
-.fp-line-row.hit .fp-line-text,
+/* Search-hit / active / jump-target row states on HighlightedCode rows
+   (applied via the lineClass prop); CSV keeps its own table rows. */
+.fp-code :deep(.hl-row.hit),
 .fp-table tr.hit td {
   background: var(--fp-search-hit-bg);
 }
-.fp-line-row.active .fp-line-text,
+.fp-code :deep(.hl-row.active),
 .fp-table tr.active td {
   background: var(--fp-search-active-bg);
 }
-.fp-line-row.target .fp-gutter,
-.fp-line-row.target .fp-line-text,
+.fp-code :deep(.hl-row.target),
 .fp-table tr.target th,
 .fp-table tr.target td {
   background: var(--color-accent-soft);
 }
-
-.fp-gutter {
-  display: table-cell;
-  width: 44px;
-  padding: 0 10px 0 12px;
-  text-align: right;
-  color: var(--faint);
-  user-select: none;
-  font-size: var(--text-base);
-  white-space: nowrap;
-  border-right: 0.5px solid var(--line2);
-  vertical-align: top;
-}
-
-.fp-line-text {
-  display: table-cell;
-  padding: 0 12px;
-  color: var(--color-text);
-  white-space: pre;
-  vertical-align: top;
-}
-.fp-line-text :deep(.tok-key),
-.fp-line-text :deep(.tok-keyword) {
-  color: var(--fp-token-keyword);
-  font-weight: 500;
-}
-.fp-line-text :deep(.tok-string) { color: var(--fp-token-string); }
-.fp-line-text :deep(.tok-number),
-.fp-line-text :deep(.tok-literal) { color: var(--fp-token-literal); }
-.fp-line-text :deep(.tok-comment) { color: var(--muted); font-style: italic; }
-.fp-line-text :deep(.tok-tag) { color: var(--fp-token-tag); font-weight: 500; }
-.fp-line-text :deep(.tok-attr) { color: var(--fp-token-literal); }
 
 /* ---- HTML / PDF ---- */
 .fp-html-frame,
@@ -880,7 +759,7 @@ function truncatePath(path: string, maxLen = 55): string {
 .fp-table {
   border-collapse: collapse;
   min-width: 100%;
-  font: 12px/1.5 var(--mono);
+  font: var(--code-font-size)/var(--leading-normal) var(--mono);
 }
 .fp-table th {
   position: sticky;

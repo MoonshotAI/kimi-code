@@ -274,6 +274,7 @@ interface WireGitStatusResult {
 interface WireDiffResult {
   path: string;
   diff: string;
+  truncated?: boolean;
 }
 
 interface WireTerminal {
@@ -1091,12 +1092,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async getFileDiff(
     sessionId: string,
     path: string,
-  ): Promise<{ path: string; diff: string }> {
+  ): Promise<{ path: string; diff: string; truncated: boolean }> {
     const data = await this.http.post<WireDiffResult>(
       `/sessions/${encodeURIComponent(sessionId)}/fs:diff`,
       { path },
     );
-    return { path: data.path, diff: data.diff };
+    return { path: data.path, diff: data.diff, truncated: data.truncated ?? false };
   }
 
   getFileDownloadUrl(sessionId: string, path: string): string {

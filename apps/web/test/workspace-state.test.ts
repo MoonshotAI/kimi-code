@@ -155,6 +155,8 @@ function createDeps(): UseWorkspaceStateDeps {
     selectedDiffPath: ref(null),
     fileDiffLines: ref([]),
     fileDiffLoading: ref(false),
+    fileDiffTexts: ref(null),
+    fileDiffEmptyFile: ref(false),
   } as unknown as UseWorkspaceStateDeps;
 }
 

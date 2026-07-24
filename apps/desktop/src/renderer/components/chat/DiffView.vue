@@ -6,7 +6,8 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
-import DiffLines from './DiffLines.vue';
+import type { DiffFullTexts } from '../../lib/diffFullTexts';
+import HighlightedCode from '../HighlightedCode.vue';
 import { Button, Icon, PanelHeader, ScrollArea, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { formatCountNumber } from '@moonshot-ai/web-i18n';
 
@@ -23,6 +24,12 @@ const props = withDefaults(
     gitInfo: { branch: string; ahead: number; behind: number } | null;
     /** Parsed unified-diff lines for the selected file (empty until tapped). */
     fileDiff?: DiffViewLine[];
+    /** Full old/new texts behind the diff for full-file highlighting; null →
+        HighlightedCode falls back to fragment highlighting. */
+    fullTexts?: DiffFullTexts | null;
+    /** True when the selected file is empty (0 bytes) — git has no line diff
+        for it, so show an "empty file" state instead of "no line changes". */
+    emptyFile?: boolean;
     /** The currently-open file path, or null when showing the file list. */
     selectedDiffPath?: string | null;
     /** True while the diff for the selected file is being fetched. */
@@ -244,10 +251,12 @@ function treeRowStyle(depth: number): Record<string, string> {
         </div>
 
         <div v-else-if="diffLines.length > 0" key="lines" class="dv-lines-wrap">
-          <DiffLines :lines="diffLines" />
+          <!-- Unframed: the panel owns the edge + scroll; shiki infers the
+               language from the selected file's path. -->
+          <HighlightedCode :lines="diffLines" :path="selectedDiffPath ?? undefined" line-numbers :framed="false" :full-texts="fullTexts ?? null" />
         </div>
 
-        <div v-else key="empty" class="empty-state">{{ t('diff.noDiff') }}</div>
+        <div v-else key="empty" class="empty-state">{{ emptyFile ? t('diff.emptyFile') : t('diff.noDiff') }}</div>
       </Transition>
     </template>
 
@@ -664,8 +673,8 @@ function treeRowStyle(depth: number): Record<string, string> {
   overflow: hidden;
 }
 
-/* Wrapper that lets <DiffLines> fill the panel height and scroll internally.
-   The line-row styles themselves live in DiffLines.vue. */
+/* Wrapper that lets the unframed <HighlightedCode> fill the panel height and
+   scroll internally. The line-row styles live in HighlightedCode.vue. */
 .dv-lines-wrap {
   flex: 1;
   min-height: 0;

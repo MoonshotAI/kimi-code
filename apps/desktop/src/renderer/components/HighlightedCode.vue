@@ -1,18 +1,16 @@
 <!-- apps/web/src/components/HighlightedCode.vue -->
-<!-- Shiki syntax highlighting for code surfaces: plain content (Write tool
-     card) or line-diff rows (Edit tool card). Renders plain text immediately
-     and upgrades in place once the lazily-loaded highlighter resolves; unknown
-     languages and highlighter failures stay plain. Streaming content updates
-     revalidate throttled WITHOUT clearing the previous tokens, so the block
-     never flashes plain mid-stream. Themes follow the app colour scheme
-     (github-light / github-dark, same as chat markdown code blocks). Shiki is
-     imported dynamically so its core stays out of the main bundle. -->
+<!-- Shiki syntax highlighting for code surfaces: plain content (Write/Read
+     tool cards, file preview) or line-diff rows (Edit tool card, diff panel).
+     Renders plain first and upgrades in place once the lazily-loaded
+     highlighter resolves; unknown languages and failures stay plain. Themes
+     follow the colour scheme (github-light / github-dark). -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ThemedToken } from 'shiki';
 import { useIsDark } from '@moonshot-ai/web-core';
 import { codeLanguageFromPath } from '../lib/codeLanguage';
 import { splitLines } from '../lib/diffLines';
+import type { DiffFullTexts } from '../lib/diffFullTexts';
 import type { DiffViewLine } from '../types';
 
 const props = withDefaults(
@@ -32,14 +30,27 @@ const props = withDefaults(
         off). Plain rows: pass a per-row number array (e.g. Read output's real
         file line numbers). */
     lineNumbers?: boolean | number[];
+    /** Card chrome (hairline edge, well fill, 24-row cap). Off for the
+        right-side panels. */
+    framed?: boolean;
+    /** Full old/new texts behind the diff; rows index tokens by real line
+        number. Null → stitched fragments mapped by position. */
+    fullTexts?: DiffFullTexts | null;
+    /** Plain mode only: per-row extra classes by gutter line number (-1 when
+        unknown). */
+    lineClass?: (lineNo: number) => Record<string, boolean> | undefined;
   }>(),
-  { code: undefined, lines: undefined, path: undefined, lineNumbers: false },
+  { code: undefined, lines: undefined, path: undefined, lineNumbers: false, framed: true, fullTexts: null, lineClass: undefined },
 );
 
 const isDark = useIsDark();
 const language = computed(() => codeLanguageFromPath(props.path));
 const isDiff = computed(() => props.lines !== undefined);
 const showDiffGutter = computed(() => props.lineNumbers === true && isDiff.value);
+/** Gutter columns that exist at all — a pure add/delete file gets no empty
+    column for the absent side. */
+const showOldGutter = computed(() => (props.lines ?? []).some((l) => l.oldNo !== undefined));
+const showNewGutter = computed(() => (props.lines ?? []).some((l) => l.newNo !== undefined));
 /** Per-row numbers for plain mode, or null when the gutter stays off. */
 const plainGutter = computed(() => (Array.isArray(props.lineNumbers) ? props.lineNumbers : null));
 
@@ -47,11 +58,12 @@ const plainGutter = computed(() => (Array.isArray(props.lineNumbers) ? props.lin
     (token rows are aligned onto it by index). */
 const plainRows = computed(() => (Array.isArray(props.code) ? props.code : splitLines(props.code ?? '')));
 
-/** The two texts a line diff is drawn from: every oldNo row in order forms the
-    before text, every newNo row the after text. */
+/** before/after texts to tokenize: the full files when provided, else the
+    stitched fragment sides. */
 const diffTexts = computed(() => {
   const lines = props.lines;
   if (!lines) return null;
+  if (props.fullTexts) return props.fullTexts;
   return {
     before: lines.filter((l) => l.oldNo !== undefined).map((l) => l.text).join('\n'),
     after: lines.filter((l) => l.newNo !== undefined).map((l) => l.text).join('\n'),
@@ -141,7 +153,10 @@ const diffAfter = computed(() => diffTexts.value?.after ?? null);
 // language/theme change invalidates in-flight work (wrong grammar/colours)
 // and clears immediately.
 watch([plainText, diffBefore, diffAfter], scheduleHighlight);
-watch([language, isDark], () => {
+// fullTexts also invalidates: it flips the token indexing scheme (real line
+// numbers vs fragment positions), so the other mode's tokens are wrong
+// content, not just stale.
+watch([language, isDark, () => props.fullTexts], () => {
   ticket++;
   clearTokens();
   scheduleHighlight();
@@ -155,16 +170,54 @@ onUnmounted(() => {
   throttleTimer = null;
 });
 
+/** Gutter content width in ch, sized to the longest line number present so
+    every row's column is identical. */
+const gutterCh = computed(() => {
+  let maxNo = 0;
+  if (Array.isArray(props.lineNumbers)) {
+    for (const n of props.lineNumbers) if (n > maxNo) maxNo = n;
+  } else {
+    for (const l of props.lines ?? []) {
+      if (l.oldNo !== undefined && l.oldNo > maxNo) maxNo = l.oldNo;
+      if (l.newNo !== undefined && l.newNo > maxNo) maxNo = l.newNo;
+    }
+  }
+  return Math.max(4, String(maxNo).length);
+});
+
 /** Tokens for one diff row: deletions read the before text, additions and
     context rows read the after text (same content either way for context).
     Rows without a line number (omission markers) render their text as-is —
     mapping them to some token row would show the wrong content. */
 function rowTokens(line: DiffViewLine): ThemedToken[] | null {
   if (line.type === 'del') {
-    return line.oldNo === undefined ? null : (beforeTokens.value?.[line.oldNo - 1] ?? null);
+    if (line.oldNo === undefined) return null;
+    const row = props.fullTexts ? line.oldNo - 1 : oldTokenRow.value.get(line.oldNo);
+    return row === undefined ? null : (beforeTokens.value?.[row] ?? null);
   }
-  return line.newNo === undefined ? null : (afterTokens.value?.[line.newNo - 1] ?? null);
+  if (line.newNo === undefined) return null;
+  const row = props.fullTexts ? line.newNo - 1 : newTokenRow.value.get(line.newNo);
+  return row === undefined ? null : (afterTokens.value?.[row] ?? null);
 }
+
+// Fragment mode only (fullTexts indexes by real line number): map each row's
+// line number to its position in the stitched before/after texts.
+const oldTokenRow = computed(() => {
+  const map = new Map<number, number>();
+  let i = 0;
+  for (const l of props.lines ?? []) {
+    if (l.oldNo !== undefined) map.set(l.oldNo, i++);
+  }
+  return map;
+});
+const newTokenRow = computed(() => {
+  const map = new Map<number, number>();
+  let i = 0;
+  for (const l of props.lines ?? []) {
+    if (l.newNo !== undefined) map.set(l.newNo, i++);
+  }
+  return map;
+});
 
 function tokenStyle(token: ThemedToken): Record<string, string> {
   const style: Record<string, string> = {};
@@ -183,20 +236,20 @@ function sign(line: DiffViewLine): string {
 </script>
 
 <template>
-  <div class="hl-code" :class="{ gutter: showDiffGutter, 'plain-pad': !isDiff && !plainGutter }">
+  <div class="hl-code" :class="{ gutter: showDiffGutter, 'plain-pad': !isDiff && !plainGutter, framed }" :style="{ '--gutter-ch': `${gutterCh}ch` }">
     <div class="hl-body">
       <template v-if="isDiff">
         <div v-for="(line, i) in lines ?? []" :key="i" class="hl-row" :class="`row-${line.type}`">
           <template v-if="showDiffGutter">
-            <span class="hl-gutter">{{ line.oldNo ?? '' }}</span>
-            <span class="hl-gutter new">{{ line.newNo ?? '' }}</span>
+            <span v-if="showOldGutter" class="hl-gutter">{{ line.oldNo ?? '' }}</span>
+            <span v-if="showNewGutter" class="hl-gutter new">{{ line.newNo ?? '' }}</span>
           </template>
           <span class="hl-sign">{{ sign(line) }}</span>
           <span class="hl-text"><template v-if="rowTokens(line)"><span v-for="(t, j) in rowTokens(line) ?? []" :key="j" :style="tokenStyle(t)">{{ t.content }}</span></template><template v-else>{{ line.text }}</template></span>
         </div>
       </template>
       <template v-else>
-        <div v-for="(row, i) in plainRows" :key="i" class="hl-row">
+        <div v-for="(row, i) in plainRows" :key="i" class="hl-row" :class="lineClass?.(plainGutter?.[i] ?? -1)" :data-line="plainGutter?.[i]">
           <span v-if="plainGutter" class="hl-gutter">{{ plainGutter[i] ?? '' }}</span>
           <span class="hl-text"><template v-if="plainTokens?.[i]"><span v-for="(t, j) in plainTokens[i] ?? []" :key="j" :style="tokenStyle(t)">{{ t.content }}</span></template><template v-else>{{ row }}</template></span>
         </div>
@@ -219,13 +272,21 @@ function sign(line: DiffViewLine): string {
   max-height: calc(24 * 1.5 * var(--ui-font-size));
   overscroll-behavior: contain;
   font-family: var(--font-mono);
-  font-size: calc(var(--content-font-size) - 2px);
+  font-size: var(--code-font-size);
   line-height: var(--leading-normal);
   font-feature-settings: "liga" 0, "calt" 0;
   font-variant-ligatures: none;
 }
+/* Unframed (right-side panels): the panel owns the edge, fill and scroll. */
+.hl-code:not(.framed) {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  max-height: none;
+  overflow: visible;
+}
 /* Grow to the longest row so add/del backgrounds paint edge-to-edge across the
-   horizontal scroll (same trick as DiffLines). */
+   horizontal scroll. */
 .hl-body {
   width: max-content;
   min-width: 100%;
@@ -246,9 +307,9 @@ function sign(line: DiffViewLine): string {
 }
 .hl-gutter {
   flex: none;
-  /* ch, not px: tracks the (user-adjustable) code font size and always fits
-     four-digit line numbers; grows for longer numbers via min-width. */
-  min-width: 4ch;
+  /* content-box: --gutter-ch measures the digits only. */
+  box-sizing: content-box;
+  min-width: var(--gutter-ch, 4ch);
   padding: 0 var(--space-2);
   text-align: right;
   color: var(--color-text-faint);
@@ -271,8 +332,13 @@ function sign(line: DiffViewLine): string {
   white-space: pre;
   color: var(--color-text);
 }
+/* Plain-gutter mode: space the text off the gutter hairline (the sign column
+   does this in diff mode). */
+.hl-gutter + .hl-text {
+  padding-left: var(--space-2);
+}
 /* Added / removed rows: a faint background carries the change; the code text
-   keeps its shiki colours (same choice as DiffLines). */
+   keeps its shiki colours. */
 .row-add {
   background: var(--color-diff-add-bg);
 }
@@ -285,7 +351,14 @@ function sign(line: DiffViewLine): string {
 .row-del .hl-sign {
   color: var(--color-danger);
 }
-/* With the gutter on (real file line numbers), add DiffLines' left accent bar;
+/* Hunk header rows (git @@ bands) never tokenize. */
+.row-hunk {
+  background: var(--color-surface-sunken);
+}
+.row-hunk .hl-text {
+  color: var(--color-text-muted);
+}
+/* With the gutter on (real file line numbers), add the left accent bar;
    without it, the edge-to-edge tint plus the coloured sign already carry it. */
 .hl-code.gutter .row-add {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 55%, transparent);

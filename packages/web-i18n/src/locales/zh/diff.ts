@@ -10,6 +10,7 @@ export default {
   back: '返回',
   loading: '正在加载 diff…',
   noDiff: '该文件没有行级改动',
+  emptyFile: '空文件',
   list: '列表',
   tree: '树形',
   close: '关闭',

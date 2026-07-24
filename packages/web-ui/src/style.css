@@ -80,6 +80,10 @@
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --content-font-size: var(--md-b1);
+  /* Standalone code surfaces (diff view, file preview, tool cards): one step
+     below body text, 12px at Medium. Prose-embedded code (markdown blocks)
+     stays on the --md-* ramp. */
+  --code-font-size: calc(var(--content-font-size) - 2px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Body/UI font follows the design-system canonical token. Mirrors --font-ui
      so the legacy alias can never drift from the current text face. */
