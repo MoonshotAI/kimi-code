@@ -1,5 +1,127 @@
 # kimi-code-app
 
+## 0.0.10
+
+### Patch Changes
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 新建文件夹按钮的图标换成 Kimi 动画版：悬停时加号旋转跳动一次。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 新建聊天图标换上悬停动画版本：鼠标移入时加号会旋转跳动一次（侧栏与折叠态快捷按钮均生效）。
+
+- [#92](https://github.com/MoonshotAI/kimi-code-app/pull/92) [`4de4c9c`](https://github.com/MoonshotAI/kimi-code-app/commit/4de4c9c0ffe3f46f4dd9859216e66c0851026428) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置里新增应用图标选项，程序坞图标可固定为浅色、深色或跟随系统自动切换。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 归档图标换新为 Kimi 设计系统图标。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 会话菜单里的「归档」不再使用红色警示样式，避免误以为归档会删除会话。
+
+- [#87](https://github.com/MoonshotAI/kimi-code-app/pull/87) [`3e9e1c3`](https://github.com/MoonshotAI/kimi-code-app/commit/3e9e1c30ea441be3c0fc4a39009bb5185b0b7030) Thanks [@liruifengv](https://github.com/liruifengv)! - 支持在后台自动下载新版本，下载完成后从侧边栏的更新入口重启即可更新；可在设置 → 高级中开启。
+
+- [#86](https://github.com/MoonshotAI/kimi-code-app/pull/86) [`991b34b`](https://github.com/MoonshotAI/kimi-code-app/commit/991b34bdc5d8532c04f34bac98e7d4e8a27a04ac) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 过长的用户消息默认折叠为渐隐预览，点击可展开或收起。
+
+- [#98](https://github.com/MoonshotAI/kimi-code-app/pull/98) [`9d462ec`](https://github.com/MoonshotAI/kimi-code-app/commit/9d462ecb8bcbbb6f81803c7e7e301f454e686e4c) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 排队中的长消息也会折叠为渐隐预览，点击可展开或收起。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - Swarm 与 Goal 的确认弹窗补上规范标题，说明文字移至正文，与其他确认弹窗一致。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 统一「Copy session ID」在标题栏菜单与会话菜单中的大小写，两处文案一致。
+
+- [#93](https://github.com/MoonshotAI/kimi-code-app/pull/93) [`c0fede2`](https://github.com/MoonshotAI/kimi-code-app/commit/c0fede246d68abf1f6e01eff943d4d06e4710aac) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置页新增供应商管理，支持手动添加、从模型目录或私有注册表导入第三方 API 供应商。
+
+- [#92](https://github.com/MoonshotAI/kimi-code-app/pull/92) [`4de4c9c`](https://github.com/MoonshotAI/kimi-code-app/commit/4de4c9c0ffe3f46f4dd9859216e66c0851026428) Thanks [@chengluyu](https://github.com/chengluyu)! - macOS 深色模式下程序坞图标自动切换为深色样式，可在设置中直接预览并选择图标外观。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 深色模式图标换成带环形山的满月版本。
+
+- [#106](https://github.com/MoonshotAI/kimi-code-app/pull/106) [`aec4ef0`](https://github.com/MoonshotAI/kimi-code-app/commit/aec4ef0e9f9a5f4daf9154bb44b410ec49f66db8) Thanks [@chengluyu](https://github.com/chengluyu)! - 放大输入框发送与停止按钮的图标，更加醒目。
+
+- [#89](https://github.com/MoonshotAI/kimi-code-app/pull/89) [`bc5cf88`](https://github.com/MoonshotAI/kimi-code-app/commit/bc5cf8825956b5828609159205b752b0c86ad7dc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Esc 和输入框停止按钮只终止当前回复，不再一并停止后台任务（后台任务可从任务面板单独终止）。
+
+- [#89](https://github.com/MoonshotAI/kimi-code-app/pull/89) [`bc5cf88`](https://github.com/MoonshotAI/kimi-code-app/commit/bc5cf8825956b5828609159205b752b0c86ad7dc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 终止回复后再按一次 Esc 可撤销刚发出的消息并放回输入框，被终止的回复下方新增「已手动终止」分割线标记。
+
+- [#88](https://github.com/MoonshotAI/kimi-code-app/pull/88) [`35ed68f`](https://github.com/MoonshotAI/kimi-code-app/commit/35ed68f1aa89a484c7be27a45659a08008fbc638) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复技能、MCP 等工具调用把「工作中」折叠打断的问题，待办、目标、子代理、提问等卡片在结束后也会一并折入。
+
+- [#100](https://github.com/MoonshotAI/kimi-code-app/pull/100) [`02b134d`](https://github.com/MoonshotAI/kimi-code-app/commit/02b134de92d6c0df4dcb4deb6020ec32f7cb9bf8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复发送消息后同一条用户消息偶尔显示两遍的问题。
+
+- [#82](https://github.com/MoonshotAI/kimi-code-app/pull/82) [`7a3772b`](https://github.com/MoonshotAI/kimi-code-app/commit/7a3772b89e5dc2a5c013a8a2f6cb4b2b1fa848f9) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复窗口全屏时点击关闭按钮变成全黑屏幕的问题。
+
+- [#106](https://github.com/MoonshotAI/kimi-code-app/pull/106) [`aec4ef0`](https://github.com/MoonshotAI/kimi-code-app/commit/aec4ef0e9f9a5f4daf9154bb44b410ec49f66db8) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复发送按钮底部被遮挡一点的问题。
+
+- [#91](https://github.com/MoonshotAI/kimi-code-app/pull/91) [`17ef185`](https://github.com/MoonshotAI/kimi-code-app/commit/17ef185e03c5809e0ab600f15c462fcde3de20c3) Thanks [@OwenXu27](https://github.com/OwenXu27)! - 字体大小设置改为「小 / 中 / 大 / 特大」四档，界面与消息文字随所选档位整体缩放。
+
+- [#96](https://github.com/MoonshotAI/kimi-code-app/pull/96) [`11a593b`](https://github.com/MoonshotAI/kimi-code-app/commit/11a593b4b83efbf77e308d15f000a2c0077d92d0) Thanks [@wbxl2000](https://github.com/wbxl2000)! - goal 模式下自动续跑的轮次会在对话中标注「目标续跑」，方便分清每轮是谁发起的。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复斜杠菜单中 /goal 命令的描述只显示「resume」的问题，现在会展示完整的用法说明。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - Goal 目标图标换新为 Kimi 设计系统的准星图标。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 拖拽把手图标换新为 Kimi 设计系统图标。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 更多组件的悬停反馈统一为模式自适应洗色：下拉选择器选项、设置导航与字号步进、归档列表、按钮与 Pill、移动端列表项等，暗色下悬停不再压暗。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 界面图标大面积换新为 Kimi 设计系统图标：动作、箭头、文件、状态、置顶、侧栏开关等 40 余处视觉风格统一。
+
+- [#91](https://github.com/MoonshotAI/kimi-code-app/pull/91) [`17ef185`](https://github.com/MoonshotAI/kimi-code-app/commit/17ef185e03c5809e0ab600f15c462fcde3de20c3) Thanks [@OwenXu27](https://github.com/OwenXu27)! - 界面配色切换为 kimi.com 线上配色，状态颜色保持原有配色以保证文字对比度。
+
+- [#91](https://github.com/MoonshotAI/kimi-code-app/pull/91) [`17ef185`](https://github.com/MoonshotAI/kimi-code-app/commit/17ef185e03c5809e0ab600f15c462fcde3de20c3) Thanks [@OwenXu27](https://github.com/OwenXu27)! - macOS 版侧栏换用原生毛玻璃材质，视力敏感的用户可在设置中关闭。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 修正弹出菜单的悬停反馈：暗色下背景改为提亮而非压暗，菜单图标默认降一档显示、悬停时与标签同步提亮。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 单行动作菜单的标签字号由 12px 提升为 13px，更易读。
+
+- [#92](https://github.com/MoonshotAI/kimi-code-app/pull/92) [`4de4c9c`](https://github.com/MoonshotAI/kimi-code-app/commit/4de4c9c0ffe3f46f4dd9859216e66c0851026428) Thanks [@chengluyu](https://github.com/chengluyu)! - 更新应用图标为新版品牌标识，包括系统托盘与界面内的品牌标志。
+
+- [#85](https://github.com/MoonshotAI/kimi-code-app/pull/85) [`d976662`](https://github.com/MoonshotAI/kimi-code-app/commit/d976662a0cfc607e735cc43cd40316c07c79f755) Thanks [@liruifengv](https://github.com/liruifengv)! - 登录界面暂时下线「输入设备码」的备用登录方式（该路径存在问题），保留浏览器一键授权，并新增完整授权链接的复制入口，修复后会恢复。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 权限模式指示换上表意图标：手动审批为手掌、YOLO 为警告标志、全自动为机器人。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 统一各界面权限模式的顺序为「逐条确认 → 自动通过 → 完全自主」，颜色警示也随之统一：完全自主始终是最高的红色警示级别。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 播放 / 暂停图标换新为 Kimi 设计系统图标（修复暂停图标发灰的问题）。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复发送按钮悬停没有过渡动画的问题。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 发送按钮的悬停渐变更清晰可感（时长与幅度上调）。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 发送按钮在输入为空时显示禁用态；启用态改用深灰（反转）填充而非主题色。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 发送按钮的颜色与禁用态变化加入过渡动画，不再瞬变。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 发送按钮的禁用/启用切换过渡更平滑（时长上调至 260ms）。
+
+- [#85](https://github.com/MoonshotAI/kimi-code-app/pull/85) [`d976662`](https://github.com/MoonshotAI/kimi-code-app/commit/d976662a0cfc607e735cc43cd40316c07c79f755) Thanks [@liruifengv](https://github.com/liruifengv)! - 未登录时点击发送会弹出登录引导，输入框下方的模型位置改为登录入口，点击直接弹出登录窗口。没有工作空间时点击发送会先提示选择工作空间，不再直接弹出目录选择器，取消操作会保留已输入的内容。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 统一英文界面按钮与菜单文案的大小写规范：New Chat 改为 New chat，外观选项 Moon Bright / Moon Dark 改为 Moon bright / Moon dark。
+
+- [#97](https://github.com/MoonshotAI/kimi-code-app/pull/97) [`a818544`](https://github.com/MoonshotAI/kimi-code-app/commit/a818544df0453a8a935c1fa033eaa35ea07000bc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 支持为会话设置 Emoji 图标（选择器可搜索、显示最近使用），在会话选项菜单选择「设置 Emoji…」或点击标题前的 Emoji 即可使用。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置导航的 Advanced 图标换为 Kimi 显微镜图标。
+
+- [#84](https://github.com/MoonshotAI/kimi-code-app/pull/84) [`add8d70`](https://github.com/MoonshotAI/kimi-code-app/commit/add8d70410354d29826d666e5eee52cb77031f60) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置导航中的「Keyboard Shortcuts」更名为「Hotkeys」（中文为「快捷键」），标签不再折行。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置导航图标更新：General 换为列表带圆点的滑杆图标，Agent 换为机器人图标。
+
+- [#103](https://github.com/MoonshotAI/kimi-code-app/pull/103) [`2529693`](https://github.com/MoonshotAI/kimi-code-app/commit/25296933069fce9d3f508bbeffd027bdbdcd2ec4) Thanks [@chengluyu](https://github.com/chengluyu)! - 侧边栏「新建会话」和「搜索」的快捷键提示改为鼠标悬停时才显示。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 侧栏开关换上 Kimi 左侧栏图标：悬停时箭头飞入并停留在图标中，不再按开合状态切换图形。
+
+- [#106](https://github.com/MoonshotAI/kimi-code-app/pull/106) [`aec4ef0`](https://github.com/MoonshotAI/kimi-code-app/commit/aec4ef0e9f9a5f4daf9154bb44b410ec49f66db8) Thanks [@chengluyu](https://github.com/chengluyu)! - 停止输出按钮改用中性灰底色并去掉红色边框。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - Swarm 模式及子任务工具调用的图标换为 Kimi 任务网络图标。
+
+- [#94](https://github.com/MoonshotAI/kimi-code-app/pull/94) [`e445851`](https://github.com/MoonshotAI/kimi-code-app/commit/e4458519a63f5fb0ddb35948b3be9a555830a87b) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 后台任务完成、失败或超时时，对话里会显示对应的通知卡片，可展开查看详情和输出文件路径。
+
+- [#90](https://github.com/MoonshotAI/kimi-code-app/pull/90) [`43624a3`](https://github.com/MoonshotAI/kimi-code-app/commit/43624a3ea1dea64ce2b732fe5ae0dba22112799a) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置中的浅色 / 深色主题切换选项加上对应图标。
+
+- [#105](https://github.com/MoonshotAI/kimi-code-app/pull/105) [`a9d175f`](https://github.com/MoonshotAI/kimi-code-app/commit/a9d175fd117eba180bd71217b3a9abe71e4efc5b) Thanks [@chengluyu](https://github.com/chengluyu)! - 模型选择下拉中的 thinking 分组标签改为首字母大写的 Thinking，与界面其他位置保持一致。
+
+- [#91](https://github.com/MoonshotAI/kimi-code-app/pull/91) [`17ef185`](https://github.com/MoonshotAI/kimi-code-app/commit/17ef185e03c5809e0ab600f15c462fcde3de20c3) Thanks [@OwenXu27](https://github.com/OwenXu27)! - 界面边框统一为更细的发丝线，列表选中态与消息气泡改为中性配色。
+
+- [#95](https://github.com/MoonshotAI/kimi-code-app/pull/95) [`aeaae1c`](https://github.com/MoonshotAI/kimi-code-app/commit/aeaae1cdd9bf94eeadcc32b58f8d0925afe26f3f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 耗时显示不再出现小数秒和原始毫秒，整分钟、整小时省略多余的零（如 6m0s 显示为 6m）。
+
+- [#87](https://github.com/MoonshotAI/kimi-code-app/pull/87) [`3e9e1c3`](https://github.com/MoonshotAI/kimi-code-app/commit/3e9e1c30ea441be3c0fc4a39009bb5185b0b7030) Thanks [@liruifengv](https://github.com/liruifengv)! - 更新弹窗增加「以后自动下载并安装更新」勾选项，下载过程中可切换为后台下载。
+
+- [#87](https://github.com/MoonshotAI/kimi-code-app/pull/87) [`3e9e1c3`](https://github.com/MoonshotAI/kimi-code-app/commit/3e9e1c30ea441be3c0fc4a39009bb5185b0b7030) Thanks [@liruifengv](https://github.com/liruifengv)! - 更新弹窗现在会显示新版本的中英双语更新说明。
+
+- [#87](https://github.com/MoonshotAI/kimi-code-app/pull/87) [`3e9e1c3`](https://github.com/MoonshotAI/kimi-code-app/commit/3e9e1c30ea441be3c0fc4a39009bb5185b0b7030) Thanks [@liruifengv](https://github.com/liruifengv)! - 更新弹窗的更新说明现在按新功能、优化、修复等小节分组展示。
+
 ## 0.0.9
 
 ### Patch Changes
