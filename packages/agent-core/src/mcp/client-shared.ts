@@ -27,24 +27,22 @@ export interface UnexpectedCloseReason {
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 
 export interface McpRequestOptions {
-  /** Timeout in milliseconds. */
   readonly timeout?: number;
   readonly signal?: AbortSignal;
 }
 
 /**
- * Build the `RequestOptions` object accepted by the MCP SDK's `callTool`,
- * including either the configured tool-call timeout, an in-flight abort
- * signal, both, or neither. Returns `undefined` when nothing needs to be
- * passed so the SDK falls back to its defaults.
+ * Build the `RequestOptions` object accepted by MCP SDK requests, including
+ * either a configured timeout, an in-flight abort signal, both, or neither.
+ * Returns `undefined` when nothing needs to be passed so the SDK falls back
+ * to its defaults.
  */
 export function buildRequestOptions(
-  toolCallTimeoutMs: number | undefined,
+  timeoutMs: number | undefined,
   signal: AbortSignal | undefined,
 ): McpRequestOptions | undefined {
-  if (signal?.aborted) { throw signal.reason ?? new Error('Tool call aborted'); }
-  if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
-  return { timeout: toolCallTimeoutMs, signal };
+  if (timeoutMs === undefined && signal === undefined) return undefined;
+  return { timeout: timeoutMs, signal };
 }
 
 interface SdkListedTool {
@@ -89,7 +87,5 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
       isError: false,
     };
   }
-  // Intentionally returns empty content for unrecognized result shapes —
-  // the caller is expected to log the raw shape before this codepath.
   return { content: [], isError: false };
 }

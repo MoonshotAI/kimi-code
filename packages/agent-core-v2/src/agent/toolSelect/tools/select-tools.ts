@@ -2,8 +2,8 @@
  * `toolSelect` domain (L4) — `select_tools`, the load-by-exact-name primitive
  * of progressive tool disclosure.
  *
- * Registers the built-in tool that lets the model load MCP schemas named in
- * loadable-tools announcements. Delegates loading to
+ * Registers the built-in tool that lets the model load dynamic schemas named
+ * in loadable-tools announcements. Delegates loading to
  * `IAgentToolSelectService`; offered by the shaped tool view only while the
  * disclosure gate is open.
  */

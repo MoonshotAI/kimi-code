@@ -31,7 +31,8 @@
  * instead of poisoning the session cache (the skill catalog, by contrast, is
  * kicked fire-and-forget). The session-level eager services whose
  * subscriptions must exist before the first agent / turn (external hooks,
- * cron) are force-instantiated at the same point.
+ * cron, the secondary-model startup warning) are force-instantiated at the
+ * same point.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -79,6 +80,7 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -222,6 +224,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
       handle.accessor.get(ISessionExternalHooksService);
       handle.accessor.get(ISessionCronService);
+      handle.accessor.get(ISessionSecondaryModelWarningService);
     } catch (error) {
       handle.dispose();
       throw error;

@@ -18,6 +18,16 @@
 
 import type { FinishReason } from './provider';
 
+/**
+ * Wire error code for invalid model/provider configuration (`config.invalid`).
+ * The code string is a wire contract matched downstream (protocol event
+ * schemas, clients), so it is declared here in the L0 contract; the error
+ * registry entry is owned by the `config` domain's error module, which
+ * registers this constant. Kosong code throws it without registering, keeping
+ * a single registry owner.
+ */
+export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
+
 export class ChatProviderError extends Error {
   constructor(message: string) {
     super(message);

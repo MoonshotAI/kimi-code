@@ -251,6 +251,14 @@ const DOMAIN_LAYER = new Map([
   ['kosong/protocol', 1],
   ['kosong/provider', 2],
   ['kosong/model', 2],
+  // `kosongConfig` (App, L3) is the persistence wrapper over kosong: it
+  // declares the kosong-owned config sections (constants + zod schemas
+  // re-derived from kosong's pure types, compile-time pinned) and their
+  // env-overlay registrations, the two-way config ↔ kosong sync bridge, the
+  // OAuth token adapter, and the discovery orchestrator. It may import
+  // `config`/`auth`/`event` (L1–L2) and every kosong layer; kosong never
+  // imports it back.
+  ['kosongConfig', 3],
 ]);
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
@@ -281,11 +289,14 @@ const KOSONG_LAYER = new Map([
 ]);
 
 /**
- * Kosong subdomains whose non-kosong imports are restricted to `_base`
- * utilities (`contract` is the pure wire contract; `protocol` is L1 trait
- * interfaces — only `_base` + `contract`).
+ * Kosong is a pure provider/model abstraction layer: NO kosong subdomain may
+ * import another v2 domain outside kosong itself — only `_base` utilities
+ * are allowed. (`protocol` additionally sees `kosong/contract`, handled by
+ * Rule 3b above.) Config persistence, OAuth tokens, events, and discovery
+ * orchestration all live in the upper `app/kosongConfig` wrapper — kosong
+ * must never reach up to them.
  */
-const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol']);
+const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol', 'provider', 'model']);
 
 /**
  * Wire SDK packages the pure kosong layers must never import — not even
@@ -398,6 +409,9 @@ const ALLOWED_EXCEPTIONS = new Set([
   'bootstrap>skillCatalog',
   // bootstrap is the composition root — it wires backends by design.
   'bootstrap>persistence/backends',
+  // bootstrap instantiates the kosong persistence bridge eagerly so kosong's
+  // registries are hydrated before any consumer can await their `ready`.
+  'bootstrap>kosongConfig',
   // `auth` (KimiOAuth, L2) owns the OAuth-backed `WebSearch` tool and registers
   // it through the tool contribution API, so it reaches up to the L3 tool
   // contract and registry. Surfaced for review: the tool needs an authenticated
@@ -405,6 +419,11 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
+  // Transitional: `auth` (L2) reads/writes the kosong-owned config sections
+  // (providers/models/thinking), whose constants and schemas are declared by
+  // the `kosongConfig` persistence wrapper (L3), when provisioning or clearing
+  // OAuth-managed config. Slated for cleanup with the auth layering rework.
+  'auth>kosongConfig',
   // `toolApproval` (Agent, L3) owns the approval round-trip for permissionGate
   // asks and plan/goal reviews, driven through the Session approval broker.
   'toolApproval>approval',
@@ -617,16 +636,17 @@ export function checkSource(source, absFile) {
       continue;
     }
 
-    // Rule 3c: outside the kosong subtree, the pure layers may only depend
-    // on `_base` utilities (`protocol` additionally sees `kosong/contract`,
-    // handled by Rule 3b above).
+    // Rule 3c: outside the kosong subtree, kosong code may only depend on
+    // `_base` utilities (`protocol` additionally sees `kosong/contract`,
+    // handled by Rule 3b above). This is what keeps kosong a pure
+    // abstraction layer with no upward dependencies.
     if (sourceKosong !== undefined && KOSONG_BASE_ONLY_SUBDOMAINS.has(sourceKosong.sub)) {
       const targetDomain = targetDomainOf(targetAbs);
       if (targetDomain !== '_base') {
         violations.push({
           file: absFile,
           line,
-          message: `'kosong/${sourceKosong.sub}' must not import domain '${targetDomain ?? specifier}' via '${specifier}' — only _base utilities are allowed outside the kosong subtree`,
+          message: `'kosong/${sourceKosong.sub}' must not import domain '${targetDomain ?? specifier}' via '${specifier}' — kosong is a pure abstraction layer: only _base utilities are allowed outside the kosong subtree (persistence/OAuth/discovery live in app/kosongConfig)`,
         });
       }
       continue;

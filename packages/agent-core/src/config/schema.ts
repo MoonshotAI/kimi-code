@@ -191,6 +191,28 @@ export const AgentConfigSchema = z.object({
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+export const MAX_MCP_TIMEOUT_MS = 2_147_483_647;
+const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
+
+export const McpConfigSchema = z.object({
+  /**
+   * Global default MCP server startup (connect + tool discovery) timeout in
+   * milliseconds. A per-server `startupTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_STARTUP_TIMEOUT_MS env var both win over this value. Defaults
+   * to 30s when unset.
+   */
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  /**
+   * Global default single MCP tool-call timeout in milliseconds. A
+   * per-server `toolTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_TOOL_TIMEOUT_MS env var both win over this value. Falls back to
+   * the client built-in default when unset.
+   */
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
+});
+
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+
 export const ImageConfigSchema = z.object({
   /**
    * Longest-edge ceiling (px) applied when compressing images for the model.
@@ -252,8 +274,8 @@ export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).max(300_000).optional(),
-  toolTimeoutMs: z.number().int().min(1).max(300_000).optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
 } as const;
@@ -409,6 +431,7 @@ export const KimiConfigSchema = z.object({
   background: BackgroundConfigSchema.optional(),
   subagent: SubagentConfigSchema.optional(),
   agent: AgentConfigSchema.optional(),
+  mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
@@ -425,6 +448,7 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
@@ -453,6 +477,7 @@ export const KimiConfigPatchSchema = z
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
+    mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),

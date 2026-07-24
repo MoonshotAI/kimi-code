@@ -1,8 +1,9 @@
+// Scenario: clipboard writes in secure and plain-HTTP web contexts.
+// Responsibilities: preserve native selection copies and provide the legacy
+// code-block fallback. The test stubs only navigator/document browser APIs.
+// Run: pnpm --filter @moonshot-ai/kimi-web test -- clipboard.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { copyTextToClipboard } from '../src/lib/clipboard';
-
-// The web test suite runs in the default node environment (no jsdom), so we
-// mock the tiny `navigator` / `document` surface that the helper touches.
+import { copyCodeBlockFallback, copyTextToClipboard } from '../src/lib/clipboard';
 
 interface FakeDocument {
   execCommand: ReturnType<typeof vi.fn>;
@@ -76,5 +77,28 @@ describe('copyTextToClipboard', () => {
     installDocument(false);
 
     await expect(copyTextToClipboard('nope')).resolves.toBe(false);
+  });
+});
+
+describe('code-block copy fallback', () => {
+  it('does not overwrite selected text when a native copy event bubbles on plain HTTP', () => {
+    installNavigator(undefined);
+    const doc = installDocument(true);
+    const copyEvent = { toString: () => '[object ClipboardEvent]' };
+
+    copyCodeBlockFallback(copyEvent);
+
+    expect(doc.execCommand).not.toHaveBeenCalled();
+    expect(doc.textarea.value).toBe('');
+  });
+
+  it('copies emitted code text when the Clipboard API is unavailable', () => {
+    installNavigator(undefined);
+    const doc = installDocument(true);
+
+    copyCodeBlockFallback('const host = "example.test";');
+
+    expect(doc.execCommand).toHaveBeenCalledWith('copy');
+    expect(doc.textarea.value).toBe('const host = "example.test";');
   });
 });

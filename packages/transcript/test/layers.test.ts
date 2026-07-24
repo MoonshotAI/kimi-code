@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granularity/filterOps';
-import { gradeFor, needsResetOnTransition } from '#/granularity/grade';
+import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
 import { groupMessagesIntoSnapshot } from '#/history/groupTurns';
@@ -96,6 +96,24 @@ describe('granularity', () => {
   it('upgrade needs reset, downgrade does not', () => {
     expect(needsResetOnTransition('turn', 'delta')).toBe(true);
     expect(needsResetOnTransition('delta', 'turn')).toBe(false);
+  });
+
+  it('detachGrades writes explicit off so a wildcard default cannot resurrect the agent', () => {
+    expect(detachGrades({ '*': 'delta' }, ['main'])).toEqual({ '*': 'delta', main: 'off' });
+    expect(detachGrades({ '*': 'delta', main: 'turn' }, ['main'])).toEqual({
+      '*': 'delta',
+      main: 'off',
+    });
+  });
+
+  it('detachGrades deletes a listed wildcard entry', () => {
+    expect(detachGrades({ '*': 'delta', main: 'turn' }, ['*'])).toEqual({ main: 'turn' });
+  });
+
+  it('detachGrades collapses an all-off spec to undefined', () => {
+    expect(detachGrades({ main: 'delta' }, ['main'])).toBeUndefined();
+    expect(detachGrades({ '*': 'delta', main: 'off' }, ['*'])).toBeUndefined();
+    expect(detachGrades(undefined, ['main'])).toBeUndefined();
   });
 
   it('append-only batches are volatile-safe', () => {

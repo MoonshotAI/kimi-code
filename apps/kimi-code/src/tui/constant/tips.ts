@@ -27,7 +27,6 @@ export function getWorkingTips(): readonly ToolbarTip[] {
     { text: t('tui.chrome.tips.tasksCheckProgress'), priority: 2 },
     { text: t('tui.chrome.tips.initGenerateAgents'), priority: 2 },
     { text: t('tui.chrome.tips.tryDance') },
-    { text: t('tui.chrome.tips.pluginsSuperpowers'), solo: true, priority: 3 },
     {
       text: t('tui.chrome.tips.pluginsKimiDatasource'),
       solo: true,

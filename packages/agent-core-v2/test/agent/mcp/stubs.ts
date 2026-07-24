@@ -21,6 +21,10 @@ export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
 export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
 export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
 export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url).pathname;
+export const slowToolStdioFixture = new URL(
+  './fixtures/slow-tool-stdio-server.mjs',
+  import.meta.url,
+).pathname;
 export const hangingListStdioFixture = new URL(
   './fixtures/hanging-list-stdio-server.mjs',
   import.meta.url,

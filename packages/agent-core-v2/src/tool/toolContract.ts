@@ -92,12 +92,14 @@ export interface ExecutableTool<Input = unknown> extends Tool {
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
+export type ToolDisclosure = 'inline' | 'deferred';
 
 export interface ToolDefinition {
   readonly name: string;
   readonly description: string;
   readonly parameters?: Record<string, unknown>;
   readonly source?: ToolSource;
+  readonly disclosure?: ToolDisclosure;
   readonly info?: Record<string, unknown>;
 }
 

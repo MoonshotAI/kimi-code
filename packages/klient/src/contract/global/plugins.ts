@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
+import { mcpServerConfigSchema } from '../mcp.js';
 import type { ServiceContract } from '../types.js';
 
 export const pluginDiagnosticSchema = z.object({
@@ -33,42 +34,6 @@ const pluginInterfaceSchema = z.object({
   developerName: z.string().optional(),
   websiteURL: z.string().optional(),
 });
-
-const stringRecordSchema = z.record(z.string(), z.string());
-
-const mcpServerCommonFields = {
-  enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
-  enabledTools: z.array(z.string()).optional(),
-  disabledTools: z.array(z.string()).optional(),
-} as const;
-
-const mcpServerConfigSchema = z.discriminatedUnion('transport', [
-  z.object({
-    transport: z.literal('stdio'),
-    command: z.string().min(1),
-    args: z.array(z.string()).optional(),
-    env: stringRecordSchema.optional(),
-    cwd: z.string().optional(),
-    executor: z.enum(['local', 'kaos']).optional(),
-    ...mcpServerCommonFields,
-  }),
-  z.object({
-    transport: z.literal('http'),
-    url: z.string().url(),
-    headers: stringRecordSchema.optional(),
-    bearerTokenEnvVar: z.string().min(1).optional(),
-    ...mcpServerCommonFields,
-  }),
-  z.object({
-    transport: z.literal('sse'),
-    url: z.string().url(),
-    headers: stringRecordSchema.optional(),
-    bearerTokenEnvVar: z.string().min(1).optional(),
-    ...mcpServerCommonFields,
-  }),
-]);
 
 const hookDefSchema = z.object({
   event: z.enum([

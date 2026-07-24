@@ -18,6 +18,7 @@ import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 export interface HttpMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
+  readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   /**
    * Reads `process.env[name]` by default. Tests can inject a deterministic
@@ -45,6 +46,7 @@ export interface HttpMcpClientOptions {
 export class HttpMcpClient implements MCPClient {
   private readonly client: Client;
   private readonly transport: StreamableHTTPClientTransport;
+  private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private started = false;
   private closed = false;
@@ -64,11 +66,7 @@ export class HttpMcpClient implements MCPClient {
   private unexpectedCloseFired = false;
 
   constructor(config: McpServerHttpConfig, options: HttpMcpClientOptions = {}) {
-    const envLookup = options.envLookup ?? ((name) => {
-      const configValue = config.env?.[name];
-      if (configValue !== undefined) return configValue;
-      return process.env[name];
-    });
+    const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpHttpHeaders(config, envLookup);
 
     this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
@@ -80,10 +78,11 @@ export class HttpMcpClient implements MCPClient {
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
     });
+    this.startupTimeoutMs = options.startupTimeoutMs;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
 
-  async connect(signal?: AbortSignal): Promise<void> {
+  async connect(): Promise<void> {
     if (this.closed) {
       throw new Error('MCP HTTP client is closed');
     }
@@ -92,7 +91,10 @@ export class HttpMcpClient implements MCPClient {
     // Install hooks BEFORE the SDK handshake; see StdioMcpClient.connect.
     this.installTransportHooks();
     try {
-      await this.client.connect(this.transport, signal ? { signal } : undefined);
+      await this.client.connect(
+        this.transport,
+        buildRequestOptions(this.startupTimeoutMs, undefined),
+      );
     } catch (error) {
       await this.closeStartedClient();
       throw error;
@@ -125,8 +127,11 @@ export class HttpMcpClient implements MCPClient {
     }
   }
 
-  async listTools(signal?: AbortSignal): Promise<MCPToolDefinition[]> {
-    const result = await this.client.listTools(undefined, signal ? { signal } : undefined);
+  async listTools(): Promise<MCPToolDefinition[]> {
+    const result = await this.client.listTools(
+      undefined,
+      buildRequestOptions(this.startupTimeoutMs, undefined),
+    );
     return result.tools.map(toMcpToolDefinition);
   }
 
@@ -143,8 +148,6 @@ export class HttpMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
-    this.client.onclose = undefined;
-    this.client.onerror = undefined;
     await this.client.close();
   }
 
@@ -209,7 +212,7 @@ export class HttpMcpClient implements MCPClient {
  */
 export function isTerminalTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
-  if (/(?:Maximum|Max) reconnection attempts|reconnection attempts exceeded/i.test(error.message)) return true;
+  if (/Maximum reconnection attempts/i.test(error.message)) return true;
   return false;
 }
 

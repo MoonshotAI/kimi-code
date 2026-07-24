@@ -48,6 +48,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:contract-types": "node scripts/gen-contract-types.mjs",
+    "gen:config-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-config-manifest.mts",
+    "gen:wire-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-wire-manifest.mts",
     "lint:domain": "node scripts/check-domain-layers.mjs",
     "clean": "rm -rf dist",
     "dep-graph:analyze": "tsx scripts/dep-graph/cli.ts",

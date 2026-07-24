@@ -6,16 +6,16 @@
  * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
  * provider through `mcp/oauth` when tokens are present, flips failing
  * servers into `needs-auth` on 401, and reconnects after authentication.
- * Emits server status changes to subscribers. Constructed by `AgentMcpService`.
+ * Applies per-server settings over session defaults and emits status changes
+ * to subscribers. Constructed by `SessionMcpService`.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
-import type { McpConfigSource } from './config-loader';
 import type { ILogger as Logger } from '#/_base/log/log';
 import type { Tool } from '#/kosong/contract/tool';
 
-import { abortable, linkAbortSignal } from '#/_base/utils/abort';
+import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';
 import { SseMcpClient } from './client-sse';
@@ -23,9 +23,8 @@ import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
-import { t } from '@moonshot-ai/kimi-i18n';
 
-export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'pending-approval';
+export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
 
 export interface McpServerEntry {
   readonly name: string;
@@ -38,8 +37,6 @@ export interface McpServerEntry {
 interface InternalEntry {
   readonly name: string;
   readonly config: McpServerConfig;
-  /** Origin of the config; gates stdio approval. */
-  source?: McpConfigSource;
   attemptId: number;
   status: McpServerStatus;
   tools?: readonly Tool[];
@@ -52,11 +49,6 @@ interface InternalEntry {
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
-const MCP_STARTUP_MAX_RETRIES = 3;
-const MCP_STARTUP_RETRY_BASE_MS = 1000;
-const MCP_STARTUP_RETRY_FACTOR = 2;
-const MCP_STARTUP_RETRY_MAX_MS = 30_000;
-const MCP_STARTUP_RETRY_JITTER = 0.25;
 
 type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
 const defaultLog: Logger = {
@@ -67,11 +59,22 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
+/**
+ * Global default timeouts applied when a server entry does not set its own
+ * `startupTimeoutMs` / `toolTimeoutMs`. Resolved at each (re)connect, not at
+ * construction, so late-ready or changed configuration is picked up.
+ */
+export interface McpDefaultTimeouts {
+  readonly startupTimeoutMs?: number;
+  readonly toolTimeoutMs?: number;
+}
+
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
+  readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
 }
 
 export class McpConnectionManager {
@@ -82,7 +85,6 @@ export class McpConnectionManager {
   private initialLoadAttemptId = 0;
   private initialLoadStartedAt: number | undefined;
   private initialLoadFinishedAt: number | undefined;
-  private initialLoadAbortController: AbortController | undefined;
 
   readonly oauthService: McpOAuthService | undefined;
   private readonly log: Logger;
@@ -97,6 +99,10 @@ export class McpConnectionManager {
     if (entry === undefined) return undefined;
     if (!isRemoteMcpConfig(entry.config)) return undefined;
     return entry.config.url;
+  }
+
+  getHttpServerUrl(name: string): string | undefined {
+    return this.getRemoteServerUrl(name);
   }
 
   onStatusChange(listener: McpStatusListener): () => void {
@@ -142,24 +148,13 @@ export class McpConnectionManager {
     };
   }
 
-  connectAll(
-    configs: Record<string, McpServerConfig>,
-    sources?: Record<string, McpConfigSource>,
-  ): Promise<void> {
+  connectAll(configs: Record<string, McpServerConfig>): Promise<void> {
     const attemptId = ++this.initialLoadAttemptId;
     this.initialLoadStartedAt = Date.now();
     this.initialLoadFinishedAt = undefined;
-    // Abort any previous in-flight initial load before starting a new
-    // one. Without this, a hot-reloaded config would leave the old
-    // spawn/connect attempts running, racing the new flow and wasting
-    // resources until they settle.
-    this.initialLoadAbortController?.abort();
-    const abortController = new AbortController();
-    this.initialLoadAbortController = abortController;
-    const initialLoad = this.connectAllNow(configs, abortController.signal, sources).finally(() => {
+    const initialLoad = this.connectAllNow(configs).finally(() => {
       if (this.initialLoadAttemptId === attemptId) {
         this.initialLoadFinishedAt = Date.now();
-        this.initialLoadAbortController = undefined;
       }
     });
     this.initialLoad = initialLoad;
@@ -202,8 +197,7 @@ export class McpConnectionManager {
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (signal === undefined) return this.initialLoad;
-    const cleanup = linkAbortSignal(signal, this.initialLoadAbortController ?? new AbortController());
-    return abortable(this.initialLoad, signal).finally(cleanup);
+    return abortable(this.initialLoad, signal);
   }
 
   initialLoadDurationMs(): number {
@@ -212,70 +206,32 @@ export class McpConnectionManager {
     return Math.max(0, endedAt - this.initialLoadStartedAt);
   }
 
-  private async connectAllNow(
-    configs: Record<string, McpServerConfig>,
-    signal?: AbortSignal,
-    sources?: Record<string, McpConfigSource>,
-  ): Promise<void> {
+  private async connectAllNow(configs: Record<string, McpServerConfig>): Promise<void> {
     const tasks: Promise<unknown>[] = [];
     for (const [name, config] of Object.entries(configs)) {
-      const source = sources?.[name];
-      // Trust policy: stdio servers sourced from <repoRoot>/.mcp.json
-      // (typically checked into git) require explicit user approval
-      // before kimi-code will spawn their command. This prevents a
-      // cloned malicious repo from running arbitrary commands at
-      // session start.
-      const requiresApproval = source === 'project-root' && config.transport === 'stdio';
       const disabled = config.enabled === false;
       const entry: InternalEntry = {
         name,
         config,
-        source,
         attemptId: 0,
-        status: disabled ? 'disabled' : requiresApproval ? 'pending-approval' : 'pending',
-        error: requiresApproval
-          ? t('v2Mcp.requiresOAuth', { name })
-          : undefined,
+        status: disabled ? 'disabled' : 'pending',
       };
       this.entries.set(name, entry);
       this.emit(entry);
-      if (!disabled && !requiresApproval) {
-        tasks.push(this.connectOne(entry, this.beginConnectAttempt(entry), signal));
+      if (!disabled) {
+        tasks.push(this.connectOne(entry, this.beginConnectAttempt(entry)));
       }
     }
     await Promise.allSettled(tasks);
   }
 
-  /**
-   * Mark a previously ``pending-approval`` server as trusted and start
-   * connecting it. Throws if the server is unknown or not in the
-   * approval-pending state.
-   */
-  async approveServer(name: string): Promise<void> {
-    const entry = this.entries.get(name);
-    if (entry === undefined) {
-      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, t('errors.mcpServerNotFound'));
-    }
-    if (entry.status !== 'pending-approval') {
-      throw new Error2(
-        ErrorCodes.MCP_SERVER_DISABLED,
-        t('errors.mcpServerDisabled'),
-      );
-    }
-    entry.status = 'pending';
-    entry.error = undefined;
-    this.emit(entry);
-    const attemptId = this.beginConnectAttempt(entry);
-    await this.connectOne(entry, attemptId);
-  }
-
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
     if (entry === undefined) {
-      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, t('errors.mcpServerNotFound'));
+      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
     }
     if (entry.config.enabled === false) {
-      throw new Error2(ErrorCodes.MCP_SERVER_DISABLED, t('errors.mcpServerDisabled'));
+      throw new Error2(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
     }
     const attemptId = this.beginConnectAttempt(entry);
     await this.closeClient(entry);
@@ -286,7 +242,7 @@ export class McpConnectionManager {
     entry.rawTools = undefined;
     entry.error = undefined;
     this.emit(entry);
-    await this.connectWithRetry(entry, attemptId);
+    await this.connectOne(entry, attemptId);
   }
 
   reconnectAndJoin(name: string): Promise<void> {
@@ -308,72 +264,19 @@ export class McpConnectionManager {
     await Promise.allSettled(tasks);
   }
 
-  private async connectOne(entry: InternalEntry, attemptId: number, signal?: AbortSignal): Promise<void> {
-    const timeoutMs = entry.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-    const err = await this.tryConnect(entry, attemptId, timeoutMs, signal);
-    if (err === undefined) return;
-    if (!this.isCurrent(entry, attemptId)) return;
-    this.applyConnectError(entry, err);
-    this.emit(entry);
-  }
+  private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
+    const timeoutMs =
+      entry.config.startupTimeoutMs ??
+      this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
+      DEFAULT_STARTUP_TIMEOUT_MS;
 
-  /**
-   * Retry a connection attempt with exponential backoff. Used by
-   * reconnect() when the user explicitly asks for a reconnect — not
-   * during initial session startup.
-   */
-  private async connectWithRetry(
-    entry: InternalEntry,
-    attemptId: number,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const timeoutMs = entry.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-    let lastError: unknown = await this.tryConnect(entry, attemptId, timeoutMs, signal);
-    if (lastError === undefined) return;
-
-    for (let retry = 0; retry < MCP_STARTUP_MAX_RETRIES; retry += 1) {
-      if (signal?.aborted) return;
-      const delay = Math.min(
-        MCP_STARTUP_RETRY_BASE_MS * Math.pow(MCP_STARTUP_RETRY_FACTOR, retry),
-        MCP_STARTUP_RETRY_MAX_MS,
-      );
-      const jittered = Math.round(delay * (1 + (Math.random() * 2 - 1) * MCP_STARTUP_RETRY_JITTER));
-      await abortableDelay(jittered, signal);
-
-      if (!this.isCurrent(entry, attemptId)) return;
-      if (signal?.aborted) return;
-      const err = await this.tryConnect(entry, attemptId, timeoutMs, signal);
-      if (err === undefined) return;
-      lastError = err;
-    }
-
-    if (!this.isCurrent(entry, attemptId)) return;
-    this.applyConnectError(entry, lastError);
-    this.emit(entry);
-  }
-
-  /**
-   * Attempt a single connection cycle. Returns `undefined` on success,
-   * or the error that caused the failure (already applied to the entry
-   * when non-transient).
-   */
-  private async tryConnect(
-    entry: InternalEntry,
-    attemptId: number,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): Promise<unknown> {
     let client: RuntimeMcpClient | undefined;
     try {
-      const startupClient = await this.createClient(entry.config, entry.name);
-      if (!this.isCurrent(entry, attemptId)) {
-        await this.closeRuntimeClient(startupClient);
-        return undefined;
-      }
+      const startupClient = await this.createClient(entry.config, entry.name, timeoutMs);
       client = startupClient;
       entry.client = startupClient;
       const discovered = await withTimeout(
-        this.connectAndDiscoverTools(startupClient, signal),
+        this.connectAndDiscoverTools(startupClient),
         timeoutMs,
         () => {
           void this.closeRuntimeClient(startupClient);
@@ -381,60 +284,34 @@ export class McpConnectionManager {
       );
       if (!this.isCurrent(entry, attemptId)) {
         await this.closeRuntimeClient(startupClient);
-        return undefined;
+        return;
       }
       entry.tools = discovered.tools;
       entry.rawTools = discovered.rawTools;
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
       entry.status = 'connected';
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
-      this.emit(entry);
-      return undefined;
     } catch (error) {
       if (!this.isCurrent(entry, attemptId)) {
         if (client !== undefined) {
           await this.closeRuntimeClient(client);
         }
-        return undefined;
+        return;
       }
       if (this.shouldMarkNeedsAuth(entry, error)) {
-        // The client holds an open stdio child process or HTTP/SSE
-        // connection; close it before dropping the reference, otherwise
-        // the transport lingers until GC collects it.
-        if (client !== undefined) {
-          await this.closeRuntimeClient(client);
-        }
         entry.status = 'needs-auth';
-        entry.error = t('v2Mcp.requiresOAuth', { name: entry.name });
-        entry.tools = undefined;
-        entry.rawTools = undefined;
-        entry.enabledNames = undefined;
-        entry.client = undefined;
-        this.emit(entry);
-        return undefined;
-      }
-      // Return the error so the caller can decide whether to retry.
-      // Don't mark the entry failed yet — that happens after all retries
-      // are exhausted.
-      const msg = formatStartupError(error, client);
-      if (client !== undefined) {
-        await this.closeRuntimeClient(client);
+        entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+      } else {
+        entry.status = 'failed';
+        entry.error = formatStartupError(error, client);
       }
       entry.tools = undefined;
-      entry.rawTools = undefined;
       entry.enabledNames = undefined;
-      entry.client = undefined;
-      return msg;
+      entry.rawTools = undefined;
+      await this.closeClient(entry);
     }
-  }
-
-  /** Apply a final error to the entry (after retries exhausted). */
-  private applyConnectError(entry: InternalEntry, error: unknown): void {
-    entry.status = 'failed';
-    entry.error = typeof error === 'string' ? error : formatStartupError(error, entry.client);
-    entry.tools = undefined;
-    entry.rawTools = undefined;
-    entry.enabledNames = undefined;
+    if (!this.isCurrent(entry, attemptId)) return;
+    this.emit(entry);
   }
 
   private watchForUnexpectedClose(
@@ -461,19 +338,30 @@ export class McpConnectionManager {
     return entry.attemptId;
   }
 
-  private async createClient(config: McpServerConfig, name: string): Promise<RuntimeMcpClient> {
-    const toolCallTimeoutMs = config.toolTimeoutMs;
+  private async createClient(
+    config: McpServerConfig,
+    name: string,
+    startupTimeoutMs: number,
+  ): Promise<RuntimeMcpClient> {
+    const toolCallTimeoutMs =
+      config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
+      return new StdioMcpClient(config, {
+        startupTimeoutMs,
+        toolCallTimeoutMs,
+        defaultCwd: this.options.stdioCwd,
+      });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {
+        startupTimeoutMs,
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
       });
     }
     return new HttpMcpClient(config, {
+      startupTimeoutMs,
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),
@@ -502,10 +390,9 @@ export class McpConnectionManager {
 
   private async connectAndDiscoverTools(
     client: RuntimeMcpClient,
-    signal?: AbortSignal,
   ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
-    await client.connect(signal);
-    const mcpTools = await client.listTools(signal);
+    await client.connect();
+    const mcpTools = await client.listTools();
     return {
       rawTools: mcpTools,
       tools: mcpTools.map((mcpTool) => ({
@@ -526,8 +413,7 @@ export class McpConnectionManager {
   private async closeRuntimeClient(client: RuntimeMcpClient): Promise<void> {
     try {
       await client.close();
-    } catch (error) {
-      this.log.debug('mcp client close threw', { error });
+    } catch {
     }
   }
 
@@ -548,8 +434,7 @@ export class McpConnectionManager {
     for (const listener of this.listeners) {
       try {
         listener(view);
-      } catch (error) {
-        this.log.debug('mcp status listener threw', { error });
+      } catch {
       }
     }
   }
@@ -600,7 +485,7 @@ function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined
 }
 
 function formatUnexpectedCloseError(name: string, reason: UnexpectedCloseReason): string {
-  const parts = [t('v2Errors.internal')];
+  const parts = [`MCP server "${name}" closed unexpectedly`];
   if (reason.error !== undefined) {
     parts.push(reason.error.message);
   }
@@ -624,44 +509,15 @@ async function withTimeout<T>(
   onTimeout?: () => void,
 ): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
-  let capturedError: unknown;
   try {
     return await new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
-        try {
-          onTimeout?.();
-        } catch {
-          // Suppress — timeout cleanup must not prevent the rejection
-          // from settling the outer promise.
-        }
-        reject(new Error(t('v2Errors.internal'), { cause: capturedError }));
+        onTimeout?.();
+        reject(new Error(`Timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      promise.then(resolve, (error) => {
-        // Capture before rejecting so the timeout branch above can
-        // attach it as `cause`. Without this, the timeout error lost
-        // the underlying failure context.
-        capturedError = error;
-        reject(error);
-      });
+      promise.then(resolve, reject);
     });
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-/** setTimeout that resolves early when `signal` aborts. */
-function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (signal === undefined) {
-    return new Promise<void>((resolve) => {
-      setTimeout(resolve, ms);
-    });
-  }
-  if (signal.aborted) return Promise.resolve();
-  const timeout = new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-  const onAbort = new Promise<void>((resolve) => {
-    signal.addEventListener('abort', () => { resolve(); }, { once: true });
-  });
-  return Promise.race([timeout, onAbort]);
 }

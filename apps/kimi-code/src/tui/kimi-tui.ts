@@ -1310,6 +1310,22 @@ export class KimiTUI {
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
+    // While a goal is being pursued the engine holds its active turn across the
+    // whole continuation loop, so a fresh prompt races the goal driver at every
+    // continuation boundary and is rejected with `turn.agent_busy`, dropping
+    // the message. Steer instead: the engine buffers it into the running goal
+    // turn, or launches a turn of its own if the loop just ended.
+    if (this.state.appState.goal?.status === 'active') {
+      void session.steer(sdkInput).catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        // Same reset as the prompt path: beginSessionRequest already moved the
+        // TUI to the waiting phase, and no turn events may follow a failed
+        // steer (e.g. the session is gone), which would leave the UI stuck
+        // queueing input behind a request that never completes.
+        this.failSessionRequest(`Failed to steer: ${message}`);
+      });
+      return;
+    }
     void session.prompt(sdkInput).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Failed to send: ${message}`);

@@ -891,6 +891,7 @@ function ToolFrameView({
           tool
         </Badge>
         <span className="text-neutral-300">{frame.name}</span>
+        <span className="text-neutral-600 select-all">{frame.toolCallId}</span>
         {frame.view !== undefined && frame.view !== frame.name ? (
           <span className="text-neutral-600">view: {frame.view}</span>
         ) : null}

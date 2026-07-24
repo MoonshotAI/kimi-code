@@ -13,7 +13,7 @@
  *    definition's `hostHeaders`, and the Anthropic effort profile is inferred
  *    only for vendors whose thinking is not trait-driven;
  *  - `get`/`getRequester` cache per id; the cache drops on the
- *    model/provider change events — and ONLY there: a config write
+ *    model/provider change events — and ONLY there: a registry write
  *    that bypasses the events keeps serving the stale Model until
  *    `notifyConfigChanged()` (the load-bearing test-harness contract).
  */
@@ -23,7 +23,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createScopedTestHost } from '#/_base/di/test';
 import { isErrorCode } from '#/_base/errors/codes';
 import { isError2 } from '#/_base/errors/errors';
-import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
@@ -36,7 +35,11 @@ import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/protocolAdapterRegistry';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
-import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
+import {
+  IProviderService,
+  type ProviderConfig,
+  type ProvidersSection,
+} from '#/kosong/provider/provider';
 import '#/kosong/provider/providerService';
 import {
   globalDefaultForProvider,
@@ -50,16 +53,17 @@ import {
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import '#/kosong/model/errors';
 import { HostRequestHeaders, IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
-import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import { IModelService, type ModelRecord, type ModelsSection } from '#/kosong/model/model';
 import '#/kosong/model/modelService';
+import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
 
-import { StubConfigService, stubOAuthService, stubTokenProvider } from '../stubs';
+import { StubConfigService, stubModelOAuthTokens, stubTokenProvider } from '../stubs';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
 
 function createHost(
   sections: Record<string, unknown> = {},
-  oauth: IOAuthService = stubOAuthService(),
+  oauthTokens: IModelOAuthTokens = stubModelOAuthTokens(),
 ): {
   host: ReturnType<typeof createScopedTestHost>;
   config: StubConfigService;
@@ -70,15 +74,27 @@ function createHost(
   const config = new StubConfigService(sections);
   const host = createScopedTestHost([
     [IConfigService, config],
-    [IOAuthService, oauth],
+    [IModelOAuthTokens, oauthTokens],
     [IHostRequestHeaders, new HostRequestHeaders(HOST_HEADERS)],
   ]);
+  // Kosong's registries are pure in-memory stores now (persistence lives in
+  // the app/kosongConfig bridge): seed them from the fixture sections.
+  const providers = host.app.accessor.get(IProviderService);
+  providers.loadAll(
+    (sections['providers'] ?? {}) as ProvidersSection,
+    sections['defaultProvider'] as string | undefined,
+  );
+  const models = host.app.accessor.get(IModelService);
+  models.loadAll(
+    (sections['models'] ?? {}) as ModelsSection,
+    sections['defaultModel'] as string | undefined,
+  );
   return {
     host,
     config,
     catalog: host.app.accessor.get(IModelCatalog) as ModelCatalog,
-    models: host.app.accessor.get(IModelService),
-    providers: host.app.accessor.get(IProviderService),
+    models,
+    providers,
   };
 }
 
@@ -90,6 +106,16 @@ const kimiSections: Record<string, unknown> = {
     k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144 },
   },
 };
+
+/**
+ * Mutate the model registry store WITHOUT firing the change events — the
+ * silent-write escape hatch for the cache-invalidation tests (replaces the
+ * old `StubConfigService.setSilent`, which the in-memory registries can no
+ * longer see).
+ */
+function silentModelWrite(models: IModelService, records: Record<string, ModelRecord>): void {
+  (models as unknown as { models: Record<string, ModelRecord> }).models = records;
+}
 
 let savedCustomHeaders: string | undefined;
 
@@ -389,19 +415,17 @@ describe('Model assembly (pure data)', () => {
 
   it('builds a refreshable OAuth auth provider for oauth-backed models', async () => {
     const tokenProvider = stubTokenProvider(['tok-1']);
-    const config = new StubConfigService({
-      providers: {
-        kimi: { type: 'kimi', oauth: { storage: 'file', key: 'kimi' }, baseUrl: 'https://api.moonshot.ai/v1' },
+    const { host, catalog } = createHost(
+      {
+        providers: {
+          kimi: { type: 'kimi', oauth: { storage: 'file', key: 'kimi' }, baseUrl: 'https://api.moonshot.ai/v1' },
+        },
+        models: { k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 1 } },
       },
-      models: { k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 1 } },
-    });
-    const host = createScopedTestHost([
-      [IConfigService, config],
-      [IOAuthService, stubOAuthService(tokenProvider)],
-      [IHostRequestHeaders, new HostRequestHeaders({})],
-    ]);
+      stubModelOAuthTokens(tokenProvider),
+    );
     try {
-      const model = (host.app.accessor.get(IModelCatalog) as ModelCatalog).get('k1');
+      const model = catalog.get('k1');
       expect(model.authProvider.canRefresh).toBe(true);
       await expect(model.authProvider.getAuth()).resolves.toEqual({ apiKey: 'tok-1' });
     } finally {
@@ -440,14 +464,14 @@ describe('ModelCatalog caching and config-event invalidation', () => {
     }
   });
 
-  it('keeps serving the stale Model on a silent config write until notifyConfigChanged()', async () => {
-    const { host, catalog, config } = createHost(kimiSections);
+  it('keeps serving the stale Model on a silent registry write until notifyConfigChanged()', async () => {
+    const { host, catalog, models } = createHost(kimiSections);
     try {
       const before = catalog.get('k1');
 
       // Bypass the change events entirely: the catalog cache is the only
       // stale layer, and only an explicit notify drops it.
-      config.setSilent('models', {
+      silentModelWrite(models, {
         k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'silent' },
       });
       expect(catalog.get('k1')).toBe(before);
@@ -520,16 +544,16 @@ describe('ModelCatalog inspect', () => {
   });
 
   it('serves the same resolution as get (chain consistency, same cache generation)', () => {
-    const { host, catalog, config } = createHost(kimiSections);
+    const { host, catalog, models } = createHost(kimiSections);
     try {
       const model = catalog.get('k1');
       const view = catalog.inspect('k1');
       const { authProvider: _auth, id: _id, name, ...rest } = model;
       expect(view.resolved).toMatchObject({ ...rest, wireName: name });
 
-      // A silent config write keeps the stale generation: inspect reflects
+      // A silent registry write keeps the stale generation: inspect reflects
       // THAT generation (what get keeps serving), never a re-resolution.
-      config.setSilent('models', {
+      silentModelWrite(models, {
         k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'silent' },
       });
       expect(catalog.inspect('k1').resolved.displayName).toBeUndefined();
@@ -743,12 +767,7 @@ describe('ModelCatalog inspect', () => {
 
 describe('ModelCatalog ping', () => {
   it('returns the streamed text and usage on a live success', async () => {
-    const config = new StubConfigService(kimiSections);
-    const host = createScopedTestHost([
-      [IConfigService, config],
-      [IOAuthService, stubOAuthService()],
-      [IHostRequestHeaders, new HostRequestHeaders({})],
-    ]);
+    const { host, models, providers } = createHost(kimiSections, stubModelOAuthTokens());
     try {
       const fakeProvider: ChatProvider = {
         name: 'fake-base',
@@ -784,10 +803,9 @@ describe('ModelCatalog ping', () => {
         createChatProvider: () => fakeProvider,
       } as unknown as IProtocolAdapterRegistry;
       const catalog = new ModelCatalog(
-        config,
-        host.app.accessor.get(IProviderService),
-        host.app.accessor.get(IModelService),
-        host.app.accessor.get(IOAuthService),
+        providers,
+        models,
+        stubModelOAuthTokens(),
         registry,
         new HostRequestHeaders({}),
       );
@@ -1199,16 +1217,12 @@ describe('ModelCatalog enumeration', () => {
   });
 
   it('marks an OAuth provider connected when a cached token exists', async () => {
-    const oauth = {
-      ...stubOAuthService(),
-      getCachedAccessToken: async () => 'cached-token',
-    } as unknown as IOAuthService;
     const { host, catalog } = createHost(
       {
         providers: { acme: { type: 'kimi', oauth: { storage: 'file', key: 'oauth/acme' } } },
         models: {},
       },
-      oauth,
+      stubModelOAuthTokens(undefined, 'cached-token'),
     );
     try {
       const [provider] = await catalog.listProviders();
@@ -1238,8 +1252,8 @@ describe('ModelCatalog enumeration', () => {
 });
 
 describe('ModelCatalog setDefaultModel', () => {
-  it('persists through config and returns the wire model', async () => {
-    const { host, config, catalog } = createHost(catalogSections);
+  it('moves the registry default pointer and returns the wire model', async () => {
+    const { host, models, catalog } = createHost(catalogSections);
     try {
       await expect(catalog.setDefaultModel('turbo')).resolves.toEqual({
         default_model: 'turbo',
@@ -1250,7 +1264,9 @@ describe('ModelCatalog setDefaultModel', () => {
           max_context_size: 32768,
         },
       });
-      expect(config.get<string>('defaultModel')).toBe('turbo');
+      // The catalog writes the in-memory pointer; persisting it to config is
+      // the app/kosongConfig bridge's job.
+      expect(models.getDefaultModel()).toBe('turbo');
     } finally {
       host.dispose();
     }
@@ -1268,7 +1284,7 @@ describe('ModelCatalog setDefaultModel', () => {
   });
 
   it('rejects a model that fails materialization', async () => {
-    const { host, config, catalog } = createHost({
+    const { host, models, catalog } = createHost({
       providers: {},
       models: {
         bad: {
@@ -1281,7 +1297,7 @@ describe('ModelCatalog setDefaultModel', () => {
     });
     try {
       await expect(catalog.setDefaultModel('bad')).rejects.toThrow();
-      expect(config.get('defaultModel')).toBeUndefined();
+      expect(models.getDefaultModel()).toBeUndefined();
     } finally {
       host.dispose();
     }

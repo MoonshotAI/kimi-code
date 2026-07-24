@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
+import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/transcript';
 
 import { eventSchema } from './events-zod';
 
@@ -107,10 +108,21 @@ export const agentFilterSchema = z.record(z.string(), z.array(z.string()).min(1)
 
 export type AgentFilter = z.infer<typeof agentFilterSchema>;
 
+/**
+ * `client_hello` is the handshake: only `client_id` is required. The
+ * subscription fields below are legacy compatibility — new clients send just
+ * `client_id` here and use `subscribe` frames (which carry the same
+ * per-session cursors / agent allowlist).
+ * @deprecated Inline subscriptions on `client_hello` are kept for older
+ * clients; prefer `subscribe`.
+ */
 export const clientHelloPayloadSchema = z.object({
   client_id: z.string(),
-  subscriptions: z.array(z.string()),
+  /** @deprecated Legacy inline subscriptions — use `subscribe` instead. */
+  subscriptions: z.array(z.string()).optional(),
+  /** @deprecated Legacy inline replay cursors — use `subscribe` instead. */
   cursors: cursorsBySessionSchema.optional(),
+  /** @deprecated Legacy inline agent allowlist — use `subscribe` instead. */
   agent_filter: agentFilterSchema.optional(),
 });
 
@@ -153,6 +165,44 @@ export const subscribeMessageSchema = z.object({
 
 export type SubscribeMessage = z.infer<typeof subscribeMessageSchema>;
 
+/**
+ * `subscribe_v2` — the transcript subscription channel. Owns ONLY the
+ * per-agent transcript grades (and the optional op-batch seq cursor) for one
+ * session; legacy event subscription stays on `client_hello` / `subscribe`.
+ * The grade/seq schemas are owned by `@moonshot-ai/transcript`.
+ */
+export const subscribeV2PayloadSchema = z.object({
+  session_id: z.string().min(1),
+  transcript: transcriptGradeSpecSchema,
+  transcript_since: z.record(z.string(), transcriptSeqSchema).optional(),
+});
+
+export const subscribeV2MessageSchema = z.object({
+  type: z.literal('subscribe_v2'),
+  id: z.string(),
+  payload: subscribeV2PayloadSchema,
+});
+
+export type SubscribeV2Message = z.infer<typeof subscribeV2MessageSchema>;
+
+/**
+ * `unsubscribe_v2` — the agent-grained counterpart of `subscribe_v2`:
+ * detaches the listed agents' transcript streams (`agent_ids` absent = the
+ * whole session's stream) without touching the legacy event subscription.
+ */
+export const unsubscribeV2PayloadSchema = z.object({
+  session_id: z.string().min(1),
+  agent_ids: z.array(z.string().min(1)).min(1).optional(),
+});
+
+export const unsubscribeV2MessageSchema = z.object({
+  type: z.literal('unsubscribe_v2'),
+  id: z.string(),
+  payload: unsubscribeV2PayloadSchema,
+});
+
+export type UnsubscribeV2Message = z.infer<typeof unsubscribeV2MessageSchema>;
+
 export const subscribeAckPayloadSchema = z.object({
   accepted: z.array(z.string()),
   not_found: z.array(z.string()),
@@ -162,6 +212,10 @@ export const subscribeAckPayloadSchema = z.object({
 });
 
 export const subscribeAckMessageSchema = wsAckEnvelopeSchema(subscribeAckPayloadSchema);
+
+export const subscribeV2AckMessageSchema = wsAckEnvelopeSchema(subscribeAckPayloadSchema);
+
+export const unsubscribeV2AckMessageSchema = wsAckEnvelopeSchema(subscribeAckPayloadSchema);
 
 export const unsubscribePayloadSchema = z.object({
   session_ids: z.array(z.string()),
@@ -460,7 +514,9 @@ export type TerminalExitMessage = z.infer<typeof terminalExitMessageSchema>;
 export const clientControlMessageSchema = z.discriminatedUnion('type', [
   clientHelloMessageSchema,
   subscribeMessageSchema,
+  subscribeV2MessageSchema,
   unsubscribeMessageSchema,
+  unsubscribeV2MessageSchema,
   watchFsAddMessageSchema,
   watchFsRemoveMessageSchema,
   abortMessageSchema,
@@ -512,6 +568,24 @@ export const clientControlOperations = [
     messageSchema: subscribeMessageSchema,
     ackSchema: subscribeAckMessageSchema,
     description: 'Subscribe the connection to one or more session event streams.',
+  },
+  {
+    type: 'subscribe_v2',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: subscribeV2MessageSchema,
+    ackSchema: subscribeV2AckMessageSchema,
+    description:
+      "Attach or update this connection's per-agent transcript grade stream for one session.",
+  },
+  {
+    type: 'unsubscribe_v2',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: unsubscribeV2MessageSchema,
+    ackSchema: unsubscribeV2AckMessageSchema,
+    description:
+      "Detach this connection's transcript grade stream for one session, optionally per agent.",
   },
   {
     type: 'unsubscribe',

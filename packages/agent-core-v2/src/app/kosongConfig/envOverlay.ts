@@ -1,18 +1,18 @@
 /**
- * `kosong/model` domain (L2) — `KIMI_MODEL_*` effective-config overlay.
+ * `kosongConfig` domain (L3) — `KIMI_MODEL_*` effective-config overlay.
  *
  * When `KIMI_MODEL_NAME` is set, synthesizes one model id (bound to the
- * reserved `__kimi_env__` provider owned by the `provider` domain) from the
+ * reserved `__kimi_env__` provider whose schema kosong owns) from the
  * `KIMI_MODEL_*` environment variables and overlays it onto the resolved
  * `effective` config: the reserved model entry, `defaultModel`, and the request
  * `modelOverrides`. The overlay is applied ONLY to the in-memory `effective`
  * view; its `strip` removes the synthesized values on the write path so they
  * never reach `config.toml`. Self-registered into `IConfigRegistry` at module
  * load (see `configOverlayContributions.ts`), so the `config` domain never
- * imports this domain's model semantics, and so the overlay takes effect even
- * when `ModelService` is never instantiated.
+ * imports kosong semantics, and so the overlay takes effect even when the
+ * kosong registry services are never instantiated.
  *
- * The env provider's default `baseUrl` is resolved through the
+ * The env provider's default `baseUrl` is resolved through kosong's
  * provider-definition registry (`resolveProviderEndpoint` against the same
  * env the overlay reads), not from a hardcoded vendor table — for Kimi that
  * is the `KIMI_BASE_URL` → `https://api.moonshot.ai/v1` chain declared by the
@@ -22,11 +22,12 @@
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { Error2 } from '#/_base/errors/errors';
 
-import type { ConfigEffectiveOverlay } from '../../app/config/config';
-import { registerConfigOverlay } from '../../app/config/configOverlayContributions';
-import { ConfigErrors } from '../../app/config/errors';
-import { ENV_MODEL_PROVIDER_KEY } from '../provider/provider';
-import { resolveProviderEndpoint } from '../provider/providerDefinition';
+import type { ConfigEffectiveOverlay } from '#/app/config/config';
+import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
+import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
+import { resolveProviderEndpoint } from '#/kosong/provider/providerDefinition';
+
+import { ENV_MODEL_PROVIDER_KEY } from './configSection';
 
 export const ENV_MODEL_ALIAS_KEY = '__kimi_env_model__';
 
@@ -40,7 +41,7 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 function fail(message: string): never {
-  throw new Error2(ConfigErrors.codes.CONFIG_INVALID, message);
+  throw new Error2(CONFIG_INVALID_ERROR_CODE, message);
 }
 
 function parsePositiveInt(raw: string, varName: string): number {
@@ -141,9 +142,9 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
 
     const maxOutputRaw = trimmed(getEnv('KIMI_MODEL_MAX_OUTPUT_SIZE'));
     const maxOutputSize =
-      maxOutputRaw !== undefined
-        ? parsePositiveInt(maxOutputRaw, 'KIMI_MODEL_MAX_OUTPUT_SIZE')
-        : undefined;
+      maxOutputRaw === undefined
+        ? undefined
+        : parsePositiveInt(maxOutputRaw, 'KIMI_MODEL_MAX_OUTPUT_SIZE');
     const capabilities = parseCapabilities(getEnv('KIMI_MODEL_CAPABILITIES')) ?? DEFAULT_CAPABILITIES;
     const displayName = trimmed(getEnv('KIMI_MODEL_DISPLAY_NAME'));
     const reasoningKey = trimmed(getEnv('KIMI_MODEL_REASONING_KEY'));

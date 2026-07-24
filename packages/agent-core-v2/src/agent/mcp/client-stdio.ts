@@ -20,6 +20,7 @@ import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 export interface StdioMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
+  readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   readonly defaultCwd?: string;
 }
@@ -29,6 +30,7 @@ const STDERR_BUFFER_CAPACITY = 4 * 1024;
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
   private readonly transport: StdioClientTransport;
+  private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
   private started = false;
@@ -38,7 +40,6 @@ export class StdioMcpClient implements MCPClient {
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
   private lastTransportError: Error | undefined;
   private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
-  private unexpectedCloseFired = false;
 
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
@@ -60,10 +61,11 @@ export class StdioMcpClient implements MCPClient {
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
     });
+    this.startupTimeoutMs = options.startupTimeoutMs;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
 
-  async connect(signal?: AbortSignal): Promise<void> {
+  async connect(): Promise<void> {
     if (this.closed) {
       throw new Error('MCP stdio client is closed');
     }
@@ -71,7 +73,10 @@ export class StdioMcpClient implements MCPClient {
     this.started = true;
     this.installTransportHooks();
     try {
-      await this.client.connect(this.transport, signal ? { signal } : undefined);
+      await this.client.connect(
+        this.transport,
+        buildRequestOptions(this.startupTimeoutMs, undefined),
+      );
     } catch (error) {
       await this.closeStartedClient();
       throw error;
@@ -102,8 +107,11 @@ export class StdioMcpClient implements MCPClient {
     return this.stderrBuffer.snapshot();
   }
 
-  async listTools(signal?: AbortSignal): Promise<MCPToolDefinition[]> {
-    const result = await this.client.listTools(undefined, signal ? { signal } : undefined);
+  async listTools(): Promise<MCPToolDefinition[]> {
+    const result = await this.client.listTools(
+      undefined,
+      buildRequestOptions(this.startupTimeoutMs, undefined),
+    );
     return result.tools.map(toMcpToolDefinition);
   }
 
@@ -124,8 +132,6 @@ export class StdioMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
-    this.client.onclose = undefined;
-    this.client.onerror = undefined;
     await this.client.close();
   }
 
@@ -136,52 +142,36 @@ export class StdioMcpClient implements MCPClient {
       if (this.closed) return;
       if (!this.ready) return;
       const stderr = this.stderrBuffer.snapshot();
-      this.fireUnexpectedClose({
+      const reason: UnexpectedCloseReason = {
         error: this.lastTransportError,
         stderr: stderr.length > 0 ? stderr : undefined,
-      });
+      };
+      const listener = this.unexpectedCloseListener;
+      if (listener !== undefined) {
+        listener(reason);
+      } else {
+        this.pendingUnexpectedClose = reason;
+      }
     };
     this.client.onerror = (error) => {
       this.lastTransportError = error;
     };
   }
-
-  private fireUnexpectedClose(reason: UnexpectedCloseReason): void {
-    if (this.unexpectedCloseFired) return;
-    this.unexpectedCloseFired = true;
-    const listener = this.unexpectedCloseListener;
-    if (listener !== undefined) {
-      listener(reason);
-    } else {
-      this.pendingUnexpectedClose = reason;
-    }
-  }
 }
 
 class BoundedTail {
-  private chunks: string[] = [];
-  private total = 0;
-  private cached: string | undefined;
+  private buffer = '';
   constructor(private readonly capacity: number) {}
 
   push(chunk: string): void {
-    this.chunks.push(chunk);
-    this.total += chunk.length;
-    while (this.total > this.capacity && this.chunks.length > 1) {
-      const dropped = this.chunks.shift()!;
-      this.total -= dropped.length;
+    this.buffer += chunk;
+    if (this.buffer.length > this.capacity) {
+      this.buffer = this.buffer.slice(this.buffer.length - this.capacity);
     }
-    if (this.total > this.capacity) {
-      const overflow = this.total - this.capacity;
-      this.chunks[0] = this.chunks[0]!.slice(overflow);
-      this.total = this.capacity;
-    }
-    this.cached = undefined;
   }
 
   snapshot(): string {
-    if (this.cached === undefined) this.cached = this.chunks.join('');
-    return this.cached;
+    return this.buffer;
   }
 }
 
@@ -191,58 +181,13 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
   return configCwd;
 }
 
-/**
- * Allowlist of parent-process environment variables that are propagated
- * to spawned MCP stdio servers. Everything else is dropped unless the
- * server config explicitly declares it via ``env`` — this prevents
- * leaking cloud credentials, database URLs, signing keys, and other
- * secrets from the user's shell into untrusted MCP servers installed
- * via ``.mcp.json``.
- *
- * The list intentionally mirrors what a generic child process needs to
- * run: shell/PATH lookup, locale, terminal, and OS identity. Anything
- * service-specific (AWS_*, GITHUB_*, DATABASE_URL, …) must be declared
- * explicitly in the server config.
- */
-const ALLOWED_PARENT_ENV_KEYS = new Set<string>([
-  'PATH',
-  'PATHEXT',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'TERM',
-  'TERM_PROGRAM',
-  'TERM_PROGRAM_VERSION',
-  'TZ',
-  'SYSTEMROOT',
-  'WINDIR',
-  'APPDATA',
-  'LOCALAPPDATA',
-  'PROGRAMDATA',
-  'COMSPEC',
-  'TEMP',
-  'TMP',
-  'TMPDIR',
-  'XDG_CONFIG_HOME',
-  'XDG_DATA_HOME',
-  'XDG_CACHE_HOME',
-]);
-
-function isAllowedParentEnvKey(key: string): boolean {
-  return ALLOWED_PARENT_ENV_KEYS.has(key.toUpperCase());
-}
-
 export function mergeStdioEnv(
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
-    if (value !== undefined && isAllowedParentEnvKey(key)) merged[key] = value;
+    if (value !== undefined) merged[key] = value;
   }
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));
