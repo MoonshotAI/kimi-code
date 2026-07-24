@@ -11,13 +11,15 @@ import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
-import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
+import { CODE_FONT_CANDIDATES, UI_FONT_CANDIDATES, installedCandidates } from '../../lib/fontCandidates';
+import type { Accent, CodeFontFamily, ColorScheme, UiFontFamily } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
 import Button from '../ui/Button.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 import Select from '../ui/Select.vue';
+import Input from '../ui/Input.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
@@ -26,6 +28,10 @@ const props = defineProps<{
   colorScheme: ColorScheme;
   accent: Accent;
   uiFontSize: number;
+  uiFontFamily: UiFontFamily;
+  uiCustomFont: string;
+  codeFontFamily: CodeFontFamily;
+  codeCustomFont: string;
   authReady: boolean;
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
@@ -56,6 +62,10 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
   setUiFontSize: [size: number];
+  setUiFontFamily: [font: UiFontFamily];
+  setUiCustomFont: [name: string];
+  setCodeFontFamily: [font: CodeFontFamily];
+  setCodeCustomFont: [name: string];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
   setNotifyApproval: [on: boolean];
@@ -72,6 +82,49 @@ const emit = defineEmits<{
 type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
+
+// Custom font dropdowns: the browser cannot enumerate installed fonts, so the
+// select probes a curated candidate list (lib/fontCandidates) and offers the
+// installed ones; the last option reveals a free-text input for unlisted
+// faces. A stored name that is not detected is kept as a select option so the
+// current value always renders.
+const MANUAL_FONT_VALUE = '__manual__';
+
+const uiFontManual = ref(false);
+const codeFontManual = ref(false);
+
+const uiFontOptions = computed<string[]>(() => {
+  const installed = installedCandidates(UI_FONT_CANDIDATES);
+  const current = props.uiCustomFont.trim();
+  return current !== '' && !installed.includes(current) ? [current, ...installed] : installed;
+});
+
+const codeFontOptions = computed<string[]>(() => {
+  const installed = installedCandidates(CODE_FONT_CANDIDATES);
+  const current = props.codeCustomFont.trim();
+  return current !== '' && !installed.includes(current) ? [current, ...installed] : installed;
+});
+
+const uiFontSelectValue = computed(() => (uiFontManual.value ? MANUAL_FONT_VALUE : props.uiCustomFont));
+const codeFontSelectValue = computed(() => (codeFontManual.value ? MANUAL_FONT_VALUE : props.codeCustomFont));
+
+function onUiFontSelect(value: string): void {
+  if (value === MANUAL_FONT_VALUE) {
+    uiFontManual.value = true;
+    return;
+  }
+  uiFontManual.value = false;
+  emit('setUiCustomFont', value);
+}
+
+function onCodeFontSelect(value: string): void {
+  if (value === MANUAL_FONT_VALUE) {
+    codeFontManual.value = true;
+    return;
+  }
+  codeFontManual.value = false;
+  emit('setCodeCustomFont', value);
+}
 
 const tabs: { id: SettingsTab; labelKey: string }[] = [
   { id: 'general', labelKey: 'settings.tabs.general' },
@@ -381,6 +434,93 @@ function archiveTime(iso: string): string {
                 />
                 <span class="num-unit">px</span>
               </label>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('theme.fontLabel') }}</span>
+              <SegmentedControl
+                :model-value="uiFontFamily"
+                :options="[
+                  { value: 'default', label: t('theme.fontDefault') },
+                  { value: 'system', label: t('theme.fontSystem') },
+                  { value: 'serif', label: t('theme.fontSerif') },
+                  { value: 'custom', label: t('theme.fontCustom') },
+                ]"
+                @update:model-value="emit('setUiFontFamily', $event as UiFontFamily)"
+              />
+            </div>
+            <div v-if="uiFontFamily === 'custom'" class="row">
+              <span class="rlabel">
+                {{ t('theme.fontCustomLabel') }}
+                <span class="hint">{{ t('theme.fontCustomHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Select
+                  :model-value="uiFontSelectValue"
+                  :aria-label="t('theme.fontCustomLabel')"
+                  @update:model-value="onUiFontSelect"
+                >
+                  <option value="" disabled>{{ t('theme.fontCustomSelect') }}</option>
+                  <option v-for="name in uiFontOptions" :key="name" :value="name">{{ name }}</option>
+                  <option :value="MANUAL_FONT_VALUE">{{ t('theme.fontCustomManual') }}</option>
+                </Select>
+              </div>
+            </div>
+            <div v-if="uiFontFamily === 'custom' && uiFontManual" class="row">
+              <span class="rlabel">
+                {{ t('theme.fontCustomManualLabel') }}
+                <span class="hint">{{ t('theme.fontCustomManualHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Input
+                  :model-value="uiCustomFont"
+                  :placeholder="t('theme.fontCustomPlaceholder')"
+                  :aria-label="t('theme.fontCustomManualLabel')"
+                  @update:model-value="emit('setUiCustomFont', $event)"
+                />
+              </div>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('theme.codeFontLabel') }}</span>
+              <SegmentedControl
+                :model-value="codeFontFamily"
+                :options="[
+                  { value: 'default', label: t('theme.fontDefault') },
+                  { value: 'system', label: t('theme.fontSystem') },
+                  { value: 'custom', label: t('theme.fontCustom') },
+                ]"
+                @update:model-value="emit('setCodeFontFamily', $event as CodeFontFamily)"
+              />
+            </div>
+            <div v-if="codeFontFamily === 'custom'" class="row">
+              <span class="rlabel">
+                {{ t('theme.codeFontCustomLabel') }}
+                <span class="hint">{{ t('theme.fontCustomHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Select
+                  :model-value="codeFontSelectValue"
+                  :aria-label="t('theme.codeFontCustomLabel')"
+                  @update:model-value="onCodeFontSelect"
+                >
+                  <option value="" disabled>{{ t('theme.fontCustomSelect') }}</option>
+                  <option v-for="name in codeFontOptions" :key="name" :value="name">{{ name }}</option>
+                  <option :value="MANUAL_FONT_VALUE">{{ t('theme.fontCustomManual') }}</option>
+                </Select>
+              </div>
+            </div>
+            <div v-if="codeFontFamily === 'custom' && codeFontManual" class="row">
+              <span class="rlabel">
+                {{ t('theme.fontCustomManualLabel') }}
+                <span class="hint">{{ t('theme.fontCustomManualHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Input
+                  :model-value="codeCustomFont"
+                  :placeholder="t('theme.fontCustomPlaceholder')"
+                  :aria-label="t('theme.fontCustomManualLabel')"
+                  @update:model-value="emit('setCodeCustomFont', $event)"
+                />
+              </div>
             </div>
             <div class="row">
               <span class="rlabel">{{ t('sidebar.language') }}</span>

@@ -1,11 +1,12 @@
 // apps/kimi-web/src/composables/client/useAppearance.ts
-// Appearance preferences (color scheme / accent / UI font size) and the
-// streaming "fast moon" spinner state. Pure local UI state: only touches
-// storage + the DOM, never rawState or the API. The values are module-level
-// singletons so the whole app shares one instance.
+// Appearance preferences (color scheme / accent / UI font size / UI & code
+// font family) and the streaming "fast moon" spinner state. Pure local UI
+// state: only touches storage + the DOM, never rawState or the API. The values
+// are module-level singletons so the whole app shares one instance.
 
 import { ref, watch } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { toFontFamilyList } from '../../lib/customFont';
 
 /** Color scheme: 'light', 'dark', or follow the OS preference ('system'). */
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -13,8 +14,26 @@ export type ColorScheme = 'light' | 'dark' | 'system';
 /** Accent: 'blue' (Kimi blue, default) or 'mono' (black/white). */
 export type Accent = 'blue' | 'mono';
 
+/**
+ * UI font family: 'default' (Inter-first stack), 'system' (platform UI
+ * stack), 'serif' (reading-oriented serif stack), or 'custom' (user-provided
+ * locally installed font names). Mirrored onto
+ * <html data-ui-font-family>; CSS remaps --font-ui for the non-default values.
+ */
+export type UiFontFamily = 'default' | 'system' | 'serif' | 'custom';
+
+/**
+ * Code font family: 'default' (JetBrains Mono-first stack), 'system'
+ * (platform monospace stack), or 'custom' (user-provided locally installed
+ * font names). Mirrored onto <html data-code-font-family>; CSS remaps
+ * --font-mono for the non-default values.
+ */
+export type CodeFontFamily = 'default' | 'system' | 'custom';
+
 const ACCENT_VALUES: readonly string[] = ['blue', 'mono'];
 const COLOR_SCHEME_VALUES: readonly string[] = ['light', 'dark', 'system'];
+const UI_FONT_FAMILY_VALUES: readonly string[] = ['default', 'system', 'serif', 'custom'];
+const CODE_FONT_FAMILY_VALUES: readonly string[] = ['default', 'system', 'custom'];
 const UI_FONT_SIZE_DEFAULT = 14;
 const UI_FONT_SIZE_MIN = 12;
 const UI_FONT_SIZE_MAX = 20;
@@ -66,13 +85,60 @@ function applyUiFontSize(value: number): void {
   document.documentElement.style.setProperty('--base-ui-font-size', `${clampUiFontSize(value)}px`);
 }
 
+function loadUiFontFamily(): UiFontFamily {
+  const v = safeGetString(STORAGE_KEYS.uiFontFamily);
+  if (v && UI_FONT_FAMILY_VALUES.includes(v)) return v as UiFontFamily;
+  return 'default';
+}
+
+function applyUiFontFamily(f: UiFontFamily): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.uiFontFamily = f;
+}
+
+function loadCodeFontFamily(): CodeFontFamily {
+  const v = safeGetString(STORAGE_KEYS.codeFontFamily);
+  if (v && CODE_FONT_FAMILY_VALUES.includes(v)) return v as CodeFontFamily;
+  return 'default';
+}
+
+function applyCodeFontFamily(f: CodeFontFamily): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.codeFontFamily = f;
+}
+
+// Custom font names are stored raw (so the input field round-trips what the
+// user typed) and sanitized into a CSS font-family list only when written to
+// the custom property. The matching default stack is appended so a typo'd or
+// uninstalled name degrades to the default face instead of the browser's
+// generic fallback. An empty/unusable value removes the property so the CSS
+// fallback chain takes over.
+function applyCustomFontProperty(property: string, fallbackProperty: string, rawName: string): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  const list = toFontFamilyList(rawName);
+  if (list) document.documentElement.style.setProperty(property, `${list}, var(${fallbackProperty})`);
+  else document.documentElement.style.removeProperty(property);
+}
+
 const colorScheme = ref<ColorScheme>(loadColorScheme());
 const accent = ref<Accent>(loadAccent());
 const uiFontSize = ref<number>(loadUiFontSize());
+const uiFontFamily = ref<UiFontFamily>(loadUiFontFamily());
+const uiCustomFont = ref<string>(safeGetString(STORAGE_KEYS.uiCustomFont) ?? '');
+const codeFontFamily = ref<CodeFontFamily>(loadCodeFontFamily());
+const codeCustomFont = ref<string>(safeGetString(STORAGE_KEYS.codeCustomFont) ?? '');
 
 watch(colorScheme, applyColorScheme, { immediate: true });
 watch(accent, applyAccent, { immediate: true });
 watch(uiFontSize, applyUiFontSize, { immediate: true });
+watch(uiFontFamily, applyUiFontFamily, { immediate: true });
+watch(uiCustomFont, (name) => applyCustomFontProperty('--font-ui-custom', '--font-ui-default', name), {
+  immediate: true,
+});
+watch(codeFontFamily, applyCodeFontFamily, { immediate: true });
+watch(codeCustomFont, (name) => applyCustomFontProperty('--font-mono-custom', '--font-mono-default', name), {
+  immediate: true,
+});
 
 function setColorScheme(c: ColorScheme): void {
   if (!COLOR_SCHEME_VALUES.includes(c)) return;
@@ -90,6 +156,28 @@ function setUiFontSize(value: number): void {
   const next = clampUiFontSize(value);
   uiFontSize.value = next;
   safeSetString(STORAGE_KEYS.uiFontSize, String(next));
+}
+
+function setUiFontFamily(f: UiFontFamily): void {
+  if (!UI_FONT_FAMILY_VALUES.includes(f)) return;
+  uiFontFamily.value = f;
+  safeSetString(STORAGE_KEYS.uiFontFamily, f);
+}
+
+function setUiCustomFont(name: string): void {
+  uiCustomFont.value = name;
+  safeSetString(STORAGE_KEYS.uiCustomFont, name);
+}
+
+function setCodeFontFamily(f: CodeFontFamily): void {
+  if (!CODE_FONT_FAMILY_VALUES.includes(f)) return;
+  codeFontFamily.value = f;
+  safeSetString(STORAGE_KEYS.codeFontFamily, f);
+}
+
+function setCodeCustomFont(name: string): void {
+  codeCustomFont.value = name;
+  safeSetString(STORAGE_KEYS.codeCustomFont, name);
 }
 
 // CSS handles the moon frames; this only flips the spinner between normal and
@@ -150,10 +238,18 @@ export function useAppearance() {
     colorScheme,
     accent,
     uiFontSize,
+    uiFontFamily,
+    uiCustomFont,
+    codeFontFamily,
+    codeCustomFont,
     fastMoon,
     setColorScheme,
     setAccent,
     setUiFontSize,
+    setUiFontFamily,
+    setUiCustomFont,
+    setCodeFontFamily,
+    setCodeCustomFont,
     resetFastMoon,
     recordMoonDelta,
   };

@@ -117,7 +117,7 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
 // existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
 // callers keep working.
-export type { Accent, ColorScheme } from './client/useAppearance';
+export type { Accent, ColorScheme, CodeFontFamily, UiFontFamily } from './client/useAppearance';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
@@ -2828,6 +2828,14 @@ export function useKimiWebClient() {
 
     uiFontSize: appearance.uiFontSize,
     setUiFontSize: appearance.setUiFontSize,
+    uiFontFamily: appearance.uiFontFamily,
+    setUiFontFamily: appearance.setUiFontFamily,
+    uiCustomFont: appearance.uiCustomFont,
+    setUiCustomFont: appearance.setUiCustomFont,
+    codeFontFamily: appearance.codeFontFamily,
+    setCodeFontFamily: appearance.setCodeFontFamily,
+    codeCustomFont: appearance.codeCustomFont,
+    setCodeCustomFont: appearance.setCodeCustomFont,
 
     // Conversation outline (TOC)
     conversationToc,
