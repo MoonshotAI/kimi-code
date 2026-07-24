@@ -136,6 +136,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       yolo: false,
       auto: false,
       plan: false,
+      swarm: false,
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,

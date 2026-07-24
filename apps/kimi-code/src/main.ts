@@ -126,6 +126,7 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
   yolo: false,
   auto: false,
   plan: false,
+  swarm: false,
   model: undefined,
   outputFormat: undefined,
   prompt: undefined,
