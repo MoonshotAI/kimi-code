@@ -163,6 +163,7 @@ export * from '#/app/agentFileCatalog/configSection';
 export * from '#/app/agentFileCatalog/agentProfileSource';
 export * from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
 export * from '#/app/agentFileCatalog/userFileAgentSource';
+export * from '#/app/hostIdentity/hostIdentity';
 export * from '#/app/plugin/types';
 export * from '#/app/plugin/commands';
 export * from '#/app/plugin/manifest';

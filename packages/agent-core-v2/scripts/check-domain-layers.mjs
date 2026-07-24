@@ -153,6 +153,7 @@ const DOMAIN_LAYER = new Map([
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
   ['agentFileCatalog', 3],
+  ['hostIdentity', 3],
   // L4 — agent behaviour
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no
