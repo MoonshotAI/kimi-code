@@ -26,13 +26,15 @@ import DESCRIPTION from './fetch-url.md?raw';
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM, or a description when the result is an image. */
   content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
+  /** Whether `content` is a verbatim passthrough, extracted main text, or an image. */
   kind: UrlFetchKind;
+  /** When the fetched URL is an image, the image data as a base64 data URL. */
+  imageUrl?: string;
 }
 
 export interface UrlFetcher {
@@ -89,7 +91,19 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, imageUrl } = await this.fetcher.fetch(args.url, { toolCallId });
+
+      // When the fetcher returns an image, emit it as an image_url content part
+      // so the model can see it directly.
+      if (kind === 'image' && imageUrl !== undefined) {
+        return {
+          isError: false,
+          output: [
+            { type: 'text', text: content },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        };
+      }
 
       if (!content) {
         return {

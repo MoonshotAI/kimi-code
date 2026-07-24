@@ -27,6 +27,10 @@ import { Agent, type Dispatcher } from 'undici';
 
 import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '../../utils/proxy';
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../builtin';
+import {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  normalizeImageMime,
+} from '../../tools/support/image-format-policy';
 
 // Readability's .d.ts references the global `Document` type, but this
 // package compiles with `lib: ES2023` (no DOM). Extracting the
@@ -253,6 +257,27 @@ export class LocalFetchURLProvider implements UrlFetcher {
       }
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    // Handle accepted image formats directly — convert to base64 data URL
+    // so the model can view them inline.
+    const normalizedMime = normalizeImageMime(contentType);
+    if (MODEL_ACCEPTED_IMAGE_MIMES.has(normalizedMime)) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(buffer.byteLength)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = Buffer.from(buffer).toString('base64');
+      const dataUrl = `data:${normalizedMime};base64,${base64}`;
+      return {
+        content: `Fetched image (${normalizedMime}).`,
+        kind: 'image',
+        imageUrl: dataUrl,
+      };
+    }
+
     const body = await response.text();
 
     // Servers may omit content-length — measure again defensively.
@@ -263,7 +288,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }

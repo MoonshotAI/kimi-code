@@ -21,6 +21,10 @@ import { parseHTML as rawParseHTML } from 'linkedom';
 import { Agent, type Dispatcher } from 'undici';
 
 import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '#/_base/utils/proxy';
+import {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  normalizeImageMime,
+} from '#/agent/media/image-format-policy';
 
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
@@ -109,6 +113,27 @@ export class LocalFetchURLProvider implements UrlFetcher {
       }
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    // Handle accepted image formats directly — convert to base64 data URL
+    // so the model can view them inline.
+    const normalizedMime = normalizeImageMime(contentType);
+    if (MODEL_ACCEPTED_IMAGE_MIMES.has(normalizedMime)) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(buffer.byteLength)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = Buffer.from(buffer).toString('base64');
+      const dataUrl = `data:${normalizedMime};base64,${base64}`;
+      return {
+        content: `Fetched image (${normalizedMime}).`,
+        kind: 'image',
+        imageUrl: dataUrl,
+      };
+    }
+
     const body = await response.text();
 
     const actualBytes = Buffer.byteLength(body, 'utf8');
@@ -118,7 +143,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }
