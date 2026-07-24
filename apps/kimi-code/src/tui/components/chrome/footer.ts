@@ -19,7 +19,6 @@ import {
   type ManagedUsageReport,
   type ManagedUsageRow,
 } from '#/tui/components/messages/usage-panel';
-import { isManagedUsageProvider } from '#/tui/constant/kimi-tui';
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
@@ -461,22 +460,20 @@ export class FooterComponent implements Component {
 
   /**
    * Keeps the plan-usage poller in sync with footer config and the active
-   * model/provider. Leaving the managed provider clears stale quota data
-   * immediately; switching models restarts the fetch for the new state.
+   * model/provider state. Changing either clears stale quota data immediately
+   * and starts a fresh request for the new state.
    */
   private syncPlanUsageTimer(config: FooterConfig): void {
-    const providerKey = this.state.availableModels[this.state.model]?.provider;
-    if (
-      !config.showPlanUsage ||
-      this.planUsageFetcher === null ||
-      !isManagedUsageProvider(providerKey)
-    ) {
+    if (!config.showPlanUsage || this.planUsageFetcher === null) {
       this.stopPlanUsageTimer();
       this.planUsageReport = null;
       return;
     }
 
-    const key = [String(config.planUsageRefreshSeconds), this.state.model, providerKey].join('\u0000');
+    const providerKey = this.state.availableModels[this.state.model]?.provider;
+    const key = [String(config.planUsageRefreshSeconds), this.state.model, providerKey ?? ''].join(
+      '\u0000',
+    );
     if (key === this.planUsageTimerKey) return;
     this.stopPlanUsageTimer();
     // Never render quota fetched for a previous model/provider while the new
