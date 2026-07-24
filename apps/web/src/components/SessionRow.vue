@@ -312,10 +312,10 @@ defineExpose({ closeMenu });
       </Tooltip>
 
       <!-- Trailing action slot: the relative time and the hover actions (pin +
-           kebab) share one grid cell and swap via `visibility` (never
-           display:none), so the slot width is identical in hover and rest. The
-           badges and title therefore don't reflow on hover — see design-system
-           §07 "Session row". -->
+           kebab) share one grid cell and cross-fade (opacity + visibility,
+           never display:none), so the slot width is identical in hover and
+           rest. The badges and title therefore don't reflow on hover — see
+           design-system §07 "Session row". -->
       <span class="act">
         <span class="ts">{{ session.time }}</span>
         <span v-if="!renaming" class="ha" :class="{ open: menuOpen && menuAnchor === 'kebab' }">
@@ -391,17 +391,19 @@ defineExpose({ closeMenu });
      --sb-pad-x + --sb-gutter + --sb-gap, exactly under the workspace name.
      The row is an inset pill: the .sessions container's --sb-inset padding +
      the row's own padding land the leading slot at --sb-pad-x, aligned with
-     the workspace header. */
+     the workspace header. --se-pad-x is the row's right padding as a var so
+     the hover cluster can anchor to it instead of a magic offset. */
+  --se-pad-x: var(--space-2);
   display: block;
   margin: 0;
-  padding: 8px var(--space-2);
+  padding: 8px var(--se-pad-x);
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   color: var(--color-text);
   cursor: pointer;
   position: relative;
 }
-.se:hover { background: var(--sb-hover, var(--color-surface-sunken)); color: var(--color-text); }
+.se:hover { background: var(--sb-hover, var(--color-hover)); color: var(--color-text); }
 /* Selected: neutral fill (NOT accent-tinted — selection reads as "where I
    am", the accent stays reserved for actions and status). */
 .se.on {
@@ -443,7 +445,13 @@ defineExpose({ closeMenu });
   background: var(--color-accent);
 }
 
+/* The title dissolves (mask-image fade) before it reaches the hover cluster —
+   no opaque plate behind the buttons. Zone-based: a 16px tail fade at rest
+   (text-overflow: clip), widening to a 34px transparent plateau on hover
+   (design-system §07 "Session row"). */
 .t {
+  --sb-fade: 0px;
+  --sb-fade-len: 16px;
   color: inherit;
   font-size: var(--ui-font-size-sm);
   font-weight: 450;
@@ -452,8 +460,15 @@ defineExpose({ closeMenu });
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
+}
+.se:hover .t,
+.se:has(.ha.open) .t {
+  --sb-fade: 34px;
+  --sb-fade-len: 26px;
 }
 
 .ts {
@@ -466,15 +481,18 @@ defineExpose({ closeMenu });
   text-align: right;
 }
 
-/* Trailing action slot: the relative time (in flow) sets the slot size; the
+/* Trailing action slot: the relative time (in flow) sets the slot width; the
    hover actions (pin + kebab) are absolutely positioned over it and swapped
-   via `visibility`, so they contribute neither height (the row stays
+   via a cross-fade, so they contribute neither height (the row stays
    font-driven) nor width changes (min-width reserves a button footprint, the
-   title doesn't reflow). The cluster carries the row's own background because
-   two buttons are wider than the reserved slot and overlap the title. */
+   title doesn't reflow). The slot stretches to the full row height so the
+   cluster centers against the row box itself — not against the time text's
+   line box, whose metrics would otherwise dictate the icon's vertical
+   position. */
 .act {
   position: relative;
   flex: none;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -482,37 +500,50 @@ defineExpose({ closeMenu });
      shifts between the time and the actions, even for short times like "2m". */
   min-width: 26px;
 }
+/* The cluster spans the slot's full (row) height and flex-centers the buttons,
+   so the icons' vertical center IS the row's geometric center, decoupled from
+   any text metrics. Anchored to the row's right padding token minus a 3px
+   inset — the same inset as the buttons' vertical one ((32px row − 26px
+   button) / 2) — so the cluster sits equidistant from the pill's right edge
+   and its top/bottom edges. */
 .act .ha {
   position: absolute;
-  /* Right inset 3px — matches the buttons' vertical inset ((32px row − 26px
-     button) / 2), so the cluster sits equidistant from the pill's right edge
-     and its top/bottom edges. The row's 8px right padding minus 5px lands it. */
-  right: -5px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  right: calc(3px - var(--se-pad-x));
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  opacity: 0;
   visibility: hidden;
   border-radius: var(--radius-sm);
-  /* Opaque background: the hover/selected washes are translucent by design
-     (they sit on any surface), so on their own the title bleeds through the
-     cluster. Layer the wash over the sidebar's opaque base — same resulting
-     color as the row underneath, but solid. */
-  background:
-    linear-gradient(var(--sb-hover, var(--color-surface-sunken)), var(--sb-hover, var(--color-surface-sunken))),
-    var(--color-sidebar-bg);
+  /* Hide path: fade out first, then flip visibility so the hidden cluster
+     stays inert; the show path overrides with an immediate visibility. */
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
 }
-.se.on .ha {
-  background:
-    linear-gradient(var(--sb-selected, var(--color-selected)), var(--sb-selected, var(--color-selected))),
-    var(--color-sidebar-bg);
-}
+/* The title dissolves (mask fade on .t) before it reaches the cluster, so the
+   cluster paints nothing — no plate, no wash — and the hover/selected washes
+   never have to be re-composited into a fake solid. */
 .se:hover .ha,
-.act:has(.ha.open) .ha { visibility: visible; }
+.act:has(.ha.open) .ha {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.act .ts {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
 .se:hover .act .ts,
-.act:has(.ha.open) .ts { visibility: hidden; }
-.kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-surface-sunken)); }
+.act:has(.ha.open) .ts {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+.kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-hover)); }
 
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
    is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
@@ -558,7 +589,7 @@ defineExpose({ closeMenu });
   font-size: var(--text-sm);
   color: var(--color-text);
   background: var(--color-bg);
-  border: 1px solid var(--color-accent);
+  border: 0.5px solid var(--color-accent);
   border-radius: var(--radius-xs);
   padding: 1px 4px;
   outline: none;
@@ -569,8 +600,10 @@ defineExpose({ closeMenu });
   margin: 0;
   border-radius: var(--radius-sm);
   /* Trim the row padding by the container inset so the title still starts at
-     the same x as the workspace name (whose header has no inset). */
-  padding: 8px calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
+     the same x as the workspace name (whose header has no inset). The hover
+     cluster's right anchoring follows the same var. */
+  --se-pad-x: calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
+  padding: 8px var(--se-pad-x);
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 .sessions .se .kebab { border-radius: var(--radius-sm); }

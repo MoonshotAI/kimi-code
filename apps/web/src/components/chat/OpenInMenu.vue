@@ -246,7 +246,7 @@ async function copyPath(): Promise<void> {
   display: inline-flex;
   align-items: center;
   flex: none;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg);

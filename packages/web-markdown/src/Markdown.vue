@@ -535,11 +535,14 @@ function copyDiff(code: string, idx: number) {
 /* Base prose — assistant message text. */
 .md {
   font: 400 var(--content-font-size)/1.6 var(--font-ui);
+  /* §03: MD body line-height is an integer px (size × 1.625), not a ratio. */
+  line-height: round(calc(var(--content-font-size) * 1.625), 1px);
   color: var(--color-text);
   word-break: break-word;
 }
 .md :deep(.markdown-renderer) {
   font: 400 var(--content-font-size)/1.6 var(--font-ui);
+  line-height: round(calc(var(--content-font-size) * 1.625), 1px);
   color: var(--color-text);
 }
 .md :deep(.markstream-vue),
@@ -577,13 +580,20 @@ function copyDiff(code: string, idx: number) {
   text-underline-offset: 1.5px;
 }
 /* Pin the prose text size explicitly. markstream sets no font-size of its own,
-   so without this the rendered <p>/<li> can pick up a different base size. */
+   so without this the rendered <p>/<li> can pick up a different base size.
+   It DOES set line-height on its .paragraph-node/.list-item-node wrappers
+   (a loose 1.75), so the §03 integer-px body leading is pinned here too —
+   size × 1.625 rounded to 1px, same as the container rule.
+   Quotes and tables are the §03 secondary level (--md-b2). */
 .md :deep(.markdown-renderer p),
-.md :deep(.markdown-renderer li),
+.md :deep(.markdown-renderer li) {
+  font-size: var(--content-font-size);
+  line-height: round(calc(var(--content-font-size) * 1.625), 1px);
+}
 .md :deep(.markdown-renderer blockquote),
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
-  font-size: var(--content-font-size);
+  font-size: var(--md-b2);
 }
 
 /* Themed surfaces swallow white-on-transparent (light) or black-on-transparent
@@ -598,7 +608,8 @@ function copyDiff(code: string, idx: number) {
   font-weight: var(--weight-semibold);
 }
 
-/* Headings */
+/* Headings — §03 MD group sizes with integer-px line heights (size × ratio).
+   h4 has no spec level: it takes the secondary-body size, muted. */
 .md :deep(h1),
 .md :deep(h2),
 .md :deep(h3),
@@ -607,35 +618,123 @@ function copyDiff(code: string, idx: number) {
   font-optical-sizing: auto;
   font-weight: 600;
   margin: 0.85em 0 0.35em;
-  line-height: var(--leading-tight);
 }
-.md :deep(h1) { font-size: max(var(--text-xl), calc(var(--content-font-size) + 3px)); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 2px)); }
-.md :deep(h3) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 1px)); }
-.md :deep(h4) { font-size: max(var(--text-base), calc(var(--content-font-size) + 1px)); color: var(--color-text-muted); }
+.md :deep(h1) { font-size: var(--md-h1); line-height: round(calc(var(--md-h1) * 1.63), 1px); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: var(--md-h2); line-height: round(calc(var(--md-h2) * 1.60), 1px); }
+.md :deep(h3) { font-size: var(--md-h3); line-height: round(calc(var(--md-h3) * 1.56), 1px); }
+.md :deep(h4) { font-size: var(--md-b2); line-height: round(calc(var(--md-b2) * 1.60), 1px); color: var(--color-text-muted); }
 
-/* Paragraphs */
+/* Paragraphs — carry no margin of their own: inter-block spacing (including
+   between consecutive paragraphs) is owned by the .node-slot gap below, so a
+   paragraph pair always lands at exactly 1u regardless of font-scale step.
+   (The old 0.8rem was pinned to the root 16px and never scaled.) */
 .md :deep(p) {
-  margin: 0.8rem 0;
+  margin: 0;
 }
 
-/* Spacing between top-level content blocks — markstream wraps each one
-   (paragraph, list, heading, code block, …) in a `.node-slot`. Set to the
-   largest inner block margin (0.8rem) so it collapses evenly into a uniform gap
-   regardless of block type; going lower would let the inner margins take over
-   and make spacing uneven. */
+/* ---------------------------------------------------------------------------
+   Block spacing — Figma "After" markdown spec, expressed in u = body font
+   size (--content-font-size) so every font-scale step scales
+   proportionally (spec was measured at u=16): default block gap 1u (16px),
+   h1/h2 blocks 2u (32px), h3/h4 blocks 1.5u (24px), first block 0.
+   markstream wraps every top-level block in a plain-block .node-slot, so
+   margins collapse through it: smaller inner margins (heading 0.85em, code
+   block 0.6em) never exceed the slot gap, they just merge into it.
+--------------------------------------------------------------------------- */
 .md :deep(.node-slot + .node-slot) {
-  margin-top: 0.8rem;
+  margin-top: var(--content-font-size);
+}
+.md :deep(.node-slot + .node-slot:has(h1)),
+.md :deep(.node-slot + .node-slot:has(h2)) {
+  margin-top: calc(var(--content-font-size) * 2);
+}
+.md :deep(.node-slot + .node-slot:has(h3)),
+.md :deep(.node-slot + .node-slot:has(h4)) {
+  margin-top: calc(var(--content-font-size) * 1.5);
 }
 
-/* Lists */
+/* ---------------------------------------------------------------------------
+   Lists — "After" marker-column system, in u = --content-font-size:
+   · every row = 2u marker column + text, so text starts at 2u (32px @u=16)
+   · nested level adds a 1.5u indent column → text at 3.5u (56px)
+   · row gap 0.75u (12px), rounded to integer px
+   · ul L1: 0.375u filled dot (6px@16), centred in the 2u column and on the
+     first text line ((1lh − dot)/2); L2 and deeper: same-size hollow dot
+   · ol: counter centred in the 2u column at body size/line-height
+   Native markers are disabled (list-style:none) and drawn by li::before so
+   column width and centring hold at every font-scale step. Overrides must
+   beat markstream's .list-node/.list-item[data-v] scoped rules — the .md
+   prefix plus element/class selectors does that without !important.
+--------------------------------------------------------------------------- */
 .md :deep(ul),
 .md :deep(ol) {
-  padding-left: 1.4em;
-  margin: 0.6em 0;
+  --md-dot: round(calc(var(--content-font-size) * 0.375), 1px);
+  list-style: none;
+  margin: 0;
+  padding-left: calc(var(--content-font-size) * 2);
 }
 .md :deep(li) {
-  margin: 0.3em 0;
+  position: relative;
+  margin: 0;
+  padding: 0;
+}
+.md :deep(li + li) {
+  margin-top: round(calc(var(--content-font-size) * 0.75), 1px);
+}
+/* Nested list: extra 1.5u indent column, and the same 0.75u row gap between
+   the parent row's text and the first child row. */
+.md :deep(li > ul),
+.md :deep(li > ol) {
+  margin-top: round(calc(var(--content-font-size) * 0.75), 1px);
+  padding-left: calc(var(--content-font-size) * 1.5);
+}
+.md :deep(ul > li)::before {
+  content: '';
+  position: absolute;
+  /* centred in the 2u column: −(2u + dot)/2 from the text edge */
+  left: calc((var(--md-dot) + var(--content-font-size) * 2) / -2);
+  /* centred on the first text line: (1lh − dot)/2 from the row top */
+  top: calc((round(calc(var(--content-font-size) * 1.625), 1px) - var(--md-dot)) / 2);
+  width: var(--md-dot);
+  height: var(--md-dot);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text) 90%, transparent);
+}
+.md :deep(ul ul > li)::before {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-text) 90%, transparent);
+  box-sizing: border-box;
+}
+.md :deep(ol) {
+  counter-reset: md-ol;
+}
+/* An explicit list start or per-item value can't reach the CSS counter —
+   those lists fall back to native decimal markers, which honor both. */
+.md :deep(ol[start]),
+.md :deep(ol:has(> li[value])) {
+  counter-reset: none;
+  list-style: decimal;
+}
+.md :deep(ol[start] > li),
+.md :deep(ol:has(> li[value]) > li) {
+  counter-increment: none;
+}
+.md :deep(ol[start] > li)::before,
+.md :deep(ol:has(> li[value]) > li)::before {
+  content: none;
+}
+.md :deep(ol > li) {
+  counter-increment: md-ol;
+}
+.md :deep(ol > li)::before {
+  content: counter(md-ol) '.';
+  position: absolute;
+  top: 0;
+  left: calc(var(--content-font-size) * -2);
+  width: calc(var(--content-font-size) * 2);
+  line-height: round(calc(var(--content-font-size) * 1.625), 1px);
+  text-align: center;
+  color: var(--color-text);
 }
 
 /* Inline code — small mono chip */
@@ -758,19 +857,43 @@ function copyDiff(code: string, idx: number) {
   margin: 0.6em 0;
 }
 
-/* Blockquote */
+/* Blockquote — "After" spec: a 2px bar with a 2px vertical inset (a border
+   can't inset, so the bar is drawn by ::before), text starts after a 1.5u
+   (24px) bar column with the bar centred in it, and the ink is primary, not
+   muted. Size/line-height stay at the §03 secondary level (--md-b2, pinned
+   above); block spacing is owned by the .node-slot gap. */
 .md :deep(blockquote) {
-  margin: 0.5em 0;
-  padding: 4px 12px;
-  border-left: 3px solid var(--color-line);
-  color: var(--color-text-muted);
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 round(calc(var(--content-font-size) * 1.5), 1px);
+  border-left: none;
+  color: var(--color-text);
+}
+.md :deep(blockquote)::before {
+  content: '';
+  position: absolute;
+  left: calc(round(calc(var(--content-font-size) * 1.5), 1px) / 2 - 1px);
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--color-line);
+}
+/* markstream gives quote paragraphs its own 1.5em vertical margins (scoped
+   class beats a plain `p` selector) — re-pin them to the 1u spec gap. */
+.md :deep(.blockquote > .paragraph-node) {
+  margin: 0;
+}
+.md :deep(.blockquote > .paragraph-node + .paragraph-node) {
+  margin-top: var(--content-font-size);
 }
 
-/* HR */
+/* HR — vertical spacing owned by the .node-slot gap (1u above and below,
+   matching the spec's 16+16); this rule only draws the line. */
 .md :deep(hr) {
   border: none;
   border-top: 1px solid var(--color-line);
-  margin: 0.8em 0;
+  margin: 0;
 }
 
 /* Tables. markstream-vue renders markdown tables as `.table-node` and relies on

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isOnboarded, isUpdateAutoDownloadEnabled, loadUiState, markOnboarded, setUpdateAutoDownloadEnabled } from '../../src/main/ui-state';
+import { isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, loadUiState, markOnboarded, setUpdateAutoDownloadEnabled, setVibrancyEnabled } from '../../src/main/ui-state';
 
 describe('ui-state persistence', () => {
   let dir: string;
@@ -45,6 +45,23 @@ describe('ui-state persistence', () => {
     markOnboarded(file);
     markOnboarded(file);
     expect(loadUiState(file)).toEqual({ onboarded: true });
+  });
+
+  it('treats a missing or unreadable vibrancy flag as enabled (default on)', () => {
+    expect(isVibrancyEnabled(file)).toBe(true);
+    writeFileSync(file, 'not json', 'utf-8');
+    expect(isVibrancyEnabled(file)).toBe(true);
+    writeFileSync(file, '{"vibrancy":"no"}', 'utf-8');
+    expect(isVibrancyEnabled(file)).toBe(true);
+  });
+
+  it('setVibrancyEnabled round-trips and preserves other keys', () => {
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    setVibrancyEnabled(false, file);
+    expect(isVibrancyEnabled(file)).toBe(false);
+    expect(loadUiState(file)).toEqual({ onboarded: true, vibrancy: false });
+    setVibrancyEnabled(true, file);
+    expect(isVibrancyEnabled(file)).toBe(true);
   });
 
   it('defaults updateAutoDownload to disabled unless explicitly enabled', () => {

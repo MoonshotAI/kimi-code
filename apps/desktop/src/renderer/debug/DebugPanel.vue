@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
   bottom: 10px;
   z-index: var(--z-overlay);
   padding: 5px 9px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--muted);

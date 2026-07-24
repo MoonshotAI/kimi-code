@@ -39,7 +39,7 @@ withDefaults(defineProps<{
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   font-family: var(--font-ui);
   font-weight: var(--weight-medium);

@@ -230,13 +230,27 @@ body {
   overflow: hidden;
 }
 
+/* macOS desktop: the BrowserWindow carries a native vibrancy material
+   (NSVisualEffectView 'menu', see
+   src/main/window.ts) behind the whole content area. The root chain must stay
+   unpainted so the material can read through the sidebar column; every
+   reading surface (conversation pane, chat header, right preview, floating
+   layers) keeps its own opaque background. The material follows the in-app
+   light/dark scheme via the nativeTheme mirror in main.ts. The `vibrancy`
+   class is the settings switch (composables/useVibrancy.ts): without it the
+   root chain repaints and the sidebar falls back to --color-sidebar-bg. */
+html.macos-desktop.vibrancy,
+html.macos-desktop.vibrancy body,
+html.macos-desktop.vibrancy #app {
+  background: transparent;
+}
+
 /* ---------------------------------------------------------------------------
    Global scrollbars: thin + faint on every scroller (chat, tasks, file tree,
    terminal, dialogs…). Firefox reads scrollbar-width/color; WebKit/Blink read
    the ::-webkit-scrollbar pseudo-elements. The track stays transparent so the
-   bar floats, and the thumb is a neutral semi-transparent gray that reads as a
-   soft hairline on both light and dark surfaces and darkens slightly on hover.
-   A single mid-gray works on either background, so no per-theme tokens needed.
+   bar floats; the thumb matches the sidebar's — a text-derived 12% fill (25%
+   on hover), no border, adapting to both schemes via the text token.
    Components may still override locally (e.g. the sidebar's even-thinner rule).
    --------------------------------------------------------------------------- */
 /* Firefox-only fallback: the standard scrollbar properties DISABLE the whole
@@ -247,7 +261,7 @@ body {
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+    scrollbar-color: color-mix(in srgb, var(--color-text) 12%, transparent) transparent;
   }
 }
 *::-webkit-scrollbar {
@@ -258,11 +272,11 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.3);
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.5);
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
 }
 *::-webkit-scrollbar-corner {
   background: transparent;
@@ -305,13 +319,13 @@ body {
     width: 100%;
     max-width: 100%;
     max-height: 88vh;
-    border-radius: 16px 16px 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     border-left: none;
     border-right: none;
     border-bottom: none;
     /* The hairline keeps the sheet edge visible in dark mode, where a black
        drop shadow on a near-black page disappears. */
-    border-top: 1px solid var(--line);
+    border-top: 0.5px solid var(--line);
     box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
     animation: kimi-sheet-up 0.26s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -469,19 +483,23 @@ body {
 .app {
   font-size: var(--ui-font-size);
 }
-/* Chat/message content follows the 14px default UI size. */
+/* Chat/message content follows the MD body level (14px at Medium, anchored to
+   the UI body). Quotes and
+   tables are the MD secondary level (design-system §03). */
 .md,
 .md .markdown-renderer,
 .md .markdown-renderer p,
 .md .markdown-renderer li,
-.md .markdown-renderer blockquote,
-.md .markdown-renderer td,
-.md .markdown-renderer th,
 .u-bub,
 .u-bub .u-text,
 .a-msg .msg,
 .ph {
   font-size: var(--content-font-size);
+}
+.md .markdown-renderer blockquote,
+.md .markdown-renderer td,
+.md .markdown-renderer th {
+  font-size: var(--md-b2);
 }
 
 /* Transcript prose uses Chromium's CJK/Latin spacing for mixed-language text. */
@@ -491,11 +509,23 @@ body {
   text-autospace: normal;
 }
 
-/* UI chrome + code surfaces → 14px (like Feishu/Ant Design shell). */
+/* UI chrome → 14px (like Feishu/Ant Design shell); code surfaces use the MD
+   weak-body level (identical size, MD group per §03 discipline). The
+   .markdown-renderer infix beats markstream's own 0.9em inline-code rule on
+   specificity — inside headings code stays proportional instead. */
 .md .code-block-container pre,
 .md .markstream-pre,
 .md .code-block-container pre code,
 .md .diff-pre code,
+.md .markdown-renderer :not(pre) > code,
+.md .markdown-renderer .inline-code,
+.a-msg code {
+  font-size: var(--md-b3);
+}
+.md .markdown-renderer :is(h1, h2, h3, h4) :not(pre) > code,
+.md .markdown-renderer :is(h1, h2, h3, h4) .inline-code {
+  font-size: 0.9em;
+}
 .queue-item,
 .queue-text,
 .ctx-num,
@@ -511,9 +541,6 @@ body {
 .srow-val {
   font-size: var(--ui-font-size);
 }
-.md :not(pre) > code,
-.md .inline-code,
-.a-msg code,
 .qopt-desc,
 .srow-label {
   font-size: var(--ui-font-size-sm);

@@ -262,6 +262,12 @@ export type KimiDesktopApi = {
    *  macOS hide-on-close it may be alive but hidden, and the renderer's own
    *  window.focus() can't un-hide it. */
   showWindow: () => void;
+  /** macOS frosted-sidebar material toggle (settings → appearance). Persisted
+   *  main-side so window creation applies it before the renderer boots. */
+  setVibrancy: (enabled: boolean) => void;
+  /** Current vibrancy preference. Default ON — only an explicit false from
+   *  the main process disables. */
+  getVibrancy: () => Promise<boolean>;
 };
 
 export const api: KimiDesktopApi = {
@@ -412,6 +418,12 @@ export const api: KimiDesktopApi = {
   showWindow: () => {
     ipcRenderer.send('kimi:show-window');
   },
+  setVibrancy: (enabled) => {
+    if (typeof enabled === 'boolean') {
+      ipcRenderer.send('kimi:vibrancy', enabled);
+    }
+  },
+  getVibrancy: async () => (await ipcRenderer.invoke('kimi:get-vibrancy')) !== false,
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);

@@ -233,7 +233,7 @@ function formatSeconds(s: number): string {
   width: 100%;
   padding: var(--space-4);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   font-family: var(--font-ui);
   text-align: left;
@@ -290,7 +290,7 @@ function formatSeconds(s: number): string {
   gap: var(--space-3);
   padding: var(--space-4);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-success-bd);
+  border: 0.5px solid var(--color-success-bd);
   border-radius: var(--radius-lg);
 }
 .ls-done-badge {
@@ -353,7 +353,7 @@ function formatSeconds(s: number): string {
   padding: 0 var(--space-4);
   background: var(--color-accent);
   color: var(--color-text-on-accent);
-  border: 1px solid var(--color-accent);
+  border: 0.5px solid var(--color-accent);
   border-radius: var(--radius-md);
   font-family: var(--font-ui);
   font-size: var(--text-base);
@@ -387,7 +387,7 @@ function formatSeconds(s: number): string {
 .ls-fb-link {
   color: var(--color-accent);
   text-decoration: none;
-  border-bottom: 1px solid var(--color-accent-bd);
+  border-bottom: 0.5px solid var(--color-accent-bd);
 }
 .ls-fb-link:hover { border-bottom-color: var(--color-accent); }
 .ls-code-row {
@@ -395,7 +395,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-3);
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
@@ -425,7 +425,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-3);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .ls-status-text {
   font-family: var(--font-mono);

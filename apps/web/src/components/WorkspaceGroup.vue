@@ -344,7 +344,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
   cursor: grab;
 }
 .gh:active { cursor: grabbing; }
-.gh:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
+.gh:hover { background: var(--sb-hover, var(--color-hover)); }
 /* Active workspace with no session selected (the draft state — e.g. right
    after adding the workspace, or after "New chat"): the same neutral selected
    fill as a session row — selection reads as "where I am". Listed after
@@ -383,11 +383,16 @@ function onSessionDragStart(id: string, event: DragEvent): void {
 /* More + add buttons — float over the row's right edge instead of reserving
    layout space, so the name can use the full row width when idle (no
    truncation caused by invisible buttons). Revealed on hover / keyboard focus
-   / while the more menu is open; the backing stacks the row hover wash on the
-   sidebar surface so the overlapped title tail doesn't bleed through. */
+   / while the more menu is open; the layer paints nothing — the name dissolves
+   (mask fade on .gh-name) before it can reach the buttons. */
 .gh-actions {
   position: absolute;
-  right: 0;
+  /* Right edge lands 3px inside the row's border edge — the same anchor the
+     session-row hover cluster uses (.act .ha in SessionRow), so hovering a
+     group header vs a session row puts the trailing icons at the same x.
+     .gh-top is the containing block, whose right edge is one .gh padding
+     (--sb-pad-x − --sb-inset) in from the border edge; cancel that, keep 3px. */
+  right: calc(3px - (var(--sb-pad-x) - var(--sb-inset)));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
@@ -396,25 +401,32 @@ function onSessionDragStart(id: string, event: DragEvent): void {
   padding-left: var(--space-1);
   border-radius: var(--radius-sm);
   isolation: isolate;
-  /* Opaque sidebar surface — hides the overlapped name tail. The ::after
-     hover wash sits above this (still behind the buttons) so the layer reads
-     seamless with the row. */
-  background: var(--color-sidebar-bg);
   opacity: 0;
   pointer-events: none;
 }
-/* Row hover wash — only while the row is actually hovered. Painted above the
-   element background (z-index 0) but below the buttons (z-index 1). */
-.gh-actions::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+/* Group title vs. floating actions: no plate, no wash — the name dissolves
+   before it reaches the buttons: a mask-image fade into a fully transparent
+   plateau. At rest a subtle 16px dissolve stands in for the ellipsis
+   (text-overflow: clip so a long tail dissolves instead of dotting). On hover
+   the mask becomes opaque → 26px dissolve → solid-transparent plateau: the
+   plateau (64px) covers the whole floating cluster (≈60px wide), so not even
+   a half-faded glyph can sit under a button. The fade is zone-based, so short
+   names render untouched. */
+.gh-name {
+  /* Rest: no plateau (nothing overlaps the name until hover) — the tail
+     dissolves over the last 16px, reaching transparent exactly at the box
+     edge, so long names keep ~16px more visible text. */
+  --sb-fade: 0px;
+  --sb-fade-len: 16px;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
 }
-.gh:hover .gh-actions::after {
-  background: var(--sb-hover, var(--color-surface-sunken));
+.gh:hover .gh-name,
+.gh:focus-within .gh-name,
+.gh:has(.gh-actions.open) .gh-name {
+  --sb-fade: 64px;
+  --sb-fade-len: 26px;
 }
 .gh-actions > * {
   position: relative;
@@ -461,7 +473,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
   text-align: left;
   cursor: pointer;
 }
-.show-more:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
+.show-more:hover { background: var(--sb-hover, var(--color-hover)); }
 .show-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .show-more-lead { width: var(--sb-gutter); flex: none; }
 .show-more-label {
@@ -481,7 +493,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
   font-weight: var(--weight-regular);
   color: var(--color-text);
   background: var(--color-bg);
-  border: 1px solid var(--color-accent);
+  border: 0.5px solid var(--color-accent);
   border-radius: var(--radius-xs);
   padding: 2px 5px;
   outline: none;

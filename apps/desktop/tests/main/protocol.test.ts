@@ -32,6 +32,11 @@ describe('rendererUrl', () => {
     expect(u).toContain('kimi_origin=http%3A%2F%2F127.0.0.1%3A54321');
     expect(u).toMatch(/#token=abc$/);
   });
+  it('pins the vibrancy state on every boot', () => {
+    expect(rendererUrl('http://127.0.0.1:1', undefined, undefined, false, false)).toContain('kimi_vibrancy=0');
+    expect(rendererUrl('http://127.0.0.1:1', undefined, undefined, false, true)).toContain('kimi_vibrancy=1');
+    expect(rendererUrl('http://127.0.0.1:1', undefined)).toContain('kimi_vibrancy=1');
+  });
 });
 
 describe('rendererDevBase', () => {

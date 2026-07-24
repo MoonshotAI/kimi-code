@@ -66,6 +66,7 @@ export function rendererUrl(
   token: string | undefined,
   base: string = DEFAULT_RENDERER_BASE,
   onboarded = false,
+  vibrancy = true,
 ): string {
   const params = new URLSearchParams({
     kimi_desktop: '1',
@@ -76,6 +77,11 @@ export function rendererUrl(
   // injected here so the renderer's first-run gate does not depend on
   // origin-scoped localStorage (dev-server ports shift between runs).
   if (onboarded) params.set('kimi_onboarded', '1');
+  // The vibrancy state rides the same channel, pinned on every boot (not only
+  // on opt-out) so an SPA reload that lost the boot query can tell "enabled"
+  // apart from "query dropped" (composables/useVibrancy.ts mirrors it into
+  // sessionStorage, the desktopFlag pattern).
+  params.set('kimi_vibrancy', vibrancy ? '1' : '0');
   const hash = token === undefined ? '' : `#token=${encodeURIComponent(token)}`;
   return `${base}?${params.toString()}${hash}`;
 }

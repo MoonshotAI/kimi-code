@@ -1,4 +1,4 @@
-<!-- apps/web/src/components/chat/ConversationPane.vue -->
+<!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -561,6 +561,10 @@ void bindChatDock;
 
 const following = ref(true);
 const showPill = ref(false);
+// Overlay-style scrollbar state: true from a scroll event until ~0.9s after
+// the last one; drives the .scrolling class on .panes.
+const panesScrolling = ref(false);
+let panesScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Within this many pixels from the bottom counts as "at the bottom" —
     scrolling DOWN into this zone re-enables the follow. */
@@ -590,6 +594,14 @@ function hasUserActionFollowLock(): boolean {
 
 function onPanesScroll(): void {
   scheduleTocTableHitTest();
+  // Overlay-style scrollbar: reveal the thumb while scrolling, hide it again
+  // shortly after the last scroll event (see .panes::-webkit-scrollbar-thumb).
+  panesScrolling.value = true;
+  if (panesScrollHideTimer) clearTimeout(panesScrollHideTimer);
+  panesScrollHideTimer = setTimeout(() => {
+    panesScrolling.value = false;
+    panesScrollHideTimer = null;
+  }, 900);
   const el = panesRef.value;
   if (!el) return;
   const top = el.scrollTop;
@@ -1552,8 +1564,7 @@ function onKeyDown(event: KeyboardEvent): void {
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier
   // handler that consumed the key (defaultPrevented). The same keypress must
-  // not also interrupt a running prompt behind any of these. (Hardcoded to
-  // Escape by decision — not customizable.)
+  // not also interrupt a running prompt behind any of these.
   if (
     event.key === 'Escape' &&
     !props.overlayOpen &&
@@ -1637,6 +1648,7 @@ onUnmounted(() => {
   if (tocHitTestRaf) cancelRaf(tocHitTestRaf);
   if (activeTocRaf) cancelRaf(activeTocRaf);
   if (tocSettleTimer !== null) clearTimeout(tocSettleTimer);
+  if (panesScrollHideTimer) clearTimeout(panesScrollHideTimer);
   if (undoneToastTimer !== null) clearTimeout(undoneToastTimer);
   if (undoHintTimer !== null) clearTimeout(undoHintTimer);
   if (autoUndoTimer !== null) clearTimeout(autoUndoTimer);
@@ -1753,6 +1765,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome 
           'is-following': following,
           'history-prepending': historyLoadInProgress,
           'is-pinned': pinActive,
+          scrolling: panesScrolling,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -2043,6 +2056,25 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome 
   scrollbar-gutter: stable;
 }
 
+/* Overlay-style scrollbar: the global 6px thumb (style.css) is transparent
+   here until the pane is actually scrolled (.scrolling), then lingers ~0.9s
+   and fades back out. scrollbar-gutter: stable above already reserves the
+   strip, so the thumb's appearance never shifts the reading column. Width
+   matches the sidebar's 4px bar. */
+.panes::-webkit-scrollbar {
+  width: 4px;
+}
+.panes::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background var(--duration-base) var(--ease-out);
+}
+.panes.scrolling::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+.panes.scrolling::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
+
 .panes.is-following,
 .panes.history-prepending,
 /* While a row pin owns scrollTop, native anchoring must not join in (the
@@ -2210,7 +2242,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome 
   max-height: calc(var(--space-8) * 10);
   overflow: hidden auto;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: var(--space-1);
@@ -2343,7 +2375,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome 
   gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   background: var(--panel);
   color: var(--color-text);
   font-size: var(--text-xs);

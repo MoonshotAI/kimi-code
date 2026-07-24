@@ -172,50 +172,54 @@ onUnmounted(() => {
 
             <h3 class="sub">Color</h3>
             <p>Semantic-first, in three layers: <b>background / text / border</b> + <b>accent</b> + <b>status colors</b>. All colors are defined in light / dark pairs, with contrast ≥ 4.5:1.</p>
-            <div class="callout info"><span class="ico">i</span><div>The table below shows the <b>semantic tokens</b>. Each ships a light value in <code>:root</code> and a dark override in the <code>data-color-scheme</code> blocks — for example <code>--color-bg</code> is <code>#ffffff</code> in light and <code>#0d1117</code> in dark; <code>--color-accent</code> is the brand blue (<code>#1783ff</code> light / <code>#58a6ff</code> dark). The <b>semantic status colors</b> (success / warning / danger / info) are independent palettes, one set each for light / dark.</div></div>
+            <div class="callout info"><span class="ico">i</span><div>The table below shows the <b>semantic tokens</b>. Each ships a light value in <code>:root</code> and a dark override in the <code>data-color-scheme</code> blocks — for example <code>--color-bg</code> is <code>#ffffff</code> in light and <code>#121212</code> in dark; <code>--color-accent</code> is the brand blue (<code>#1783ff</code> light / <code>#1a88ff</code> dark). The <b>semantic status colors</b> (success / warning / danger / info) are independent palettes, one set each for light / dark.</div></div>
             <div class="palette">
-              <div class="color-card"><div class="color-chip" style="background:#ffffff"></div><div class="color-meta"><div class="cn">bg</div><div class="cv">#ffffff / #0d1117</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#fafbfc"></div><div class="color-meta"><div class="cn">surface</div><div class="cv">#fafbfc / #13181e</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#f3f5f8"></div><div class="color-meta"><div class="cn">surface-sunken</div><div class="cv">#f3f5f8 / #0d1117</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#f3f5f8"></div><div class="color-meta"><div class="cn">well</div><div class="cv">#f3f5f8 / #13181e</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#fafbfc"></div><div class="color-meta"><div class="cn">surface-deep</div><div class="cv">#fafbfc / #0a0d12</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#fff;border:1px solid #e7eaee"></div><div class="color-meta"><div class="cn">surface-overlay</div><div class="cv">#ffffff / #22272e</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#eceff3"></div><div class="color-meta"><div class="cn">selected</div><div class="cv">#eceff3 / #2d333b</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#14171c"></div><div class="color-meta"><div class="cn">fg</div><div class="cv">#14171c / #e8eaed</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#6b7280"></div><div class="color-meta"><div class="cn">fg-muted</div><div class="cv">#6b7280 / #9aa0a8</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#e7eaee"></div><div class="color-meta"><div class="cn">line</div><div class="cv">#e7eaee / #2d333b</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#f1f4f8"></div><div class="color-meta"><div class="cn">subtle</div><div class="cv">#f1f4f8 / #22272e</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#1783ff"></div><div class="color-meta"><div class="cn">accent (KMBlue)</div><div class="cv">#1783ff / #58a6ff</div></div></div>
-              <div class="color-card"><div class="color-chip" style="background:#e8f3ff"></div><div class="color-meta"><div class="cn">accent-soft</div><div class="cv">#e8f3ff / rgba(88,166,255,.14)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#ffffff"></div><div class="color-meta"><div class="cn">bg</div><div class="cv">#ffffff / #121212</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#f5f5f5"></div><div class="color-meta"><div class="cn">surface</div><div class="cv">#f5f5f5 / #1f1f1f</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#f5f5f5"></div><div class="color-meta"><div class="cn">surface-sunken</div><div class="cv">#f5f5f5 / #121212</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#f5f5f5"></div><div class="color-meta"><div class="cn">well</div><div class="cv">#f5f5f5 / #1f1f1f</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#f5f5f5"></div><div class="color-meta"><div class="cn">surface-deep</div><div class="cv">#f5f5f5 / #0d0d0d</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#fff;border:0.5px solid rgba(0,0,0,.13)"></div><div class="color-meta"><div class="cn">surface-overlay</div><div class="cv">#ffffff / rgba(255,255,255,.1)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:rgba(0,0,0,.05)"></div><div class="color-meta"><div class="cn">selected</div><div class="cv">rgba(0,0,0,.05) / rgba(255,255,255,.1)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:rgba(0,0,0,.9)"></div><div class="color-meta"><div class="cn">fg</div><div class="cv">rgba(0,0,0,.9) / rgba(255,255,255,.84)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:rgba(0,0,0,.6)"></div><div class="color-meta"><div class="cn">fg-muted</div><div class="cv">rgba(0,0,0,.6) / rgba(255,255,255,.56)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:rgba(0,0,0,.13)"></div><div class="color-meta"><div class="cn">line</div><div class="cv">rgba(0,0,0,.13) / rgba(255,255,255,.12)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:rgba(0,0,0,.05)"></div><div class="color-meta"><div class="cn">subtle</div><div class="cv">rgba(0,0,0,.05) / rgba(255,255,255,.05)</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#1783ff"></div><div class="color-meta"><div class="cn">accent (KMBlue)</div><div class="cv">#1783ff / #1a88ff</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#e8f3ff"></div><div class="color-meta"><div class="cn">accent-soft</div><div class="cv">#e8f3ff / rgba(26,136,255,.1)</div></div></div>
             </div>
             <table class="dt">
               <thead><tr><th>Token</th><th>Light</th><th>Dark</th><th>Usage</th></tr></thead>
               <tbody>
-                <tr><td class="tk">--color-bg</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#0d1117"></span>#0d1117</td><td>Page background</td></tr>
-                <tr><td class="tk">--color-surface</td><td class="val"><span class="swatch" style="background:#fafbfc"></span>#fafbfc</td><td class="val"><span class="swatch" style="background:#13181e"></span>#13181e</td><td>Panel / sidebar / card head</td></tr>
-                <tr><td class="tk">--color-surface-raised</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#1c2128"></span>#1c2128</td><td>Raised card / dialog / input</td></tr>
-                <tr><td class="tk">--color-surface-overlay</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#22272e"></span>#22272e</td><td>Field-control fill on raised cards (selects, steppers) — top rung; light tops out at white (the level is carried by the border), dark steps one rung above raised. Floating layers stay at raised</td></tr>
-                <tr><td class="tk">--color-well</td><td class="val"><span class="swatch" style="background:#f3f5f8"></span>#f3f5f8</td><td class="val"><span class="swatch" style="background:#13181e"></span>#13181e</td><td>Content well on the page (code blocks, tool-output panels, match/file lists, media thumbnails) — light reuses the sunken recess; dark lifts one rung ABOVE the page, because a true recess (<code>#0d1117</code>) vanishes into the page there</td></tr>
-                <tr><td class="tk">--color-surface-deep</td><td class="val"><span class="swatch" style="background:#fafbfc"></span>#fafbfc</td><td class="val"><span class="swatch" style="background:#0a0d12"></span>#0a0d12</td><td>Deep chrome plane one step BELOW the page (panel headers, diff gutters) — dark drops under <code>--color-bg</code> so chrome framing stays darker than the content it frames</td></tr>
-                <tr><td class="tk">--color-text</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.9)"></span>rgba(0,0,0,.9)</td><td class="val"><span class="swatch" style="background:#e8eaed"></span>#e8eaed</td><td>Body text / headings</td></tr>
+                <tr><td class="tk">--color-bg</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#121212"></span>#121212</td><td>Page background</td></tr>
+                <tr><td class="tk">--color-surface</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#1f1f1f"></span>#1f1f1f</td><td>Panel / sidebar / card head</td></tr>
+                <tr><td class="tk">--color-surface-raised</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#292929"></span>#292929</td><td>Raised card / dialog / input</td></tr>
+                <tr><td class="tk">--color-surface-overlay</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.1)"></span>rgba(255,255,255,.1)</td><td>Field-control fill on raised cards (selects, steppers) — top rung; light tops out at white (the level is carried by the border), dark steps one rung above raised. Floating layers stay at raised</td></tr>
+                <tr><td class="tk">--color-well</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#1f1f1f"></span>#1f1f1f</td><td>Content well on the page (code blocks, tool-output panels, match/file lists, media thumbnails) — light reuses the sunken recess; dark lifts one rung ABOVE the page, because a true recess (<code>#121212</code>) vanishes into the page there</td></tr>
+                <tr><td class="tk">--color-surface-deep</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#0d0d0d"></span>#0d0d0d</td><td>Deep chrome plane one step BELOW the page (panel headers, diff gutters) — dark drops under <code>--color-bg</code> so chrome framing stays darker than the content it frames</td></tr>
+                <tr><td class="tk">--color-text</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.9)"></span>rgba(0,0,0,.9)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.84)"></span>rgba(255,255,255,.84)</td><td>Body text / headings</td></tr>
                 <tr><td class="tk">--color-text-strong</td><td class="val"><span class="swatch" style="background:#000"></span>#000000</td><td class="val"><span class="swatch" style="background:#fff;box-shadow:inset 0 0 0 1px #ddd"></span>#ffffff</td><td>Max foreground emphasis — menu-row label &amp; icon on hover</td></tr>
-                <tr><td class="tk">--color-text-muted</td><td class="val"><span class="swatch" style="background:#6b7280"></span>#6b7280</td><td class="val"><span class="swatch" style="background:#9aa0a8"></span>#9aa0a8</td><td>Secondary text / placeholder</td></tr>
-                <tr><td class="tk">--color-line</td><td class="val"><span class="swatch" style="background:#e7eaee"></span>#e7eaee</td><td class="val"><span class="swatch" style="background:#2d333b"></span>#2d333b</td><td>Divider / card border</td></tr>
-                <tr><td class="tk">--color-subtle</td><td class="val"><span class="swatch" style="background:#f1f4f8"></span>#f1f4f8</td><td class="val"><span class="swatch" style="background:#22272e"></span>#22272e</td><td>Subtle hairline — tertiary separators below <code>--color-line</code> (diff-gutter column rules, quiet dividers inside wells)</td></tr>
-                <tr><td class="tk">--color-selected</td><td class="val"><span class="swatch" style="background:#00000014"></span>#00000014</td><td class="val"><span class="swatch" style="background:#ffffff14"></span>#ffffff14</td><td>Neutral selected fill (sidebar rows, list pickers) — translucent, never accent-tinted</td></tr>
-                <tr><td class="tk">--color-hover</td><td class="val"><span class="swatch" style="background:#0000000d"></span>#0000000d</td><td class="val"><span class="swatch" style="background:#ffffff0d"></span>#ffffff0d</td><td>Row hover wash — lighter than the selected fill (hover &lt; selected); translucent, sits on any surface</td></tr>
-                <tr><td class="tk">--color-inline-code-bg</td><td class="val"><span class="swatch" style="background:#f3f5f8"></span>#f3f5f8</td><td class="val"><span class="swatch" style="background:#ffffff1a"></span>#ffffff1a</td><td>Inline-code chip fill — light reuses the sunken surface; dark lifts off any dark surface (sunken == bg there)</td></tr>
+                <tr><td class="tk">--color-text-muted</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.6)"></span>rgba(0,0,0,.6)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.56)"></span>rgba(255,255,255,.56)</td><td>Secondary text / placeholder</td></tr>
+                <tr><td class="tk">--color-line</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.13)"></span>rgba(0,0,0,.13)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.12)"></span>rgba(255,255,255,.12)</td><td>Divider / card border</td></tr>
+                <tr><td class="tk">--color-subtle</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.05)"></span>rgba(0,0,0,.05)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.05)"></span>rgba(255,255,255,.05)</td><td>Subtle hairline — tertiary separators below <code>--color-line</code> (diff-gutter column rules, quiet dividers inside wells)</td></tr>
+                <tr><td class="tk">--color-selected</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.05)"></span>rgba(0,0,0,.05)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.1)"></span>rgba(255,255,255,.1)</td><td>Neutral selected fill (sidebar rows, list pickers) — translucent, never accent-tinted</td></tr>
+                <tr><td class="tk">--color-hover</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.03)"></span>rgba(0,0,0,.03)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.05)"></span>rgba(255,255,255,.05)</td><td>Row hover wash — lighter than the selected fill (hover &lt; selected); translucent, sits on any surface. The global hover rule: transparent-base controls overlay this f1 wash (hover never darkens — never sunken); filled controls use their own hover token (accent-hover, send-bg-hover)</td></tr>
+                <tr><td class="tk">--color-inline-code-bg</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.03)"></span>rgba(0,0,0,.03)</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.1)"></span>rgba(255,255,255,.1)</td><td>Inline-code chip fill — fills.f1 / fills.f2; dark lifts off any dark surface (sunken == bg there)</td></tr>
                 <tr><td class="tk">--color-media-alpha-bg-1</td><td class="val"><span class="swatch" style="background:#858585"></span>≈#858585</td><td class="val"><span class="swatch" style="background:#76797e"></span>≈#76797e</td><td>Checkerboard square A of the <code>&lt;img&gt;</code> alpha canvas — color-mix of <code>--color-bg</code>/<code>--color-text</code> (52/48); applied via <code>--media-alpha-canvas</code> (16px period)</td></tr>
                 <tr><td class="tk">--color-media-alpha-bg-2</td><td class="val"><span class="swatch" style="background:#6b6b6b"></span>≈#6b6b6b</td><td class="val"><span class="swatch" style="background:#8c8f93"></span>≈#8c8f93</td><td>Checkerboard square B (42/58) — both squares stay ≥3:1 against white and black; opaque images cover the canvas</td></tr>
-                <tr><td class="tk">--color-sidebar-bg</td><td class="val"><span class="swatch" style="background:#fbfaf9"></span>#fbfaf9</td><td class="val"><span class="swatch" style="background:#0a0d12"></span>#0a0d12</td><td>Sidebar surface — one step off <code>--color-bg</code> (just under white in light, one step BELOW the page in dark) so the session column reads as its own plane and never brighter than the reading surface</td></tr>
-                <tr><td class="tk">--color-scrim</td><td class="val"><span class="swatch" style="background:rgba(20,23,28,.62)"></span>rgba(20,23,28,.62)</td><td class="val"><span class="swatch" style="background:rgba(20,23,28,.62)"></span>same</td><td>Modal scrim — the dark veil behind dialogs/lightboxes (constant across themes; legacy hardcoded overlays can migrate here)</td></tr>
+                <tr><td class="tk">--color-sidebar-bg</td><td class="val"><span class="swatch" style="background:#f9fbfc"></span>#f9fbfc</td><td class="val"><span class="swatch" style="background:#0d0d0d"></span>#0d0d0d</td><td>Sidebar surface — one step off <code>--color-bg</code> (just under white in light, one step BELOW the page in dark) so the session column reads as its own plane and never brighter than the reading surface</td></tr>
+                <tr><td class="tk">--color-scrim</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.4)"></span>rgba(0,0,0,.4)</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.6)"></span>rgba(0,0,0,.6)</td><td>Modal scrim — the dark veil behind dialogs/lightboxes (mask.base; legacy hardcoded overlays can migrate here)</td></tr>
                 <tr><td class="tk">--color-text-on-scrim</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#fff"></span>same</td><td>Text drawn on the scrim (captions over the media lightbox)</td></tr>
-                <tr><td class="tk">--color-accent</td><td class="val"><span class="swatch" style="background:#1783ff"></span>#1783ff</td><td class="val"><span class="swatch" style="background:#58a6ff"></span>#58a6ff</td><td>Primary action / link / focus</td></tr>
+                <tr><td class="tk">--color-accent</td><td class="val"><span class="swatch" style="background:#1783ff"></span>#1783ff</td><td class="val"><span class="swatch" style="background:#1a88ff"></span>#1a88ff</td><td>Primary action / link / focus</td></tr>
                 <tr><td class="tk">--color-success</td><td class="val"><span class="swatch" style="background:#0e7a38"></span>#0e7a38</td><td class="val"><span class="swatch" style="background:#3fb950"></span>#3fb950</td><td>Success / pass</td></tr>
                 <tr><td class="tk">--color-warning</td><td class="val"><span class="swatch" style="background:#a9610a"></span>#a9610a</td><td class="val"><span class="swatch" style="background:#d29922"></span>#d29922</td><td>Warning / pending</td></tr>
                 <tr><td class="tk">--color-danger</td><td class="val"><span class="swatch" style="background:#c0392b"></span>#c0392b</td><td class="val"><span class="swatch" style="background:#f85149"></span>#f85149</td><td>Danger / error / abort</td></tr>
               </tbody>
             </table>
+
+            <h4 class="mini">Palette</h4>
+            <p>The palette <b>is</b> the production kimi.com palette (design tokens <code>tokens.json</code>): neutral-gray surfaces, an alpha-based label / fill / separator ramp (<code>labels.*</code> / <code>fills.*</code> / <code>separator.s1</code>), the KMBlue accent, and a true neutral dark ladder (<code>#121212 → #1f1f1f → #292929</code>; the deep chrome plane and sidebar derive one step below at <code>#0d0d0d</code> — the palette has nothing darker than primary).</p>
+            <p>The ONE deliberate exception is the <b>status hues</b>: success / warning / danger / done keep the app's own WCAG-tuned ramp (≥4.5:1 on the neutral surfaces) — the production status colours (positiveGreen <code>#16c456</code>, orange <code>#ff9500</code>, danger red <code>#ff3849</code>) are too bright against it. Diff add/del bands happen to coincide (both use the production 25% fills in light, 14% in dark).</p>
 
             <h4 class="mini">Surface usage</h4>
             <p>The surface layers each have a role — choose by "field overlay / raised layer / content well / default flat layer / sunken layer / page background / deep chrome", and avoid treating <code>--p-surface-raised</code> as a universal background. In dark, elevation = lighter: floating layers sit above the content, content wells sit above the page, and chrome planes (sidebar, panel headers) sit below it — never the reverse. One consequence: on the page itself, never use <code>--color-surface-sunken</code> for a content carrier — it equals <code>--color-bg</code> in dark and the fill vanishes; use <code>--color-well</code>. Sunken stays correct INSIDE surface / raised cards, where it is a genuine recess. Field controls (selects, steppers) on a raised card use <code>--color-surface-overlay</code>, the top fill rung; floating layers keep <code>--color-surface-raised</code> — their elevation is shadow + hairline, not a lighter fill.</p>
@@ -233,7 +237,7 @@ onUnmounted(() => {
             </table>
 
             <h4 class="mini">Borders &amp; hairlines</h4>
-            <p>Three line tokens, three jobs: <code>--color-line</code> is the default structural separator, <code>--color-subtle</code> the tertiary separator that must stay quieter (diff-gutter column rules, quiet dividers inside wells), and <code>--color-line-strong</code> the edge of interactive controls (inputs, selects, secondary buttons). Width follows role: <b>0.5px</b> for static structural edges (card rims, plane seams, header dividers), <b>1px</b> for interactive controls and floating layers. Separation comes from luminance first — planes one rung apart already read as distinct in dark, so their shared edge stays a 0.5px hairline rather than a heavier border; same-rung neighbours (list rows, card head / body) are exactly where a hairline is required. In dark, drop shadows fade on near-black surfaces, so a floating layer's edge IS its hairline — never ship a shadow-only floating surface. (Legacy <code>--line</code> / <code>--line2</code> alias <code>--color-line</code> / <code>--color-subtle</code> for one cycle; new work references the v2 names.)</p>
+            <p>Three line tokens, three jobs: <code>--color-line</code> is the default structural separator, <code>--color-subtle</code> the tertiary separator that must stay quieter (diff-gutter column rules, quiet dividers inside wells), and <code>--color-line-strong</code> the edge of interactive controls (inputs, selects, secondary buttons). Width is one: <b>0.5px</b> — every stroke is the same hairline, on static structural edges (card rims, plane seams, header dividers), interactive control rims and floating layers alike. Separation comes from luminance first — planes one rung apart already read as distinct in dark, so their shared edge stays a 0.5px hairline rather than a heavier border; same-rung neighbours (list rows, card head / body) are exactly where a hairline is required. In dark, drop shadows fade on near-black surfaces, so a floating layer's edge IS its hairline — never ship a shadow-only floating surface. (Legacy <code>--line</code> / <code>--line2</code> alias <code>--color-line</code> / <code>--color-subtle</code> for one cycle; new work references the v2 names.)</p>
 
             <h4 class="mini">Focus ring</h4>
             <p>All focusable controls (button, input, link, menu item, switch, checkbox) use the focus-ring token uniformly; do not hand-write a <code>box-shadow</code> focus ring.</p>
@@ -297,25 +301,33 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Type scale &amp; weight</h3>
-            <p>The user font-size preference writes <code>--base-ui-font-size</code>. UI chrome, the sidebar, and chat history follow it through <code>--ui-font-size</code> and <code>--content-font-size</code>.</p>
-            <p>The fixed product type tokens still define component defaults: <b>UI controls / buttons / forms</b> and <b>reading body — including chat Markdown and message bubbles</b> use <code>--text-base</code> (14px); transcript prose also enables <code>text-autospace: normal</code> for mixed CJK and Latin text. The <b>sidebar session list</b> follows the same base size while keeping list density.
-            Drop stray <code>font-weight: 650 / 750</code>; converge on 400 / 500 (regular / emphasis), with a dedicated 600 weight for sidebar section labels.</p>
+            <p>The user font-size preference is one of four named steps (<code>small / medium / large / xlarge</code>, Medium default) written to <code>data-font-scale</code> on <code>&lt;html&gt;</code>; the step name is persisted, never a px value. The step only moves <code>--base-font</code>; every size token derives additively (<code>default + shift</code>), and line heights are locked to integer px via <code>round(size × ratio, 1px)</code> — never a unitless ratio.</p>
+            <p>Two token groups share the shift but keep their own ratios: <b>--ui-*</b> for chrome (tight, 1.40–1.50) and <b>--md-*</b> for Markdown content + the composer (loose, 1.56–1.63; body is anchored to the UI body size — the spec's +2px offset was dropped as a product decision — while keeping its own looser line-height ratios). T0/T1 cap at 24/22px on the top steps (built into the tokens via <code>min()</code> — do not remove). Use the <code>.text-ui-*</code> / <code>.text-md-*</code> utility classes; legacy aliases <code>--ui-font-size</code> (→ <code>--ui-b2</code>), <code>--content-font-size</code> (→ <code>--md-b1</code>) and the whole 6-level <code>--text-*</code> ramp (xs→c1, sm→b2−1px, base→b2, lg→t2, xl→t1, 2xl→t0) keep older components on the ramp. Panel titles sit at the base step (<code>--ui-b2</code>); dropdown menu items sit one rung below (<code>--text-sm</code> = b2 − 1px) — both still follow the user's font scale.</p>
             <div class="panel panel-pad" style="margin:16px 0">
-              <div class="type-row"><div class="type-sample" style="font-size:22px;font-weight:500">Page Title</div><div class="type-meta">--text-2xl · 22 / 500</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:18px;font-weight:500">Section Title</div><div class="type-meta">--text-xl · 18 / 500</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:14px;font-weight:400">Chat body / card title</div><div class="type-meta">--text-base · 14 / 400</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:14px;font-weight:500">UI control / button / form</div><div class="type-meta">--text-base · 14 / 500</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:13px">Helper text / table</div><div class="type-meta">--text-sm · 13 / 400</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:12px">Badge / timestamp / line number</div><div class="type-meta">--text-xs · 12 / 500</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-t1);font-weight:500">Section Title</div><div class="type-meta">--ui-t1 · title (cap 22)</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-t2);font-weight:500">Card title</div><div class="type-meta">--ui-t2 · subtitle</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-b1);font-weight:500">UI emphasis</div><div class="type-meta">--ui-b1 · body strong</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-b2)">UI control / button / form</div><div class="type-meta">--ui-b2 · body</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-c1)">Helper text / table</div><div class="type-meta">--ui-c1 · caption</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--ui-c2)">Badge / timestamp</div><div class="type-meta">--ui-c2 · non-critical only</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--md-h1);font-weight:600">Markdown H1</div><div class="type-meta">--md-h1</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--md-b1)">Chat body / message bubbles / composer</div><div class="type-meta">--md-b1 · prose body</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--md-b2)">Quote / table</div><div class="type-meta">--md-b2 · secondary</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:var(--md-b3);font-family:var(--font-mono)">Code block / inline code</div><div class="type-meta">--md-b3 · weak / code</div></div>
             </div>
+            <p>The fixed product type tokens still define scale-independent defaults: transcript prose enables <code>text-autospace: normal</code> for mixed CJK and Latin text.
+            Drop stray <code>font-weight: 650 / 750</code>; converge on 400 / 500 (regular / emphasis), with a dedicated 600 weight for sidebar section labels.</p>
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">--font-ui</td><td class="val">"Schibsted Grotesk Variable", …, "Noto Sans SC Variable", …</td><td>UI &amp; body (Schibsted Grotesk + Noto Sans SC)</td></tr>
                 <tr><td class="tk">--font-kbd</td><td class="val">"Schibsted Grotesk Variable", system-ui, sans-serif</td><td>keyboard shortcut keycaps</td></tr>
                 <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, Bash commands, line numbers, diffs</td></tr>
-                <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
-                <tr><td class="tk">--content-font-size</td><td class="val">var(--base-ui-font-size)</td><td>chat Markdown, message bubbles, composer</td></tr>
+                <tr><td class="tk">data-font-scale</td><td class="val">small / medium / large / xlarge</td><td>user preference on &lt;html&gt;; sets --base-font (12–18px), Medium = 14px default</td></tr>
+                <tr><td class="tk">--ui-t0…--ui-c2</td><td class="val">default + --ui-shift, t0/t1 capped via min()</td><td>chrome type ramp (title / subtitle / body / caption); .text-ui-* classes</td></tr>
+                <tr><td class="tk">--md-h1…--md-b3</td><td class="val">default + --md-shift</td><td>Markdown ramp (headings / body / secondary / code); .text-md-* classes</td></tr>
+                <tr><td class="tk">--ui-font-size / --content-font-size</td><td class="val">var(--ui-b2) / var(--md-b1)</td><td>legacy aliases kept on the ramp</td></tr>
+                <tr><td class="tk">--text-xs / sm / base / lg / xl / 2xl</td><td class="val">c1 / b2−1 / b2 / t2 / t1 / t0</td><td>legacy ramp, aliased into the scale</td></tr>
                 <tr><td class="tk">--leading-tight/normal/prose/relaxed</td><td class="val">1.25 / 1.5 / 1.6 / 1.7</td><td>headings / UI / chat prose / long text</td></tr>
                 <tr><td class="tk">--weight-regular/option-label/medium/ui-strong</td><td class="val">400 / 475 / 500 / 525</td><td>body / settings labels / emphasis / compact UI emphasis</td></tr>
                 <tr><td class="tk">--weight-section-label</td><td class="val">600</td><td>sidebar section labels</td></tr>
@@ -391,9 +403,9 @@ onUnmounted(() => {
                 <tr><td class="tk">--radius-xs</td><td class="val">4px</td><td>small badge, inline tag</td><td class="val">2/3/4px →</td></tr>
                 <tr><td class="tk">--radius-sm</td><td class="val">6px</td><td>small button, icon button, menu item</td><td class="val">5/6px →</td></tr>
                 <tr><td class="tk">--radius-md</td><td class="val">8px</td><td>button, input, badge, card</td><td class="val">7/8/9px →</td></tr>
-                <tr><td class="tk">--radius-lg</td><td class="val">12px</td><td>dropdown panel</td><td class="val">10/12px →</td></tr>
-                <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>dialog, bottom Sheet</td><td class="val">14/16px →</td></tr>
-                <tr><td class="tk">--radius-2xl</td><td class="val">20px</td><td>accent container / large panel</td><td class="val">20px</td></tr>
+                <tr><td class="tk">--radius-lg</td><td class="val">12px</td><td>menu, toast, bubble, floating card</td><td class="val">10/12px →</td></tr>
+                <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>container baseline: dialogs, settings cards, sheets, work panel</td><td class="val">13/16px →</td></tr>
+                <tr><td class="tk">--radius-2xl</td><td class="val">20px</td><td>workspace attachment card bottom (<code>0 0 2xl 2xl</code>) tucked under the composer</td><td class="val">18/20px →</td></tr>
                 <tr><td class="tk">--radius-composer</td><td class="val">32px</td><td>Composer shell, with <code>--corner-shape-composer</code></td><td class="val">product-specific</td></tr>
                 <tr><td class="tk">--radius-full</td><td class="val">999px</td><td>pill badge, avatar, send button</td><td class="val">999px / 50%</td></tr>
               </tbody>
@@ -484,7 +496,7 @@ onUnmounted(() => {
                 <tr><td>Destructive action (delete / abort)</td><td><code>Button danger</code> / <code>danger-soft</code></td></tr>
                 <tr><td>Status marker</td><td><code>Badge</code></td></tr>
                 <tr><td>Toolbar filter / model switch</td><td><code>Pill</code></td></tr>
-                <tr><td>2–4 mutually exclusive options</td><td><code>SegmentedControl</code></td></tr>
+                <tr><td>2–5 mutually exclusive options</td><td><code>SegmentedControl</code></td></tr>
                 <tr><td>Top tabs</td><td><code>Tabs</code></td></tr>
                 <tr><td>Switch / multi-select</td><td><code>Switch</code> / <code>Checkbox</code></td></tr>
                 <tr><td>Scrollable regions with overlay controls</td><td><code>ScrollArea</code></td></tr>
@@ -554,7 +566,7 @@ onUnmounted(() => {
 
             <!-- ===== IconButton ===== -->
             <h3 class="sub">IconButton</h3>
-            <p>Unified into three sizes — 26 / 32 / 44px — with a light-grey hover background and a visible focus ring. Replaces the ad-hoc icon + click areas scattered across components today.</p>
+            <p>Unified into three sizes — 26 / 32 / 44px — with the neutral <code>--color-hover</code> wash on hover and a visible focus ring. Replaces the ad-hoc icon + click areas scattered across components today.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">IconButton</span></div>
               <div class="stage p">
@@ -603,7 +615,7 @@ onUnmounted(() => {
 
             <!-- ===== Kbd ===== -->
             <h3 class="sub">Kbd · keyboard shortcut</h3>
-            <p><b>Kbd</b> renders a shortcut as keycaps — one block per key, never inline text like <code>(⌘K)</code>. Caps are 18px tall (Badge sm rhythm): the <code>--color-sidebar-bg</code> surface, 1px border with a 2px bottom edge, 11px <code>--font-kbd</code> (Inter + system-ui), muted text. Typical placement: pushed to the row's trailing edge, opposite the label (e.g. the sidebar search row), and inside dialog navigation hints.</p>
+            <p><b>Kbd</b> renders a shortcut as keycaps — one block per key, never inline text like <code>(⌘K)</code>. Caps are 18px tall (Badge sm rhythm): transparent ground with a 0.5px hairline edge, 11px <code>--font-kbd</code> (Inter + system-ui), text colour inherited from the row that carries it — the cap has no fill or colour of its own, so it follows its context (bright inside the accent-ringed recording box, quiet in a hint row). Typical placement: pushed to the row's trailing edge, opposite the label (e.g. the sidebar search row), and inside dialog navigation hints.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Kbd · keycaps</span></div>
               <div class="stage p">
@@ -617,7 +629,7 @@ onUnmounted(() => {
             <h3 class="sub">Card / Surface</h3>
             <p>All cards across the site share <b>one structure</b> — <code>head / body / foot</code> — and come in two tiers by visual weight:</p>
             <ul class="clean">
-              <li><b>Operation card</b> —— composite "process" content such as the Swarm overview. (Individual tool calls are NOT cards anymore: they render as quiet borderless lines, see §04.) Flat shell: <code>1px</code> border, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
+              <li><b>Operation card</b> —— composite "process" content such as the Swarm overview. (Individual tool calls are NOT cards anymore: they render as quiet borderless lines, see §04.) Flat shell: <code>0.5px</code> hairline, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
               <li><b>Attention card</b> —— content that needs a user decision, such as Question / Approval. A floating neutral card: white raised surface, <code>--radius-lg</code>, a faint popover shadow (<code>--shadow-menu</code>), a plain dark title head, and a hairline footer whose actions read in number-key order (chips on the buttons) leading to one solid primary action. No semantic color band.</li>
             </ul>
             <div class="stage-wrap">
@@ -653,7 +665,7 @@ onUnmounted(() => {
               </div>
             </div>
             <ul class="clean check">
-              <li><b>One structure, two shells</b>: every card is <code>head / body / foot</code>; operation cards are flat + 1px border + radius-md with no shadow, while the attention card is the single exception — raised surface, radius-xl and a soft shadow, because it floats above the transcript in place of the composer.</li>
+              <li><b>One structure, two shells</b>: every card is <code>head / body / foot</code>; operation cards are flat + 0.5px hairline + radius-md with no shadow, while the attention card is the single exception — raised surface, radius-lg and a soft shadow, because it floats above the transcript in place of the composer.</li>
               <li><b>Differences are intentional</b>: operation cards keep a compact mono head; attention cards get a plain dark title head and footer actions.</li>
               <li><b>Grouping</b>: consecutive activity (thinking + tool calls of any kind, cards included) folds into ONE activity-run row — a smart summary sentence that expands into the items in order; only text and successful media tools (inline media is the turn's output) stay out and break the run (see §04).</li>
               <li><b>Turn fold</b>: once an assistant turn settles, everything before its final text block (thinking, activity runs, interim text, standalone cards) folds into ONE bare "Worked Ns" row — no glyph, a faint one-line label + rotating chevron sharing the activity-run head's padding and hover language; while the turn streams the row stays hidden and the body forced open, and on settle the row appears and folds itself back. The span is the turn's elapsed time (daemon duration once settled, server message stamps for history; approval/question waits included by design), reading the generic "Work details" without any stamp. The final text — and anything after it, so trailing media / cards stay on screen — never folds; a text-only turn renders no row at all (see §04).</li>
@@ -763,7 +775,7 @@ onUnmounted(() => {
             </div>
 
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Size &amp; height</b>: Dialog offers three widths — <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight. Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>. Selectable controls inside Settings use 0.5px hairlines. Its navigation shares <code>--color-sidebar-bg</code> with the app sidebar — separated from the content region by the 0.5px hairline (horizontal in the stacked mobile layout) — and uses 12px labels at weight 525 with 16px registry icons; section captions use 16px UI text in <code>--color-text</code>. Every setting row has a plain-language description; option labels use <code>--color-text</code> at weight 475 with a 1px gap before that description. Chinese descriptions use “思考” and “计划模式” rather than the English terms; “skills” stays lowercase when it appears within a sentence. Every settings section puts its rows inside one rounded group with 0.5px dividers; the content region paints the flat <code>--color-surface</code> so each group (<code>--color-surface-raised</code>) reads one rung above it — never a sunken pit, which would sink the dialog's content below its chrome in dark. The font-size stepper is a compact 32px UI-font control with 12px values and custom minus and plus buttons. Its 52px desktop row centres the control with equal space above and below. Archived workspace headings reuse the sidebar’s <code>folder-closed</code> registry icon, and Restore actions lead with the <code>undo</code> icon. Archive counts use weight 500; timestamps and workspace paths use the UI font.
+              <b>Size &amp; height</b>: Dialog offers three widths — <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight. Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>. Selectable controls inside Settings use 0.5px hairlines. Its navigation stays transparent on the grouped canvas — separated from the content region by the 0.5px hairline (horizontal in the stacked mobile layout) — and uses 12px labels at weight 525 with 16px registry icons; the selected tab paints the same neutral <code>--color-hover</code> wash as hover, with the label simply brightening to <code>--color-text</code> — the Kimi app settings nav's recipe (<code>.ss-nav-item--active</code> → <code>Fills-F1</code>, no accent tint, no weight change); section captions use 16px UI text in <code>--color-text</code>. Every setting row has a plain-language description; option labels use <code>--color-text</code> at weight 475 with a 1px gap before that description. Chinese descriptions use “思考” and “计划模式” rather than the English terms; “skills” stays lowercase when it appears within a sentence. Every settings section puts its rows inside one rounded group with 0.5px dividers; the content region paints the flat <code>--color-surface</code> so each group (<code>--color-surface-raised</code>) reads one rung above it — never a sunken pit, which would sink the dialog's content below its chrome in dark. The font-size stepper is a compact 32px UI-font control with 12px values and custom minus and plus buttons. Its 52px desktop row centres the control with equal space above and below. Archived workspace headings reuse the sidebar’s <code>folder-closed</code> registry icon, and Restore actions lead with the <code>undo</code> icon. Archive counts use weight 500; timestamps and workspace paths use the UI font.
             </div></div>
             <p><b>Dialog backdrop</b>: Use a restrained 28% neutral overlay so the workspace remains legible without competing with the modal.</p>
             <p><b>Settings regions</b>: The settings title and close action belong to the right content region. The navigation is a separate full-height region that starts at the dialog's top edge, not content beneath a dialog-wide header.</p>
@@ -861,7 +873,7 @@ onUnmounted(() => {
 
             <!-- ===== SegmentedControl ===== -->
             <h3 class="sub">SegmentedControl</h3>
-            <p>Mutually exclusive short option groups, commonly used for 2–4 option switches such as "light / dark / follow system". Options may include a 14px registry icon or a colour swatch. A single raised indicator with a subtle shadow slides and resizes between options using the standard motion tokens. Three sizes: <code>md</code> (default, settings pages), <code>sm</code> (compact rows), and <code>xs</code> (dense menus such as the composer model dropdown — 20px items, 12px labels).</p>
+            <p>Mutually exclusive short option groups, commonly used for 2–5 option switches such as "light / dark / follow system" or the four font-scale steps. Options may include a 14px registry icon or a colour swatch. A single raised indicator with a soft shadow (no border — the edge stays clean) slides and resizes between options using the standard motion tokens. Three sizes: <code>md</code> (default, settings pages), <code>sm</code> (compact rows), and <code>xs</code> (dense menus such as the composer model dropdown — 20px items, 12px labels).</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">SegmentedControl</span></div>
               <div class="stage p col">
@@ -928,7 +940,7 @@ onUnmounted(() => {
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">EmptyState</span></div>
               <div class="stage p col">
-                <div class="p-empty" style="width:100%;border:1px dashed var(--p-line);border-radius:var(--p-r-lg)">
+                <div class="p-empty" style="width:100%;border:0.5px dashed var(--p-line);border-radius:var(--p-r-lg)">
                   <svg class="em-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M6.455 19L2 22.5V4a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1zm-.692-2H20V5H4v13.385zM8 10h8v2H8z"/></svg>
                   <div class="em-title">No chats yet</div>
                   <div class="em-hint">Click "New chat" to start a conversation with Kimi</div>
@@ -938,7 +950,7 @@ onUnmounted(() => {
 
             <!-- ===== Divider ===== -->
             <h3 class="sub">Divider</h3>
-            <p>A 1px horizontal divider (<code>--p-line</code>); <code>.p-divider-v</code> is the vertical divider, used between inline elements.</p>
+            <p>A 0.5px hairline divider (<code>--p-line</code>); <code>.p-divider-v</code> is the vertical divider, used between inline elements.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Divider</span></div>
               <div class="stage p col">
@@ -1068,7 +1080,7 @@ onUnmounted(() => {
             </p>
 
             <h3 class="sub">Unified message stream</h3>
-            <p>User-message bubbles use a 0.5px accent hairline mixed with the strong line colour. This keeps the edge visible against the soft accent fill without making the bubble look heavy.</p>
+            <p>User-message bubbles follow the kimiwork production recipe (<code>MessageItem .user-bubble</code>): a neutral <code>--color-user-bubble-bg</code> fill (BubbleGray — <code>#f5f5f5</code> light / <code>#292929</code> dark), uniform <code>--radius-lg</code> corners, no border, no shadow.</p>
             <p>Message timestamps use 12px UI text at weight 500, matching the compact metadata scale without switching to a monospace face.</p>
             <p>The user-message metadata row sits one 8px spacing step below the bubble, so its actions and timestamp read as supporting information rather than part of the bubble edge.</p>
             <p>Overlong user messages clamp at 10 measured lines, the tail dissolving through an alpha mask rather than a tint overlay (the translucent accent fill would double-composite); a floating pill toggle centred on the fade expands in place and collapses back, and the collapse pins the toggle itself so the reading position survives. Skill / plugin command args clamp through the same wrapper, beside the card head. Like the transcript's other disclosure controls (thinking row, turn fold, tool lines), the toggle is a bare native button carrying <code>aria-expanded</code> — chat-surface disclosure controls do not use the §03 Button primitive.</p>
@@ -1279,6 +1291,8 @@ onUnmounted(() => {
 
             <h3 class="sub">Composer</h3>
             <p>Unified into a single raised container: <code>--radius-composer</code> (32px) with <code>--corner-shape-composer: superellipse(1.5)</code> and a stable 0.5px edge. Focus crossfades a low-chroma line-and-accent edge over <code>--duration-slow</code> with <code>--ease-in-out</code>, while the neutral shadow stays unchanged — there is no added halo and no layout shift. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls use a quiet 32px full-round geometry with 8px edge inset; the send button remains a standard 32px circle.</p>
+            <p><b>Fill and edge tokens</b>: the card's fill and rest border are their own tokens — <code>--color-composer-bg</code> and <code>--color-composer-line</code> — running the kimiwork / kimi.com production input recipe (<code>.chat-input__shell</code>): fill = <code>groupedBackground.secondary</code> (#ffffff light / #1f1f1f dark), rest border = <code>separator.s1</code> (13% black / 12% white), focus line = <code>fills.f4</code> (25% in both schemes), and <code>--shadow-input</code> = <code>effect.shadow.inputDefault</code> (<code>0 5px 16px -4px rgba(0,0,0,0.07)</code>, kept identical in dark — the hairline carries the edge there). Only colours sit in the tokens; the 32px superellipse shape and the focus-only edge overlay are unchanged.</p>
+            <p><b>Send button tokens</b>: the send circle runs on <code>--color-send-bg</code> / <code>--color-send-bg-hover</code> / <code>--color-send-icon</code> (+ <code>*-disabled</code>, <code>--opacity-send-disabled</code>, <code>--shadow-send[-hover]</code>), following the production recipe (<code>.chat-input__send</code>): a neutral <code>labels.primary</code> fill (90% black light / 84% white dark, hover #252525 / 84.8%) with the production lift shadow (<code>0 7px 16px -13px 38% + 0 1px 2px 7%</code>, one step larger on hover), a <code>groupedBackground.secondary</code> glyph, and a disabled state of the same vocabulary — <code>fills.f2</code> fill with a <code>labels.quaternary</code> glyph at full opacity. The button is disabled exactly when submit would no-op — an empty draft with no ready attachment (image-only sends stay enabled), an upload in flight, or the starting spinner — so disabled is a first-class persistent state, never a fade.</p>
             <p><b>Layering, anchors, and motion</b>: the dock normally stays at <code>--z-sticky</code> so the Latest Messages pill can remain visible above its veil. While any Composer popup is open, the dock temporarily joins <code>--z-dropdown</code>, ensuring permission, work-mode, and model menus always paint above that pill. The permission menu's left edge and the model menu's right edge each follow their own trigger pill. All three menus use <code>--shadow-menu</code> and the same trigger-corner pop motion as Session Row menus: 0.97 scale with a 2px shift toward the trigger, <code>--duration-base</code> on entry, and <code>--duration-fast</code> on exit.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Composer</span></div>
@@ -1303,7 +1317,7 @@ onUnmounted(() => {
             <div class="callout info"><span class="ico">i</span><div>
               <b>Site-wide consistency</b>: the composer uses one 32px superellipse shell and one 32px desktop control height. Attachment, permission, modes, compact, and model controls are all full-round and transparent at rest; hover reveals a neutral wash, open/active may use accent-soft, and Send remains the sole persistent filled control — an inverted <code>--color-text</code> fill with a <code>--color-bg</code> glyph (never the accent), disabled while the input is empty or an upload is in flight. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair the existing icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one pill vocabulary — 32px high with <code>--space-4</code> inline padding and stadium-shaped (<code>--radius-full</code>) corners, a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens), and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike; a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
             </div></div>
-            <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-composer</code> corners with <code>--corner-shape-composer</code>, and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-2xl --radius-2xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
+            <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-composer</code> corners with <code>--corner-shape-composer</code>, and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-xl --radius-xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
 
             <h3 class="sub">Responsive</h3>
             <p>See §02 <code>--p-bp-sm</code> for the breakpoint. This section only gives mobile-adaptation pointers for the chat interface; a full mobile mockup is out of scope for this spec.</p>
@@ -1441,16 +1455,16 @@ onUnmounted(() => {
             </div></div>
 
             <h3 class="sub">Sidebar structure</h3>
-            <p>The sidebar from top to bottom: brand header → action group → grouped list (workspace head + session rows) → settings footer. New chat and Search are direct sibling controls in the same grid container; the optional new-workspace action shares the first row, while Search spans the next row. A 4px gap keeps Search clear of the scroll boundary. Both pinned edges use three light near, middle and far fades across 18px, entering over 260ms only while more session content exists beyond that edge. The Settings seam is a 0.5px hairline. Controls reuse the §03 primitives as much as possible. The sidebar sits on <code>--color-sidebar-bg</code> (one step off <code>--color-bg</code>: warm off-white just under white in light, one step BELOW the page in dark — the session column reads as its own plane, and with dark elevation = lighter the chrome never sits brighter than the conversation pane; the hairline still separates it from the pane). Vertical rhythm: the brand header keeps 12px padding (on macOS desktop the left padding grows to 80px to clear the traffic lights); rows inside the action group stack flush (0 gap, same rhythm as the list rows); adjacent groups are separated by 12px. The search glyph has a -0.5px optical correction to align its visual centre with the label. Row hover uses <code>--sb-hover</code> (= the global <code>--color-hover</code> wash); the selected row uses the lighter <code>--sb-selected</code> wash derived from <code>--color-selected</code> — neutral, never the accent.</p>
+            <p>The sidebar from top to bottom: brand header → action group → grouped list (workspace head + session rows) → settings footer. New chat and Search are direct sibling controls in the same grid container; the optional new-workspace action shares the first row, while Search spans the next row. A 4px gap keeps Search clear of the scroll boundary. Both pinned edges use three light near, middle and far fades across 18px, entering over 260ms only while more session content exists beyond that edge. The Settings seam is a 0.5px hairline. Controls reuse the §03 primitives as much as possible. The sidebar sits on <code>--color-sidebar-bg</code> (one step off <code>--color-bg</code>: warm off-white just under white in light, one step BELOW the page in dark — the session column reads as its own plane, and with dark elevation = lighter the chrome never sits brighter than the conversation pane; the hairline still separates it from the pane). Vertical rhythm: the brand header keeps 12px padding (on macOS desktop the left padding grows to 80px to clear the traffic lights); rows inside the action group stack flush (0 gap, same rhythm as the list rows); adjacent groups are separated by 12px. The search glyph has a -0.5px optical correction to align its visual centre with the label. Row hover uses <code>--sb-hover</code> (= the global <code>--color-hover</code> wash); the selected row uses the lighter <code>--sb-selected</code> wash derived from <code>--color-selected</code> —  On macOS desktop the sidebar is instead <b>frosted</b>: the window carries a native <code>NSVisualEffectView</code> ('menu' vibrancy, following the in-app scheme via the nativeTheme mirror, its state pinned to <code>inactive</code> so the material keeps its flat pressed-down colour — ≈ #282829 dark / #E7E7E7 light — with no active/inactive drift) and the sidebar column drops <code>--color-sidebar-bg</code> for a single translucent <code>--color-sidebar-tint</code> wash that presses the pinned material one step — ≈ #282829 → ≈ #1e1e1f in dark (<code>rgba(0,0,0,0.25)</code>), ≈ #E7E7E7 → ≈ #f1f1f1 in light (<code>rgba(255,255,255,0.4)</code>) — with header and footer staying transparent so the tint reads as one uniform pane; the root chain (<code>html/body/#app/.app</code>) stays unpainted only under the <code>macos-desktop</code> + <code>vibrancy</code> flags — the latter is the Settings → Appearance accessibility switch (default on; persisted main-side so the window is created with the right material, and live-applied on toggle): off repaints the root chain and the sidebar falls back to opaque <code>--color-sidebar-bg</code>, while the traffic-light layout keeps keying off <code>macos-desktop</code> alone — while the conversation pane, chat header and right preview keep their own opaque surfaces. The list's hover-icon clusters (session-row kebab, group-head actions) paint NOTHING there — no plate, no wash, no blur (real backdrop blur does not even render over this window: Chromium's backdrop sampler returns a flat wash above the transparent BrowserWindow + vibrancy view). Instead the row's title/name dissolves before it ever reaches the buttons: a two-stage <code>mask-image</code> fade — a subtle 16px dissolve at rest, extending over the cluster zone only while the actions are revealed (row hover / keyboard focus / menu open): 34px on session rows (the pin+kebab cluster overhangs the title by ≈25px), 68px on group heads (the floating cluster is ≈60px wide). The fade is zone-based, so short rows render untouched, and <code>text-overflow</code> becomes <code>clip</code> so a long tail dissolves instead of dotting.</p>
             <table class="dt">
               <thead><tr><th>Block</th><th>Use</th><th>Note</th></tr></thead>
               <tbody>
                 <tr><td>Brand header</td><td>logo + name + collapse IconButton (right-aligned)</td><td>on Windows / web the brand is left and the collapse IconButton sm is right-aligned inside the header; the dev-only backend version/address pill uses the UI font, not monospace; the logo is animated (a blinking eye). On macOS desktop the header is a bare drag strip (brand hidden, traffic lights + resident floating toggle over it)</td></tr>
                 <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>500-weight label; same rhythm as the session rows in the list (left-aligned, hover = <code>--sb-hover</code>). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
-                <tr><td>Search</td><td>bare search row (custom)</td><td>500-weight label; no border, hover/focus shows a sunken background; icon + label, with the <code>Kbd</code> keycaps (⌘K / Ctrl K) pushed to the trailing edge — label and shortcut are justified apart. <b>Do not</b> use Input (the 38px bordered version is too heavy). It is a direct sibling of New chat; their common container carries the scroll-linked seam</td></tr>
+                <tr><td>Search</td><td>bare search row (custom)</td><td>500-weight label; no border, hover/focus shows the faint <code>--color-hover</code> wash; icon + label, with the <code>Kbd</code> keycaps (⌘K / Ctrl K) pushed to the trailing edge — label and shortcut are justified apart. <b>Do not</b> use Input (the 38px bordered version is too heavy). It is a direct sibling of New chat; their common container carries the scroll-linked seam</td></tr>
                 <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces", using <code>--weight-section-label</code> (600)</td></tr>
                 <tr><td>Workspace head / session row</td><td>see next two sections</td><td>share <code>--sb-*</code> alignment</td></tr>
-                <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>500-weight label; pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
+                <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>500-weight label; pinned row under the session list, separated by a 0.5px <code>--line</code> hairline; icon + label, same list-style family as New chat</td></tr>
               </tbody>
             </table>
             <div class="callout warn"><span class="ico">!</span><div>
@@ -1477,7 +1491,7 @@ onUnmounted(() => {
             <ul class="clean">
               <li>The folder icon leads the row (switching icons between open and closed states) with the plain <code>--sb-gap</code> before the name — it does not pad out the <code>--sb-gutter</code> slot.</li>
               <li>The name uses 500 weight with muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads remain clear without competing with list content. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
-              <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm inside a floating actions layer anchored to the row's right edge — no reserved layout space, so the name uses the full row width when idle. Shown on hover, keyboard focus, or while the menu is open; the layer backs itself with the sidebar surface (container background) plus the row hover wash (an <code>::after</code> shown only while the row is hovered), so its color exactly equals the row's current background and the overlapped name tail doesn't bleed through (hidden via <code>opacity:0</code>, staying in the tab order).</li>
+              <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm inside a floating actions layer anchored to the row's right edge — no reserved layout space, so the name uses the full row width when idle. Shown on hover, keyboard focus, or while the menu is open; the layer backs itself with the sidebar surface (container background) plus the row hover wash (an <code>::after</code> shown only while the row is hovered), so its color exactly equals the row's current background and the overlapped name tail doesn't bleed through (hidden via <code>opacity:0</code>, staying in the tab order). On macOS desktop the layer paints nothing at all — the name's <code>mask-image</code> fade (see the sidebar section above) dissolves the tail before it reaches the buttons</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
               <li>While the active workspace has no session selected (the draft state — e.g. right after adding the workspace, or after New chat), the group head carries the same neutral <code>--sb-selected</code> fill as a selected session row (selection reads as "where I am"; the fill wins over hover). Once a session is selected or created, the fill moves to that session row.</li>
             </ul>
@@ -1495,12 +1509,12 @@ onUnmounted(() => {
             </table>
 
             <h3 class="sub">ResizeHandle</h3>
-            <p>A 4px vertical drag bar, layered over the 1px column border (<code>margin: 0 -2px</code> makes the whole 4px grabbable), turning accent on hover / drag.</p>
+            <p>A 4px grab strip layered over the 1px column border (<code>margin: 0 -2px</code> makes the whole 4px grabbable) with a centred 2px indicator bar. The bar stays transparent at rest and shows the neutral fills one step up the ramp — f2 on hover, f3 while the drag is live (the sidebar column is translucent on macOS, so f1 read too faint) — never the accent.</p>
             <table class="dt">
               <thead><tr><th>Rule</th><th>Value</th></tr></thead>
               <tbody>
-                <tr><td>Width / cursor</td><td>4px / <code>col-resize</code> mid-range; <code>w-resize</code> / <code>e-resize</code> at the drag limits (hints the direction that still resizes)</td></tr>
-                <tr><td>Normal / active</td><td>transparent / <code>accent</code> fill</td></tr>
+                <tr><td>Width / cursor</td><td>4px strip, 2px bar / <code>col-resize</code> mid-range; <code>w-resize</code> / <code>e-resize</code> at the drag limits (hints the direction that still resizes)</td></tr>
+                <tr><td>Normal / hover / drag</td><td>transparent / <code>--color-selected</code> (f2) / <code>--color-line-strong</code> (f3) — the neutral ramp one step up, never accent</td></tr>
                 <tr><td>Layer</td><td><code>--z-dropdown</code>, above pane-level sticky chrome (chat dock at <code>--z-sticky</code>) so the overhang stays visible and grabbable</td></tr>
                 <tr><td>Behavior</td><td>panel width follows the pointer 1:1 while dragging (the parent disables transitions to avoid lag); on release it is persisted to localStorage</td></tr>
               </tbody>
@@ -1651,7 +1665,7 @@ onUnmounted(() => {
                 <tr><td class="tk">App update (desktop)</td><td>padded · md · auto</td><td>version title + quiet meta line (release date · current version) / progress bar + right-aligned foot (skip → download, later → restart)</td></tr>
                 <tr><td class="tk">Server token</td><td>padded · md · auto</td><td><code>hideClose</code>, no Esc/overlay close — resolved only by a valid token</td></tr>
                 <tr><td class="tk">Settings</td><td>flush · xl · fixed</td><td>page-like exception: side-nav region, per §03</td></tr>
-                <tr><td class="tk">Onboarding wizard</td><td>not a Dialog</td><td>full-page takeover (not built on §03): one centered column (brand lockup → step content → ghost actions + centered primary CTA); selectable options share the option-card pattern — 1px <code>--color-line</code> border, <code>--color-accent</code> border + <code>--color-accent-soft</code> fill when selected</td></tr>
+                <tr><td class="tk">Onboarding wizard</td><td>not a Dialog</td><td>full-page takeover (not built on §03): one centered column (brand lockup → step content → ghost actions + centered primary CTA); selectable options share the option-card pattern — 0.5px <code>--color-line</code> hairline, <code>--color-accent</code> border + <code>--color-accent-soft</code> fill when selected</td></tr>
               </tbody>
             </table>
 
@@ -1727,7 +1741,7 @@ onUnmounted(() => {
   code, pre, .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
   code {
     background: var(--d-code-bg);
-    border: 1px solid var(--d-line-2);
+    border: 0.5px solid var(--d-line-2);
     border-radius: 5px;
     padding: 1px 6px;
     font-size: .88em;
@@ -1739,7 +1753,7 @@ onUnmounted(() => {
   .layout { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; }
   .sidebar {
     position: sticky; top: 0; align-self: start; height: 100vh;
-    background: var(--d-sidebar); border-right: 1px solid var(--d-line);
+    background: var(--d-sidebar); border-right: 0.5px solid var(--d-line);
     padding: 26px 22px; overflow-y: auto;
   }
   .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
@@ -1758,9 +1772,9 @@ onUnmounted(() => {
     transition: background .15s, color .15s;
   }
   .nav a .num { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--d-fg-faint); width: 18px; }
-  .nav a:hover { background: var(--d-surface-2); color: var(--d-fg); text-decoration: none; }
-  .nav a.active { background: var(--d-accent-soft); color: var(--d-accent-2); }
-  .nav a.active .num { color: var(--d-accent-2); }
+  .nav a:hover { background: var(--color-hover); color: var(--d-fg); text-decoration: none; }
+  .nav a.active { background: var(--color-hover); color: var(--d-fg); }
+  .nav a.active .num { color: var(--d-fg-soft); }
 
   .content { min-width: 0; }
   .content-inner { max-width: var(--content-max); margin: 0 auto; padding: 64px 56px 120px; }
@@ -1768,7 +1782,7 @@ onUnmounted(() => {
   section + section { margin-top: 72px; }
 
   /* ---------- Hero ---------- */
-  .hero { padding: 8px 0 40px; border-bottom: 1px solid var(--d-line); margin-bottom: 56px; }
+  .hero { padding: 8px 0 40px; border-bottom: 0.5px solid var(--d-line); margin-bottom: 56px; }
   .eyebrow {
     display: inline-flex; align-items: center; gap: 8px;
     font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600; letter-spacing: .04em;
@@ -1781,7 +1795,7 @@ onUnmounted(() => {
   .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
   .meta-chip {
     display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--d-fg-muted);
-    background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 8px; padding: 7px 12px;
+    background: var(--d-surface); border: 0.5px solid var(--d-line); border-radius: 8px; padding: 7px 12px;
   }
   .meta-chip b { color: var(--d-fg); font-weight: 600; }
   .meta-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--d-green); }
@@ -1797,7 +1811,7 @@ onUnmounted(() => {
 
   /* ---------- Stat cards / metrics ---------- */
   .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
-  .stat { background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 14px; padding: 18px 18px 16px; }
+  .stat { background: var(--d-surface); border: 0.5px solid var(--d-line); border-radius: 14px; padding: 18px 18px 16px; }
   .stat .v { font-size: 34px; font-weight: 800; letter-spacing: -.03em; line-height: 1; color: var(--d-fg); }
   .stat .v small { font-size: 16px; color: var(--d-fg-muted); font-weight: 600; }
   .stat .l { font-size: 12.5px; color: var(--d-fg-muted); margin-top: 8px; line-height: 1.4; }
@@ -1809,12 +1823,12 @@ onUnmounted(() => {
   .stat.good .v { color: var(--d-green); }
 
   /* ---------- Cards / panels ---------- */
-  .panel { background: var(--d-bg); border: 1px solid var(--d-line); border-radius: 16px; box-shadow: var(--d-shadow-sm); }
+  .panel { background: var(--d-bg); border: 0.5px solid var(--d-line); border-radius: 16px; box-shadow: var(--d-shadow-sm); }
   .panel-pad { padding: 22px; }
-  .panel-soft { background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 14px; }
+  .panel-soft { background: var(--d-surface); border: 0.5px solid var(--d-line); border-radius: 14px; }
   .callout {
     display: flex; gap: 12px; padding: 14px 16px; border-radius: 12px; font-size: 14px; line-height: 1.55;
-    background: var(--d-surface); border: 1px solid var(--d-line); color: var(--d-fg-soft); margin: 18px 0;
+    background: var(--d-surface); border: 0.5px solid var(--d-line); color: var(--d-fg-soft); margin: 18px 0;
   }
   .callout .ico { flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 800; }
   .callout.info { background: var(--d-accent-soft); border-color: var(--d-accent-bd); }
@@ -1826,41 +1840,41 @@ onUnmounted(() => {
 
   /* ---------- Tables ---------- */
   table.dt { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 16px 0; }
-  table.dt th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--d-fg-faint); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--d-line); }
-  table.dt td { padding: 11px 12px; border-bottom: 1px solid var(--d-line-2); color: var(--d-fg-soft); vertical-align: middle; }
+  table.dt th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--d-fg-faint); font-weight: 700; padding: 10px 12px; border-bottom: 0.5px solid var(--d-line); }
+  table.dt td { padding: 11px 12px; border-bottom: 0.5px solid var(--d-line-2); color: var(--d-fg-soft); vertical-align: middle; }
   table.dt tr:last-child td { border-bottom: none; }
   table.dt td.tk { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--d-fg); white-space: nowrap; }
   table.dt td.val { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-muted); }
-  .swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,.08); vertical-align: -3px; margin-right: 8px; }
+  .swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 0.5px solid rgba(0,0,0,.08); vertical-align: -3px; margin-right: 8px; }
 
   /* ---------- Color swatches ---------- */
   .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
-  .color-card { border: 1px solid var(--d-line); border-radius: 12px; overflow: hidden; background: var(--d-bg); }
-  .color-chip { height: 56px; border-bottom: 1px solid var(--d-line); }
+  .color-card { border: 0.5px solid var(--d-line); border-radius: 12px; overflow: hidden; background: var(--d-bg); }
+  .color-chip { height: 56px; border-bottom: 0.5px solid var(--d-line); }
   .color-meta { padding: 10px 12px 12px; }
   .color-meta .cn { font-size: 13px; font-weight: 600; color: var(--d-fg); }
   .color-meta .cv { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--d-fg-muted); margin-top: 2px; }
 
   /* ---------- Type scale ---------- */
-  .type-row { display: flex; align-items: baseline; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--d-line-2); }
+  .type-row { display: flex; align-items: baseline; gap: 18px; padding: 13px 0; border-bottom: 0.5px solid var(--d-line-2); }
   .type-row:last-child { border-bottom: none; }
   .type-sample { flex: 1; color: var(--d-fg); line-height: 1.2; }
   .type-meta { width: 190px; flex: none; text-align: right; font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-muted); }
 
   /* ---------- Spacing / radius ---------- */
-  .space-row { display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--d-line-2); }
+  .space-row { display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 0.5px solid var(--d-line-2); }
   .space-row:last-child { border-bottom: none; }
   .space-bar { height: 18px; border-radius: 4px; background: linear-gradient(90deg, var(--d-accent), var(--d-accent-2)); flex: none; }
   .space-meta { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--d-fg-soft); width: 150px; }
   .space-use { font-size: 12.5px; color: var(--d-fg-muted); }
   .radius-grid { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-end; margin: 16px 0; }
   .radius-item { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  .radius-box { width: 64px; height: 64px; border: 2px solid var(--d-accent); background: var(--d-accent-soft); }
+  .radius-box { width: 64px; height: 64px; border: 0.5px solid var(--d-accent); background: var(--d-accent-soft); }
   .radius-item .rl { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-soft); }
 
   /* ---------- Component stage ---------- */
-  .stage-wrap { border: 1px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; background: var(--d-bg); box-shadow: var(--d-shadow-sm); }
-  .stage-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--d-line); background: var(--d-surface); }
+  .stage-wrap { border: 0.5px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; background: var(--d-bg); box-shadow: var(--d-shadow-sm); }
+  .stage-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 0.5px solid var(--d-line); background: var(--d-surface); }
   .stage-bar .st { font-size: 13px; font-weight: 600; color: var(--d-fg); display: flex; align-items: center; gap: 8px; }
   .stage-bar .st .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; }
   .tag.after { background: var(--d-green-soft); color: var(--d-green); }
@@ -1868,7 +1882,7 @@ onUnmounted(() => {
   .tag.spec { background: var(--d-accent-soft); color: var(--d-accent-2); }
   .stage-bar .sactions { display: flex; gap: 6px; }
   .tab { font-family: "JetBrains Mono", monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 6px; color: var(--d-fg-muted); cursor: default; }
-  .tab.on { background: var(--d-bg); color: var(--d-fg); border: 1px solid var(--d-line); }
+  .tab.on { background: var(--d-bg); color: var(--d-fg); border: 0.5px solid var(--d-line); }
   .stage {
     padding: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
     background:
@@ -1885,10 +1899,10 @@ onUnmounted(() => {
   .stage.dark .stage-label { color: #6b7280; }
 
   /* ---------- Before / After ---------- */
-  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; box-shadow: var(--d-shadow-sm); }
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 0.5px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; box-shadow: var(--d-shadow-sm); }
   .ba-col { min-width: 0; }
-  .ba-col + .ba-col { border-left: 1px solid var(--d-line); }
-  .ba-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; border-bottom: 1px solid var(--d-line); }
+  .ba-col + .ba-col { border-left: 0.5px solid var(--d-line); }
+  .ba-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; border-bottom: 0.5px solid var(--d-line); }
   .ba-head.before { background: var(--d-red-soft); }
   .ba-head.after { background: var(--d-green-soft); }
   .ba-head .bh { font-size: 13px; font-weight: 700; }
@@ -1899,8 +1913,8 @@ onUnmounted(() => {
   .ba-col.after .ba-body { background: #fff; }
 
   /* ---------- Code block ---------- */
-  .code { background: #0d1117; border-radius: 12px; overflow: hidden; margin: 16px 0; border: 1px solid #1c2128; }
-  .code-bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: #13181e; border-bottom: 1px solid #1c2128; }
+  .code { background: #0d1117; border-radius: 12px; overflow: hidden; margin: 16px 0; border: 0.5px solid #1c2128; }
+  .code-bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: #13181e; border-bottom: 0.5px solid #1c2128; }
   .code-bar .d { width: 10px; height: 10px; border-radius: 50%; background: #30363d; }
   .code-bar .fn { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: #8b949e; margin-left: 4px; }
   .code pre { margin: 0; padding: 18px; overflow-x: auto; font-size: 12.5px; line-height: 1.7; color: #c9d1d9; }
@@ -1912,7 +1926,7 @@ onUnmounted(() => {
   .code .v { color: #ffa657; }
 
   /* ---------- Tag / pill (document use) ---------- */
-  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--d-line); background: var(--d-surface); color: var(--d-fg-soft); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 0.5px solid var(--d-line); background: var(--d-surface); color: var(--d-fg-soft); }
   .pill.blue { background: var(--d-accent-soft); border-color: var(--d-accent-bd); color: var(--d-accent-2); }
   .pill.green { background: var(--d-green-soft); border-color: #bfe3cc; color: var(--d-green); }
   .pill.amber { background: var(--d-amber-soft); border-color: #f0d9b8; color: var(--d-amber); }
@@ -1921,7 +1935,7 @@ onUnmounted(() => {
 
   /* ---------- Lists ---------- */
   ul.clean { list-style: none; padding: 0; margin: 14px 0; }
-  ul.clean li { position: relative; padding: 8px 0 8px 26px; color: var(--d-fg-soft); border-bottom: 1px solid var(--d-line-2); }
+  ul.clean li { position: relative; padding: 8px 0 8px 26px; color: var(--d-fg-soft); border-bottom: 0.5px solid var(--d-line-2); }
   ul.clean li:last-child { border-bottom: none; }
   ul.clean li::before { content: ""; position: absolute; left: 4px; top: 17px; width: 7px; height: 7px; border-radius: 50%; background: var(--d-accent); }
   ul.clean.check li::before { content: "✓"; background: none; color: var(--d-green); font-weight: 800; top: 7px; left: 0; font-size: 14px; }
@@ -1934,16 +1948,16 @@ onUnmounted(() => {
   .phase { position: relative; display: grid; grid-template-columns: 120px 1fr; gap: 24px; padding: 0 0 32px; }
   .phase:not(:last-child)::after { content: ""; position: absolute; left: 59px; top: 36px; bottom: 0; width: 2px; background: var(--d-line); }
   .phase-tag { text-align: right; padding-top: 4px; }
-  .phase-tag .pt { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; color: var(--d-accent-2); background: var(--d-accent-soft); border: 1px solid var(--d-accent-bd); padding: 5px 10px; border-radius: 8px; }
+  .phase-tag .pt { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; color: var(--d-accent-2); background: var(--d-accent-soft); border: 0.5px solid var(--d-accent-bd); padding: 5px 10px; border-radius: 8px; }
   .phase-tag .pe { font-size: 11.5px; color: var(--d-fg-faint); margin-top: 8px; }
-  .phase-body { background: var(--d-bg); border: 1px solid var(--d-line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--d-shadow-sm); }
+  .phase-body { background: var(--d-bg); border: 0.5px solid var(--d-line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--d-shadow-sm); }
   .phase-body h4 { font-size: 16px; margin-bottom: 8px; }
   .phase-body p { font-size: 14px; margin-bottom: 12px; }
   .phase-body ul { margin: 0; }
 
   /* ---------- Anti-pattern matrix ---------- */
   .matrix { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
-  .anti { border: 1px solid var(--d-line); border-radius: 12px; padding: 16px; background: var(--d-bg); }
+  .anti { border: 0.5px solid var(--d-line); border-radius: 12px; padding: 16px; background: var(--d-bg); }
   .anti .ah { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
   .anti .ah .verdict { margin-left: auto; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
   .verdict.pass { background: var(--d-green-soft); color: var(--d-green); }
@@ -1952,8 +1966,8 @@ onUnmounted(() => {
   .anti p { font-size: 13px; margin: 0; color: var(--d-fg-muted); }
 
   /* ---------- Footnote ---------- */
-  .footer { margin-top: 80px; padding-top: 28px; border-top: 1px solid var(--d-line); font-size: 13px; color: var(--d-fg-faint); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .kbd { font-family: "JetBrains Mono", monospace; font-size: 11px; background: var(--d-surface-2); border: 1px solid var(--d-line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; }
+  .footer { margin-top: 80px; padding-top: 28px; border-top: 0.5px solid var(--d-line); font-size: 13px; color: var(--d-fg-faint); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .kbd { font-family: "JetBrains Mono", monospace; font-size: 11px; background: var(--d-surface-2); border: 0.5px solid var(--d-line); border-radius: 5px; padding: 1px 6px; }
 
   @media (max-width: 980px) {
     .layout { grid-template-columns: 1fr; }
@@ -1962,7 +1976,7 @@ onUnmounted(() => {
     .content-inner { padding: 40px 22px 80px; }
     .stat-grid { grid-template-columns: repeat(2, 1fr); }
     .ba { grid-template-columns: 1fr; }
-    .ba-col + .ba-col { border-left: none; border-top: 1px solid var(--d-line); }
+    .ba-col + .ba-col { border-left: none; border-top: 0.5px solid var(--d-line); }
     .palette { grid-template-columns: repeat(2, 1fr); }
     .matrix { grid-template-columns: 1fr; }
   }
@@ -1983,6 +1997,7 @@ onUnmounted(() => {
     --p-surface-raised: var(--color-surface-raised);
     --p-surface-overlay: var(--color-surface-overlay);
     --p-surface-sunken: var(--color-surface-sunken);
+    --p-hover: var(--color-hover);
     --p-well: var(--color-well);
     --p-surface-deep: var(--color-surface-deep);
     --p-hover: var(--color-hover);
@@ -1997,13 +2012,14 @@ onUnmounted(() => {
     --p-accent: var(--color-accent);
     --p-accent-hover: var(--color-accent-hover);
     --p-accent-soft: var(--color-accent-soft);
+    --p-user-bubble-bg: var(--color-user-bubble-bg);
     --p-accent-bd: var(--color-accent-bd);
     --p-success: var(--color-success); --p-success-soft: var(--color-success-soft); --p-success-bd: var(--color-success-bd);
     --p-warning: var(--color-warning); --p-warning-soft: var(--color-warning-soft); --p-warning-bd: var(--color-warning-bd);
     --p-danger: var(--color-danger); --p-danger-soft: var(--color-danger-soft); --p-danger-bd: var(--color-danger-bd);
     --p-info: var(--color-info);
     --p-sp-1: var(--space-1); --p-sp-2: var(--space-2); --p-sp-3: var(--space-3); --p-sp-4: var(--space-4); --p-sp-5: var(--space-5); --p-sp-6: var(--space-6); --p-sp-8: var(--space-8);
-    --p-r-xs: var(--radius-xs); --p-r-sm: var(--radius-sm); --p-r-md: var(--radius-md); --p-r-lg: var(--radius-lg); --p-r-xl: var(--radius-xl); --p-r-2xl: var(--radius-2xl); --p-r-composer: var(--radius-composer); --p-r-full: var(--radius-full);
+    --p-r-xs: var(--radius-xs); --p-r-sm: var(--radius-sm); --p-r-md: var(--radius-md); --p-r-lg: var(--radius-lg); --p-r-xl: var(--radius-xl); --p-r-composer: var(--radius-composer); --p-r-full: var(--radius-full);
     --p-corner-composer: var(--corner-shape-composer);
     --p-sh-xs: var(--shadow-xs);
     --p-sh-sm: var(--shadow-sm);
@@ -2046,7 +2062,7 @@ onUnmounted(() => {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     height: var(--_h); padding: 0 var(--_px); border-radius: var(--_r);
     font-family: var(--p-font-sans); font-size: var(--_fs); font-weight: 600; line-height: 1;
-    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+    border: 0.5px solid transparent; cursor: pointer; white-space: nowrap;
     transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease),
                 color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease), transform var(--p-dur-fast) var(--p-ease);
   }
@@ -2070,7 +2086,7 @@ onUnmounted(() => {
 
   .p-icon-btn {
     --_s: 32px; display: inline-grid; place-items: center; width: var(--_s); height: var(--_s); flex: none;
-    border-radius: var(--p-r-md); border: 1px solid transparent; background: transparent; color: var(--p-text-muted); cursor: pointer;
+    border-radius: var(--p-r-md); border: 0.5px solid transparent; background: transparent; color: var(--p-text-muted); cursor: pointer;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
   .p-icon-btn:hover { background: var(--p-hover); color: var(--p-text); }
@@ -2084,7 +2100,7 @@ onUnmounted(() => {
   .p-badge {
     display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
     border-radius: var(--p-r-full); font-family: var(--p-font-sans); font-size: var(--p-font-size-xs); font-weight: 600; line-height: 1;
-    border: 1px solid var(--p-line); background: var(--p-surface); color: var(--p-text); white-space: nowrap;
+    border: 0.5px solid var(--p-line); background: var(--p-surface); color: var(--p-text); white-space: nowrap;
   }
   .p-badge.sm { height: 18px; padding: 0 7px; font-size: 11px; }
   .p-badge .bd { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -2101,15 +2117,15 @@ onUnmounted(() => {
   .p-kbd kbd {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 18px; height: 18px; padding: 0 5px;
-    border: 1px solid var(--p-line); border-bottom-width: 2px; border-radius: var(--p-r-xs);
-    background: var(--p-surface-sunken); color: var(--p-text-muted);
+    border: 0.5px solid var(--p-line); border-radius: var(--p-r-xs);
+    background: transparent; color: inherit;
     font-family: var(--p-font-kbd); font-size: 11px; line-height: 1;
   }
 
   /* model / mode pill (composer toolbar) */
   .p-pill {
     display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px;
-    border-radius: var(--p-r-full); border: 1px solid transparent; background: transparent;
+    border-radius: var(--p-r-full); border: 0.5px solid transparent; background: transparent;
     font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); font-weight: 500; color: var(--p-text); cursor: pointer;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
@@ -2119,26 +2135,26 @@ onUnmounted(() => {
   .p-pill .p-ic { width: 14px; height: 14px; color: var(--p-text-faint); }
 
   /* ===== Card / Surface ===== */
-  /* Unified card shell: flat, 1px border, radius-md, no shadow. All cards share this
+  /* Unified card shell: flat, 0.5px hairline, radius-md, no shadow. All cards share this
      shell; they differ only in the head — action cards have a compact mono head with no
      fill; note cards have a semantic color band in the head. */
   .p-card {
-    background: var(--p-surface); border: 1px solid var(--p-line); border-radius: var(--p-r-md);
+    background: var(--p-surface); border: 0.5px solid var(--p-line); border-radius: var(--p-r-md);
     overflow: hidden; color: var(--p-text);
   }
   .p-card.interactive { transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease); cursor: pointer; }
   .p-card.interactive:hover { background: var(--p-surface); border-color: var(--p-line-strong); }
-  .p-card-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-bottom: 1px solid var(--p-line); background: var(--p-surface); }
+  .p-card-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-bottom: 0.5px solid var(--p-line); background: var(--p-surface); }
   .p-card-title { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); font-family: var(--p-font-mono); }
   .p-card-body { padding: 14px; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
-  .p-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--p-line); background: var(--p-surface); }
+  .p-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 0.5px solid var(--p-line); background: var(--p-surface); }
 
   /* ===== Form Input / Select / Textarea ===== */
   .p-field { display: flex; flex-direction: column; gap: 6px; }
   .p-label { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
   .p-input, .p-select, .p-textarea {
     width: 100%; height: 38px; padding: 0 12px; border-radius: var(--p-r-md);
-    border: 1px solid var(--p-line-strong); background: var(--p-surface-raised);
+    border: 0.5px solid var(--p-line-strong); background: var(--p-surface-raised);
     font-family: var(--p-font-sans); font-size: var(--p-font-size-base); color: var(--p-text);
     box-shadow: var(--p-sh-xs); transition: border-color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
   }
@@ -2153,7 +2169,7 @@ onUnmounted(() => {
 
   /* ===== Dialog ===== */
   .p-dialog {
-    width: 480px; max-width: calc(100vw - 48px); background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    width: 480px; max-width: calc(100vw - 48px); background: var(--p-surface-raised); border: 0.5px solid var(--p-line);
     border-radius: var(--p-r-xl); box-shadow: var(--p-sh-xl); overflow: hidden; color: var(--p-text);
   }
   .p-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 22px 14px; }
@@ -2165,7 +2181,7 @@ onUnmounted(() => {
   /* ===== Toast ===== */
   .p-toast {
     display: flex; align-items: flex-start; gap: 11px; width: 360px; padding: 13px 14px;
-    background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-lg); box-shadow: var(--p-sh-md);
+    background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-lg); box-shadow: var(--p-sh-md);
   }
   .p-toast .ti { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-top: 1px; }
   .p-toast.success .ti { background: var(--p-success-soft); color: var(--p-success); }
@@ -2184,29 +2200,29 @@ onUnmounted(() => {
 
   /* ===== Chat: user bubble ===== */
   .p-bubble-user {
-    align-self: flex-end; max-width: 78%; background: var(--p-accent-soft); border: 0.5px solid color-mix(in srgb, var(--p-accent) 32%, var(--p-line-strong));
-    color: var(--p-text); border-radius: 18px 18px 5px 18px; padding: 11px 15px;
-    font-size: var(--p-font-size-md); line-height: var(--p-leading-normal); box-shadow: var(--p-sh-xs);
+    align-self: flex-end; max-width: 78%; background: var(--p-user-bubble-bg); border: none;
+    color: var(--p-text); border-radius: var(--p-r-lg); padding: 10px 12px;
+    font-size: var(--p-font-size-md); line-height: var(--p-leading-normal);
   }
   .p-msg { max-width: 760px; font-size: var(--p-font-size-md); line-height: var(--p-leading-relaxed); color: var(--p-text); }
   .p-msg p { margin: 0 0 10px; color: var(--p-text); }
   .p-msg code { font-family: var(--p-font-mono); background: var(--p-surface-sunken); border: 0; color: var(--p-accent-hover); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
 
   /* ===== Chat: mono output / code panel (expanded tool-line detail) ===== */
-  .p-code { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 11px 13px; color: var(--p-text); overflow-x: auto; }
+  .p-code { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; background: var(--p-surface-sunken); border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); padding: 11px 13px; color: var(--p-text); overflow-x: auto; }
 
   /* ===== Chat: question / approval card (floating neutral attention card) ===== */
-  .p-action { border-radius: var(--p-r-lg); overflow: hidden; border: 1px solid var(--p-line); background: var(--p-surface-raised); box-shadow: var(--p-sh-menu); }
+  .p-action { border-radius: var(--p-r-lg); overflow: hidden; border: 0.5px solid var(--p-line); background: var(--p-surface-raised); box-shadow: var(--p-sh-menu); }
   .p-action-head { display: flex; align-items: center; gap: 9px; padding: 14px 16px 0; }
   .p-action-title { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-text); }
   .p-action-body { padding: 12px 16px 0; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
-  .p-action-foot { display: flex; gap: 8px; margin-top: 12px; padding: 10px 16px; border-top: 1px solid var(--p-line); }
+  .p-action-foot { display: flex; gap: 8px; margin-top: 12px; padding: 10px 16px; border-top: 0.5px solid var(--p-line); }
 
   /* Decision-card option rows — plan approaches pinned below the plan scroll
      area, or question options. Borderless rows: number chip + label on the
      first line, full description always on the second; the chip top-aligns
      with the text block, optically centred on the label's first line. */
-  .p-opts { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding: 12px 16px; border-top: 1px solid var(--p-line); }
+  .p-opts { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding: 12px 16px; border-top: 0.5px solid var(--p-line); }
   .p-opt { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: var(--p-r-md); color: var(--p-text); font-size: var(--p-font-size-base); }
   .p-opt .n { width: var(--p-chip-num); height: var(--p-chip-num); margin-top: calc((var(--p-font-size-base) * var(--p-leading-normal) - var(--p-chip-num)) / 2); border-radius: var(--p-r-sm); background: var(--p-surface-sunken); color: var(--p-text); font-size: var(--p-font-size-xs); font-weight: 500; display: inline-flex; align-items: center; justify-content: center; flex: none; }
   .p-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -2214,7 +2230,7 @@ onUnmounted(() => {
   .p-opt-text .d { font-size: var(--p-font-size-xs); color: var(--p-text-muted); line-height: var(--p-leading-normal); }
 
   /* ===== Chat: Todo card ===== */
-  .p-todo { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 6px; }
+  .p-todo { background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); padding: 6px; }
   .p-todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--p-r-md); font-size: var(--p-font-size-base); color: var(--p-text); }
   .p-todo-row.done { color: var(--p-text-faint); text-decoration: line-through; }
   .p-todo-row.active { background: var(--p-accent-soft); color: var(--p-text); }
@@ -2311,7 +2327,7 @@ onUnmounted(() => {
 
   /* ===== Menu / Dropdown ===== */
   .p-menu {
-    background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    background: var(--p-surface-raised); border: 0.5px solid var(--p-line);
     border-radius: var(--p-r-lg); box-shadow: var(--p-sh-sm);
     padding: 3.5px; min-width: 180px;
     font-family: var(--p-font-sans); color: var(--p-text);
@@ -2322,8 +2338,8 @@ onUnmounted(() => {
     cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
   .p-menu-item:hover { background: var(--p-hover); color: var(--p-text-strong); }
-  .p-menu-item.active { background: var(--p-accent-soft); color: var(--p-accent-hover); }
-  .p-menu-item.active:hover { background: var(--p-accent-soft); color: var(--p-accent-hover); }
+  .p-menu-item.active { background: var(--p-hover); color: var(--p-text); }
+  .p-menu-item.active:hover { background: var(--p-hover); color: var(--p-text); }
   .p-menu-item.danger { color: var(--p-danger); }
   .p-menu-item.danger:hover { background: var(--p-danger-soft); color: var(--p-danger); }
   .p-menu-item.disabled { opacity: .5; cursor: not-allowed; }
@@ -2338,7 +2354,7 @@ onUnmounted(() => {
   /* ===== SegmentedControl ===== */
   .p-seg {
     display: inline-flex; gap: 2px; padding: 2px;
-    background: var(--p-surface-sunken); border: 1px solid var(--p-line);
+    background: var(--p-surface-sunken); border: 0.5px solid var(--p-line);
     border-radius: var(--p-r-md); font-family: var(--p-font-sans);
   }
   .p-seg-item {
@@ -2347,17 +2363,17 @@ onUnmounted(() => {
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
   }
   .p-seg-item:hover { color: var(--p-text); }
-  .p-seg-item.on { background: var(--p-surface-raised); color: var(--p-text); box-shadow: var(--p-sh-xs); }
+  .p-seg-item.on { background: var(--p-surface-raised); color: var(--p-text); box-shadow: var(--p-sh-sm); }
 
   /* ===== Tabs ===== */
   .p-tabs {
     display: flex; align-items: center; gap: 0;
-    border-bottom: 1px solid var(--p-line); font-family: var(--p-font-sans);
+    border-bottom: 0.5px solid var(--p-line); font-family: var(--p-font-sans);
   }
   .p-tab {
     padding: 8px 14px; font-size: var(--p-font-size-sm); font-weight: 500;
     color: var(--p-text-muted); cursor: pointer; white-space: nowrap;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    border-bottom: 0.5px solid transparent; margin-bottom: -0.5px;
     transition: color var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease);
   }
   .p-tab:hover { color: var(--p-text); }
@@ -2385,7 +2401,7 @@ onUnmounted(() => {
   /* ===== Checkbox ===== */
   .p-check {
     width: 17px; height: 17px; flex: none; display: inline-grid; place-items: center;
-    border: 1.5px solid var(--p-line-strong); border-radius: var(--p-r-sm);
+    border: 0.5px solid var(--p-line-strong); border-radius: var(--p-r-sm);
     background: var(--p-surface-raised); color: var(--p-text-on-accent);
     cursor: pointer; transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease);
   }
@@ -2397,7 +2413,7 @@ onUnmounted(() => {
   .p-avatar {
     width: 32px; height: 32px; flex: none; display: grid; place-items: center;
     border-radius: var(--p-r-md); background: var(--p-surface-sunken);
-    border: 1px solid var(--p-line); color: var(--p-text-muted);
+    border: 0.5px solid var(--p-line); color: var(--p-text-muted);
     font-size: var(--p-font-size-sm); font-weight: 600;
   }
   .p-avatar.sm { width: 24px; height: 24px; border-radius: var(--p-r-sm); font-size: var(--p-font-size-xs); }
@@ -2430,7 +2446,7 @@ onUnmounted(() => {
   /* ===== Banner ===== */
   .p-banner {
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-    border-radius: var(--p-r-md); border: 1px solid var(--p-line);
+    border-radius: var(--p-r-md); border: 0.5px solid var(--p-line);
     background: var(--p-surface); font-size: var(--p-font-size-sm); color: var(--p-text);
   }
   .p-banner .bn-ic { width: 18px; height: 18px; flex: none; }
@@ -2443,7 +2459,7 @@ onUnmounted(() => {
 
   /* ===== Sheet / BottomSheet ===== */
   .p-sheet {
-    background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    background: var(--p-surface-raised); border: 0.5px solid var(--p-line);
     border-radius: var(--p-r-xl) var(--p-r-xl) 0 0; box-shadow: var(--p-sh-xl);
     padding: 8px 16px 20px;
   }
@@ -2461,14 +2477,14 @@ onUnmounted(() => {
 
   /* ===== Command Bar ===== */
   .p-cmdbar { display: flex; align-items: center; gap: 8px; width: 100%; }
-  .p-cmd { flex: 1; min-width: 0; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); color: var(--p-text-muted); }
+  .p-cmd { flex: 1; min-width: 0; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; background: var(--p-surface-sunken); border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); color: var(--p-text-muted); }
   .p-cmd .cmd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .p-cmd .cmd-copy { margin-left: auto; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: var(--p-r-sm); color: var(--p-text-faint); cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease); }
   .p-cmd .cmd-copy:hover { background: var(--p-surface-raised); color: var(--p-text); }
   .p-cmd .cmd-copy .p-ic { width: 15px; height: 15px; }
 
   /* ===== TopBar ===== */
-  .p-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 48px; padding: 0 16px; background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-lg); }
+  .p-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 48px; padding: 0 16px; background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-lg); }
   .p-topbar .tb-title { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
   .p-topbar .tb-actions { display: flex; align-items: center; gap: 4px; }
   .p-topbar.frost { background: rgba(255,255,255,.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-color: rgba(255,255,255,.6); }
@@ -2484,7 +2500,7 @@ onUnmounted(() => {
   /* Icon catalog (§02 Icon library) */
   .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin: 14px 0; }
   .icon-group-label { grid-column: 1 / -1; margin-top: 10px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--d-fg-muted); }
-  .icon-cell { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-surface); }
+  .icon-cell { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0.5px solid var(--d-line); border-radius: 8px; background: var(--d-surface); }
   .icon-cell .kw-icon { width: 20px; height: 20px; color: var(--d-fg-soft); }
   .icon-cell .ic-name { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--d-fg); }
   .icon-sizes { display: flex; align-items: end; gap: 22px; flex-wrap: wrap; }
@@ -2492,11 +2508,11 @@ onUnmounted(() => {
 
   /* ===== Code / Diff ===== */
   .p-code-inline { font-family: var(--p-font-mono); background: var(--p-surface-sunken); color: var(--p-text); padding: 0 5px; border-radius: var(--p-r-sm); font-size: .9em; }
-  .p-code-block { border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; background: var(--p-surface-sunken); }
-  .p-code-block-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
+  .p-code-block { border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; background: var(--p-surface-sunken); }
+  .p-code-block-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--p-surface); border-bottom: 0.5px solid var(--p-line); font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
   .p-code-block pre { margin: 0; padding: 12px 14px; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; color: var(--p-text); overflow-x: auto; }
-  .p-diff { border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); }
-  .p-diff-head { padding: 8px 12px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
+  .p-diff { border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); }
+  .p-diff-head { padding: 8px 12px; background: var(--p-surface); border-bottom: 0.5px solid var(--p-line); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
   .p-diff-row { display: flex; gap: 10px; padding: 2px 12px; line-height: 1.6; }
   .p-diff-row .pm { width: 14px; flex: none; color: var(--p-text-faint); }
   .p-diff-row.add { background: var(--p-success-soft); }
@@ -2530,14 +2546,14 @@ onUnmounted(() => {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
 }
 .ds-back {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface-raised);
   color: var(--color-text);
@@ -2546,7 +2562,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .ds-back:hover {
-  background: var(--color-surface-sunken);
+  background: var(--color-hover);
 }
 .ds-topbar-title {
   font-size: var(--text-sm);

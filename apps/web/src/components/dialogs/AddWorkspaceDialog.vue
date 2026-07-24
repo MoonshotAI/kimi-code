@@ -367,7 +367,7 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) 22px;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
 }
 .crumbs {
   display: flex;
@@ -397,7 +397,7 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) 22px;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
 }
 .filter-icon { flex: none; width: var(--p-ic-sm); height: var(--p-ic-sm); color: var(--color-text-muted); }
 .filter-input {
@@ -457,7 +457,7 @@ onUnmounted(() => {
 /* Paste-path escape hatch */
 .paste-section {
   padding: var(--space-3) 22px;
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .paste-section.paste-only { border-top: none; }
 .paste-row {
@@ -475,7 +475,7 @@ onUnmounted(() => {
   font-size: var(--text-xs);
   color: var(--color-danger);
   background: var(--color-danger-soft);
-  border: 1px solid var(--color-danger-bd);
+  border: 0.5px solid var(--color-danger-bd);
   border-radius: var(--radius-sm);
 }
 .actions {
@@ -491,7 +491,7 @@ onUnmounted(() => {
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 
 @media (max-width: 640px) {

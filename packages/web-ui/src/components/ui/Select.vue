@@ -199,10 +199,10 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   width: 100%;
   height: 100%;
   padding: 0 var(--space-3);
-  border: 1px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-md);
-  background: var(--color-surface-overlay);
-  box-shadow: var(--shadow-xs);
+  background: transparent;
+  box-shadow: none;
   color: var(--color-text);
   font: inherit;
   font-size: var(--text-base);

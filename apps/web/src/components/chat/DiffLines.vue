@@ -78,11 +78,11 @@ function rowClass(line: DiffViewLine): string {
   color: var(--faint);
   background: var(--color-surface-deep);
   user-select: none;
-  border-right: 1px solid var(--color-subtle);
+  border-right: 0.5px solid var(--color-subtle);
   font-variant-numeric: tabular-nums;
 }
 
-.dl-gutter.new { border-right: 1px solid var(--color-line); }
+.dl-gutter.new { border-right: 0.5px solid var(--color-line); }
 
 .dl-sign {
   flex: none;

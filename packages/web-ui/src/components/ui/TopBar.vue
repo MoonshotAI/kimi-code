@@ -20,7 +20,7 @@ defineProps<{ frost?: boolean }>();
   height: 48px;
   padding: 0 var(--space-4);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
 }
 .ui-topbar--frost {

@@ -5,7 +5,8 @@ import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/web-i18n';
 import App from './App.vue';
 import i18n from './i18n';
 import { useKimiWebClient } from './composables/useKimiWebClient';
-import { isDesktop } from './lib/desktopFlag';
+import { initVibrancy } from './composables/useVibrancy';
+import { isDesktop, isMacosDesktop } from './lib/desktopFlag';
 import { getIcon, type IconName } from './lib/icons';
 import { installClientErrorCapture } from './debug/trace';
 import '@fontsource-variable/jetbrains-mono/wght.css';
@@ -48,4 +49,13 @@ if (isDesktop) {
     });
     report();
   }
+}
+
+// macOS desktop: flag the root for the traffic-light / drag-region layout,
+// then seed the vibrancy paint class (composables/useVibrancy.ts) — the
+// window carries a native vibrancy material (see src/main/window.ts) that
+// must read through the sidebar column unless the user switched it off.
+if (isMacosDesktop) {
+  document.documentElement.classList.add('macos-desktop');
+  initVibrancy();
 }

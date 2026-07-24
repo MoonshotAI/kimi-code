@@ -189,7 +189,7 @@ function autosize(): void {
   flex: 1;
   min-width: 0;
   resize: none;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--r-sm);
   padding: 7px 9px;
   background: var(--bg);

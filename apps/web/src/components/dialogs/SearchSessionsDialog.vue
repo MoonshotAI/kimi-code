@@ -386,7 +386,7 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);

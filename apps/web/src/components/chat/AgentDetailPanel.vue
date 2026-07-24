@@ -241,7 +241,7 @@ watch(
   color: var(--color-text-muted);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  border-left: 2px solid var(--color-line);
+  border-left: 0.5px solid var(--color-line);
   min-width: 0;
 }
 .ap-out-line {

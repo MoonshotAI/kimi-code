@@ -145,7 +145,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
 
 /* TUI-style header: top border + bold title */
 .tp-head {
-  border-top: 1px solid var(--line);
+  border-top: 0.5px solid var(--line);
   padding-top: 10px;
   margin-bottom: 8px;
   display: flex;
@@ -225,7 +225,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
 .tp-stop {
   flex: none;
   background: none;
-  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, var(--bg));
+  border: 0.5px solid color-mix(in srgb, var(--color-danger) 22%, var(--bg));
   border-radius: var(--radius-xs);
   color: var(--color-danger);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
@@ -246,7 +246,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
 .tp-codebox {
   position: relative;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: var(--radius-xs);
 }
 
@@ -259,7 +259,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   visibility: hidden;
   transition: opacity 0.12s ease, visibility 0.12s ease;
   background: var(--panel2);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: var(--radius-xs);
   color: var(--dim);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));

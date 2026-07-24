@@ -14,7 +14,7 @@ withDefaults(defineProps<{ size?: 'sm' | 'md' }>(), { size: 'md' });
   align-items: center;
   justify-content: center;
   flex: none;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface-sunken);
   color: var(--color-text-muted);

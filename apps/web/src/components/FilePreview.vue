@@ -736,7 +736,7 @@ function truncatePath(path: string, maxLen = 55): string {
   flex: 1;
   min-width: 0;
   height: 26px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 2px 7px;
   background: var(--color-surface-raised);
@@ -762,7 +762,7 @@ function truncatePath(path: string, maxLen = 55): string {
   color: var(--color-text-muted);
 }
 .fp-download:hover {
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  background: var(--color-hover);
   color: var(--color-text);
 }
 .fp-download:focus-visible {
@@ -838,7 +838,7 @@ function truncatePath(path: string, maxLen = 55): string {
   user-select: none;
   font-size: var(--text-base);
   white-space: nowrap;
-  border-right: 1px solid var(--line2);
+  border-right: 0.5px solid var(--line2);
   vertical-align: top;
 }
 
@@ -892,13 +892,13 @@ function truncatePath(path: string, maxLen = 55): string {
   text-align: right;
   color: var(--faint);
   background: var(--panel);
-  border-right: 1px solid var(--line2);
+  border-right: 0.5px solid var(--line2);
   user-select: none;
 }
 .fp-table td {
   padding: 2px 10px;
-  border-right: 1px solid var(--line2);
-  border-bottom: 1px solid var(--line2);
+  border-right: 0.5px solid var(--line2);
+  border-bottom: 0.5px solid var(--line2);
   white-space: pre;
 }
 
@@ -915,7 +915,7 @@ function truncatePath(path: string, maxLen = 55): string {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 4px;
   background: var(--media-alpha-canvas);
 }
@@ -936,7 +936,7 @@ function truncatePath(path: string, maxLen = 55): string {
   align-items: center;
   gap: 12px;
   padding: 20px 24px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
   color: var(--muted);
@@ -962,7 +962,7 @@ function truncatePath(path: string, maxLen = 55): string {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--line);
+  border: 0.5px solid var(--line);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
@@ -981,7 +981,7 @@ function truncatePath(path: string, maxLen = 55): string {
 
 .fp-empty,
 .fp-loading { font-family: var(--sans); }
-.fp-binary-card { border: 1px solid var(--color-line); border-radius: var(--radius-md); }
+.fp-binary-card { border: 0.5px solid var(--color-line); border-radius: var(--radius-md); }
 .fp-binary-label { font-family: var(--sans); }
 .fp-image { border-radius: var(--radius-md); }
 .seg-btn { font-family: var(--sans); }

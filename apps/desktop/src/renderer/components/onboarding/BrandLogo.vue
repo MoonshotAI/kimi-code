@@ -81,7 +81,7 @@ onBeforeUnmount(() => clearTimeout(blinkTimer));
   user-select: none;
   touch-action: manipulation;
   /* Lift the tile off near-black dark surfaces (and vice versa). */
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: 22.5%; /* matches the tile's own rx=27/120 */
   box-sizing: border-box;
 }

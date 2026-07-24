@@ -430,7 +430,7 @@ async function onOpenInApp(appId: string): Promise<void> {
   font-weight: var(--weight-medium);
   color: var(--color-text);
   background: var(--color-bg);
-  border: 1px solid var(--color-accent);
+  border: 0.5px solid var(--color-accent);
   border-radius: var(--radius-xs);
   padding: 2px 5px;
   outline: none;
@@ -470,7 +470,7 @@ async function onOpenInApp(appId: string): Promise<void> {
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   font-size: calc(var(--ui-font-size) - 3px);
 }
 .ch-sync-pill { border-color: var(--line); }
@@ -505,7 +505,7 @@ async function onOpenInApp(appId: string): Promise<void> {
   height: 22px;
   padding: 0 9px;
   flex: none;
-  border: 1px solid var(--color-warning-bd);
+  border: 0.5px solid var(--color-warning-bd);
   border-radius: var(--radius-full);
   background: var(--color-warning-soft);
   color: var(--color-warning);
@@ -522,7 +522,7 @@ async function onOpenInApp(appId: string): Promise<void> {
   height: 22px;
   padding: 0 9px;
   flex: none;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-full);
   background: var(--color-well);
   color: var(--color-text-muted);

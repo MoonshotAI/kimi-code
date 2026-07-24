@@ -32,6 +32,8 @@ export const IPC = {
   globalShortcut: 'kimi:global-shortcut',
   globalShortcutSuspend: 'kimi:global-shortcut-suspend',
   setOnboarded: 'kimi:set-onboarded',
+  vibrancy: 'kimi:vibrancy',
+  getVibrancy: 'kimi:get-vibrancy',
   petDragStart: 'kimi:pet-drag-start',
   petDragMove: 'kimi:pet-drag-move',
   petDragEnd: 'kimi:pet-drag-end',

@@ -58,9 +58,9 @@ defineExpose({ focus, select, el });
 <style scoped>
 .ui-input {
   width: 100%;
-  border: 1px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-md);
-  background: var(--color-surface-raised);
+  background: var(--color-surface-overlay);
   box-shadow: var(--shadow-xs);
   color: var(--color-text);
   font-family: var(--font-ui);

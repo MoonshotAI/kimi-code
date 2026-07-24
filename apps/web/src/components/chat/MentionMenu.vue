@@ -97,7 +97,7 @@ function fileIcon(item: FileItem): string {
   right: 0;
   padding: var(--space-1);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   z-index: var(--z-dropdown);
@@ -108,7 +108,7 @@ function fileIcon(item: FileItem): string {
 .mention-state {
   padding: 8px 12px;
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--ui-b2);
 }
 
 .dim {
@@ -122,7 +122,7 @@ function fileIcon(item: FileItem): string {
   padding: 6px 10px;
   cursor: pointer;
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--ui-b2);
   border-radius: var(--radius-sm);
 }
 
@@ -156,7 +156,7 @@ function fileIcon(item: FileItem): string {
   color: var(--color-text-strong);
 }
 .mention-item.active {
-  background: var(--color-accent-soft);
+  background: var(--color-hover);
 }
 
 .mention-name {

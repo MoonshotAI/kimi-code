@@ -255,7 +255,7 @@ watch(
   width: 14px;
   height: 14px;
   flex: none;
-  border: 1.5px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   position: relative;
 }
 .rc-g.chk { border-radius: var(--radius-xs); }

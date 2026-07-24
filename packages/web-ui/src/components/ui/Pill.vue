@@ -36,7 +36,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);

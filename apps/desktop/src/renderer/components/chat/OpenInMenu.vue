@@ -243,7 +243,7 @@ async function copyPath(): Promise<void> {
   align-items: stretch;
   flex: none;
   height: 26px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-xs);

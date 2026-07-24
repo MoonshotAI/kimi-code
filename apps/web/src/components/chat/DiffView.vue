@@ -657,7 +657,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   background: var(--panel);
   flex: none;
   white-space: nowrap;

@@ -254,7 +254,7 @@ function badgeLabel(e: TraceEntry): string {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   background: var(--panel);
 }
 .kap-count { color: var(--muted); }
@@ -262,7 +262,7 @@ function badgeLabel(e: TraceEntry): string {
 .kap-head-actions button,
 .kap-view-toggle button {
   padding: 3px 8px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 6px;
   background: var(--bg);
   color: var(--muted);
@@ -281,12 +281,12 @@ function badgeLabel(e: TraceEntry): string {
   align-items: center;
   gap: 6px;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
 }
 .kap-filters select,
 .kap-filters input[type='text'] {
   padding: 3px 6px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 6px;
   background: var(--bg);
   color: var(--color-text);
@@ -309,7 +309,7 @@ function badgeLabel(e: TraceEntry): string {
   width: 100%;
   padding: 3px 10px;
   border: none;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   background: transparent;
   color: var(--color-text);
   font: inherit;
@@ -341,14 +341,14 @@ function badgeLabel(e: TraceEntry): string {
 }
 
 .kap-detail {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   background: var(--bg);
   padding: 6px 10px 10px;
 }
 .kap-detail-actions { display: flex; justify-content: flex-end; margin-bottom: 4px; }
 .kap-detail-actions button {
   padding: 2px 8px;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
   color: var(--muted);
@@ -371,7 +371,7 @@ function badgeLabel(e: TraceEntry): string {
 .kap-agg table { width: 100%; border-collapse: collapse; }
 .kap-agg th, .kap-agg td {
   padding: 3px 6px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   text-align: left;
   vertical-align: top;
 }

@@ -40,9 +40,12 @@ defineEmits<{ click: [event: MouseEvent] }>();
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
+  /* Menu items sit one rung under the base UI step; --text-sm aliases
+     calc(--ui-b2 − 1px) on the §03 ramp, so labels still follow the user's
+     font scale. */
   font-size: var(--text-sm);
   font-weight: var(--weight-option-label);
-  line-height: 16px;
+  line-height: var(--leading-tight);
   text-align: left;
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base);
@@ -50,12 +53,14 @@ defineEmits<{ click: [event: MouseEvent] }>();
 .ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger) { background: var(--color-hover); color: var(--color-text-strong); }
 .ui-menu-item:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
-.ui-menu-item.is-active { background: var(--color-accent-soft); color: var(--color-accent-hover); }
+/* "Where I am" selection is the neutral f1 wash, never accent-tinted —
+   same recipe as the settings nav (Kimi .ss-nav-item--active → Fills-F1). */
+.ui-menu-item.is-active { background: var(--color-hover); color: var(--color-text); }
 .ui-menu-item.is-danger { color: var(--color-danger); }
 .ui-menu-item.is-danger:hover:not(:disabled) { background: var(--color-danger-soft); }
 .ui-menu-item :deep(svg) { display: block; width: 16px; height: 16px; flex: none; color: var(--muted); transition: color var(--duration-base); }
 .ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger) :deep(svg) { color: var(--color-text-strong); }
-.ui-menu-item.is-active :deep(svg) { color: var(--color-accent-hover); }
+.ui-menu-item.is-active :deep(svg) { color: var(--color-text); }
 .ui-menu-item.is-danger :deep(svg) { color: var(--color-danger); }
 /* lg · touch / mobile: taller row, bigger tap target */
 .ui-menu-item--lg { min-height: 44px; padding: 12px 14px; font-size: var(--text-sm); }

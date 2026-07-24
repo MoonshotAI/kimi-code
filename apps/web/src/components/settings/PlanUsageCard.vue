@@ -153,9 +153,8 @@ function money(cents: number, currency: string): string {
 }
 .pu-group {
   overflow: hidden;
-  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl);
-  background: var(--color-bg);
+  background: var(--color-surface);
 }
 .pu-row {
   display: flex;

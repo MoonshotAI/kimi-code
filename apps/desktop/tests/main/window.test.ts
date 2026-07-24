@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { isAppRendererUrl, looksMaximizedBounds, shouldHideOnClose, shouldPersistBounds } from '../../src/main/window';
+import { isAppRendererUrl, looksMaximizedBounds, shouldHideOnClose, shouldPersistBounds, vibrancyWindowOptions } from '../../src/main/window';
 
 describe('isAppRendererUrl', () => {
   it('accepts the packaged renderer protocol and the dev-server http URL', () => {
@@ -55,5 +55,20 @@ describe('looksMaximizedBounds', () => {
     const workArea = { width: 1512, height: 944 };
     expect(looksMaximizedBounds({ width: 1280, height: 860 }, workArea)).toBe(false);
     expect(looksMaximizedBounds({ width: 900, height: 600 }, workArea)).toBe(false);
+  });
+});
+
+describe('vibrancyWindowOptions', () => {
+  it('always passes the pinned flat material + transparent flash on macOS (an opt-out launch removes it right after creation)', () => {
+    expect(vibrancyWindowOptions('darwin')).toEqual({
+      vibrancy: 'menu',
+      visualEffectState: 'inactive',
+      backgroundColor: '#00000000',
+    });
+  });
+
+  it('passes no vibrancy options off macOS', () => {
+    expect(vibrancyWindowOptions('win32')).toEqual({ backgroundColor: '#0b0b0c' });
+    expect(vibrancyWindowOptions('linux')).toEqual({ backgroundColor: '#0b0b0c' });
   });
 });

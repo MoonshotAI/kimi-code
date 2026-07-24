@@ -1,7 +1,7 @@
 import { dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 
-import { getMainWindow, showMainWindow } from './window';
+import { getMainWindow, showMainWindow, applyWindowVibrancy } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import {
@@ -15,7 +15,7 @@ import {
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
-import { markOnboarded } from './ui-state';
+import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { IPC, type ColorScheme } from './ipc-channels';
 
@@ -163,4 +163,14 @@ export function registerIpcHandlers(): void {
   ipcMain.on(IPC.setOnboarded, () => {
     markOnboarded();
   });
+  // Frosted-sidebar switch (macOS, settings → appearance): persist main-side
+  // (window creation reads it before the renderer exists — no boot flicker),
+  // then live-apply to the created window. Initial value goes back over
+  // IPC.getVibrancy.
+  ipcMain.on(IPC.vibrancy, (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return;
+    setVibrancyEnabled(enabled);
+    applyWindowVibrancy(enabled);
+  });
+  ipcMain.handle(IPC.getVibrancy, () => isVibrancyEnabled());
 }

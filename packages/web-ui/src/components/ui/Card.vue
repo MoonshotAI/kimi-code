@@ -19,7 +19,7 @@ withDefaults(defineProps<{
 <style scoped>
 .ui-card {
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -30,7 +30,7 @@ withDefaults(defineProps<{
   align-items: center;
   gap: var(--space-2);
   padding: 10px 14px;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   background: var(--color-surface);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -44,7 +44,7 @@ withDefaults(defineProps<{
   justify-content: flex-end;
   gap: var(--space-2);
   padding: 10px 14px;
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
   background: var(--color-surface);
 }
 </style>

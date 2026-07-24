@@ -142,17 +142,15 @@ const text = computed(() => props.text ?? '');
   color: var(--color-danger);
 }
 
-/* Mirrors the user bubble (.u-bub): accent fill + border, rounded with one
-   small corner, soft shadow. The prompt is shown in full and wraps across
+/* Mirrors the user bubble (.u-bub): neutral BubbleGray fill, uniform
+   radius, no border, no shadow. The prompt is shown in full and wraps across
    lines (long tokens break) — no truncation. */
 .cn-bubble {
   box-sizing: border-box;
   max-width: 100%;
-  padding: 8px 14px;
-  background: var(--color-accent-soft);
-  border: 1px solid var(--color-accent-bd);
-  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
-  box-shadow: var(--shadow-xs);
+  padding: 10px 12px;
+  background: var(--color-user-bubble-bg);
+  border-radius: var(--radius-lg);
   color: var(--color-text);
   font-size: var(--content-font-size);
   line-height: var(--leading-normal);

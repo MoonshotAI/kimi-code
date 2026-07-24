@@ -2,8 +2,9 @@
 <!-- A thin (~4px) vertical drag bar used to resize the panel to its LEFT. It -->
 <!-- owns the width via useResizable and reports changes through v-model:width so -->
 <!-- the parent can drive its grid/flex sizing. Directional resize cursor (at a -->
-<!-- drag limit it hints the one direction that still works), subtle blue hover -->
-<!-- highlight, no text-selection while dragging. -->
+<!-- drag limit it hints the one direction that still works), a 2px indicator bar -->
+<!-- that shows the neutral fills one step up the ramp (f2 hover, f3 drag — never accent),
+<!-- no text-selection while dragging. -->
 <script setup lang="ts">
 import { watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -82,12 +83,19 @@ watch(dragging, (d) => emit('update:dragging', d));
 }
 .rh-bar {
   position: absolute;
-  inset: 0;
+  /* 2px indicator line centred in the 4px grab strip (the strip stays 4px
+     so the hit target doesn't shrink). */
+  inset: 0 1px;
   background: transparent;
   transition: background 0.12s;
 }
-.rh:hover .rh-bar,
+/* Neutral fills, never accent: f2 on hover, one step stronger (f3) while
+   the drag is live — the same ramp as row hover/selected, shifted one step
+   up so the 2px line stays visible on the translucent sidebar material. */
+.rh:hover .rh-bar {
+  background: var(--color-selected);
+}
 .rh.dragging .rh-bar {
-  background: var(--color-accent);
+  background: var(--color-line-strong);
 }
 </style>

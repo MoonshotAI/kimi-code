@@ -134,7 +134,7 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 // Appearance types + logic live in @moonshot-ai/web-core; re-exported here so
 // existing `import type { ColorScheme } from './useKimiWebClient'` callers
 // keep working.
-export type { ColorScheme } from '@moonshot-ai/web-core';
+export type { ColorScheme, FontScale } from '@moonshot-ai/web-core';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
@@ -3069,8 +3069,8 @@ export function useKimiWebClient() {
     starredModelIds: modelProvider.starredModelIds,
     providers: modelProvider.providers,
 
-    uiFontSize: appearance.uiFontSize,
-    setUiFontSize: appearance.setUiFontSize,
+    fontScale: appearance.fontScale,
+    setFontScale: appearance.setFontScale,
 
     // Color scheme
     colorScheme: appearance.colorScheme,

@@ -1127,7 +1127,7 @@ function openPr(url: string): void {
     <SettingsDialog
       v-if="showSettings"
       :color-scheme="client.colorScheme.value"
-      :ui-font-size="client.uiFontSize.value"
+      :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
       :on-fetch-usage="client.getUsage"
       :notify="client.notifyEnabled.value"
@@ -1139,7 +1139,7 @@ function openPr(url: string): void {
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
       @set-color-scheme="client.setColorScheme($event)"
-      @set-ui-font-size="client.setUiFontSize($event)"
+      @set-font-scale="client.setFontScale($event)"
       @set-notify="client.setNotifyEnabled($event)"
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
@@ -1228,7 +1228,7 @@ function openPr(url: string): void {
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
-      :ui-font-size="client.uiFontSize.value"
+      :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
@@ -1237,7 +1237,7 @@ function openPr(url: string): void {
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
       @set-color-scheme="client.setColorScheme($event)"
-      @set-ui-font-size="client.setUiFontSize($event)"
+      @set-font-scale="client.setFontScale($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
@@ -1417,7 +1417,7 @@ function openPr(url: string): void {
   width: var(--preview-w);
   height: 100%;
   box-sizing: border-box;
-  border-left: 1px solid var(--line);
+  border-left: 0.5px solid var(--line);
 }
 .global-preview.mobile {
   position: fixed;
@@ -1425,7 +1425,7 @@ function openPr(url: string): void {
   z-index: var(--z-sticky);
   width: auto;
   transition: none;
-  border-top: 2px solid var(--color-text);
+  border-top: 0.5px solid var(--color-text);
 }
 </style>
 

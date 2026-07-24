@@ -94,7 +94,7 @@ const statusText = computed<string>(() =>
   height: calc(50px + var(--safe-top));
   flex: none;
   padding: var(--safe-top) max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   background: var(--color-bg);
   font-family: var(--font-ui);
 }

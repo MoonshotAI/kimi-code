@@ -1111,7 +1111,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   max-width: min(90%, 480px);
   padding: 6px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: var(--ui-font-size-sm);
@@ -1150,18 +1150,17 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   width: 100%;
 }
 
-/* User message → right-aligned soft-blue bubble (redesign .p-bubble-user). */
+/* User message → right-aligned neutral bubble (kimiwork BubbleGray:
+   uniform r12, no border, no shadow — production MessageItem .user-bubble). */
 .u-bub {
   align-self: flex-end;
   max-width: 78%;
-  background: var(--color-accent-soft);
-  border: 0.5px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-line-strong));
+  background: var(--color-user-bubble-bg);
   color: var(--color-text);
-  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
-  padding: 11px 15px;
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
   font-size: var(--content-font-size);
   line-height: var(--leading-normal);
-  box-shadow: var(--shadow-xs);
 }
 .u-meta {
   align-self: flex-end;
@@ -1506,7 +1505,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg :deep(:not(pre) > code) {
   font: .9em var(--font-mono);
   background: var(--color-inline-code-bg);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   color: var(--color-accent-hover);
@@ -1606,7 +1605,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   height: 22px;
   border-radius: var(--radius-full);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   color: var(--color-text);
   box-shadow: var(--shadow-sm);
   pointer-events: none;
@@ -1726,7 +1725,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .top-sentinel-btn {
   appearance: none;
-  border: 1px solid var(--border);
+  border: 0.5px solid var(--border);
   background: transparent;
   color: var(--muted);
   font-size: var(--ui-font-size-sm);
@@ -1753,11 +1752,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   padding: 22px 20px 26px;
 }
 .u-bub {
-  background: var(--color-accent-soft);
-  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--color-line-strong));
-  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
-  padding: 11px 15px;
-  box-shadow: var(--shc);
+  background: var(--color-user-bubble-bg);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
 }
 .a-msg {
   max-width: 100%;
@@ -1811,7 +1808,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   width: fit-content;
   background: var(--color-surface-raised);
-  border: 1px dashed var(--color-accent-bd);
+  border: 0.5px dashed var(--color-accent-bd);
   padding: 8px 8px 8px 6px;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
@@ -1878,7 +1875,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   height: 28px;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
 }
 .q-file {
   display: inline-flex;
@@ -1887,7 +1884,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   height: 28px;
   padding: 0 6px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   color: var(--color-text-muted);
   font-size: calc(var(--ui-font-size) - 3px);
   max-width: 160px;
@@ -1907,12 +1904,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .q-tag-next {
   color: var(--color-accent-hover);
   background: var(--color-accent-soft);
-  border: 1px solid var(--color-accent-bd);
+  border: 0.5px solid var(--color-accent-bd);
 }
 .q-tag-idx {
   color: var(--color-text-faint);
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
 }
 .q-rm {
   flex: none;

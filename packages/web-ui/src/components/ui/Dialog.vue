@@ -28,6 +28,14 @@ const props = withDefaults(defineProps<{
    *  explicit action (e.g. server auth). Pair with closeOnOverlay/closeOnEsc
    *  set to false so the dialog can only be resolved, not dismissed. */
   hideClose?: boolean;
+  /** raised (default) = the panel floats at --color-surface-raised, one rung
+   *  above the page — right for simple confirm/input dialogs. grouped = the
+   *  panel drops to --color-bg so a dialog that IS a grouped interface
+   *  (Settings) can lay its inner cards one rung above itself at
+   *  --color-surface — keeping nesting monotonic: in dark each higher
+   *  layer is one rung lighter, in light the same primary→secondary→tertiary
+   *  order (gray grouped canvas, white cards). */
+  level?: 'raised' | 'grouped';
   /** Element (or selector / resolver) to receive focus when the dialog opens.
    *  Falls back to the first focusable element, then the dialog panel. */
   initialFocus?: HTMLElement | string | (() => HTMLElement | null | undefined);
@@ -37,6 +45,7 @@ const props = withDefaults(defineProps<{
   size: 'md',
   height: 'auto',
   padded: true,
+  level: 'raised',
 });
 
 const emit = defineEmits<{
@@ -143,7 +152,7 @@ onBeforeUnmount(() => {
       <div
         ref="panel"
         class="ui-dialog"
-        :class="[`ui-dialog--${size}`, { 'ui-dialog--flush': !padded, 'ui-dialog--fixed-height': height === 'fixed' }]"
+        :class="[`ui-dialog--${size}`, { 'ui-dialog--flush': !padded, 'ui-dialog--fixed-height': height === 'fixed', 'ui-dialog--grouped': level === 'grouped' }]"
         role="dialog"
         aria-modal="true"
         :aria-label="ariaLabel ?? title"
@@ -188,7 +197,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl);
   outline: none;
@@ -199,6 +208,7 @@ onBeforeUnmount(() => {
 .ui-dialog--lg { width: min(640px, 100%); }
 .ui-dialog--xl { width: min(var(--p-content-max), 100%); }
 .ui-dialog--fixed-height { height: min(680px, calc(100vh - var(--space-8) * 2)); }
+.ui-dialog--grouped { background: var(--color-bg); }
 .ui-dialog--flush .ui-dialog__body { padding: 0; }
 .ui-dialog__head {
   display: flex;

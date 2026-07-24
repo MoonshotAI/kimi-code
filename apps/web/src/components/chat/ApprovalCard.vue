@@ -444,7 +444,7 @@ onUpdated(updatePlanScrollState);
   max-height: calc(100dvh - 72px);
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   overflow: hidden;
@@ -560,7 +560,7 @@ onUpdated(updatePlanScrollState);
 .shell-cmd {
   font: var(--text-sm) var(--font-mono);
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
   white-space: pre-wrap;
@@ -671,7 +671,7 @@ onUpdated(updatePlanScrollState);
   gap: 2px;
   margin-top: var(--space-3);
   padding-top: var(--space-3);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .popt {
   display: flex;
@@ -735,7 +735,7 @@ onUpdated(updatePlanScrollState);
   box-sizing: border-box;
   font: var(--text-sm) var(--font-ui);
   padding: var(--space-2) var(--space-2);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   resize: none;
   outline: none;
@@ -756,7 +756,7 @@ onUpdated(updatePlanScrollState);
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .abtns {
   display: flex;

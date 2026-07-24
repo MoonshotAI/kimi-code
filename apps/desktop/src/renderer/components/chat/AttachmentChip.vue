@@ -118,7 +118,7 @@ const title = computed(() => {
   max-width: 220px;
   padding: 4px 9px 4px 5px;
   background: var(--color-well);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: 999px;
   font-size: var(--ui-font-size-sm);
   transition: border-color var(--duration-fast) ease;

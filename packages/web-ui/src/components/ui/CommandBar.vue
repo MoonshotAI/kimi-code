@@ -43,7 +43,7 @@ async function copy() {
   height: 38px;
   padding: 0 10px 0 14px;
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
 }
 .ui-cmdbar__text {

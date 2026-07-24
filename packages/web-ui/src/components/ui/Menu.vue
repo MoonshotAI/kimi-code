@@ -21,7 +21,7 @@ defineExpose({ el });
   min-width: 180px;
   padding: 3.5px;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   display: flex;

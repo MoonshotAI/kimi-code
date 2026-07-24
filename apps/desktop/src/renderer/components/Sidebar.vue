@@ -1,4 +1,4 @@
-<!-- apps/web/src/components/Sidebar.vue -->
+<!-- apps/kimi-web/src/components/Sidebar.vue -->
 <!-- Unified sidebar: session groups with collapsible workspace headers.
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
@@ -31,10 +31,15 @@ import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import { isDesktop, isMacosDesktop } from '../lib/desktopFlag';
+import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
+
+// Frosted-sidebar (vibrancy) preference — the tint paint below only applies
+// while on; traffic-light layout keeps keying off macos-desktop.
+const { vibrancy } = useVibrancy();
 
 // Dev-only affordance: when the page is served by the Vite dev server, a
 // backend pill next to the brand shows the engine generation reported by
@@ -165,12 +170,17 @@ function toggleSearch(): void {
 // (isSearchOpen lets it allow the closing press through the overlay guard).
 defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value });
 
-// Scroll-linked seams: each edge shows a soft 18px fade only while more session
+// Scroll-linked seams: each edge shows a soft fade only while more session
 // content exists beyond that edge. This keeps the pinned actions and Settings
 // entry readable without leaving a permanent shadow on a short list.
 const sessionsEl = ref<HTMLElement | null>(null);
 const sessionsScrolled = ref(false);
 const sessionsCanScrollDown = ref(false);
+// Overlay-style scrollbar: the thin thumb stays transparent until the list is
+// actually scrolled, then lingers briefly and fades back out (see the
+// .sessions::-webkit-scrollbar-thumb rules).
+const sessionsScrolling = ref(false);
+let sessionsScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 function updateSessionsScrollState(el = sessionsEl.value): void {
   if (!el) return;
@@ -180,6 +190,12 @@ function updateSessionsScrollState(el = sessionsEl.value): void {
 
 function onSessionsScroll(e: Event): void {
   updateSessionsScrollState(e.target as HTMLElement);
+  sessionsScrolling.value = true;
+  if (sessionsScrollHideTimer) clearTimeout(sessionsScrollHideTimer);
+  sessionsScrollHideTimer = setTimeout(() => {
+    sessionsScrolling.value = false;
+    sessionsScrollHideTimer = null;
+  }, 900);
 }
 
 let sessionsResizeObserver: ResizeObserver | null = null;
@@ -193,7 +209,10 @@ onMounted(() => {
   });
 });
 onUpdated(() => updateSessionsScrollState());
-onBeforeUnmount(() => sessionsResizeObserver?.disconnect());
+onBeforeUnmount(() => {
+  sessionsResizeObserver?.disconnect();
+  if (sessionsScrollHideTimer) clearTimeout(sessionsScrollHideTimer);
+});
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -766,7 +785,7 @@ onBeforeUnmount(() => {
 <template>
   <aside
     class="side"
-    :class="{ 'macos-desktop': isMacosDesktop, collapsed, 'no-anim': dragging }"
+    :class="{ 'macos-desktop': isMacosDesktop, vibrancy, collapsed, 'no-anim': dragging }"
     :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
   >
     <!-- Session column -->
@@ -873,7 +892,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Session list — grouped by workspace -->
-      <div ref="sessionsEl" class="sessions" @scroll="onSessionsScroll">
+      <div ref="sessionsEl" class="sessions" :class="{ scrolling: sessionsScrolling }" @scroll="onSessionsScroll">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
@@ -1126,6 +1145,21 @@ onBeforeUnmount(() => {
   --sb-hover: var(--color-hover);
   --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
 }
+/* macOS desktop + frosted material on: frosted sidebar — the column paints
+   ONLY the translucent --color-sidebar-tint wash, which presses the window's
+   native vibrancy material (NSVisualEffectView 'menu', pinned to
+   visualEffectState 'inactive' — set in src/main/window.ts) one step darker
+   in dark mode / one step brighter in light mode. Every sub-surface that
+   normally re-paints the sidebar surface (header, footer) stays transparent
+   so the tint reads as one uniform pane; the .col hairline still separates
+   it from the conversation pane. The `vibrancy` class is the settings switch
+   (composables/useVibrancy.ts): off = plain --color-sidebar-bg again. */
+.side.macos-desktop.vibrancy { background: var(--color-sidebar-tint, transparent); }
+.side.macos-desktop.vibrancy .ch,
+.side.macos-desktop.vibrancy .sidebar-actions,
+.side.macos-desktop.vibrancy .side-footer {
+  background: transparent;
+}
 /* While dragging the resize handle, follow the pointer 1:1 (same pattern as
    .global-preview.no-anim in App.vue). */
 .side.no-anim {
@@ -1149,7 +1183,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
-  border-right: 1px solid var(--line);
+  border-right: 0.5px solid var(--line);
   container-type: inline-size;
   container-name: sidebar-col;
   /* Anchor for the folder-drop overlay. */
@@ -1283,7 +1317,7 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   right: 0;
-  height: 18px;
+  height: 13px;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
@@ -1291,9 +1325,9 @@ onBeforeUnmount(() => {
 .sidebar-actions::after {
   top: 100%;
   background:
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
   transition-duration: var(--duration-slow);
 }
 .sidebar-actions--scrolled {
@@ -1384,12 +1418,20 @@ onBeforeUnmount(() => {
 .sessions::-webkit-scrollbar { width: 4px; }
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
-  /* Neutral, text-derived translucency — adapts to both schemes and sits
-     quietly on the sidebar surface (no accent tint on hover). */
-  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  /* Hidden until the list is scrolled (.scrolling) — an always-visible thumb
+     is permanent chrome on a surface that only scrolls occasionally. Neutral,
+     text-derived translucency — adapts to both schemes and sits quietly on
+     the sidebar surface (no accent tint on hover). */
+  background: transparent;
   border-radius: var(--radius-full);
+  transition: background var(--duration-base) var(--ease-out);
 }
-.sessions::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-text) 25%, transparent); }
+.sessions.scrolling::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+.sessions.scrolling::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
 
 /* Footer — settings entry pinned under the session list. Same list-style
    control family as search / New chat (full-width, left-aligned, hover
@@ -1405,9 +1447,9 @@ onBeforeUnmount(() => {
 .side-footer::before {
   bottom: 100%;
   background:
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
   transition-duration: var(--duration-slow);
 }
 .side-footer--shadowed::before { opacity: 1; }
@@ -1524,7 +1566,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   padding: var(--space-4);
   border-radius: var(--radius-lg);
-  border: 1.5px dashed var(--color-accent);
+  border: 0.5px dashed var(--color-accent);
   background: var(--color-bg);
   color: var(--color-accent);
   font-size: var(--ui-font-size-lg);

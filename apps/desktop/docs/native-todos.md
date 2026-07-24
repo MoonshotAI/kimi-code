@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 25 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 34 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意三点：
 
@@ -164,6 +164,13 @@
   - **web 无桥恒不触发**：`Sidebar.vue` 与 `nativeWorkspaceDrop.ts` 两端同步、文件保持一致（仅既有的文件头 + 日志前缀 2 行品牌分叉），web 端「拖文件到侧边栏 = 附件」行为不变。拖到非侧边栏区域保持现状（用户明确决定：文件夹落聊天区仍走附件流程，不特判）。
   - 测试：`tests/main/preload.test.ts`（白名单 + webUtils 路径/空串/抛错三态断言）；`tests/renderer/nativeWorkspaceDrop.test.ts`（13 用例：桥探测三态、启发式含 text/plain 排除、提取只收目录、去重、null 过滤、桥缺省/抛错）。
 
+- [x] **macOS 毛玻璃侧栏（窗口 vibrancy）+ 辅助功能开关**（已完成，desktop 专属，macOS only）
+  - 材质：`window.ts` 的 `vibrancyWindowOptions(platform)` 纯函数出窗口配置——darwin 恒为 `vibrancy:'menu'` + `visualEffectState:'inactive'`（钉住扁平渲染，不随焦点漂移）+ 透明 `backgroundColor`，其余平台不透明 `#0b0b0c`。**关闭态启动走"创建后立即移除"**：窗口仍带材质创建（保证 `visualEffectState` 在创建时存入，Electron 之后每次 SetVibrancy 都会重放，已对 v43.1.1 源码核实），`createWindow` 紧接着 `applyWindowVibrancy(false)`（首帧前，无闪烁）——不依赖"关闭态创建时 option 是否生效"的解读分歧。运行时切换同走 `applyWindowVibrancy`（`setVibrancy('menu'|null)` + `setBackgroundColor`）。钉住 `inactive` 的原因（2026-07 实测）：默认 followWindow 下聚焦窗口的材质高度透光（暗色 ≈ #535353 带壁纸渗透），发白发奶，且会在聚焦/失焦两幅面孔间跳变；`inactive` 是其扁平压底渲染（≈ #282829 暗 / #E7E7E7 亮，测量值记在 web-ui style.css 的 `--color-sidebar-tint` 注释里）。
+  - 开关（默认开，辅助功能动机）：**主进程持久化**——`ui-state.ts` 的 `vibrancy` 键（`isVibrancyEnabled` 缺省/畸形均按 true），窗口创建时先读它，renderer 不存在前材质就已就位，无启动闪烁。IPC：`kimi:vibrancy`（写，send + 布尔校验，handler 里持久化 + live-apply）与 `kimi:get-vibrancy`（读，invoke）；preload 白名单加 `setVibrancy` / `getVibrancy`（后者只认显式 false，畸形回默认 true）。
+  - renderer：`composables/useVibrancy.ts` 单例（照 useFullscreen 模式，无桥恒 true 零影响）。**关键 class 拆分**：`macos-desktop` 只管红绿灯避让/拖拽区等 macOS 布局，`vibrancy`（`<html>`、`App.vue` 根、`.side` 三处绑定同一 ref）只管"让材质透出"的上色规则——`style.css` 根链透明、`App.vue` `.app` 背景透明、`Sidebar.vue` 侧栏 tint + 子面透明；关闭 vibrancy 时布局（红绿灯）必须原样保留，所以两套 class 绝不能合并。`main.ts` 启动同步加 `macos-desktop` + `initVibrancy()`。**关闭态启动防闪烁**：偏好经 `rendererUrl` 的 `kimi_vibrancy=0|1` 查询参数**每次启动都注入**（protocol.ts，照 `kimi_onboarded` 先例——ui-state 主进程持有，URL 注入不依赖 origin localStorage；恒注入是为了让 SPA 内部 pushState 丢 query 后的 reload 能区分"开启"与"参数丢失"），`initVibrancy` 同步读参并镜像进 sessionStorage（desktopFlag 模式）决定首帧 class——**sessionStorage 优先于 URL pin**（设置切换写 sessionStorage，而地址栏里的 boot query 可能是旧值，SPA 或整页 reload 时不能让旧 query 盖过当次选择），异步桥读仅作确认；否则关闭过的用户启动会先闪一帧 tint 再跳回。设置行在 `SettingsDialog.vue` 通用页 Appearance（`v-if="isMacosDesktop"`，web 恒不渲染；i18n `settings.vibrancy[Hint]` 在共享包，web 不使用）。
+  - **web 无对应物**：浏览器没有窗口材质；`useVibrancy.ts` 不同步 apps/web（同 useFullscreen 先例）；分叉块：`App.vue`（import + binding + `.app.macos-desktop.vibrancy` CSS）、`Sidebar.vue`（import + binding + tint CSS）、`SettingsDialog.vue`（import + 设置行）、`main.ts`（initVibrancy），整目录 re-copy 时需保留。
+  - 测试：`tests/main/ui-state.test.ts`（vibrancy 默认 true/畸形 true/往返/保留其它 key）；`tests/main/window.test.ts`（`vibrancyWindowOptions` 三态）；`tests/main/preload.test.ts`（白名单 + 通道/畸形/junk 回默认断言）。
+
 
 ## 共享组件 UI 分叉
 
@@ -186,5 +193,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（25 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（32 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

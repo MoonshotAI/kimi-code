@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/settings/SettingsDialog.vue -->
+<!-- apps/web/src/components/settings/SettingsDialog.vue -->
 <!-- The app's dedicated Settings page (modal). Consolidates what used to be
      scattered in the sidebar account popover: appearance, language, account,
      connection, plus notifications and the troubleshooting-log export. -->
@@ -12,7 +12,7 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
-import type { ColorScheme } from '../../composables/useKimiWebClient';
+import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
 import type { IconName } from '../../lib/icons';
@@ -22,7 +22,7 @@ const { t } = useI18n();
 
 const props = defineProps<{
   colorScheme: ColorScheme;
-  uiFontSize: number;
+  fontScale: FontScale;
   /** Managed Kimi account credential state from GET /api/v1/auth
       ('authenticated' | 'unauthenticated' | null when unconfigured). The
       account row keys off THIS, not a global "any usable model exists" flag —
@@ -49,7 +49,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
-  setUiFontSize: [size: number];
+  setFontScale: [scale: FontScale];
   setNotify: [on: boolean];
   setNotifySound: [on: boolean];
   login: [];
@@ -59,39 +59,30 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const uiFontSizeDraft = ref(String(props.uiFontSize));
-
 const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
 
 const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
 );
 
-watch(
-  () => props.uiFontSize,
-  (size) => {
-    uiFontSizeDraft.value = String(size);
-  },
-);
-
-function setUiFontSize(size: number): void {
-  const next = Math.min(20, Math.max(12, size));
-  uiFontSizeDraft.value = String(next);
-  if (next !== props.uiFontSize) emit('setUiFontSize', next);
-}
-
-function commitUiFontSize(): void {
-  const value = Number(uiFontSizeDraft.value.trim());
-  if (!Number.isInteger(value) || value < 12 || value > 20) {
-    uiFontSizeDraft.value = String(props.uiFontSize);
-    return;
-  }
-  setUiFontSize(value);
-}
-
 type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
+
+// Overlay-style scrollbar, same as the sidebar's .sessions: the thin thumb
+// stays hidden until the body is scrolled, then fades back out shortly after
+// the last scroll event (see the .body::-webkit-scrollbar-thumb rules).
+const bodyScrolling = ref(false);
+let bodyScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onBodyScroll(): void {
+  bodyScrolling.value = true;
+  if (bodyScrollHideTimer) clearTimeout(bodyScrollHideTimer);
+  bodyScrollHideTimer = setTimeout(() => {
+    bodyScrolling.value = false;
+    bodyScrollHideTimer = null;
+  }, 900);
+}
 
 const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
@@ -120,7 +111,10 @@ function handleKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') emit('close');
 }
 onMounted(() => document.addEventListener('keydown', handleKeydown));
-onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown);
+  if (bodyScrollHideTimer) clearTimeout(bodyScrollHideTimer);
+});
 
 function exportLog(): void {
   downloadTraceLog();
@@ -414,7 +408,7 @@ function archiveTime(iso: string): string {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :aria-label="t('settings.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" :aria-label="t('settings.title')" size="xl" height="fixed" :padded="false" level="grouped" @close="emit('close')">
     <div ref="dialogRef" class="sd">
       <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
         <header class="settings-tabs-header">
@@ -443,7 +437,7 @@ function archiveTime(iso: string): string {
             <Icon name="close" size="md" />
           </IconButton>
         </header>
-        <div class="body">
+        <div class="body" :class="{ scrolling: bodyScrolling }" @scroll="onBodyScroll">
         <!-- General: Appearance + Notifications -->
         <section v-show="activeTab === 'general'" class="panel">
           <section class="sec">
@@ -469,37 +463,17 @@ function archiveTime(iso: string): string {
                 {{ t('settings.uiFontSize') }}
                 <span class="hint">{{ t('settings.uiFontSizeHint') }}</span>
               </span>
-              <div class="num-field" role="group" :aria-label="t('settings.uiFontSize')">
-                <button
-                  class="num-step"
-                  type="button"
-                  :aria-label="t('settings.decreaseUiFontSize')"
-                  :disabled="uiFontSize <= 12"
-                  @click="setUiFontSize(uiFontSize - 1)"
-                >
-                  <Icon name="minus" size="sm" />
-                </button>
-                <input
-                  v-model="uiFontSizeDraft"
-                  class="num-value"
-                  type="text"
-                  inputmode="numeric"
-                  maxlength="2"
-                  :aria-label="t('settings.uiFontSize')"
-                  @blur="commitUiFontSize"
-                  @keydown.enter.prevent="commitUiFontSize"
-                />
-                <span class="num-unit">px</span>
-                <button
-                  class="num-step"
-                  type="button"
-                  :aria-label="t('settings.increaseUiFontSize')"
-                  :disabled="uiFontSize >= 20"
-                  @click="setUiFontSize(uiFontSize + 1)"
-                >
-                  <Icon name="plus" size="sm" />
-                </button>
-              </div>
+              <SegmentedControl
+                :model-value="fontScale"
+                :options="[
+                  { value: 'small', label: 'S' },
+                  { value: 'medium', label: 'M' },
+                  { value: 'large', label: 'L' },
+                  { value: 'xlarge', label: 'XL' },
+                ]"
+                :aria-label="t('settings.uiFontSize')"
+                @update:model-value="emit('setFontScale', $event as FontScale)"
+              />
             </div>
             <div class="row language-row">
               <span class="rlabel">
@@ -797,7 +771,10 @@ function archiveTime(iso: string): string {
 .sd :is(input, textarea, [contenteditable='true']) {
   user-select: text;
 }
-.settings-region { display: flex; min-width: 0; min-height: 0; flex-direction: column; grid-area: region; background: var(--color-surface); }
+/* The dialog panel is the grouped canvas (Dialog level="grouped" →
+   --color-bg); the region and tab rail stay transparent on top of it so
+   only the cards rise one rung lighter (--color-surface). */
+.settings-region { display: flex; min-width: 0; min-height: 0; flex-direction: column; grid-area: region; }
 /* Sidebar title row and the region's close-button row share one fixed height so
    the first tab and the first section title land on the same line. */
 .settings-region-header,
@@ -812,7 +789,7 @@ function archiveTime(iso: string): string {
 .settings-dialog-title {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text);
@@ -825,7 +802,6 @@ function archiveTime(iso: string): string {
   padding: 0 var(--space-2) var(--space-2);
   gap: 2px;
   overflow-y: auto;
-  background: var(--color-sidebar-bg);
   border-right: 0.5px solid var(--color-line);
   grid-area: tabs;
 }
@@ -845,16 +821,34 @@ function archiveTime(iso: string): string {
   background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   font-weight: var(--weight-ui-strong);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .tab:hover { background: var(--color-hover); color: var(--color-text-strong); }
-.tab.on { background: var(--color-accent-soft); color: var(--color-accent); }
+/* Selected = the same neutral f1 wash as hover, text just brightens —
+   synced with the Kimi app settings nav (.ss-nav-item:hover and
+   .ss-nav-item--active share one rule: background Fills-F1, colour stays
+   Labels-Primary). Never accent-tinted: it means "where I am". */
+.tab.on { background: var(--color-hover); color: var(--color-text); }
 .tab:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
 .body { display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-2) 32px var(--space-5); flex: 1; min-width: 0; }
+/* Scrollbar identical to the sidebar's .sessions: 4px, hidden at rest. */
+.body::-webkit-scrollbar { width: 4px; }
+.body::-webkit-scrollbar-track { background: transparent; }
+.body::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+  transition: background var(--duration-base) var(--ease-out);
+}
+.body.scrolling::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+.body.scrolling::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
 .panel { display: block; }
 .sec { padding: var(--space-4) 0; }
 /* The first section's top spacing comes from .body so its title lines up with
@@ -870,7 +864,7 @@ function archiveTime(iso: string): string {
 .sec-title {
   margin: 0 0 var(--space-3);
   font-family: var(--font-ui);
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   letter-spacing: 0;
   color: var(--color-text);
@@ -887,9 +881,8 @@ function archiveTime(iso: string): string {
 }
 .settings-group {
   overflow: hidden;
-  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
 }
 .settings-group:has(.ui-select.is-open) {
   position: relative;
@@ -929,7 +922,7 @@ function archiveTime(iso: string): string {
 }
 .account-name {
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text);
   overflow: hidden;
@@ -947,7 +940,7 @@ function archiveTime(iso: string): string {
 }
 .rlabel {
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   color: var(--color-text);
   font-weight: var(--weight-option-label);
   display: flex;
@@ -956,7 +949,7 @@ function archiveTime(iso: string): string {
 }
 .rvalue {
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   max-width: 60%;
   overflow: hidden;
@@ -971,71 +964,15 @@ function archiveTime(iso: string): string {
 .body :deep(.ui-seg),
 .body :deep(.ui-select__trigger),
 .body :deep(.ui-button),
-.num-field,
 .archive-search {
   border-width: 0.5px;
-}
-.num-field {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  align-self: center;
-  box-sizing: border-box;
-  /* Centre against the row's visible edges; its 0.5px top divider otherwise
-     shifts the flex content down by a quarter pixel. */
-  transform: translateY(-0.25px);
-  height: 28px;
-  padding: 0;
-  overflow: hidden;
-  border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-overlay);
-  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-}
-.num-field:hover { border-color: var(--color-line-strong); }
-.num-field:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
-.num-step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 100%;
-  padding: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.num-step:first-child { border-right: 0.5px solid var(--color-line); }
-.num-step:last-child { border-left: 0.5px solid var(--color-line); }
-.num-step:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text-strong); }
-.num-step:focus-visible { background: var(--color-accent-soft); color: var(--color-accent); }
-.num-step:disabled { opacity: 0.4; cursor: not-allowed; }
-.num-value {
-  width: 20px;
-  padding: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  text-align: center;
-}
-.num-unit {
-  padding: 0 var(--space-2) 0 var(--space-1);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
 }
 
 .select-wrap { min-width: 220px; max-width: min(320px, 50vw); flex: none; }
 
 .empty-config {
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   padding: var(--space-1) 0;
 }
@@ -1071,7 +1008,6 @@ function archiveTime(iso: string): string {
     align-items: flex-start;
     flex-direction: column;
   }
-  .settings-group > .font-size-row { height: auto; }
   .settings-group { margin-inline: 0; }
   .select-wrap {
     width: 100%;
@@ -1079,18 +1015,18 @@ function archiveTime(iso: string): string {
   }
 }
 /* Archived-sessions tab */
-.setting-card { border: 0.5px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-surface-raised); }
+.setting-card { border-radius: var(--radius-xl); overflow: hidden; background: var(--color-surface); }
 .panel-head { margin-bottom: var(--space-4); }
-.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-lg); font-weight: var(--weight-medium); letter-spacing: 0; color: var(--color-text); }
-.panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
+.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); letter-spacing: 0; color: var(--color-text); }
+.panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
 .archive-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
-.archive-search { flex: 1; min-width: 200px; height: 36px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-line); color: var(--color-text-faint); font-size: var(--text-sm); background: var(--color-surface-raised); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.archive-search { flex: 1; min-width: 200px; height: 36px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: var(--radius-md); border: 0.5px solid var(--color-line); color: var(--color-text-faint); font-size: var(--text-xs); background: var(--color-surface-overlay); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .archive-search:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); color: var(--color-text-muted); }
 .archive-search svg { width: 15px; height: 15px; flex: none; }
 .archive-search input { width: 100%; border: none; outline: none; background: transparent; font: inherit; color: var(--color-text); }
 .archive-list { display: flex; flex-direction: column; gap: var(--space-4); }
 .archive-card .setting-card { margin-bottom: 0; }
-.archive-workspace { display: flex; align-items: center; gap: var(--space-2); margin: 0 2px var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.archive-workspace { display: flex; align-items: center; gap: var(--space-2); margin: 0 2px var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-medium); }
 .archive-workspace svg { width: 16px; height: 16px; color: var(--color-text-faint); flex: none; }
 .archive-workspace .path { font-family: var(--font-ui); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); flex: none; }
@@ -1098,10 +1034,10 @@ function archiveTime(iso: string): string {
 .archive-row:first-child { border-top: none; }
 .archive-row:hover { background: var(--color-hover); }
 .archive-meta { min-width: 0; }
-.archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-name { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-ui); }
-.archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
-.archive-empty { padding: var(--space-6) var(--space-4); border: 0.5px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-surface-raised); }
+.archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-xs); }
+.archive-empty { padding: var(--space-6) var(--space-4); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-xs); text-align: center; background: var(--color-surface); }
 @media (max-width: 640px) {
   .archive-toolbar { flex-direction: column; align-items: stretch; }
   .archive-search { min-width: 0; }

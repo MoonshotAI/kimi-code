@@ -1,5 +1,5 @@
 <!-- apps/kimi-web/src/components/ui/SegmentedControl.vue -->
-<!-- Design-system §03 SegmentedControl: 2-4 mutually exclusive options. -->
+<!-- Design-system §03 SegmentedControl: 2-5 mutually exclusive options. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import Icon from './Icon.vue';
@@ -80,7 +80,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
   gap: 2px;
   padding: 2px;
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
 }
 .ui-seg__indicator {
@@ -90,7 +90,11 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
   z-index: 0;
   border-radius: var(--radius-sm);
   background: var(--color-surface-raised);
-  box-shadow: var(--shadow-xs);
+  /* Light-mode lifeline: the raised pill on the sunken track is only a 4%
+     lightness step and shadow-xs is invisible at this size — give the pill a
+     real shadow (iOS recipe). No border: the indicator's edge stays clean,
+     separation comes from the shadow. */
+  box-shadow: var(--shadow-sm);
   opacity: 0;
   pointer-events: none;
   transition: transform var(--duration-base) var(--ease-out),

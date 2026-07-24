@@ -10,7 +10,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
-import type { ColorScheme } from '../../composables/useKimiWebClient';
+import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
   commitLevel,
@@ -34,7 +34,7 @@ const props = withDefaults(
     planMode?: boolean;
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
-    uiFontSize?: number;
+    fontScale?: FontScale;
     /** Managed Kimi account credential state from GET /api/v1/auth — drives the
         sign-in/out row (third-party providers must not keep it "signed in"
         after a Kimi logout). */
@@ -46,7 +46,7 @@ const props = withDefaults(
   }>(),
   {
     colorScheme: 'system',
-    uiFontSize: 14,
+    fontScale: 'medium',
     managedProviderStatus: null,
     serverVersion: '',
     models: () => [],
@@ -61,7 +61,7 @@ const emit = defineEmits<{
   toggleSwarm: [];
   setPermission: [mode: PermissionMode];
   setColorScheme: [colorScheme: ColorScheme];
-  setUiFontSize: [size: number];
+  setFontScale: [scale: FontScale];
   login: [];
   logout: [];
 }>();
@@ -352,19 +352,17 @@ watch(
       <span class="srow-main">
         <span class="srow-label">{{ t('settings.uiFontSize') }}</span>
       </span>
-      <label class="num-field">
-        <input
-          class="num-input"
-          type="number"
-          min="12"
-          max="20"
-          step="1"
-          :value="uiFontSize"
-          :aria-label="t('settings.uiFontSize')"
-          @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
-        />
-        <span class="num-unit">px</span>
-      </label>
+      <SegmentedControl
+        :model-value="fontScale"
+        :options="[
+          { value: 'small', label: 'S' },
+          { value: 'medium', label: 'M' },
+          { value: 'large', label: 'L' },
+          { value: 'xlarge', label: 'XL' },
+        ]"
+        :aria-label="t('settings.uiFontSize')"
+        @update:model-value="emit('setFontScale', $event as FontScale)"
+      />
     </div>
 
     <!-- Account: sign in / out -->
@@ -529,7 +527,7 @@ watch(
   border-radius: var(--radius-full);
   box-sizing: border-box;
   background: var(--color-bg);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   box-shadow: var(--shadow-xs);
   transition: left 0.18s;
 }
@@ -537,33 +535,6 @@ watch(
 
 /* App preference rows: segmented theme/color-scheme toggles + language switcher. */
 .srow.pref { cursor: default; }
-
-.num-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  height: 34px;
-  padding: 0 9px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-}
-.num-input {
-  width: 50px;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: var(--ui-font-size);
-  text-align: right;
-}
-.num-unit {
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--ui-font-size-xs);
-}
 
 /* Account rows */
 .srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
@@ -611,9 +582,6 @@ watch(
   }
   .srow.pref .srow-main {
     flex: 1 0 100%;
-  }
-  .num-field {
-    margin-left: auto;
   }
   .srow-val,
   .chev,
@@ -668,7 +636,7 @@ watch(
   gap: var(--space-3);
   min-height: 56px;
   padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .arch-row:first-of-type { border-top: none; }
 .arch-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }

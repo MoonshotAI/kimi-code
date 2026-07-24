@@ -48,7 +48,7 @@ function close() {
   display: flex;
   flex-direction: column;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-xl);
   overflow: hidden;

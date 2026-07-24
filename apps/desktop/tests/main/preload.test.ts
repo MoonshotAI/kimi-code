@@ -26,6 +26,7 @@ const WHITELIST = [
   'getServerToken',
   'getUpdateAutoDownload',
   'getUpdateStatus',
+  'getVibrancy',
   'installUpdate',
   'isFullscreen',
   'listOpenInApps',
@@ -52,6 +53,7 @@ const WHITELIST = [
   'setTheme',
   'setTrayAttention',
   'setUpdateAutoDownload',
+  'setVibrancy',
   'showOpenDialog',
   'showSaveDialog',
   'showWindow',
@@ -249,6 +251,21 @@ describe('kimiDesktop preload bridge', () => {
 
     await exposed.installUpdate();
     expect(invoke).toHaveBeenCalledWith('kimi:update-install');
+
+    // Vibrancy toggle: booleans forward; junk is ignored.
+    exposed.setVibrancy(false);
+    expect(send).toHaveBeenCalledWith('kimi:vibrancy', false);
+    exposed.setVibrancy('yes'); // junk ignored
+    expect(send).toHaveBeenCalledTimes(12);
+
+    // getVibrancy: only an explicit false from the main process disables.
+    invoke.mockResolvedValueOnce(false);
+    await expect(exposed.getVibrancy()).resolves.toBe(false);
+    expect(invoke).toHaveBeenCalledWith('kimi:get-vibrancy');
+    invoke.mockResolvedValueOnce(true);
+    await expect(exposed.getVibrancy()).resolves.toBe(true);
+    invoke.mockResolvedValueOnce('junk');
+    await expect(exposed.getVibrancy()).resolves.toBe(true);
 
     await exposed.getUpdateAutoDownload();
     expect(invoke).toHaveBeenCalledWith('kimi:update-get-auto-download');

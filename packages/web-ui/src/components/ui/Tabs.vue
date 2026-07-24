@@ -27,12 +27,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </template>
 
 <style scoped>
-.ui-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--color-line); }
+.ui-tabs { display: flex; gap: 0; border-bottom: 0.5px solid var(--color-line); }
 .ui-tabs__item {
   padding: var(--space-2) 14px;
-  margin-bottom: -1px;
+  margin-bottom: -0.5px;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 0.5px solid transparent;
   background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);

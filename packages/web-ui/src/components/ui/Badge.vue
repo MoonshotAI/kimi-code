@@ -29,7 +29,7 @@ withDefaults(defineProps<{
   font-weight: var(--weight-medium);
   line-height: 1;
   white-space: nowrap;
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
 }
 .ui-badge--md { height: 22px; padding: 0 9px; font-size: var(--text-xs); }
 .ui-badge--sm { height: 18px; padding: 0 7px; font-size: 11px; }

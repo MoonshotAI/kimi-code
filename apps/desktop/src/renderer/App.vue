@@ -50,6 +50,7 @@ import { stripSkillPrefix } from './lib/slashCommands';
 import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
 import { useFullscreen } from './composables/useFullscreen';
+import { useVibrancy } from './composables/useVibrancy';
 import { useTrayAttention } from './composables/useTrayAttention';
 import { matchShortcutAction } from './composables/useShortcuts';
 import { shortcutActionById } from './lib/keymap';
@@ -100,6 +101,10 @@ const isMobile = useIsMobile();
 // On macOS fullscreen the traffic lights hide, so the resident sidebar toggle
 // drops their slot and hugs the left edge (see the fullscreen CSS below).
 const isFullscreen = useFullscreen();
+
+// Frosted-sidebar (vibrancy) preference — paints the root chain / .app /
+// sidebar transparent only while on; layout keeps keying off macos-desktop.
+const { vibrancy } = useVibrancy();
 
 // Push the global pending-attention totals (unread sessions + awaiting
 // approvals + awaiting questions) to the native tray: macOS menu-bar count +
@@ -1016,6 +1021,7 @@ function openPr(url: string): void {
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
         'macos-desktop': isMacosDesktop,
+        vibrancy: isMacosDesktop && vibrancy,
         fullscreen: isFullscreen,
       }"
       :inert="showOnboarding"
@@ -1296,7 +1302,7 @@ function openPr(url: string): void {
     <SettingsDialog
       v-if="showSettings"
       :color-scheme="client.colorScheme.value"
-      :ui-font-size="client.uiFontSize.value"
+      :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
       :on-fetch-usage="client.getUsage"
       :notify="client.notifyEnabled.value"
@@ -1308,7 +1314,7 @@ function openPr(url: string): void {
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
       @set-color-scheme="client.setColorScheme($event)"
-      @set-ui-font-size="client.setUiFontSize($event)"
+      @set-font-scale="client.setFontScale($event)"
       @set-notify="client.setNotifyEnabled($event)"
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
@@ -1397,7 +1403,7 @@ function openPr(url: string): void {
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
-      :ui-font-size="client.uiFontSize.value"
+      :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
@@ -1406,7 +1412,7 @@ function openPr(url: string): void {
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
       @set-color-scheme="client.setColorScheme($event)"
-      @set-ui-font-size="client.setUiFontSize($event)"
+      @set-font-scale="client.setFontScale($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
@@ -1476,6 +1482,13 @@ function openPr(url: string): void {
   color: var(--color-text);
   overflow: hidden;
   box-sizing: border-box;
+}
+/* macOS desktop with the frosted material on: unpainted — the window's
+   native vibrancy material reads through the sidebar column (see style.css
+   html.macos-desktop.vibrancy); the conversation (.con), chat header and
+   right preview paint themselves. */
+.app.macos-desktop.vibrancy {
+  background: transparent;
 }
 /* Grid children must be allowed to shrink below content height so that only
    the inner scroll containers (.panes / .sessions) scroll — otherwise the
@@ -1586,7 +1599,7 @@ function openPr(url: string): void {
   width: var(--preview-w);
   height: 100%;
   box-sizing: border-box;
-  border-left: 1px solid var(--line);
+  border-left: 0.5px solid var(--line);
 }
 .global-preview.mobile {
   position: fixed;
@@ -1594,7 +1607,7 @@ function openPr(url: string): void {
   z-index: var(--z-sticky);
   width: auto;
   transition: none;
-  border-top: 2px solid var(--color-text);
+  border-top: 0.5px solid var(--color-text);
 }
 </style>
 

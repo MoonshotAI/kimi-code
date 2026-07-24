@@ -446,7 +446,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .qcard {
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   overflow: hidden;
@@ -560,7 +560,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   height: 16px;
   margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
   flex: none;
-  border: 1.5px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   position: relative;
   transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
@@ -610,7 +610,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   flex: 1;
   font: var(--text-base) var(--font-ui);
   border: none;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   outline: none;
   padding: 2px var(--space-1);
   color: var(--color-text);
@@ -631,7 +631,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
 }
 .qbtns {
   display: flex;

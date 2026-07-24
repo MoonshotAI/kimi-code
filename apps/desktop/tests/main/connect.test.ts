@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   dataUrl: vi.fn(() => 'error-url'),
   errorHtml: vi.fn(() => '<error>'),
   isOnboarded: vi.fn(() => false),
+  isVibrancyEnabled: vi.fn(() => true),
 }));
 
 vi.mock('electron', () => ({
@@ -37,6 +38,7 @@ vi.mock('../../src/main/protocol', () => ({
 }));
 vi.mock('../../src/main/ui-state', () => ({
   isOnboarded: mocks.isOnboarded,
+  isVibrancyEnabled: mocks.isVibrancyEnabled,
 }));
 vi.mock('../../src/main/screens', () => ({
   dataUrl: mocks.dataUrl,
@@ -88,7 +90,7 @@ describe('connect', () => {
       identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
     });
-    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', 'tok', undefined, false);
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', 'tok', undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
@@ -110,7 +112,7 @@ describe('connect', () => {
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(handle.close).not.toHaveBeenCalled();
     expect(mocks.rendererUrl).toHaveBeenCalledTimes(2);
-    expect(mocks.rendererUrl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:54321', 'tok', undefined, false);
+    expect(mocks.rendererUrl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:54321', 'tok', undefined, false, true);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
@@ -166,7 +168,7 @@ describe('connect', () => {
     // instead of tripping over a half-closed one.
     await connect(win2 as unknown as BrowserWindow);
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(2);
-    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:5555', 'tok', undefined, false);
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:5555', 'tok', undefined, false, true);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
   });
 
@@ -178,7 +180,7 @@ describe('connect', () => {
     await connect(win as unknown as BrowserWindow);
 
     expect(mocks.startDesktopServer).not.toHaveBeenCalled();
-    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', undefined, undefined, false);
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', undefined, undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });

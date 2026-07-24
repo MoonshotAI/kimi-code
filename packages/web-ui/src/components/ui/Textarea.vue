@@ -43,9 +43,9 @@ function onInput(event: Event) {
   width: 100%;
   min-height: 84px;
   resize: vertical;
-  border: 1px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-md);
-  background: var(--color-surface-raised);
+  background: var(--color-surface-overlay);
   box-shadow: var(--shadow-xs);
   color: var(--color-text);
   font-family: var(--font-ui);

@@ -273,7 +273,7 @@ function statusLabel(status: AppProvider['status']): string {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .prov-row:last-child { border-bottom: none; }
@@ -287,7 +287,7 @@ function statusLabel(status: AppProvider['status']): string {
 }
 .status-dot--empty {
   background: transparent;
-  border: 1.5px solid var(--color-text-faint);
+  border: 0.5px solid var(--color-text-faint);
 }
 .prov-info {
   flex: 1;
@@ -329,7 +329,7 @@ function statusLabel(status: AppProvider['status']): string {
 /* Add section */
 .add-section {
   margin: 0 22px;
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
   padding-top: var(--space-3);
 }
 .add-btns {
@@ -358,7 +358,7 @@ function statusLabel(status: AppProvider['status']): string {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);

@@ -49,7 +49,7 @@ defineEmits<{ dismiss: [] }>();
   max-width: 100%;
   padding: 13px 14px;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   font-family: var(--font-ui);

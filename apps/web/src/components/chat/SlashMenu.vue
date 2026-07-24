@@ -56,7 +56,7 @@ watch(
   right: 0;
   padding: var(--space-1);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   z-index: var(--z-dropdown);
@@ -72,7 +72,7 @@ watch(
   padding: 6px 10px;
   cursor: pointer;
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--ui-b2);
   border-radius: var(--radius-sm);
 }
 
@@ -80,10 +80,10 @@ watch(
   background: var(--color-hover);
 }
 .slash-item.active {
-  background: var(--color-accent-soft);
+  background: var(--color-hover);
 }
 .slash-item.active .slash-name {
-  color: var(--color-accent-hover);
+  color: var(--color-text);
 }
 
 .slash-name {

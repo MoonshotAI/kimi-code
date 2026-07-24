@@ -264,7 +264,7 @@ function onLoginSuccess(): void {
   display: flex;
   align-items: center;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   font-family: var(--font-ui);
   cursor: pointer;
@@ -301,7 +301,7 @@ function onLoginSuccess(): void {
   width: 18px;
   height: 18px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-line-strong);
   background: var(--color-surface-raised);
   flex: none;
   display: inline-flex;
@@ -340,7 +340,7 @@ function onLoginSuccess(): void {
   display: flex;
   width: 100%;
   aspect-ratio: 16 / 10;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   overflow: hidden;
 }

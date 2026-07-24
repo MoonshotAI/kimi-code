@@ -388,11 +388,11 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   white-space: nowrap;
 }
 .mgh-add { margin: -10px -12px -10px 0; }
-.mgh-add:active { color: var(--color-text); background: var(--color-surface-sunken); }
+.mgh-add:active { color: var(--color-text); background: var(--color-hover); }
 
 /* Workspace "…" menu trigger */
 .mgh-more { margin: -10px -8px; }
-.mgh-more:active { color: var(--color-text); background: var(--color-surface-sunken); }
+.mgh-more:active { color: var(--color-text); background: var(--color-hover); }
 
 /* ---- Session rows ---- */
 .srow {
@@ -470,7 +470,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border-radius: var(--radius-full);
   padding: 1px 7px;
 }
-.srow .kb:active { color: var(--color-text); background: var(--color-surface-sunken); }
+.srow .kb:active { color: var(--color-text); background: var(--color-hover); }
 
 /* Kebab menu — surface from Menu primitive; only positioning here. */
 .kmenu {
@@ -503,7 +503,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   cursor: pointer;
   text-align: left;
 }
-.mshow-more:active { color: var(--color-accent-hover); background: var(--color-surface-sunken); }
+.mshow-more:active { color: var(--color-accent-hover); background: var(--color-hover); }
 
 .newrow { font-family: var(--sans); }
 .mlist .srow {

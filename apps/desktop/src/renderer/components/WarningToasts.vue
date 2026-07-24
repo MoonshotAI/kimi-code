@@ -273,7 +273,7 @@ onUnmounted(() => {
   gap: 5px;
   margin: 8px 0 0;
   padding: 8px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-sm);
   background: var(--color-surface-sunken);
 }

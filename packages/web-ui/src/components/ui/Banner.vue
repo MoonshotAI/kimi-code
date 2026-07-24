@@ -25,7 +25,7 @@ withDefaults(defineProps<{ variant?: 'info' | 'warning' | 'danger' }>(), { varia
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-muted);

@@ -1450,7 +1450,7 @@ function selectModel(modelId: string): void {
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-lg);
-  border: 1.5px dashed var(--color-accent);
+  border: 0.5px dashed var(--color-accent);
   background: var(--color-bg);
   color: var(--color-accent);
   font-size: var(--ui-font-size-lg);
@@ -1464,10 +1464,10 @@ function selectModel(modelId: string): void {
   --composer-send-size: var(--composer-control-size);
   --composer-control-inset: var(--space-2);
   position: relative;
-  border: 0.5px solid var(--color-line-strong);
+  border: 0.5px solid var(--color-composer-line);
   border-radius: var(--radius-composer);
   corner-shape: var(--corner-shape-composer);
-  background: var(--color-surface-raised);
+  background: var(--color-composer-bg);
   box-shadow: var(--shadow-input);
   user-select: none;
   container-type: inline-size;
@@ -1541,7 +1541,7 @@ function selectModel(modelId: string): void {
   right: -14px;
   width: 28px;
   height: 28px;
-  border: 1px solid rgba(255,255,255,0.45);
+  border: 0.5px solid rgba(255,255,255,0.45);
   border-radius: 50%;
   background: rgba(20,23,28,0.82);
   color: var(--color-text-on-accent);
@@ -1635,7 +1635,7 @@ function selectModel(modelId: string): void {
 .compact-chip {
   height: var(--composer-control-size);
   padding: 0 var(--space-2);
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-warning);
@@ -1656,41 +1656,31 @@ function selectModel(modelId: string): void {
   border-radius: var(--radius-full);
 }
 
-/* Send button — circular accent icon. Always "send"; while running it enqueues
+/* Send button — circular icon. Always "send"; while running it enqueues
    (handled upstream). Interrupt is a separate Stop button so the two are never
-   confused. */
+   confused. Fill/icon/shadow run on the dedicated --color-send-* tokens (the
+   production kimiwork neutral recipe, see web-ui style.css). */
 .send {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
   border-radius: var(--radius-full);
-  background: var(--color-text);
-  color: var(--color-bg); /* inverted fill — dark in light, light in dark; never the accent */
+  background: var(--color-send-bg);
+  color: var(--color-send-icon); /* reads on the send fill in light and dark */
   border: none;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow-send);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: color var(--duration-base) var(--ease-out), opacity var(--duration-slow) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-slow) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-slow) var(--ease-out);
   position: relative;
 }
 
-/* The hover softening rides on an ::after overlay so it can fade — transitions
-   between computed colours (var/color-mix) don't interpolate. */
-.send::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-bg);
-  opacity: 0;
-  transition: opacity var(--duration-slow) var(--ease-out);
-  pointer-events: none;
-}
-.send:hover:not(:disabled)::after {
-  opacity: 0.28;
+.send:hover:not(:disabled) {
+  background: var(--color-send-bg-hover);
+  box-shadow: var(--shadow-send-hover);
 }
 
 .send:active {
@@ -1699,27 +1689,28 @@ function selectModel(modelId: string): void {
 
 .send:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  background: var(--color-send-bg-disabled);
+  color: var(--color-send-icon-disabled);
+  opacity: var(--opacity-send-disabled);
 }
 
 .send:disabled:active {
   transform: none;
 }
 
-/* Spinner-on-fill: recolor the ring so the arc reads on the inverted fill.
-   Spinner.vue styles are scoped, so pierce them with :deep(). */
+/* Starting is a working state, not an empty one: the button keeps the active
+   send fill (clicks stay blocked) and the spinner arc is recolored to read on
+   it. Spinner.vue styles are scoped, so pierce them with :deep(). */
+.send.is-starting:disabled {
+  background: var(--color-send-bg);
+  color: var(--color-send-icon);
+}
 .send.is-starting :deep(.ui-spinner) {
-  color: var(--color-bg);
+  color: var(--color-send-icon);
 }
 
 .send.is-starting :deep(.ui-spinner__track) {
-  stroke: color-mix(in srgb, var(--color-bg) 35%, transparent);
-}
-
-/* Starting is a working state, not an empty one — keep the fill solid so the
-   spinner stays legible. */
-.send.is-starting:disabled {
-  opacity: 1;
+  stroke: color-mix(in srgb, var(--color-send-icon) 32%, transparent);
 }
 
 .send svg {
@@ -1737,7 +1728,7 @@ function selectModel(modelId: string): void {
   border-radius: var(--radius-full);
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  border: 1px solid var(--color-danger-bd);
+  border: 0.5px solid var(--color-danger-bd);
   box-shadow: var(--shadow-xs);
   padding: 0;
   display: flex;
@@ -1956,7 +1947,7 @@ function selectModel(modelId: string): void {
   z-index: var(--z-dropdown);
   min-width: 200px;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   padding: var(--space-1);
@@ -2113,7 +2104,7 @@ function selectModel(modelId: string): void {
   width: max-content;
   max-width: calc(100vw - var(--space-8));
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   padding: 5px;
@@ -2138,7 +2129,7 @@ function selectModel(modelId: string): void {
   text-align: left;
 }
 .pd-row:hover { background: var(--color-hover); }
-.pd-row.is-current { background: var(--color-accent-soft); }
+.pd-row.is-current { background: var(--color-hover); }
 
 .pd-check {
   grid-column: 1;
@@ -2191,7 +2182,7 @@ function selectModel(modelId: string): void {
   font-size: calc(var(--ui-font-size) - 3px);
   color: var(--color-accent-hover);
   background: var(--bg);
-  border: 1px solid var(--color-accent-bd);
+  border: 0.5px solid var(--color-accent-bd);
   border-radius: 999px;
   padding: 0 6px;
   line-height: 16px;
@@ -2205,7 +2196,7 @@ function selectModel(modelId: string): void {
   width: max-content;
   max-width: calc(100vw - var(--space-8));
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   padding: 5px;
@@ -2273,10 +2264,10 @@ function selectModel(modelId: string): void {
   color: var(--muted);
 }
 .mode-row.on {
-  background: var(--color-accent-soft);
+  background: var(--color-hover);
 }
-.mode-row.on .mode-row-name { color: var(--color-accent-hover); }
-.mode-row.on .mode-row-icon { color: var(--color-accent-hover); }
+.mode-row.on .mode-row-name { color: var(--color-text); }
+.mode-row.on .mode-row-icon { color: var(--color-text); }
 .mode-row-meta { font-family: var(--mono); font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
 .mode-row:disabled .mode-row-meta { color: var(--faint); }
 .mode-switch {
@@ -2319,7 +2310,7 @@ function selectModel(modelId: string): void {
 }
 .mode-row-goal:hover { background: transparent; }
 .mode-row-goal.on {
-  background: var(--color-accent-soft);
+  background: var(--color-hover);
 }
 .mode-row-main {
   display: grid;
@@ -2339,7 +2330,7 @@ function selectModel(modelId: string): void {
 .mode-row-main:hover { background: var(--color-hover); }
 .mode-row-main:hover .mode-row-icon,
 .mode-row-main:hover .mode-row-name { color: var(--color-text-strong); }
-.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-accent-hover); }
+.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-text); }
 .mode-row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2357,7 +2348,7 @@ function selectModel(modelId: string): void {
   min-width: 0;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   background: var(--bg);
   color: var(--color-text);
   font-size: var(--ui-font-size-xs);

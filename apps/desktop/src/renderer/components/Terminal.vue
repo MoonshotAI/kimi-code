@@ -32,11 +32,11 @@ let disposeExit: (() => void) | null = null;
 const theme = computed<ITheme>(() => {
   if (isDark.value) {
     return {
-      background: '#0d1117',
+      background: '#121212',
       foreground: '#e6edf3',
       cursor: '#7aa2ff',
       selectionBackground: '#264f78',
-      black: '#0d1117',
+      black: '#121212',
       red: '#ff7b72',
       green: '#7ee787',
       yellow: '#f2cc60',
@@ -205,7 +205,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 5px 8px 5px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
   background: var(--panel);
 }
 .terminal-meta {

@@ -59,8 +59,9 @@ defineEmits<{ close: [] }>();
 }
 .ui-panel-header__title {
   flex: none;
-  font: var(--weight-semibold) var(--text-xs) var(--font-mono);
-  letter-spacing: 0.04em;
+  /* Panel titles sit at the base UI step (design-system §03) — the right-side
+     panel is primary chrome, not a caption. */
+  font: var(--weight-semibold) var(--ui-b2) var(--font-ui);
   color: var(--color-text);
 }
 .ui-panel-header__sub {
@@ -69,7 +70,7 @@ defineEmits<{ close: [] }>();
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--text-xs) var(--font-mono);
+  font: var(--ui-c1) var(--font-mono);
   color: var(--color-text-muted);
 }
 .ui-panel-header__close {

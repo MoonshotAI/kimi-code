@@ -41,7 +41,7 @@ defineExpose({ el });
   justify-content: center;
   flex: none;
   padding: 0;
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
@@ -49,11 +49,10 @@ defineExpose({ el });
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
-/* Translucent text-mix instead of the sunken surface: stays visible on ANY
-   backdrop — the sunken token equals the page bg in dark mode, which made
-   hover feedback vanish for icon buttons sitting directly on --color-bg
-   (chat header, flat sidebar). */
-.ui-icon-button:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--color-text); }
+/* The translucent f1 wash, not a solid surface: stays visible on ANY
+   backdrop — hover never darkens (the sunken token equals the page bg in
+   dark mode, which made feedback vanish on --color-bg chrome). */
+.ui-icon-button:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text); }
 .ui-icon-button:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
 

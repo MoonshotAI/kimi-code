@@ -375,9 +375,9 @@ onUnmounted(() => {
   padding: 0 var(--space-3);
   margin-bottom: var(--space-2);
   margin-inline: calc(-1 * var(--space-4));
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-raised);
+  background: var(--color-surface-overlay);
   color: var(--color-text-faint);
   font-size: var(--text-sm);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
@@ -402,9 +402,8 @@ onUnmounted(() => {
 .sc-group {
   overflow: hidden;
   margin-inline: calc(-1 * var(--space-4));
-  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl);
-  background: var(--color-bg);
+  background: var(--color-surface);
 }
 .sc-row {
   display: flex;
@@ -454,9 +453,9 @@ onUnmounted(() => {
   min-width: 148px;
   height: var(--space-8);
   padding: 0 var(--space-4);
-  border: 1px solid var(--color-accent);
+  border: 0.5px solid var(--color-accent);
   border-radius: var(--radius-lg);
-  background: var(--color-bg);
+  background: var(--color-surface-overlay);
   color: var(--color-text);
   font-size: var(--text-sm);
 }
@@ -472,7 +471,7 @@ onUnmounted(() => {
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .sc-cancel:hover {
-  background: var(--color-surface-sunken);
+  background: var(--color-hover);
   color: var(--color-text);
 }
 .sc-cancel:focus-visible {

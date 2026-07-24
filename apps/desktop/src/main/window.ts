@@ -8,6 +8,7 @@ import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import { IPC, type RendererEventChannel } from './ipc-channels';
 import { log, redactUrlForLog } from './log';
+import { isVibrancyEnabled } from './ui-state';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -205,6 +206,32 @@ function saveBounds(win: BrowserWindow): void {
 // sidebar-toggle button and header icons.
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
 
+/** macOS frosted chrome: the window carries a native NSVisualEffectView
+    ('menu') behind the renderer's unpainted sidebar column, so backgroundColor
+    must stay transparent or it would cover the material. visualEffectState
+    'inactive' pins the flat rendering with no focus drift; Electron re-applies
+    it from the creation options on every later setVibrancy, so the option is
+    always passed and an opt-out launch removes the material right after
+    creation instead (see createWindow). */
+export function vibrancyWindowOptions(
+  platform: NodeJS.Platform,
+): { vibrancy?: 'menu'; visualEffectState?: 'inactive'; backgroundColor: string } {
+  if (platform === 'darwin') {
+    return { vibrancy: 'menu', visualEffectState: 'inactive', backgroundColor: '#00000000' };
+  }
+  return { backgroundColor: '#0b0b0c' };
+}
+
+/** Live-apply the settings vibrancy toggle to the created window. Re-enabling
+    re-pins visualEffectState 'inactive' — Electron keeps it from the creation
+    options and applies it on every SetVibrancy. */
+export function applyWindowVibrancy(enabled: boolean): void {
+  if (process.platform !== 'darwin') return;
+  if (mainWindow === null || mainWindow.isDestroyed()) return;
+  mainWindow.setVibrancy(enabled ? 'menu' : null);
+  mainWindow.setBackgroundColor(enabled ? '#00000000' : '#0b0b0c');
+}
+
 export function createWindow(): void {
   installQuitWatch();
   const win = new BrowserWindow({
@@ -213,7 +240,7 @@ export function createWindow(): void {
     // 640px viewport breakpoint where the UI drops into the mobile layout.
     minWidth: 900,
     minHeight: 480,
-    backgroundColor: '#0b0b0c',
+    ...vibrancyWindowOptions(process.platform),
     title: 'Kimi Code',
     // macOS: hide the native title bar and float the traffic lights over the
     // content; the web UI reserves a draggable strip at the top to clear them.
@@ -230,6 +257,10 @@ export function createWindow(): void {
     },
   });
   mainWindow = win;
+  // Opted-out launch: the window is still created WITH the material (so the
+  // 'inactive' pin is stored for any later re-enable) and it is removed
+  // immediately — before the first paint, so there is no frosted flash.
+  if (!isVibrancyEnabled()) applyWindowVibrancy(false);
   // The fresh renderer boot is not subscribed yet — tray session-select clicks
   // queue until did-finish-load below flips this back on.
   rendererReady = false;
