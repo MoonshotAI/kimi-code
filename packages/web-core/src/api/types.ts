@@ -21,7 +21,7 @@ export interface PageRequest {
 // Notices
 // ---------------------------------------------------------------------------
 
-export type AppNoticeSeverity = 'info' | 'warning' | 'error';
+export type AppNoticeSeverity = 'info' | 'success' | 'warning' | 'error';
 
 export interface AppNoticeDetail {
   label: string;
@@ -659,7 +659,8 @@ export interface AppModel {
 export interface AppProvider {
   /** Provider id */
   id: string;
-  /** Provider type (e.g. "moonshot", "anthropic", "openai", "custom") */
+  /** Provider wire protocol (one of PROVIDER_TYPES: kimi / openai /
+      openai_responses / anthropic / google-genai / vertexai) */
   type: string;
   /** Optional custom base URL */
   baseUrl?: string;
@@ -673,6 +674,12 @@ export interface AppProvider {
   models?: string[];
 }
 
+/** Single-provider GET result: the only response that reveals the stored key. */
+export interface AppProviderDetail extends AppProvider {
+  /** Stored API key in plaintext (absent when none is set) */
+  apiKey?: string;
+}
+
 export interface ProviderRefreshResult {
   changed: Array<{
     providerId: string;
@@ -682,6 +689,134 @@ export interface ProviderRefreshResult {
   }>;
   unchanged: string[];
   failed: Array<{ provider: string; reason: string }>;
+}
+
+/** One model entry of a manually added provider (POST /providers, design §4.1). */
+export interface AddProviderModelInput {
+  /** Model id; written as the `<id>/<model>` alias */
+  model: string;
+  /** Maximum context size in tokens */
+  maxContextSize: number;
+  /** Optional human-readable display name */
+  displayName?: string;
+  /** Optional capability tags (e.g. ["vision"]) */
+  capabilities?: string[];
+  /** Optional max output tokens */
+  maxOutputSize?: number;
+  /** Optional thinking efforts the model supports (e.g. ["low","high","max"]) */
+  supportEfforts?: string[];
+  /** Optional adaptive-thinking override (Anthropic wire; undefined = infer) */
+  adaptiveThinking?: boolean;
+}
+
+/** Manual add-provider request (POST /providers, design §4.1).
+ *  `id` and `models` are required by the server (400 otherwise); they are
+ *  optional in the type only so the not-yet-synced apps/web copy, which still
+ *  calls this with the legacy { type, apiKey? } shape, keeps type-checking. */
+export interface AddProviderInput {
+  /** Provider id: Unicode letters/digits plus "-", "_" and spaces (409 on conflict) */
+  id?: string;
+  /** Wire protocol: kimi / openai / openai_responses / anthropic / google-genai / vertexai */
+  type: string;
+  /** Optional — providers that read credentials from the env may omit it */
+  apiKey?: string;
+  /** Optional; protocol default endpoint applies when omitted */
+  baseUrl?: string;
+  /** Optional; must be one of `models` when set */
+  defaultModel?: string;
+  /** At least one model */
+  models?: AddProviderModelInput[];
+}
+
+/** Delete-provider outcome (DELETE /providers/{id} — always a bare 204; the
+ *  global default pointers are never modified server-side). */
+export interface DeleteProviderResult {
+  deleted: string;
+}
+
+/** Update-provider request (PUT /providers/{id}) — replace semantics: the body
+ *  is the provider's new config. `newId` renames the provider (providers key,
+ *  model aliases and default pointers migrate server-side). `apiKey` is
+ *  three-state: undefined = keep the stored key, '' = clear it, non-empty =
+ *  set a new one. */
+export interface UpdateProviderInput {
+  /** Optional rename target; must pass the server id pattern and be free */
+  newId?: string;
+  /** Wire protocol: kimi / openai / openai_responses / anthropic / google-genai / vertexai */
+  type: string;
+  /** Three-state: keep / clear / set (see above) */
+  apiKey?: string;
+  /** Optional; omitted unsets under replace semantics */
+  baseUrl?: string;
+  /** Optional; must be one of `models` when set */
+  defaultModel?: string;
+  /** At least one model */
+  models: AddProviderModelInput[];
+}
+
+/** Update-provider outcome (PUT /providers/{id} 200 body). */
+export interface UpdateProviderResult {
+  provider: AppProvider;
+}
+
+/** One model in the browsable models.dev directory (design §4.3). */
+export interface AppCatalogModel {
+  id: string;
+  name?: string;
+  maxContextSize: number;
+  capabilities?: string[];
+  reasoning: boolean;
+}
+
+/** A browsable models.dev directory entry with server-resolved import eligibility. */
+export interface AppCatalogProvider {
+  /** Catalog entry id (the default local provider id on import) */
+  id: string;
+  name: string;
+  /** Resolved wire protocol; null when the entry is rejected */
+  wireType: string | null;
+  /** True when the wire came from the OpenAI-compatible fallback */
+  guessed: boolean;
+  /** True when the import form must collect a base URL */
+  needsBaseUrl: boolean;
+  /** True when this server version cannot import the entry at all */
+  rejected: boolean;
+  rejectReason: string | null;
+  /** Credential env var the vendor conventionally uses (hint only) */
+  envKey: string | null;
+  models: AppCatalogModel[];
+}
+
+/** Catalog-import request (POST /providers:import_catalog, design §4.4).
+ *  Re-importing an existing id is a refresh; the global default pointers are
+ *  never modified server-side. */
+export interface ImportCatalogProviderInput {
+  catalogId: string;
+  apiKey?: string;
+  baseUrl?: string;
+  /** Optional local provider id override (defaults to the catalog id) */
+  id?: string;
+}
+
+/** Catalog-import outcome (POST /providers:import_catalog 201 body). */
+export interface ImportCatalogProviderResult {
+  provider: AppProvider;
+  modelsImported: number;
+}
+
+/** Custom-registry import request (POST /providers:import_registry, design
+ *  §4.5): a models.dev-shaped api.json URL plus its optional Bearer key.
+ *  Re-importing the same URL is a refresh — providers that disappeared
+ *  upstream are removed; the global default pointers are never modified. */
+export interface ImportCustomRegistryInput {
+  url: string;
+  apiKey?: string;
+}
+
+/** Custom-registry import outcome (201 body): one item per imported provider. */
+export interface ImportCustomRegistryResult {
+  providers: AppProvider[];
+  modelsImported: number;
 }
 
 export interface AppConfigProvider {
@@ -801,14 +936,25 @@ export interface KimiWebApi {
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
 
-  // PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+  // Models + providers — list/refresh are REAL endpoints; add/update/delete
+  // follow design §4.1/§4.2 (POST /providers, PUT/DELETE /providers/{id}).
   listModels(): Promise<AppModel[]>;
   listProviders(): Promise<AppProvider[]>;
-  addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
-  deleteProvider(id: string): Promise<{ deleted: true }>;
+  /** REAL endpoint: GET /v1/providers/{id} — the only response carrying the
+      plaintext api_key (the list stays redacted). */
+  getProvider(id: string): Promise<AppProviderDetail>;
+  addProvider(input: AddProviderInput): Promise<AppProvider>;
+  updateProvider(id: string, input: UpdateProviderInput): Promise<UpdateProviderResult>;
+  deleteProvider(id: string): Promise<DeleteProviderResult>;
   refreshProvider(id: string): Promise<ProviderRefreshResult>;
   refreshAllProviders(): Promise<ProviderRefreshResult>;
   refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
+  // models.dev directory (design §4.3/§4.4) — server-proxied browse + import.
+  listCatalogProviders(): Promise<AppCatalogProvider[]>;
+  getCatalogProvider(catalogId: string): Promise<AppCatalogProvider>;
+  importCatalogProvider(input: ImportCatalogProviderInput): Promise<ImportCatalogProviderResult>;
+  // Custom registry (design §4.5) — models.dev-shaped api.json import.
+  importCustomRegistry(input: ImportCustomRegistryInput): Promise<ImportCustomRegistryResult>;
 
   // File upload / download
   uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;

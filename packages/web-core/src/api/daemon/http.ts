@@ -415,6 +415,10 @@ export class DaemonHttpClient {
     return this.request<T>('PATCH', path, body);
   }
 
+  async put<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, body);
+  }
+
   async delete<T>(path: string): Promise<T> {
     return this.request<T>('DELETE', path);
   }
@@ -477,11 +481,19 @@ export class DaemonHttpClient {
       });
     }
 
-    // Parse envelope
+    // Parse envelope. A bare 204 (e.g. DELETE /providers/{id}) carries no body —
+    // treat exactly that case as a successful null-data envelope. Any OTHER
+    // empty body (a proxy's bare 500, a truncated 200, …) must keep falling
+    // into the parse-failure path below instead of being forged into a success.
     let envelope: WireEnvelope<T>;
     const responseForDiagnostics = response.clone();
     try {
-      envelope = (await response.json()) as WireEnvelope<T>;
+      const text = await response.text();
+      envelope = (
+        response.status === 204 && text === ''
+          ? { code: 0, msg: '', data: null, request_id: requestId }
+          : JSON.parse(text)
+      ) as WireEnvelope<T>;
     } catch (err) {
       this.tracer.restFailure?.({ method, path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
       throw new DaemonNetworkError({
@@ -516,12 +528,18 @@ export class DaemonHttpClient {
 
     this.checkAuthRequired(response, envelope.code);
 
-    // Unwrap: code 0 = success; allowed non-zero = return data; else throw
+    // Unwrap: code 0 = success; allowed non-zero = return data; else throw.
+    // A non-envelope error body (an old server's bare fastify 404) has neither
+    // code nor msg — fall back to the HTTP status so a banner never renders
+    // an empty string.
     if (envelope.code !== 0 && !allowCodes.includes(envelope.code)) {
       throw new DaemonApiError({
         code: envelope.code,
-        msg: envelope.msg,
-        requestId: envelope.request_id,
+        msg:
+          typeof envelope.msg === 'string' && envelope.msg.length > 0
+            ? envelope.msg
+            : `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`,
+        requestId: envelope.request_id ?? requestId,
         details: envelope.details,
         timestamp: Date.now(),
         durationMs: Date.now() - startedAt,

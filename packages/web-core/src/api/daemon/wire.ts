@@ -363,7 +363,8 @@ export interface WireFsEntry {
 
 // ---------------------------------------------------------------------------
 // Model + Provider wire DTOs
-// PRESUMED — not in current daemon docs; isolated here, swap when backend defines them.
+// GET /models, GET /providers and the :refresh endpoints are REAL (kap-server
+// routes/modelCatalog.ts); create/delete follow design §4.1/§4.2.
 // ---------------------------------------------------------------------------
 
 export interface WireModel {
@@ -386,6 +387,11 @@ export interface WireProvider {
   models?: string[];
 }
 
+/** GET /providers/{id} only: the single GET reveals the stored key. */
+export interface WireProviderDetail extends WireProvider {
+  api_key?: string;
+}
+
 export interface WireProviderRefreshResult {
   changed: Array<{
     provider_id: string;
@@ -395,6 +401,98 @@ export interface WireProviderRefreshResult {
   }>;
   unchanged: string[];
   failed: Array<{ provider: string; reason: string }>;
+}
+
+// POST /api/v1/providers request body (design §4.1) — snake_case, aligned with
+// the server zod schema. `models` writes one `<id>/<model>` alias per entry.
+export interface WireCreateProviderModel {
+  model: string;
+  max_context_size: number;
+  display_name?: string;
+  capabilities?: string[];
+  max_output_size?: number;
+  support_efforts?: string[];
+  adaptive_thinking?: boolean;
+}
+
+export interface WireCreateProviderRequest {
+  id: string;
+  type: string;
+  api_key?: string;
+  base_url?: string;
+  default_model?: string;
+  models: WireCreateProviderModel[];
+}
+
+// PUT /api/v1/providers/{id} request body — replace semantics (the body is the
+// provider's new config), except api_key which is three-state so the edit form
+// can leave the stored key untouched: absent = keep, "" = clear, non-empty = set.
+export interface WireUpdateProviderRequest {
+  new_id?: string;
+  type: string;
+  api_key?: string;
+  base_url?: string;
+  default_model?: string;
+  models: WireCreateProviderModel[];
+}
+
+// PUT /api/v1/providers/{id} 200 body.
+export interface WireUpdateProviderResult {
+  provider: WireProvider;
+}
+
+// GET /api/v1/catalog/providers item (design §4.3) — a pruned models.dev
+// entry with import eligibility pre-resolved server-side.
+export interface WireCatalogModel {
+  id: string;
+  name?: string;
+  max_context_size: number;
+  capabilities?: string[];
+  reasoning: boolean;
+}
+
+export interface WireCatalogProvider {
+  id: string;
+  name: string;
+  /** Resolved wire protocol; null when the entry is rejected. */
+  wire_type: string | null;
+  /** True when the wire came from the OpenAI-compatible fallback. */
+  guessed: boolean;
+  /** True when the import form must collect a base URL. */
+  needs_base_url: boolean;
+  /** True when this server version cannot import the entry at all. */
+  rejected: boolean;
+  reject_reason: string | null;
+  /** Credential env var the vendor conventionally uses (hint only). */
+  env_key: string | null;
+  models: WireCatalogModel[];
+}
+
+// POST /api/v1/providers:import_catalog request body (design §4.4).
+export interface WireImportCatalogProviderRequest {
+  catalog_id: string;
+  api_key?: string;
+  base_url?: string;
+  id?: string;
+}
+
+// POST /api/v1/providers:import_catalog 201 body.
+export interface WireImportCatalogProviderResult {
+  provider: WireProvider;
+  models_imported: number;
+}
+
+// POST /api/v1/providers:import_registry request body (design §4.5).
+export interface WireImportCustomRegistryRequest {
+  url: string;
+  api_key?: string;
+}
+
+// POST /api/v1/providers:import_registry 201 body — one item per provider the
+// registry document lists.
+export interface WireImportCustomRegistryResult {
+  providers: WireProvider[];
+  models_imported: number;
 }
 
 export interface WireConfigProvider {

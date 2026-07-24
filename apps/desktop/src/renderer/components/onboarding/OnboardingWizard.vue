@@ -33,7 +33,9 @@ const props = defineProps<{
 // `complete` — onboarding finished OR the login step was skipped (parent marks
 // the onboarded flag and closes). `loginSuccess` — the device-code flow
 // authenticated (parent re-checks auth + reloads, then also completes).
-const emit = defineEmits<{ complete: []; loginSuccess: [] }>();
+// `addProvider` — the custom-provider card: parent completes onboarding and
+// opens Settings on the Providers tab.
+const emit = defineEmits<{ complete: []; loginSuccess: []; addProvider: [] }>();
 
 // -------------------------------------------------------------------------
 // Steps
@@ -146,6 +148,7 @@ function onLoginSuccess(): void {
             :on-poll-o-auth-login="props.onPollOAuthLogin"
             :on-cancel-o-auth-login="props.onCancelOAuthLogin"
             @success="onLoginSuccess"
+            @add-provider="emit('addProvider')"
           />
         </div>
       </section>

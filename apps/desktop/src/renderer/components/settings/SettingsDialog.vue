@@ -10,6 +10,7 @@ import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
+import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice } from '../../lib/dockIconChoice';
 import DockIconPicker from './DockIconPicker.vue';
@@ -29,6 +30,8 @@ const { t } = useI18n();
 // Frosted-sidebar switch (macOS desktop only — the row below is v-if'd on
 // isMacosDesktop; web never renders it).
 const { vibrancy, setVibrancy } = useVibrancy();
+
+type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived' | 'shortcuts';
 
 const props = defineProps<{
   colorScheme: ColorScheme;
@@ -55,6 +58,9 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Tab to open on (default 'general'); deep links like the onboarding
+      custom-provider entry land on 'providers'. Read once at mount. */
+  initialTab?: SettingsTab;
 }>();
 
 const emit = defineEmits<{
@@ -64,7 +70,6 @@ const emit = defineEmits<{
   setNotifySound: [on: boolean];
   login: [];
   logout: [];
-  openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
   close: [];
 }>();
@@ -75,9 +80,7 @@ const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
 );
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived' | 'shortcuts';
-
-const activeTab = ref<SettingsTab>('general');
+const activeTab = ref<SettingsTab>(props.initialTab ?? 'general');
 
 // Overlay-style scrollbar, same as the sidebar's .sessions: the thin thumb
 // stays hidden until the body is scrolled, then fades back out shortly after
@@ -98,6 +101,8 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
   { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'robot' },
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
+  // No plug-style glyph exists in the icon registry; the bolt is the closest.
+  { id: 'providers', labelKey: 'settings.tabs.providers', icon: 'bolt' },
   // Desktop-only tab (web's copy stops at 'archived'; docs/native-todos.md).
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
@@ -828,6 +833,13 @@ function archiveTime(iso: string): string {
               {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
             </div>
           </template>
+        </section>
+
+        <!-- Providers (accordion management). v-if (not v-show): the panel
+             refetches providers/models on mount, so reopening the tab always
+             shows fresh data. -->
+        <section v-if="activeTab === 'providers'" class="panel">
+          <ProvidersPanel />
         </section>
 
         <!-- Hotkeys (desktop-only). v-if (not v-show): the panel

@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Providers 设置页 · 5 种设计方案</title>
+<style>
+/* ============================================================
+   Tokens — 取自 packages/web-ui/src/style.css（亮/暗双套）
+   ============================================================ */
+:root {
+  --bg: #ffffff;
+  --surface: #fafbfc;
+  --raised: #ffffff;
+  --sunken: #f3f5f8;
+  --text: rgba(0, 0, 0, 0.9);
+  --muted: #6b7280;
+  --faint: #9aa3af;
+  --line: #e7eaee;
+  --subtle: #f1f4f8;
+  --line-strong: #d4d9e0;
+  --hover: #0000000d;
+  --selected: #00000014;
+  --sidebar: #fbfaf9;
+  --accent: #1783ff;
+  --accent-hover: #0f6fe0;
+  --accent-soft: #e8f3ff;
+  --accent-bd: #cfe6ff;
+  --success: #0e7a38;
+  --success-soft: #e7f6ee;
+  --success-bd: #bfe3cc;
+  --warn: #a9610a;
+  --warn-soft: #fbf1e0;
+  --warn-bd: #f0d9b8;
+  --danger: #c0392b;
+  --danger-soft: #fbeaea;
+  --danger-bd: #f0cccc;
+  --scrim: rgba(20, 23, 28, 0.62);
+
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --r-full: 999px;
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp5: 20px; --sp6: 24px; --sp8: 32px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-f: 120ms; --dur-b: 160ms; --dur-s: 260ms;
+  --shadow-win: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
+  --shadow-menu: 0 4px 16px rgba(16,24,40,.10), 0 2px 6px rgba(16,24,40,.06);
+
+  --sans: "Schibsted Grotesk", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+html[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #13181e;
+  --raised: #1c2128;
+  --sunken: #0d1117;
+  --text: #e8eaed;
+  --muted: #9aa0a8;
+  --faint: #6b7280;
+  --line: #2d333b;
+  --subtle: #22272e;
+  --line-strong: #3d444d;
+  --hover: #ffffff0d;
+  --selected: #ffffff14;
+  --sidebar: #0a0d12;
+  --accent: #58a6ff;
+  --accent-hover: #79b8ff;
+  --accent-soft: rgba(88, 166, 255, 0.14);
+  --accent-bd: rgba(88, 166, 255, 0.28);
+  --success: #3fb950;
+  --success-soft: rgba(63, 185, 80, 0.12);
+  --success-bd: rgba(63, 185, 80, 0.3);
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, 0.12);
+  --warn-bd: rgba(210, 153, 34, 0.3);
+  --danger: #f85149;
+  --danger-soft: rgba(248, 81, 73, 0.12);
+  --danger-bd: rgba(248, 81, 73, 0.3);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-win: 0 24px 64px rgba(0, 0, 0, 0.5), 0 8px 20px rgba(0, 0, 0, 0.4);
+  --shadow-menu: 0 4px 16px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.3);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--sans);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--sunken);
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; }
+::selection { background: var(--accent-soft); }
+
+/* ============================================================
+   原型外壳（不属于设计方案本身）
+   ============================================================ */
+.chrome {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: var(--sp3);
+  padding: 10px 20px;
+  background: var(--raised);
+  border-bottom: 0.5px solid var(--line);
+}
+.chrome h1 { font-size: 15px; font-weight: 600; margin-right: 8px; white-space: nowrap; }
+.p-switch { display: flex; gap: 2px; background: var(--sunken); border: 0.5px solid var(--line); border-radius: var(--r-md); padding: 2px; }
+.p-switch button {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 13px; font-weight: 500; padding: 5px 12px; border-radius: var(--r-sm);
+  transition: background var(--dur-f) var(--ease), color var(--dur-f) var(--ease);
+  white-space: nowrap;
+}
+.p-switch button:hover { color: var(--text); }
+.p-switch button.on { background: var(--raised); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.chrome .spacer { flex: 1; }
+.theme-toggle {
+  display: flex; align-items: center; gap: 6px;
+  border: 0.5px solid var(--line); background: var(--raised); color: var(--muted);
+  font-size: 12.5px; padding: 6px 12px; border-radius: var(--r-full);
+  transition: color var(--dur-f) var(--ease), border-color var(--dur-f) var(--ease);
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--line-strong); }
+
+.anno {
+  max-width: 980px; margin: 14px auto 0; padding: 0 20px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.anno .a-name { font-size: 15px; font-weight: 600; }
+.anno .a-model { font-size: 13px; color: var(--muted); }
+.anno .a-pros { font-size: 12.5px; color: var(--faint); line-height: 1.6; }
+.anno .a-pros b { color: var(--muted); font-weight: 600; }
+
+.stage { display: flex; justify-content: center; padding: 18px 20px 48px; }
+
+/* ============================================================
+   设置窗口外壳（复刻 SettingsDialog：148px 侧栏 + region）
+   ============================================================ */
+.window {
+  width: 980px; height: 700px;
+  display: grid; grid-template-columns: 148px 1fr;
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-win);
+  overflow: hidden;
+  user-select: none;
+}
+.window input, .window textarea { user-select: text; }
+
+.w-side {
+  display: flex; flex-direction: column;
+  padding: 0 var(--sp2) var(--sp2);
+  background: var(--sidebar);
+  border-right: 0.5px solid var(--line);
+}
+.w-side-head {
+  display: flex; align-items: center;
+  height: calc(16px + 26px + 8px);
+  padding-inline: var(--sp3);
+}
+.w-side-title { font-size: 18px; font-weight: 500; }
+.w-tabs { display: flex; flex-direction: column; gap: 2px; }
+.w-tab {
+  display: flex; align-items: center; gap: var(--sp2);
+  padding: 8px 10px; border: none; border-radius: var(--r-md);
+  background: transparent; color: var(--muted);
+  font-size: 14px; font-weight: 500; text-align: left;
+  transition: background var(--dur-f) var(--ease), color var(--dur-f) var(--ease);
+}
+.w-tab svg { flex: none; }
+.w-tab:hover { background: var(--sunken); color: var(--text); }
+html[data-theme="dark"] .w-tab:hover { background: var(--hover); }
+.w-tab.on { background: var(--accent-soft); color: var(--accent); }
+
+.w-region { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+.w-region-head {
+  display: flex; align-items: center; justify-content: flex-end;
+  height: calc(16px + 26px + 8px);
+  padding-right: var(--sp5); flex: none;
+}
+.w-body { flex: 1; overflow-y: auto; padding: var(--sp2) 32px var(--sp5); min-width: 0; }
+.w-body::-webkit-scrollbar { width: 8px; }
+.w-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+
+/* ============================================================
+   共享组件（§03 原语的 mock 版）
+   ============================================================ */
+.sec { padding: var(--sp4) 0; }
+.sec:first-child { padding-top: 0; }
+.sec-title { font-size: 16px; font-weight: 500; margin-bottom: var(--sp3); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp3); margin-bottom: var(--sp3); }
+.sec-head .sec-title { margin-bottom: 0; }
+.sec-desc { font-size: 13px; color: var(--muted); max-width: 560px; line-height: 1.55; margin-bottom: var(--sp3); }
+
+.group {
+  border: 0.5px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--raised);
+  overflow: hidden;
+}
+.group > * + * { border-top: 0.5px solid var(--line); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 14px;
+  border: 0.5px solid var(--line); border-radius: var(--r-md);
+  background: var(--raised); color: var(--text);
+  font-size: 13.5px; font-weight: 600;
+  transition: background var(--dur-f) var(--ease), border-color var(--dur-f) var(--ease), color var(--dur-f) var(--ease), transform 100ms var(--ease);
+}
+.btn:hover { background: var(--sunken); }
+html[data-theme="dark"] .btn:hover { background: var(--hover); }
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { background: var(--danger-soft); border-color: var(--danger-bd); }
+.btn.danger-solid { background: var(--danger); border-color: transparent; color: #fff; }
+.btn.danger-solid:hover { filter: brightness(1.06); background: var(--danger); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; border-radius: var(--r-sm); }
+.btn:disabled { opacity: .5; pointer-events: none; }
+
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: none;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--faint);
+  transition: background var(--dur-f) var(--ease), color var(--dur-f) var(--ease), transform 100ms var(--ease);
+}
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.icon-btn:active { transform: scale(0.94); }
+.icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+.icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+.icon-btn.spinning svg { animation: rot .8s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 7px;
+  border-radius: var(--r-xs);
+  font-size: 11.5px; font-weight: 500; line-height: 1;
+  background: var(--subtle); color: var(--muted);
+  white-space: nowrap;
+}
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.success { background: var(--success-soft); color: var(--success); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.mono { font-family: var(--mono); font-size: 11px; }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--success); }
+.dot.off { background: var(--faint); }
+
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field > label { font-size: 13px; font-weight: 500; color: var(--text); }
+.field > label .req { color: var(--danger); margin-left: 2px; }
+.field .f-hint { font-size: 12px; color: var(--faint); line-height: 1.45; }
+.input, .select {
+  height: 32px; padding: 0 10px;
+  border: 0.5px solid var(--line); border-radius: var(--r-md);
+  background: var(--raised); color: var(--text);
+  font-size: 13.5px; outline: none; width: 100%;
+  transition: border-color var(--dur-f) var(--ease), box-shadow var(--dur-f) var(--ease);
+}
+.input::placeholder { color: var(--faint); }
+.input:focus, .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.input.invalid { border-color: var(--danger); }
+.input.invalid:focus { box-shadow: 0 0 0 3px var(--danger-soft); }
+.input.mono { font-family: var(--mono); font-size: 12.5px; }
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239aa3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  padding-right: 28px; cursor: pointer;
+}
+html[data-theme="dark"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.banner {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px; border-radius: var(--r-md);
+  font-size: 13px; line-height: 1.5;
+  background: var(--danger-soft); color: var(--danger);
+  border: 0.5px solid var(--danger-bd);
+}
+.banner svg { flex: none; margin-top: 2px; }
+
+.seg {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--sunken); border: 0.5px solid var(--line); border-radius: var(--r-md);
+}
+.seg button {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 13px; font-weight: 500; padding: 5px 14px; border-radius: var(--r-sm);
+  transition: background var(--dur-f) var(--ease), color var(--dur-f) var(--ease);
+}
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--raised); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.10); }
+
+/* provider 行内共享片段 */
+.p-id { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.p-id .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-sub { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 6px; margin-top: 3px; min-width: 0; }
+.p-sub .mono { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-sub .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); flex: none; }
+
+/* 表单网格（各方案共用） */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp4) var(--sp4); }
+.form-grid .span2 { grid-column: span 2; }
+.model-rows { display: flex; flex-direction: column; gap: 8px; }
+.model-row { display: grid; grid-template-columns: 1.4fr 110px 1fr 26px; gap: 8px; align-items: center; }
+.model-row-head { font-size: 12px; color: var(--faint); display: grid; grid-template-columns: 1.4fr 110px 1fr 26px; gap: 8px; }
+.form-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: var(--sp4); }
+.add-model-link {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent; color: var(--accent);
+  font-size: 13px; font-weight: 500; padding: 4px 0;
+}
+.add-model-link:hover { color: var(--accent-hover); }
+
+/* 展开/收起过渡 */
+.collapse { overflow: hidden; transition: max-height var(--dur-s) var(--ease), opacity var(--dur-b) var(--ease); }
+.collapse.closed { max-height: 0 !important; opacity: 0; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <h1>Providers 设置页 · 方案对比</h1>
+  <div class="p-switch" id="pSwitch"></div>
+  <div class="spacer"></div>
+  <button class="theme-toggle" id="themeToggle">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.3 11.3 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">暗色</span>
+  </button>
+</div>
+
+<div class="anno" id="anno"></div>
+<div class="stage"><div id="mock"></div></div>
+
+<script>
+/* ============================================================
+   共享：图标 / 数据 / 窗口外壳
+   ============================================================ */
+const I = {
+  sliders: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h13M19 18h1"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
+  sparkles: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.7 5.7 1.9-5.7 1.9L12 18.2l-1.9-5.7-5.7-1.9 5.7-1.9L12 3z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z"/></svg>',
+  user: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>',
+  plug: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3m6 4V3M7 7h10v4a5 5 0 0 1-10 0V7z"/><path d="M12 16v5"/></svg>',
+  keyboard: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
+  tool: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4L14 13l-3-3 3.7-3.7z"/></svg>',
+  archive: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>',
+  plus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  refresh: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
+  trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>',
+  x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  warn: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>',
+  check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+  chevR: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  key: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.9 12.1 8.6-8.6M15 6l3 3"/></svg>',
+};
+
+const TABS = [
+  ['general', 'sliders', '通用'],
+  ['agent', 'sparkles', 'Agent'],
+  ['account', 'user', '账户'],
+  ['providers', 'plug', 'Providers'],
+  ['shortcuts', 'keyboard', '快捷键'],
+  ['advanced', 'tool', '高级'],
+  ['archived', 'archive', '归档'],
+];
+
+const TYPES = ['kimi', 'openai', 'openai_responses', 'anthropic', 'google-genai', 'vertexai'];
+
+function seedProviders() {
+  return [
+    { id: 'managed:kimi-code', type: 'kimi', baseUrl: 'https://api.kimi.com/coding/v1', key: 'oauth', status: 'connected', models: [{ id: 'kimi-for-coding', ctx: 262144 }, { id: 'kimi-for-coding-highspeed', ctx: 262144 }], managed: true },
+    { id: 'openai', type: 'openai', baseUrl: '', key: 'set', status: 'connected', models: [{ id: 'gpt-4.1', ctx: 1047576 }, { id: 'gpt-4.1-mini', ctx: 1047576 }, { id: 'o4-mini', ctx: 200000 }, { id: 'gpt-4o', ctx: 128000 }], defaultModel: 'gpt-4.1' },
+    { id: 'my-gateway', type: 'openai', baseUrl: 'https://gw.internal.example.com/v1', key: 'unset', status: 'unconfigured', models: [{ id: 'deepseek-v3.2', ctx: 163840 }], defaultModel: 'deepseek-v3.2' },
+  ];
+}
+
+function keyBadge(p) {
+  if (p.key === 'oauth') return `<span class="badge accent">${I.key} OAuth</span>`;
+  if (p.key === 'set') return `<span class="badge success">${I.key} 已设置</span>`;
+  return `<span class="badge warn">${I.key} 未设置</span>`;
+}
+
+function shell(bodyHTML) {
+  return `
+  <div class="window">
+    <nav class="w-side">
+      <header class="w-side-head"><h2 class="w-side-title">设置</h2></header>
+      <div class="w-tabs">
+        ${TABS.map(([id, icon, label]) => `
+          <button type="button" class="w-tab ${id === 'providers' ? 'on' : ''}" ${id !== 'providers' ? 'disabled' : ''}>
+            ${I[icon]}<span>${label}</span>
+          </button>`).join('')}
+      </div>
+    </nav>
+    <section class="w-region">
+      <header class="w-region-head">
+        <button class="icon-btn" title="关闭">${I.x}</button>
+      </header>
+      <div class="w-body">${bodyHTML}</div>
+    </section>
+  </div>`;
+}
+
+/* 共享：provider 表单字段（各方案复用同一组字段语义） */
+function formFieldsHTML(prefix) {
+  return `
+  <div class="form-grid">
+    <div class="field">
+      <label>ID<span class="req">*</span></label>
+      <input class="input mono" id="${prefix}-id" placeholder="my-openai" spellcheck="false">
+      <span class="f-hint">小写字母 / 数字 / - / _，模型别名的前缀</span>
+    </div>
+    <div class="field">
+      <label>协议类型<span class="req">*</span></label>
+      <select class="select" id="${prefix}-type">
+        ${TYPES.map(t => `<option value="${t}" ${t === 'openai' ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input class="input mono" id="${prefix}-key" type="password" placeholder="sk-…" spellcheck="false">
+      <span class="f-hint">留空则走环境变量兜底（如 OPENAI_API_KEY）</span>
+    </div>
+    <div class="field">
+      <label>Base URL</label>
+      <input class="input mono" id="${prefix}-url" placeholder="留空用协议默认端点" spellcheck="false">
+    </div>
+    <div class="field span2">
+      <label>模型<span class="req">*</span></label>
+      <div class="model-rows" id="${prefix}-models">
+        <div class="model-row-head"><span>模型 ID *</span><span>上下文 *</span><span>显示名</span><span></span></div>
+      </div>
+      <button type="button" class="add-model-link" id="${prefix}-addmodel">${I.plus} 添加模型</button>
+    </div>
+    <div class="field span2">
+      <label>默认模型</label>
+      <select class="select" id="${prefix}-defmodel"><option value="">不设置</option></select>
+    </div>
+  </div>`;
+}
+
+function addModelRow(container, prefix, values) {
+  const v = values || {};
+  const dis = v.disabled ? 'disabled' : '';
+  const row = document.createElement('div');
+  row.className = 'model-row';
+  row.innerHTML = `
+    <input class="input mono m-id" placeholder="gpt-4.1" spellcheck="false" value="${v.id || ''}" ${dis}>
+    <input class="input m-ctx" type="number" min="1" placeholder="1047576" value="${v.ctx || ''}" ${dis}>
+    <input class="input m-name" placeholder="可选" value="${v.name || ''}" ${dis}>
+    ${v.disabled ? '<span></span>' : `<button type="button" class="icon-btn danger" title="移除">${I.trash}</button>`}`;
+  const del = row.querySelector('.icon-btn');
+  if (del) del.onclick = () => { row.remove(); syncDefModels(prefix); };
+  row.querySelectorAll('.m-id').forEach(el => el.addEventListener('input', () => syncDefModels(prefix)));
+  container.appendChild(row);
+  syncDefModels(prefix);
+}
+
+function syncDefModels(prefix) {
+  const sel = document.getElementById(`${prefix}-defmodel`);
+  if (!sel) return;
+  const cur = sel.value;
+  const ids = [...document.querySelectorAll(`#${prefix}-models .m-id`)].map(i => i.value.trim()).filter(Boolean);
+  sel.innerHTML = '<option value="">不设置</option>' + ids.map(m => `<option value="${m}">${m}</option>`).join('');
+  sel.value = ids.includes(cur) ? cur : '';
+}
+
+function collectForm(prefix) {
+  const id = document.getElementById(`${prefix}-id`).value.trim();
+  const type = document.getElementById(`${prefix}-type`).value;
+  const key = document.getElementById(`${prefix}-key`).value.trim();
+  const url = document.getElementById(`${prefix}-url`).value.trim();
+  const rows = [...document.querySelectorAll(`#${prefix}-models .model-row`)];
+  const models = rows.map(r => ({
+    id: r.querySelector('.m-id').value.trim(),
+    ctx: r.querySelector('.m-ctx').value.trim(),
+    name: r.querySelector('.m-name').value.trim(),
+  })).filter(m => m.id || m.ctx || m.name);
+  const defEl = document.getElementById(`${prefix}-defmodel`);
+  const defModel = defEl ? defEl.value : '';
+  return { id, type, key, url, models, defModel };
+}
+
+function validateForm(f, existing) {
+  if (!f.id) return '请填写 Provider ID。';
+  if (!/^[a-z0-9][a-z0-9-_]*$/.test(f.id)) return 'ID 只能包含小写字母、数字、-、_，且以字母或数字开头。';
+  if (existing.some(p => p.id === f.id)) return `ID 「${f.id}」已存在（server 会返回 409）。`;
+  if (f.models.length === 0) return '至少添加一个模型。';
+  for (const m of f.models) {
+    if (!m.id) return '模型行缺少模型 ID。';
+    if (!m.ctx || Number(m.ctx) <= 0) return `模型「${m.id}」缺少有效的上下文大小。`;
+  }
+  return null;
+}
+</script>
+
+<style>
+/* ============================================================
+   方案 A：分组列表 + 就地展开表单
+   ============================================================ */
+.pa-row { display: flex; align-items: center; gap: var(--sp3); padding: var(--sp4); min-height: 52px; }
+.pa-row .grow { flex: 1; min-width: 0; }
+.pa-row .acts { display: flex; align-items: center; gap: 2px; flex: none; }
+.pa-row.flash { animation: flash 1.2s var(--ease); }
+@keyframes flash { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
+.pa-add-row {
+  display: flex; align-items: center; gap: var(--sp2);
+  width: 100%; padding: var(--sp4); min-height: 52px;
+  border: none; background: transparent; color: var(--muted);
+  font-size: 14px; font-weight: 500; text-align: left;
+  transition: background var(--dur-f) var(--ease), color var(--dur-f) var(--ease);
+}
+.pa-add-row:hover { background: var(--hover); color: var(--text); }
+.pa-add-row.on { color: var(--accent); }
+.pa-confirm { display: flex; align-items: center; gap: var(--sp3); padding: var(--sp4); background: var(--danger-soft); }
+.pa-confirm .msg { flex: 1; font-size: 13px; color: var(--danger); line-height: 1.5; }
+.pa-form-wrap { margin-top: var(--sp4); }
+.pa-form {
+  border: 0.5px solid var(--line); border-radius: var(--r-xl);
+  background: var(--raised); padding: var(--sp5);
+  display: flex; flex-direction: column; gap: var(--sp4);
+}
+.pa-form .f-title { font-size: 15px; font-weight: 600; }
+
+/* ============================================================
+   方案 B：Master-Detail 双栏
+   ============================================================ */
+.pb-layout { display: grid; grid-template-columns: 232px 1fr; gap: var(--sp4); height: 100%; }
+.pb-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; }
+.pb-item {
+  display: flex; align-items: center; gap: var(--sp2);
+  padding: 10px 12px; border: none; border-radius: var(--r-md);
+  background: transparent; text-align: left; color: var(--text);
+  transition: background var(--dur-f) var(--ease);
+}
+.pb-item:hover { background: var(--hover); }
+.pb-item.on { background: var(--selected); }
+.pb-item .meta { flex: 1; min-width: 0; }
+.pb-item .meta .n { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-item .meta .t { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
+.pb-add {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 8px 12px;
+  border: 0.5px dashed var(--line-strong); border-radius: var(--r-md);
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 500;
+  transition: color var(--dur-f) var(--ease), border-color var(--dur-f) var(--ease), background var(--dur-f) var(--ease);
+}
+.pb-add:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.pb-detail {
+  border: 0.5px solid var(--line); border-radius: var(--r-xl); background: var(--raised);
+  padding: var(--sp5); min-height: 0; overflow-y: auto;
+}
+.pb-detail.flash { animation: flash 1.2s var(--ease); }
+.form-stack { display: flex; flex-direction: column; gap: var(--sp4); }
+.input:disabled, .select:disabled { opacity: .55; cursor: not-allowed; }
+.pb-detail .d-head { display: flex; align-items: center; gap: var(--sp3); margin-bottom: var(--sp4); }
+.pb-detail .d-head .n { font-size: 16px; font-weight: 600; }
+.pb-detail .d-head .spacer { flex: 1; }
+.pb-kv { display: flex; flex-direction: column; }
+.pb-kv .kv { display: flex; align-items: center; justify-content: space-between; gap: var(--sp3); padding: 10px 0; border-top: 0.5px solid var(--line); }
+.pb-kv .kv:first-child { border-top: none; }
+.pb-kv .k { font-size: 13px; color: var(--muted); }
+.pb-kv .v { font-size: 13px; color: var(--text); }
+.pb-kv .v.mono { font-family: var(--mono); font-size: 12px; }
+.pb-models { margin-top: var(--sp4); }
+.pb-models .m-title { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+.pb-mrow { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 0.5px solid var(--subtle); font-size: 13px; }
+.pb-mrow:first-of-type { border-top: none; }
+.pb-mrow .ctx { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.pb-dfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: var(--sp5); padding-top: var(--sp4); border-top: 0.5px solid var(--line); }
+.pb-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--faint); font-size: 13px; }
+
+/* ============================================================
+   方案 C：卡片网格
+   ============================================================ */
+.pc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp4); }
+.pc-card {
+  border: 0.5px solid var(--line); border-radius: var(--r-xl); background: var(--raised);
+  padding: var(--sp4);
+  display: flex; flex-direction: column; gap: 10px;
+  transition: border-color var(--dur-f) var(--ease);
+}
+.pc-card:hover { border-color: var(--line-strong); }
+.pc-card.flash { animation: flash 1.2s var(--ease); }
+.pc-card .c-head { display: flex; align-items: center; gap: 8px; }
+.pc-card .c-head .n { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-card .c-head .spacer { flex: 1; }
+.pc-card .c-meta { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.pc-card .c-meta .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pc-card .c-meta .mono { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-card .c-foot { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 0.5px solid var(--subtle); font-size: 12px; color: var(--faint); }
+.pc-card .c-foot .spacer { flex: 1; }
+.pc-add-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 148px;
+  border: 0.5px dashed var(--line-strong); border-radius: var(--r-xl);
+  background: transparent; color: var(--muted); font-size: 13.5px; font-weight: 500;
+  transition: color var(--dur-f) var(--ease), border-color var(--dur-f) var(--ease), background var(--dur-f) var(--ease);
+}
+.pc-add-card:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.pc-form-card { grid-column: span 2; display: flex; flex-direction: column; gap: var(--sp4); }
+.pc-form-card .f-title { font-size: 15px; font-weight: 600; }
+.pc-confirm { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12.5px; color: var(--danger); }
+
+/* ============================================================
+   方案 D：分段切换 + 分步表单
+   ============================================================ */
+.pd-steps { display: flex; align-items: center; gap: var(--sp2); margin-bottom: var(--sp5); }
+.pd-step { display: flex; align-items: center; gap: 8px; }
+.pd-step .num {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 600;
+  background: var(--subtle); color: var(--faint);
+  transition: background var(--dur-b) var(--ease), color var(--dur-b) var(--ease);
+}
+.pd-step .lb { font-size: 13px; color: var(--faint); font-weight: 500; transition: color var(--dur-b) var(--ease); }
+.pd-step.on .num { background: var(--accent); color: #fff; }
+.pd-step.on .lb { color: var(--text); }
+.pd-step.done .num { background: var(--accent-soft); color: var(--accent); }
+.pd-step.done .lb { color: var(--muted); }
+.pd-step-line { flex: 1; max-width: 48px; height: 0.5px; background: var(--line-strong); }
+.pd-panel {
+  border: 0.5px solid var(--line); border-radius: var(--r-xl); background: var(--raised);
+  padding: var(--sp6); display: flex; flex-direction: column; gap: var(--sp4);
+}
+.pd-panel .f-title { font-size: 15px; font-weight: 600; }
+.pd-nav { display: flex; justify-content: space-between; margin-top: var(--sp2); }
+.pd-nav .right { display: flex; gap: 8px; }
+.pd-summary { display: flex; flex-direction: column; gap: 0; }
+.pd-summary .kv { display: flex; justify-content: space-between; gap: var(--sp3); padding: 9px 0; border-top: 0.5px solid var(--line); font-size: 13px; }
+.pd-summary .kv:first-child { border-top: none; }
+.pd-summary .k { color: var(--muted); }
+.pd-summary .v { color: var(--text); }
+.pd-summary .v.mono { font-family: var(--mono); font-size: 12px; }
+
+/* ============================================================
+   方案 E：密集表格 + 行内表单行
+   ============================================================ */
+.pe-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp3); margin-bottom: var(--sp3); }
+.pe-count { font-size: 13px; color: var(--faint); }
+.pe-table { border: 0.5px solid var(--line); border-radius: var(--r-xl); background: var(--raised); overflow: hidden; }
+.pe-tHead, .pe-tr {
+  display: grid;
+  grid-template-columns: 72px 1.5fr 130px 1.6fr 92px 72px 76px;
+  align-items: center; gap: var(--sp3);
+  padding: 0 var(--sp4);
+}
+.pe-tHead {
+  height: 36px; background: var(--surface);
+  font-size: 12px; font-weight: 500; color: var(--faint);
+  border-bottom: 0.5px solid var(--line);
+}
+.pe-tr { min-height: 48px; border-top: 0.5px solid var(--line); transition: background var(--dur-f) var(--ease); }
+.pe-tr:hover { background: var(--hover); }
+.pe-tr.flash { animation: flash 1.2s var(--ease); }
+.pe-tr .cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.pe-tr .cell.id { font-weight: 500; }
+.pe-tr .cell.mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.pe-tr .cell.acts { display: flex; gap: 2px; justify-content: flex-end; }
+.pe-tr .cell .dim { color: var(--faint); }
+.pe-form-row { border-top: 0.5px solid var(--line); background: var(--surface); padding: var(--sp4); display: flex; flex-direction: column; gap: var(--sp4); }
+.pe-form-row .f-title { font-size: 13.5px; font-weight: 600; }
+.pe-confirm-cell { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--danger); justify-content: flex-end; }
+
+/* ============================================================
+   方案 F：手风琴列表（行内原地展开）
+   ============================================================ */
+.pf-row {
+  display: flex; align-items: center; gap: var(--sp3);
+  width: 100%; padding: var(--sp4); min-height: 52px;
+  border: none; background: transparent; text-align: left;
+  cursor: pointer; border-radius: 0;
+  transition: background var(--dur-f) var(--ease);
+}
+.pf-row:hover { background: var(--hover); }
+.pf-item.open > .pf-row { background: var(--subtle); }
+.pf-row .grow { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.pf-row .pf-id { font-size: 14px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-count { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.pf-chev { display: inline-flex; color: var(--faint); transition: transform var(--dur-b) var(--ease); }
+.pf-item.open .pf-chev { transform: rotate(90deg); }
+.pf-add-row { color: var(--muted); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: var(--sp2); }
+.pf-add-row:hover { color: var(--text); }
+.pf-add-item.open > .pf-add-row { color: var(--accent); }
+.pf-acc { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-s) var(--ease); }
+.pf-item.open .pf-acc { grid-template-rows: 1fr; }
+.pf-acc-in { overflow: hidden; min-height: 0; }
+.pf-form {
+  padding: var(--sp4) var(--sp4) var(--sp5);
+  display: flex; flex-direction: column; gap: var(--sp4);
+  border-top: 0.5px solid var(--line);
+}
+.pf-form .f-guard { margin-bottom: 0; }
+.pf-item.flash > .pf-row { animation: flash 1.2s var(--ease); }
+</style>
+
+<script>
+/* ============================================================
+   方案 A：分组列表 + 就地展开表单
+   交互模型：列表即主页；添加在列表下方就地展开，不离开上下文
+   ============================================================ */
+function renderA(root) {
+  let providers = seedProviders();
+  let adding = false;
+
+  function rowHTML(p) {
+    return `
+      <span class="dot ${p.status === 'connected' ? 'ok' : 'off'}"></span>
+      <div class="grow">
+        <div class="p-id"><span class="name">${p.id}</span><span class="badge">${p.type}</span>${p.managed ? '<span class="badge accent">托管登录</span>' : ''}</div>
+        <div class="p-sub">
+          <span class="mono">${p.baseUrl || '协议默认端点'}</span>
+          <span class="sep"></span><span>${p.models.length} 个模型</span>
+        </div>
+      </div>
+      ${keyBadge(p)}
+      <div class="acts">
+        <button class="icon-btn act-refresh" title="刷新模型">${I.refresh}</button>
+        ${p.managed ? '' : `<button class="icon-btn danger act-del" title="删除">${I.trash}</button>`}
+      </div>`;
+  }
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec">
+        <div class="sec-head"><h3 class="sec-title">Providers</h3></div>
+        <p class="sec-desc">管理模型服务。添加自有 API Key 的 OpenAI / Anthropic 兼容服务，或导入私有注册表。</p>
+        <div class="group" id="paGroup">
+          ${providers.map((p, i) => `<div class="pa-row" data-i="${i}">${rowHTML(p)}</div>`).join('')}
+          <button type="button" class="pa-add-row ${adding ? 'on' : ''}" id="paAdd">${I.plus} 添加 Provider</button>
+        </div>
+        <div class="collapse ${adding ? '' : 'closed'}" id="paCollapse" style="max-height: 640px;">
+          <div class="pa-form-wrap"><div class="pa-form">
+            <div class="f-title">添加 Provider</div>
+            <div id="paErr"></div>
+            ${formFieldsHTML('pa')}
+            <div class="form-foot">
+              <button class="btn" id="paCancel">取消</button>
+              <button class="btn primary" id="paSubmit">添加 Provider</button>
+            </div>
+          </div></div>
+        </div>
+      </section>`);
+
+    root.querySelector('#paAdd').onclick = () => { adding = !adding; draw(); if (adding) addModelRow(root.querySelector('#pa-models'), 'pa'); };
+    root.querySelectorAll('.act-refresh').forEach(b => b.onclick = () => { b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 900); });
+    root.querySelectorAll('.act-del').forEach(b => b.onclick = () => {
+      const row = b.closest('.pa-row');
+      const p = providers[Number(row.dataset.i)];
+      row.innerHTML = `
+        <div class="pa-confirm">
+          <span class="msg">删除 <b>${p.id}</b>？其 ${p.models.length} 个模型别名将一并删除，此操作不可撤销。</span>
+          <button class="btn sm c-no">取消</button>
+          <button class="btn sm danger-solid c-yes">删除</button>
+        </div>`;
+      row.querySelector('.c-no').onclick = () => { row.innerHTML = rowHTML(p); bindRowActs(); };
+      row.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); draw(); };
+    });
+    if (adding) {
+      const sel = root.querySelector('#pa-addmodel');
+      if (sel) sel.onclick = () => addModelRow(root.querySelector('#pa-models'), 'pa');
+      root.querySelector('#paCancel').onclick = () => { adding = false; draw(); };
+      root.querySelector('#paSubmit').onclick = () => {
+        const f = collectForm('pa');
+        const err = validateForm(f, providers);
+        const box = root.querySelector('#paErr');
+        if (err) { box.innerHTML = `<div class="banner">${I.warn}<span>${err}</span></div>`; return; }
+        providers.push({ id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: f.models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })), defaultModel: f.defModel });
+        adding = false; draw();
+        root.querySelector(`#paGroup .pa-row[data-i="${providers.length - 1}"]`)?.classList.add('flash');
+      };
+    }
+  }
+  function bindRowActs() { draw(); }
+  draw();
+}
+
+/* ============================================================
+   方案 B：Master-Detail 双栏
+   交互模型：左列表选中；右栏统一纵向表单——查看 = 编辑 = 添加
+   ============================================================ */
+function renderB(root) {
+  let providers = seedProviders();
+  let selected = 0;
+  let adding = false;
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec" style="height:100%; display:flex; flex-direction:column;">
+        <div class="sec-head"><h3 class="sec-title">Providers</h3></div>
+        <div class="pb-layout">
+          <div class="pb-list">
+            ${providers.map((q, i) => `
+              <button type="button" class="pb-item ${i === selected && !adding ? 'on' : ''}" data-i="${i}">
+                <span class="dot ${q.status === 'connected' ? 'ok' : 'off'}"></span>
+                <span class="meta"><span class="n">${q.id}</span></span>
+              </button>`).join('')}
+            <button type="button" class="pb-add ${adding ? 'on' : ''}" id="pbAdd">${I.plus} 添加 Provider</button>
+          </div>
+          <div class="pb-detail" id="pbDetail"></div>
+        </div>
+      </section>`);
+
+    root.querySelectorAll('.pb-item').forEach(b => b.onclick = () => { selected = Number(b.dataset.i); adding = false; draw(); });
+    root.querySelector('#pbAdd').onclick = () => { adding = true; draw(); };
+
+    const d = root.querySelector('#pbDetail');
+    const p = adding ? null : providers[selected];
+    if (!adding && !p) { d.innerHTML = `<div class="pb-empty">${I.plug}<span>选择左侧 Provider 查看详情</span></div>`; return; }
+
+    const managed = p && p.managed;
+    const dis = managed ? 'disabled' : '';
+    d.innerHTML = `
+      <div class="d-head">
+        ${p ? `<span class="dot ${p.status === 'connected' ? 'ok' : 'off'}"></span>` : ''}
+        <span class="n">${p ? p.id : '添加 Provider'}</span>
+        ${p ? `<span class="badge">${p.type}</span>${keyBadge(p)}` : ''}
+        <span class="spacer"></span>
+        ${p && !managed ? `<button class="icon-btn" id="pbRefresh" title="刷新模型">${I.refresh}</button>` : ''}
+      </div>
+      <div id="pbErr" style="margin-bottom:12px;"></div>
+      <div class="form-stack">
+        <div class="field">
+          <label>ID<span class="req">*</span></label>
+          <input class="input mono" id="pb-id" spellcheck="false" ${p ? `value="${p.id}" disabled` : 'placeholder="my-openai"'}>
+        </div>
+        <div class="field">
+          <label>协议类型<span class="req">*</span></label>
+          <select class="select" id="pb-type" ${dis}>${TYPES.map(t => `<option value="${t}" ${p && p.type === t ? 'selected' : !p && t === 'openai' ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <input class="input mono" id="pb-key" type="password" spellcheck="false"
+            placeholder="${managed ? 'OAuth 托管登录' : p && p.key === 'set' ? '已设置，输入以更换' : 'sk-…'}"
+            ${managed ? 'disabled' : ''}>
+        </div>
+        <div class="field">
+          <label>Base URL</label>
+          <input class="input mono" id="pb-url" spellcheck="false" placeholder="https://api.example.com/v1" value="${p ? p.baseUrl : ''}" ${dis}>
+        </div>
+        <div class="field">
+          <label>模型<span class="req">*</span></label>
+          <div class="model-rows" id="pb-models">
+            <div class="model-row-head"><span>模型 ID *</span><span>上下文 *</span><span>显示名</span><span></span></div>
+          </div>
+          ${managed ? '' : `<button type="button" class="add-model-link" id="pb-addmodel">${I.plus} 添加模型</button>`}
+        </div>
+      </div>
+      <div class="form-foot">
+        ${managed
+          ? '<span style="font-size:12.5px; color:var(--faint); align-self:center;">托管 Provider 在账户页登录 / 登出</span>'
+          : p
+            ? `<button class="btn danger" id="pbDelete">删除 Provider</button><span style="flex:1"></span><button class="btn primary" id="pbSave">保存</button>`
+            : `<button class="btn" id="pbCancel">取消</button><button class="btn primary" id="pbSubmit">添加 Provider</button>`}
+      </div>`;
+
+    const modelsBox = root.querySelector('#pb-models');
+    if (p) p.models.forEach(m => addModelRow(modelsBox, 'pb', { id: m.id, ctx: m.ctx, disabled: managed }));
+    else addModelRow(modelsBox, 'pb');
+    const addM = root.querySelector('#pb-addmodel');
+    if (addM) addM.onclick = () => addModelRow(modelsBox, 'pb');
+
+    const refresh = root.querySelector('#pbRefresh');
+    if (refresh) refresh.onclick = () => { refresh.classList.add('spinning'); setTimeout(() => refresh.classList.remove('spinning'), 900); };
+
+    const cancel = root.querySelector('#pbCancel');
+    if (cancel) cancel.onclick = () => { adding = false; draw(); };
+
+    const submit = root.querySelector('#pbSubmit');
+    if (submit) submit.onclick = () => {
+      const f = collectForm('pb');
+      const err = validateForm(f, providers);
+      if (err) return pbErr(err);
+      providers.push({ id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: f.models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })) });
+      selected = providers.length - 1; adding = false; draw();
+    };
+
+    const save = root.querySelector('#pbSave');
+    if (save) save.onclick = () => {
+      const rows = [...root.querySelectorAll('#pb-models .model-row')];
+      const models = rows.map(r => ({ id: r.querySelector('.m-id').value.trim(), ctx: r.querySelector('.m-ctx').value.trim(), name: r.querySelector('.m-name').value.trim() })).filter(m => m.id || m.ctx || m.name);
+      if (models.length === 0) return pbErr('至少保留一个模型。');
+      for (const m of models) {
+        if (!m.id) return pbErr('模型行缺少模型 ID。');
+        if (!m.ctx || Number(m.ctx) <= 0) return pbErr(`模型「${m.id}」缺少有效的上下文大小。`);
+      }
+      p.type = root.querySelector('#pb-type').value;
+      p.baseUrl = root.querySelector('#pb-url').value.trim();
+      const keyVal = root.querySelector('#pb-key').value.trim();
+      if (keyVal) { p.key = 'set'; p.status = 'connected'; }
+      p.models = models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 }));
+      draw();
+      root.querySelector('#pbDetail').classList.add('flash');
+    };
+
+    const del = root.querySelector('#pbDelete');
+    if (del) del.onclick = () => {
+      d.querySelector('.form-foot').innerHTML = `
+        <div class="pc-confirm"><span>确认删除 <b>${p.id}</b> 及其 ${p.models.length} 个模型？</span><span style="flex:1"></span>
+        <button class="btn sm c-no">取消</button><button class="btn sm danger-solid c-yes">确认删除</button></div>`;
+      d.querySelector('.c-no').onclick = () => draw();
+      d.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); selected = 0; draw(); };
+    };
+  }
+  function pbErr(msg) {
+    root.querySelector('#pbErr').innerHTML = `<div class="banner">${I.warn}<span>${msg}</span></div>`;
+  }
+  draw();
+}
+
+/* ============================================================
+   方案 C：卡片网格
+   交互模型：每个 provider 一张卡；虚线卡即入口，展开为整行表单卡
+   ============================================================ */
+function renderC(root) {
+  let providers = seedProviders();
+  let adding = false;
+
+  function cardHTML(p, i) {
+    return `
+      <div class="pc-card" data-i="${i}">
+        <div class="c-head">
+          <span class="dot ${p.status === 'connected' ? 'ok' : 'off'}"></span>
+          <span class="n">${p.id}</span>
+          <span class="spacer"></span>
+          <span class="badge">${p.type}</span>
+        </div>
+        <div class="c-meta">
+          <div class="line"><span class="mono">${p.baseUrl || '协议默认端点'}</span></div>
+          <div class="line">${keyBadge(p)}${p.managed ? '<span class="badge accent">托管登录</span>' : ''}</div>
+          <div class="line">默认模型 <span class="mono">${p.defaultModel || '未设置'}</span></div>
+        </div>
+        <div class="c-foot">
+          <span>${p.models.length} 个模型</span>
+          <span class="spacer"></span>
+          <button class="icon-btn act-refresh" title="刷新模型">${I.refresh}</button>
+          ${p.managed ? '' : `<button class="icon-btn danger act-del" title="删除">${I.trash}</button>`}
+        </div>
+      </div>`;
+  }
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec">
+        <div class="sec-head"><h3 class="sec-title">Providers</h3></div>
+        <p class="sec-desc">管理模型服务。添加自有 API Key 的 OpenAI / Anthropic 兼容服务，或导入私有注册表。</p>
+        <div class="pc-grid" id="pcGrid">
+          ${adding ? `
+            <div class="pc-card pc-form-card">
+              <div class="f-title">添加 Provider</div>
+              <div id="pcErr"></div>
+              ${formFieldsHTML('pc')}
+              <div class="form-foot">
+                <button class="btn" id="pcCancel">取消</button>
+                <button class="btn primary" id="pcSubmit">添加 Provider</button>
+              </div>
+            </div>` : ''}
+          ${providers.map((p, i) => cardHTML(p, i)).join('')}
+          <button type="button" class="pc-add-card" id="pcAdd">${I.plus}<span>添加 Provider</span></button>
+        </div>
+      </section>`);
+
+    root.querySelector('#pcAdd').onclick = () => { adding = true; draw(); addModelRow(root.querySelector('#pc-models'), 'pc'); };
+    root.querySelectorAll('.act-refresh').forEach(b => b.onclick = () => { b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 900); });
+    root.querySelectorAll('.act-del').forEach(b => b.onclick = () => {
+      const card = b.closest('.pc-card');
+      const p = providers[Number(card.dataset.i)];
+      const foot = card.querySelector('.c-foot');
+      foot.innerHTML = `
+        <div class="pc-confirm"><span>删除 <b>${p.id}</b>？</span><span class="spacer"></span>
+        <button class="btn sm c-no">取消</button><button class="btn sm danger-solid c-yes">删除</button></div>`;
+      foot.querySelector('.c-no').onclick = () => draw();
+      foot.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); draw(); };
+    });
+    if (adding) {
+      root.querySelector('#pc-addmodel').onclick = () => addModelRow(root.querySelector('#pc-models'), 'pc');
+      root.querySelector('#pcCancel').onclick = () => { adding = false; draw(); };
+      root.querySelector('#pcSubmit').onclick = () => {
+        const f = collectForm('pc');
+        const err = validateForm(f, providers);
+        if (err) { root.querySelector('#pcErr').innerHTML = `<div class="banner">${I.warn}<span>${err}</span></div>`; return; }
+        providers.push({ id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: f.models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })), defaultModel: f.defModel });
+        adding = false; draw();
+        root.querySelector(`.pc-card[data-i="${providers.length - 1}"]`)?.classList.add('flash');
+      };
+    }
+  }
+  draw();
+}
+
+/* ============================================================
+   方案 D：分段切换 + 分步表单
+   交互模型：列表 / 添加两个视图切换；添加按步骤推进，每步聚焦一件事
+   ============================================================ */
+function renderD(root) {
+  let providers = seedProviders();
+  let view = 'list';       // 'list' | 'add'
+  let step = 0;            // 0 基本信息 · 1 凭据 · 2 模型与确认
+  const STEPS = ['基本信息', '凭据', '模型'];
+
+  function stepper() {
+    return `<div class="pd-steps">
+      ${STEPS.map((s, i) => `
+        ${i > 0 ? '<div class="pd-step-line"></div>' : ''}
+        <div class="pd-step ${i === step ? 'on' : i < step ? 'done' : ''}">
+          <span class="num">${i < step ? '✓' : i + 1}</span><span class="lb">${s}</span>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  function listView() {
+    return `
+      <div class="seg" style="margin-bottom:16px;">
+        <button class="on" type="button">Provider 列表</button>
+        <button type="button" id="pdGoAdd">添加 Provider</button>
+      </div>
+      <div class="group">
+        ${providers.map((p, i) => `
+          <div class="pa-row" data-i="${i}">
+            <span class="dot ${p.status === 'connected' ? 'ok' : 'off'}"></span>
+            <div class="grow">
+              <div class="p-id"><span class="name">${p.id}</span><span class="badge">${p.type}</span>${p.managed ? '<span class="badge accent">托管登录</span>' : ''}</div>
+              <div class="p-sub"><span class="mono">${p.baseUrl || '协议默认端点'}</span><span class="sep"></span><span>${p.models.length} 个模型</span></div>
+            </div>
+            ${keyBadge(p)}
+            <div class="acts">
+              <button class="icon-btn act-refresh" title="刷新模型">${I.refresh}</button>
+              ${p.managed ? '' : `<button class="icon-btn danger act-del" title="删除">${I.trash}</button>`}
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  function addView() {
+    let inner = '';
+    if (step === 0) {
+      inner = `
+        <div class="f-title">基本信息</div>
+        <div id="pdErr"></div>
+        <div class="form-grid">
+          <div class="field"><label>ID<span class="req">*</span></label>
+            <input class="input mono" id="pd-id" placeholder="my-openai" spellcheck="false">
+            <span class="f-hint">小写字母 / 数字 / - / _，模型别名的前缀</span></div>
+          <div class="field"><label>协议类型<span class="req">*</span></label>
+            <select class="select" id="pd-type">${TYPES.map(t => `<option ${t === 'openai' ? 'selected' : ''}>${t}</option>`).join('')}</select>
+            <span class="f-hint">不确定时选 openai（OpenAI 兼容端点）</span></div>
+        </div>
+        <div class="pd-nav">
+          <button class="btn" id="pdCancel">取消</button>
+          <div class="right"><button class="btn primary" id="pdNext">继续</button></div>
+        </div>`;
+    } else if (step === 1) {
+      inner = `
+        <div class="f-title">凭据</div>
+        <div id="pdErr"></div>
+        <div class="form-grid">
+          <div class="field"><label>API Key</label>
+            <input class="input mono" id="pd-key" type="password" placeholder="sk-…" spellcheck="false">
+            <span class="f-hint">留空则走环境变量兜底（如 OPENAI_API_KEY）</span></div>
+          <div class="field"><label>Base URL</label>
+            <input class="input mono" id="pd-url" placeholder="留空用协议默认端点" spellcheck="false">
+            <span class="f-hint">自建网关 / 代理地址</span></div>
+        </div>
+        <div class="pd-nav">
+          <button class="btn" id="pdBack">上一步</button>
+          <div class="right"><button class="btn primary" id="pdNext">继续</button></div>
+        </div>`;
+    } else {
+      inner = `
+        <div class="f-title">模型</div>
+        <div id="pdErr"></div>
+        <div class="field">
+          <div class="model-rows" id="pd-models">
+            <div class="model-row-head"><span>模型 ID *</span><span>上下文 *</span><span>显示名</span><span></span></div>
+          </div>
+          <button type="button" class="add-model-link" id="pd-addmodel">${I.plus} 添加模型</button>
+        </div>
+        <div class="field" style="max-width:280px;"><label>默认模型</label>
+          <select class="select" id="pd-defmodel"><option value="">不设置</option></select></div>
+        <div class="pd-nav">
+          <button class="btn" id="pdBack">上一步</button>
+          <div class="right"><button class="btn primary" id="pdFinish">完成添加</button></div>
+        </div>`;
+    }
+    return `
+      <div class="seg" style="margin-bottom:16px;">
+        <button type="button" id="pdGoList">Provider 列表</button>
+        <button class="on" type="button">添加 Provider</button>
+      </div>
+      ${stepper()}
+      <div class="pd-panel">${inner}</div>`;
+  }
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec">
+        <div class="sec-head"><h3 class="sec-title">Providers</h3></div>
+        ${view === 'list' ? listView() : addView()}
+      </section>`);
+
+    const goAdd = root.querySelector('#pdGoAdd');
+    if (goAdd) goAdd.onclick = () => { view = 'add'; step = 0; draw(); };
+    const goList = root.querySelector('#pdGoList');
+    if (goList) goList.onclick = () => { view = 'list'; draw(); };
+
+    root.querySelectorAll('.act-refresh').forEach(b => b.onclick = () => { b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 900); });
+    root.querySelectorAll('.act-del').forEach(b => b.onclick = () => {
+      const row = b.closest('.pa-row');
+      const p = providers[Number(row.dataset.i)];
+      row.innerHTML = `
+        <div class="pa-confirm">
+          <span class="msg">删除 <b>${p.id}</b>？其 ${p.models.length} 个模型别名将一并删除。</span>
+          <button class="btn sm c-no">取消</button><button class="btn sm danger-solid c-yes">删除</button>
+        </div>`;
+      row.querySelector('.c-no').onclick = () => draw();
+      row.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); draw(); };
+    });
+
+    if (view === 'add') {
+      const cancel = root.querySelector('#pdCancel');
+      if (cancel) cancel.onclick = () => { view = 'list'; draw(); };
+      const back = root.querySelector('#pdBack');
+      if (back) back.onclick = () => { stash(); step--; draw(); restore(); };
+      const next = root.querySelector('#pdNext');
+      if (next) next.onclick = () => {
+        if (step === 0) {
+          const id = root.querySelector('#pd-id').value.trim();
+          if (!id) return pdErr('请填写 Provider ID。');
+          if (!/^[a-z0-9][a-z0-9-_]*$/.test(id)) return pdErr('ID 只能包含小写字母、数字、-、_。');
+          if (providers.some(p => p.id === id)) return pdErr(`ID 「${id}」已存在。`);
+        }
+        stash(); step++; draw(); restore();
+        if (step === 2 && !root.querySelector('#pd-models .model-row')) addModelRow(root.querySelector('#pd-models'), 'pd');
+      };
+      const finish = root.querySelector('#pdFinish');
+      if (finish) finish.onclick = () => {
+        stash();
+        const f = draft;
+        const models = [...document.querySelectorAll('#pd-models .model-row')].map(r => ({
+          id: r.querySelector('.m-id').value.trim(), ctx: r.querySelector('.m-ctx').value.trim(),
+        })).filter(m => m.id || m.ctx);
+        if (models.length === 0) return pdErr('至少添加一个模型。');
+        for (const m of models) if (!m.id || !m.ctx || Number(m.ctx) <= 0) return pdErr('模型行需要模型 ID 和有效的上下文大小。');
+        providers.push({ id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })), defaultModel: root.querySelector('#pd-defmodel').value });
+        draft = { id: '', type: 'openai', key: '', url: '' };
+        view = 'list'; step = 0; draw();
+        root.querySelector(`.pa-row[data-i="${providers.length - 1}"]`)?.classList.add('flash');
+      };
+      restore();
+    }
+  }
+
+  let draft = { id: '', type: 'openai', key: '', url: '' };
+  function stash() {
+    const g = id => document.getElementById(id);
+    if (g('pd-id')) { draft.id = g('pd-id').value.trim(); draft.type = g('pd-type').value; }
+    if (g('pd-key')) { draft.key = g('pd-key').value.trim(); draft.url = g('pd-url').value.trim(); }
+  }
+  function restore() {
+    const g = id => document.getElementById(id);
+    if (g('pd-id')) { g('pd-id').value = draft.id; g('pd-type').value = draft.type; }
+    if (g('pd-key')) { g('pd-key').value = draft.key; g('pd-url').value = draft.url; }
+    const addM = root.querySelector('#pd-addmodel');
+    if (addM) addM.onclick = () => addModelRow(root.querySelector('#pd-models'), 'pd');
+  }
+  function pdErr(msg) {
+    root.querySelector('#pdErr').innerHTML = `<div class="banner">${I.warn}<span>${msg}</span></div>`;
+  }
+  draw();
+}
+
+/* ============================================================
+   方案 E：密集表格 + 行内表单行
+   交互模型：一张表看全量；添加/删除确认都以「行」为单位就地发生
+   ============================================================ */
+function renderE(root) {
+  let providers = seedProviders();
+  let adding = false;
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec">
+        <div class="pe-toolbar">
+          <h3 class="sec-title" style="margin:0;">Providers</h3>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span class="pe-count">${providers.length} 个 Provider · ${providers.reduce((n, p) => n + p.models.length, 0)} 个模型</span>
+            <button class="btn sm" id="peAdd" ${adding ? 'disabled' : ''}>${I.plus} 添加 Provider</button>
+          </div>
+        </div>
+        <div class="pe-table">
+          <div class="pe-tHead">
+            <span>状态</span><span>ID</span><span>协议</span><span>Base URL</span><span>凭据</span><span>模型</span><span></span>
+          </div>
+          <div id="peRows">
+            ${adding ? `
+              <div class="pe-form-row">
+                <div class="f-title">添加 Provider</div>
+                <div id="peErr"></div>
+                ${formFieldsHTML('pe')}
+                <div class="form-foot">
+                  <button class="btn sm" id="peCancel">取消</button>
+                  <button class="btn sm primary" id="peSubmit">添加 Provider</button>
+                </div>
+              </div>` : ''}
+            ${providers.map((p, i) => `
+              <div class="pe-tr" data-i="${i}">
+                <span class="cell"><span class="dot ${p.status === 'connected' ? 'ok' : 'off'}" style="display:inline-block; vertical-align:middle;"></span> <span class="dim" style="font-size:12px;">${p.status === 'connected' ? '已连接' : '未配置'}</span></span>
+                <span class="cell id">${p.id}${p.managed ? ' <span class="badge accent">托管</span>' : ''}</span>
+                <span class="cell"><span class="badge">${p.type}</span></span>
+                <span class="cell mono">${p.baseUrl || '默认端点'}</span>
+                <span class="cell">${keyBadge(p)}</span>
+                <span class="cell"><span class="dim">${p.models.length}</span></span>
+                <span class="cell acts">
+                  <button class="icon-btn act-refresh" title="刷新模型">${I.refresh}</button>
+                  ${p.managed ? '' : `<button class="icon-btn danger act-del" title="删除">${I.trash}</button>`}
+                </span>
+              </div>`).join('')}
+          </div>
+        </div>
+      </section>`);
+
+    root.querySelector('#peAdd').onclick = () => { adding = true; draw(); addModelRow(root.querySelector('#pe-models'), 'pe'); };
+    root.querySelectorAll('.act-refresh').forEach(b => b.onclick = () => { b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 900); });
+    root.querySelectorAll('.act-del').forEach(b => b.onclick = () => {
+      const tr = b.closest('.pe-tr');
+      const p = providers[Number(tr.dataset.i)];
+      const acts = tr.querySelector('.acts');
+      acts.innerHTML = `<div class="pe-confirm-cell"><span>删除？</span><button class="btn sm danger-solid c-yes">是</button><button class="btn sm c-no">否</button></div>`;
+      acts.querySelector('.c-no').onclick = () => draw();
+      acts.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); draw(); };
+    });
+    if (adding) {
+      root.querySelector('#pe-addmodel').onclick = () => addModelRow(root.querySelector('#pe-models'), 'pe');
+      root.querySelector('#peCancel').onclick = () => { adding = false; draw(); };
+      root.querySelector('#peSubmit').onclick = () => {
+        const f = collectForm('pe');
+        const err = validateForm(f, providers);
+        if (err) { root.querySelector('#peErr').innerHTML = `<div class="banner">${I.warn}<span>${err}</span></div>`; return; }
+        providers.push({ id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: f.models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })), defaultModel: f.defModel });
+        adding = false; draw();
+        root.querySelector(`.pe-tr[data-i="${providers.length - 1}"]`)?.classList.add('flash');
+      };
+    }
+  }
+  draw();
+}
+
+/* ============================================================
+   方案 F：手风琴列表（行内原地展开）
+   交互模型：一种交互「行 + 原地展开」——查看 / 编辑 / 添加共用
+   ============================================================ */
+function renderF(root) {
+  let providers = seedProviders().sort((a, b) => a.id.localeCompare(b.id));
+  let openId = null;   // provider.id | 'add' | null
+  let dirty = false;
+
+  function formHTML(p) {
+    const managed = p && p.managed;
+    const dis = managed ? 'disabled' : '';
+    return `
+      <div class="pf-form">
+        <div id="pfErr"></div>
+        <div class="form-stack">
+          <div class="field">
+            <label>ID<span class="req">*</span></label>
+            <input class="input mono" id="pf-id" spellcheck="false" ${p ? `value="${p.id}" disabled` : 'placeholder="my-openai"'}>
+          </div>
+          <div class="field">
+            <label>协议类型<span class="req">*</span></label>
+            <select class="select" id="pf-type" ${dis}>${TYPES.map(t => `<option value="${t}" ${p && p.type === t ? 'selected' : !p && t === 'openai' ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          </div>
+          <div class="field">
+            <label>API Key</label>
+            <input class="input mono" id="pf-key" type="password" spellcheck="false"
+              placeholder="${managed ? 'OAuth 托管登录' : p && p.key === 'set' ? '已设置，输入以更换' : 'sk-…'}" ${managed ? 'disabled' : ''}>
+          </div>
+          <div class="field">
+            <label>Base URL</label>
+            <input class="input mono" id="pf-url" spellcheck="false" placeholder="https://api.example.com/v1" value="${p ? p.baseUrl : ''}" ${dis}>
+          </div>
+          <div class="field">
+            <label>模型<span class="req">*</span></label>
+            <div class="model-rows" id="pf-models">
+              <div class="model-row-head"><span>模型 ID *</span><span>上下文 *</span><span>显示名</span><span></span></div>
+            </div>
+            ${managed ? '' : `<button type="button" class="add-model-link" id="pf-addmodel">${I.plus} 添加模型</button>`}
+          </div>
+        </div>
+        <div class="form-foot">
+          ${managed
+            ? '<span style="font-size:12.5px; color:var(--faint); align-self:center;">托管 Provider 在账户页登录 / 登出</span>'
+            : p
+              ? `<button class="btn danger" id="pfDelete">删除 Provider</button><span style="flex:1"></span><button class="btn primary" id="pfSave">保存</button>`
+              : `<button class="btn" id="pfCancel">取消</button><button class="btn primary" id="pfSubmit">添加 Provider</button>`}
+        </div>
+      </div>`;
+  }
+
+  function rowHTML(p, i) {
+    const open = openId === p.id;
+    return `
+      <div class="pf-item ${open ? 'open' : ''}" data-id="${p.id}">
+        <div class="pf-row" role="button" tabindex="0" data-open="${p.id}">
+          <span class="dot ${p.status === 'connected' ? 'ok' : 'off'}"></span>
+          <div class="grow">
+            <span class="pf-id">${p.id}</span>
+            <span class="badge">${p.type}</span>
+            ${p.managed ? '<span class="badge accent">托管登录</span>' : keyBadge(p)}
+          </div>
+          <span class="pf-count">${p.models.length} 个模型</span>
+          <span class="pf-chev">${I.chevR}</span>
+        </div>
+        <div class="pf-acc"><div class="pf-acc-in">${open ? formHTML(p) : ''}</div></div>
+      </div>`;
+  }
+
+  function addRowHTML() {
+    return `
+      <div class="pf-item pf-add-item open">
+        <div class="pf-row pf-add-row" role="button" tabindex="0" data-open="add">
+          ${I.plus}<span>添加 Provider</span>
+          <span style="flex:1"></span>
+          <span class="pf-chev">${I.chevR}</span>
+        </div>
+        <div class="pf-acc"><div class="pf-acc-in">${formHTML(null)}</div></div>
+      </div>`;
+  }
+
+  function draw() {
+    root.innerHTML = shell(`
+      <section class="sec">
+        <div class="sec-head">
+          <h3 class="sec-title">Providers</h3>
+          <button class="btn sm" id="pfAddBtn">${I.plus} 添加 Provider</button>
+        </div>
+        <div class="group" id="pfList">
+          ${openId === 'add' ? addRowHTML() : ''}
+          ${providers.map((p, i) => rowHTML(p, i)).join('')}
+        </div>
+      </section>`);
+
+    root.querySelector('#pfAddBtn').onclick = () => tryOpen(openId === 'add' ? null : 'add');
+    root.querySelectorAll('.pf-row[data-open]').forEach(r => {
+      r.onclick = () => tryOpen(r.dataset.open);
+      r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tryOpen(r.dataset.open); } };
+    });
+
+    const openItem = root.querySelector('.pf-item.open');
+    if (!openItem) return;
+    const modelsBox = root.querySelector('#pf-models');
+    const p = openId === 'add' ? null : providers.find(x => x.id === openId);
+    if (p) p.models.forEach(m => addModelRow(modelsBox, 'pf', { id: m.id, ctx: m.ctx, disabled: p.managed }));
+    else addModelRow(modelsBox, 'pf');
+    dirty = false;
+    openItem.querySelector('.pf-form').addEventListener('input', () => { dirty = true; });
+
+    const addM = root.querySelector('#pf-addmodel');
+    if (addM) addM.onclick = () => { addModelRow(modelsBox, 'pf'); dirty = true; };
+
+    const cancel = root.querySelector('#pfCancel');
+    if (cancel) cancel.onclick = () => { dirty = false; openId = null; draw(); };
+
+    const submit = root.querySelector('#pfSubmit');
+    if (submit) submit.onclick = () => {
+      const f = collectForm('pf');
+      const err = validateForm(f, providers);
+      if (err) return pfErr(err);
+      const np = { id: f.id, type: f.type, baseUrl: f.url, key: f.key ? 'set' : 'unset', status: f.key ? 'connected' : 'unconfigured', models: f.models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 })) };
+      providers.push(np);
+      providers.sort((a, b) => a.id.localeCompare(b.id));
+      dirty = false; openId = np.id; draw();
+      root.querySelector(`.pf-item[data-id="${np.id}"]`)?.classList.add('flash');
+    };
+
+    const save = root.querySelector('#pfSave');
+    if (save) save.onclick = () => {
+      const models = [...root.querySelectorAll('#pf-models .model-row')].map(r => ({
+        id: r.querySelector('.m-id').value.trim(), ctx: r.querySelector('.m-ctx').value.trim(), name: r.querySelector('.m-name').value.trim(),
+      })).filter(m => m.id || m.ctx || m.name);
+      if (models.length === 0) return pfErr('至少保留一个模型。');
+      for (const m of models) {
+        if (!m.id) return pfErr('模型行缺少模型 ID。');
+        if (!m.ctx || Number(m.ctx) <= 0) return pfErr(`模型「${m.id}」缺少有效的上下文大小。`);
+      }
+      p.type = root.querySelector('#pf-type').value;
+      p.baseUrl = root.querySelector('#pf-url').value.trim();
+      const keyVal = root.querySelector('#pf-key').value.trim();
+      if (keyVal) { p.key = 'set'; p.status = 'connected'; }
+      p.models = models.map(m => ({ id: m.id, ctx: Number(m.ctx) || 0 }));
+      dirty = false; draw();
+      root.querySelector(`.pf-item[data-id="${p.id}"]`)?.classList.add('flash');
+    };
+
+    const del = root.querySelector('#pfDelete');
+    if (del) del.onclick = () => {
+      const foot = root.querySelector('.pf-form .form-foot');
+      foot.innerHTML = `
+        <div class="pc-confirm"><span>确认删除 <b>${p.id}</b> 及其 ${p.models.length} 个模型？</span><span style="flex:1"></span>
+        <button class="btn sm c-no">取消</button><button class="btn sm danger-solid c-yes">确认删除</button></div>`;
+      foot.querySelector('.c-no').onclick = () => draw();
+      foot.querySelector('.c-yes').onclick = () => { providers = providers.filter(x => x !== p); dirty = false; openId = null; draw(); };
+    };
+  }
+
+  function tryOpen(id) {
+    if (openId === id) {
+      if (dirty) return showGuard(() => { dirty = false; openId = null; draw(); });
+      openId = null; draw(); return;
+    }
+    if (dirty) return showGuard(() => { dirty = false; openId = id; draw(); });
+    openId = id; draw();
+  }
+
+  function showGuard(proceed) {
+    const form = root.querySelector('.pf-item.open .pf-form');
+    if (!form) { proceed(); return; }
+    const old = form.querySelector('.f-guard');
+    if (old) old.remove();
+    const g = document.createElement('div');
+    g.className = 'banner f-guard';
+    g.innerHTML = `${I.warn}<span style="flex:1">有未保存的修改。</span><button class="btn sm g-stay">继续编辑</button><button class="btn sm danger-solid g-go">丢弃</button>`;
+    g.querySelector('.g-stay').onclick = () => g.remove();
+    g.querySelector('.g-go').onclick = () => proceed();
+    form.prepend(g);
+  }
+
+  function pfErr(msg) {
+    root.querySelector('#pfErr').innerHTML = `<div class="banner">${I.warn}<span>${msg}</span></div>`;
+  }
+  draw();
+}
+
+/* ============================================================
+   切换器 / 主题 / 启动
+   ============================================================ */
+const PROPOSALS = [
+  { key: 'A', name: 'A · 列表 + 就地展开', render: renderA,
+    model: '单栏列表为主视图，「添加 Provider」行就地向下展开表单，不离开列表上下文。',
+    pros: '<b>优点：</b>改动最小、与设置页现有 group 语言最一致；实现成本低。<b>缺点：</b>表单展开后列表被顶下去，长表单时上下文略弱；未来目录浏览（Phase 2）塞进来会挤。' },
+  { key: 'B', name: 'B · Master-Detail 双栏', render: renderB,
+    model: '左栏 provider 列表（状态点 + ID），右栏统一的纵向表单：选中已有 provider 即可直接编辑（模型同样是可编辑输入框），「添加」复用同一套表单。',
+    pros: '<b>优点：</b>查看 / 编辑 / 添加同一套 UI，没有第二种表单；纵向单列字段扫读顺；编辑能力自然落地。<b>缺点：</b>「保存」需要 server 支持编辑语义（当前只有增删端点，实现时可用 删除+重建 或补一个更新端点）。' },
+  { key: 'C', name: 'C · 卡片网格', render: renderC,
+    model: '每个 provider 一张信息卡，虚线卡是添加入口，点击展开为整行表单卡。',
+    pros: '<b>优点：</b>每张卡信息自足、扫读性好。<b>缺点：</b>两列卡片与设置页其它 tab 的行式语言不一致；信息密度低；Quiet Utility 上略「展示型」。' },
+  { key: 'D', name: 'D · 分段 + 分步表单', render: renderD,
+    model: '顶部分段切换「列表 / 添加」，添加按 基本信息 → 凭据 → 模型 三步推进。',
+    pros: '<b>优点：</b>分步降低表单认知负担；与 Phase 2（目录导入，第一步天然变成「选来源」）的演进路线最契合。<b>缺点：</b>手动添加其实只有一屏字段，分三步略重；步骤条是一个新组件。' },
+  { key: 'E', name: 'E · 密集表格', render: renderE,
+    model: '一张表看全量 provider；添加和删除确认都以表格行就地发生。',
+    pros: '<b>优点：</b>信息密度最高、横向对比一目了然。<b>缺点：</b>列宽在小窗口下紧张（settings 内容区约 760px）；表格语言在设置页首次出现；行内表单行略局促。' },
+  { key: 'F', name: 'F · 手风琴行内展开', render: renderF,
+    model: '一种交互「行 + 原地展开」：provider 全宽行，点击在下方展开统一表单（查看 = 编辑）；添加固定在标题行右侧按钮，表单展开时 pinned 在列表最上方，提交成功就地变成正式行。互斥展开，未保存修改有守卫。',
+    pros: '<b>优点：</b>表单吃满内容宽度（~760px），不挤；添加入口位置固定，provider 再多也不用滚到底；无页面切换、无双栏分割；与设置页 group 行语言最一致。<b>缺点：</b>展开长表单会把后续行顶出视口（provider 量级小可接受）。' },
+];
+
+const mock = document.getElementById('mock');
+const anno = document.getElementById('anno');
+const sw = document.getElementById('pSwitch');
+let current = 'A';
+
+PROPOSALS.forEach(p => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = p.key;
+  b.title = p.name;
+  b.dataset.key = p.key;
+  b.onclick = () => show(p.key);
+  sw.appendChild(b);
+});
+
+function show(key) {
+  current = key;
+  const p = PROPOSALS.find(x => x.key === key);
+  sw.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.key === key));
+  anno.innerHTML = `
+    <div class="a-name">${p.name}</div>
+    <div class="a-model">${p.model}</div>
+    <div class="a-pros">${p.pros}</div>`;
+  p.render(mock);
+}
+
+const themeBtn = document.getElementById('themeToggle');
+const themeLabel = document.getElementById('themeLabel');
+themeBtn.onclick = () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : '';
+  themeLabel.textContent = dark ? '亮色' : '暗色';
+};
+
+show('A');
+</script>
+</body>
+</html>

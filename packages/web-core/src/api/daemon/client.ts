@@ -5,12 +5,19 @@ import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
 import type {
+  AddProviderInput,
+  AppCatalogProvider,
   AppConfig,
   AppGoal,
   AppMessage,
   AppMessageRole,
   AppModel,
   AppProvider,
+  AppProviderDetail,
+  ImportCatalogProviderInput,
+  ImportCatalogProviderResult,
+  ImportCustomRegistryInput,
+  ImportCustomRegistryResult,
   ProviderRefreshResult,
   AppSession,
   AppSkill,
@@ -22,6 +29,7 @@ import type {
   AppTerminal,
   AppWorkspace,
   ApprovalResponse,
+  DeleteProviderResult,
   FsBrowseResult,
   FsEntry,
   KimiEventConnection,
@@ -35,11 +43,14 @@ import type {
   PromptSubmission,
   PromptSubmitResult,
   QuestionResponse,
+  UpdateProviderInput,
+  UpdateProviderResult,
 } from '../types';
 import { DaemonHttpClient } from './http';
 import type { AgentProjector } from './projector';
 import {
   toAppApprovalRequest,
+  toAppCatalogProvider,
   toAppConfig,
   toAppEvent,
   toAppFsEntry,
@@ -60,13 +71,20 @@ import {
 import type {
   WireAuthResult,
   WireTask,
+  WireCatalogProvider,
   WireConfig,
+  WireCreateProviderModel,
+  WireCreateProviderRequest,
   WireEvent,
   WireFileMeta,
   WireFsBrowseResult,
   WireFsEntry,
   WireFsHomeResult,
   WireGoalSnapshot,
+  WireImportCatalogProviderRequest,
+  WireImportCatalogProviderResult,
+  WireImportCustomRegistryRequest,
+  WireImportCustomRegistryResult,
   WireMessage,
   WireModel,
   WireOAuthCancelResult,
@@ -76,6 +94,7 @@ import type {
   WirePromptSubmitResult,
   WirePromptSteerResult,
   WireProvider,
+  WireProviderDetail,
   WireProviderRefreshResult,
   WireSession,
   WireSessionAbortResult,
@@ -83,6 +102,8 @@ import type {
   WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
   WireSessionSnapshot,
+  WireUpdateProviderRequest,
+  WireUpdateProviderResult,
   WireWorkspace,
   WireLogoutResult,
   WireUsageResult,
@@ -1213,40 +1234,142 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   // -------------------------------------------------------------------------
-  // Models + Providers
-  // PRESUMED — not in current daemon docs; isolated here, swap when backend defines them.
+  // Models + Providers — list/refresh REAL (kap-server routes/modelCatalog.ts);
+  // add/update/delete follow design §4.1/§4.2.
   // -------------------------------------------------------------------------
 
   async listModels(): Promise<AppModel[]> {
-    // PRESUMED endpoint: GET /v1/models → { items: WireModel[] }
+    // REAL endpoint: GET /v1/models → { items: WireModel[] }
     const data = await this.http.get<{ items: WireModel[] }>('/models');
     return data.items.map(toAppModel);
   }
 
   async listProviders(): Promise<AppProvider[]> {
-    // PRESUMED endpoint: GET /v1/providers → { items: WireProvider[] }
+    // REAL endpoint: GET /v1/providers → { items: WireProvider[] }
     const data = await this.http.get<{ items: WireProvider[] }>('/providers');
     return data.items.map(toAppProvider);
   }
 
-  async addProvider(input: {
-    type: string;
-    apiKey?: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers → WireProvider
-    const body: Record<string, unknown> = { type: input.type };
-    if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
-    if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
-    if (input.defaultModel !== undefined) body['default_model'] = input.defaultModel;
+  async getProvider(id: string): Promise<AppProviderDetail> {
+    // REAL endpoint: GET /v1/providers/{id} — the single GET also carries the
+    // plaintext api_key when one is stored (the list above stays redacted).
+    const wire = await this.http.get<WireProviderDetail>(`/providers/${encodeURIComponent(id)}`);
+    const app = toAppProvider(wire);
+    return wire.api_key !== undefined ? { ...app, apiKey: wire.api_key } : app;
+  }
+
+  async addProvider(input: AddProviderInput): Promise<AppProvider> {
+    // REAL endpoint (design §4.1): POST /v1/providers → 201 ProviderCatalogItem
+    // (api_key redacted to has_api_key). 409 on id conflict, 400 on validation.
+    const body: WireCreateProviderRequest = {
+      id: input.id ?? '',
+      type: input.type,
+      models: (input.models ?? []).map((model) => {
+        const wire: WireCreateProviderModel = {
+          model: model.model,
+          max_context_size: model.maxContextSize,
+        };
+        if (model.displayName !== undefined) wire.display_name = model.displayName;
+        if (model.capabilities !== undefined) wire.capabilities = model.capabilities;
+        if (model.maxOutputSize !== undefined) wire.max_output_size = model.maxOutputSize;
+        if (model.supportEfforts !== undefined) wire.support_efforts = model.supportEfforts;
+        if (model.adaptiveThinking !== undefined) wire.adaptive_thinking = model.adaptiveThinking;
+        return wire;
+      }),
+    };
+    if (input.apiKey !== undefined) body.api_key = input.apiKey;
+    if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
+    if (input.defaultModel !== undefined) body.default_model = input.defaultModel;
     const data = await this.http.post<WireProvider>('/providers', body);
     return toAppProvider(data);
   }
 
-  async deleteProvider(id: string): Promise<{ deleted: true }> {
-    // PRESUMED endpoint: DELETE /v1/providers/{id} → { deleted: true }
-    return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
+  async updateProvider(id: string, input: UpdateProviderInput): Promise<UpdateProviderResult> {
+    // REAL endpoint: PUT /v1/providers/{id} → 200 { provider }.
+    // Replace semantics; 40412 unknown id, 40003 managed OAuth provider.
+    const body: WireUpdateProviderRequest = {
+      type: input.type,
+      models: (input.models ?? []).map((model) => {
+        const wire: WireCreateProviderModel = {
+          model: model.model,
+          max_context_size: model.maxContextSize,
+        };
+        if (model.displayName !== undefined) wire.display_name = model.displayName;
+        if (model.capabilities !== undefined) wire.capabilities = model.capabilities;
+        if (model.maxOutputSize !== undefined) wire.max_output_size = model.maxOutputSize;
+        if (model.supportEfforts !== undefined) wire.support_efforts = model.supportEfforts;
+        if (model.adaptiveThinking !== undefined) wire.adaptive_thinking = model.adaptiveThinking;
+        return wire;
+      }),
+    };
+    // api_key passes through verbatim: undefined keeps the stored key, ''
+    // clears it, anything else sets a new one.
+    if (input.newId !== undefined) body.new_id = input.newId;
+    if (input.apiKey !== undefined) body.api_key = input.apiKey;
+    if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
+    if (input.defaultModel !== undefined) body.default_model = input.defaultModel;
+    const data = await this.http.put<WireUpdateProviderResult>(
+      `/providers/${encodeURIComponent(id)}`,
+      body,
+    );
+    return { provider: toAppProvider(data.provider) };
+  }
+
+  async deleteProvider(id: string): Promise<DeleteProviderResult> {
+    // REAL endpoint (design §4.2): DELETE /v1/providers/{id} — always a bare
+    // 204; the daemon never touches the global default pointers on delete.
+    await this.http.delete<null>(`/providers/${encodeURIComponent(id)}`);
+    return { deleted: id };
+  }
+
+  async listCatalogProviders(): Promise<AppCatalogProvider[]> {
+    // REAL endpoint (design §4.3): GET /v1/catalog/providers — server-proxied
+    // models.dev directory (10-min cache + built-in snapshot fallback).
+    const data = await this.http.get<{ items: WireCatalogProvider[] }>('/catalog/providers');
+    return data.items.map(toAppCatalogProvider);
+  }
+
+  async getCatalogProvider(catalogId: string): Promise<AppCatalogProvider> {
+    // REAL endpoint: GET /v1/catalog/providers/{id}; 40416 on unknown id.
+    const wire = await this.http.get<WireCatalogProvider>(
+      `/catalog/providers/${encodeURIComponent(catalogId)}`,
+    );
+    return toAppCatalogProvider(wire);
+  }
+
+  async importCatalogProvider(
+    input: ImportCatalogProviderInput,
+  ): Promise<ImportCatalogProviderResult> {
+    // REAL endpoint (design §4.4): POST /v1/providers:import_catalog → 201
+    // { provider, models_imported }. Re-importing an existing id is a refresh
+    // (40003 when OAuth-managed); the daemon never moves the global defaults.
+    const body: WireImportCatalogProviderRequest = { catalog_id: input.catalogId };
+    if (input.apiKey !== undefined) body.api_key = input.apiKey;
+    if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
+    if (input.id !== undefined) body.id = input.id;
+    const data = await this.http.post<WireImportCatalogProviderResult>(
+      '/providers:import_catalog',
+      body,
+    );
+    return { provider: toAppProvider(data.provider), modelsImported: data.models_imported };
+  }
+
+  async importCustomRegistry(
+    input: ImportCustomRegistryInput,
+  ): Promise<ImportCustomRegistryResult> {
+    // REAL endpoint (design §4.5): POST /v1/providers:import_registry → 201
+    // { providers, models_imported }. Re-importing the same URL is a refresh;
+    // the daemon never moves the global defaults.
+    const body: WireImportCustomRegistryRequest = { url: input.url };
+    if (input.apiKey !== undefined) body.api_key = input.apiKey;
+    const data = await this.http.post<WireImportCustomRegistryResult>(
+      '/providers:import_registry',
+      body,
+    );
+    return {
+      providers: data.providers.map(toAppProvider),
+      modelsImported: data.models_imported,
+    };
   }
 
   async refreshProvider(id: string): Promise<ProviderRefreshResult> {

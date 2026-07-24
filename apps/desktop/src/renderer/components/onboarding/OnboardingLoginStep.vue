@@ -27,7 +27,7 @@ const props = defineProps<{
   onCancelOAuthLogin: () => Promise<void>;
 }>();
 
-const emit = defineEmits<{ success: [] }>();
+const emit = defineEmits<{ success: []; addProvider: [] }>();
 
 // 'choice' → picking a service card; 'flow' → device-code authorization UI.
 const phase = ref<'choice' | 'flow'>('choice');
@@ -102,7 +102,16 @@ function formatSeconds(s: number): string {
       </div>
       <Icon name="chevron-right" size="lg" class="ls-card-chevron" />
     </button>
-    <!-- TODO: 三方 API 入口（OpenAI 兼容服务 + 自带 Key），待设计/实现后开放 -->
+    <!-- Third-party entry: lands on Settings → Providers (the parent completes
+         onboarding first, same as skipping the login step). -->
+    <button class="ls-card" type="button" @click="emit('addProvider')">
+      <span class="ls-card-logo ls-card-icon"><Icon name="bolt" size="lg" /></span>
+      <div class="ls-card-text">
+        <div class="ls-card-title">{{ t('onboarding.login.customProviderTitle') }}</div>
+        <div class="ls-card-hint">{{ t('onboarding.login.customProviderHint') }}</div>
+      </div>
+      <Icon name="chevron-right" size="lg" class="ls-card-chevron" />
+    </button>
   </div>
 
   <!-- Device-code flow -->
@@ -250,6 +259,15 @@ function formatSeconds(s: number): string {
   box-shadow: var(--p-focus-ring-strong);
 }
 .ls-card-logo { align-self: flex-start; }
+/* Icon stand-in matching the 40px brand-logo slot on the Kimi card. */
+.ls-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  color: var(--color-text-muted);
+}
 .ls-card-text {
   flex: 1;
   min-width: 0;

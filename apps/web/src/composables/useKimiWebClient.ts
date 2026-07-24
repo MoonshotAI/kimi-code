@@ -1419,7 +1419,7 @@ const GOAL_ERROR_KEYS: Record<number, string> = {
 };
 
 function goalErrorMessage(err: unknown): string | undefined {
-  if (!isDaemonApiError(err)) return undefined;
+  if (!isDaemonApiError(err) || err.code === undefined) return undefined;
   const key = GOAL_ERROR_KEYS[err.code];
   return key ? i18n.global.t(key) : undefined;
 }

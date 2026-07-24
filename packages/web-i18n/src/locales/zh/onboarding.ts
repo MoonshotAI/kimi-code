@@ -14,6 +14,8 @@ export default {
     kimiTitle: '登录 Kimi 账号',
     kimiHint: '使用 Kimi 会员权益，开箱即用',
     recommended: '推荐',
+    customProviderTitle: '添加自定义供应商',
+    customProviderHint: '使用自己的 API Key，接入 OpenAI 兼容等模型服务',
     loggedInTitle: '已登录 Kimi 账号',
     loggedInHint: '模型服务已就绪，可以开始使用',
     finish: '完成',

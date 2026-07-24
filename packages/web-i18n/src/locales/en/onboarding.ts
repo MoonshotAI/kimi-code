@@ -14,6 +14,8 @@ export default {
     kimiTitle: 'Sign in with Kimi',
     kimiHint: 'Ready out of the box with Kimi membership benefits',
     recommended: 'Recommended',
+    customProviderTitle: 'Add a custom provider',
+    customProviderHint: 'Bring your own API key for OpenAI-compatible and other services',
     loggedInTitle: 'Logged in with Kimi',
     loggedInHint: 'Your model service is ready to use',
     finish: 'Finish',

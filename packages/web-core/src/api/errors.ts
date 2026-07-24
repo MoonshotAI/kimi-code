@@ -2,7 +2,9 @@
 // DaemonApiError, DaemonNetworkError, and type guard.
 
 export class DaemonApiError extends Error {
-  readonly code: number;
+  /** The numeric envelope code. Undefined when the daemon answered with a
+      non-envelope error (e.g. an old server's bare fastify 404). */
+  readonly code: number | undefined;
   readonly requestId: string;
   readonly details: unknown;
   /** Epoch ms when the failure was surfaced. */
@@ -11,7 +13,7 @@ export class DaemonApiError extends Error {
   readonly durationMs?: number;
 
   constructor(input: {
-    code: number;
+    code: number | undefined;
     msg: string;
     requestId: string;
     details?: unknown;
