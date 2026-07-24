@@ -37,6 +37,8 @@ describe('TUI config', () => {
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
+    expect(text).toContain('[status_line]');
+    expect(text).toContain('timeout_ms = 200');
     expect(text).toContain('[notifications]');
     expect(text).toContain('enabled = true');
     expect(text).toContain('notification_condition = "unfocused"');
@@ -55,6 +57,10 @@ notification_condition = "always"
 
 [upgrade]
 auto_install = false
+
+[status_line]
+command = "kimi-hud"
+timeout_ms = 500
 `);
 
     expect(config).toEqual({
@@ -63,6 +69,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: { command: 'kimi-hud', timeoutMs: 500 },
     });
   });
 
@@ -87,6 +94,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: { command: null, timeoutMs: 200 },
     });
   });
 
@@ -95,6 +103,7 @@ command = "   "
 
     expect(config.notifications).toEqual({ enabled: true, condition: 'unfocused' });
     expect(config.upgrade).toEqual({ autoInstall: true });
+    expect(config.statusLine).toEqual({ command: null, timeoutMs: 200 });
   });
 
   it('throws TuiConfigParseError with fallback when parsing fails, leaving the file untouched', async () => {
@@ -119,6 +128,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        statusLine: { command: 'kimi-hud', timeoutMs: 300 },
       },
       filePath,
     );
@@ -129,6 +139,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: { command: 'kimi-hud', timeoutMs: 300 },
     });
   });
 
@@ -141,10 +152,15 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        statusLine: {
+          command: 'status"line\\cmd',
+          timeoutMs: DEFAULT_TUI_CONFIG.statusLine.timeoutMs,
+        },
       },
       filePath,
     );
 
     expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+    expect((await loadTuiConfig(filePath)).statusLine.command).toBe('status"line\\cmd');
   });
 });

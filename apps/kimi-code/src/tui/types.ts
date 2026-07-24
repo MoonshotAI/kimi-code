@@ -9,9 +9,10 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig, UpgradePreferences } from './config';
+import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
+import type { StatusLineManagedUsageLoader } from './utils/status-line-command';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
 
@@ -52,6 +53,7 @@ export interface AppState {
   disablePasteBurst?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
+  statusLine: StatusLineConfig;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
@@ -250,6 +252,7 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
+  loadStatusLineManagedUsage?: StatusLineManagedUsageLoader;
 }
 
 export interface PendingExit {

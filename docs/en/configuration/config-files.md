@@ -388,6 +388,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[status_line].command` | `string` | `""` | External command used to render the second footer line; empty uses the built-in context indicator |
+| `[status_line].timeout_ms` | `integer` | `200` | Maximum time to wait for the status-line command |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -403,7 +405,44 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[status_line]
+command = "" # External command; empty uses the built-in context indicator
+timeout_ms = 200
 ```
+
+When `[status_line].command` is set, Kimi Code runs the command about once per second, sends a JSON payload on stdin, and uses the first stdout line as the second footer line. If the command exits non-zero, times out, or prints no output, the built-in context indicator is shown instead.
+
+Example payload:
+
+```json
+{
+  "session_id": "ses_123",
+  "model": "kimi-k2",
+  "display_model": "Kimi K2",
+  "cwd": "/path/to/project",
+  "permission_mode": "manual",
+  "plan_mode": false,
+  "input_mode": "prompt",
+  "swarm_mode": false,
+  "thinking_effort": "off",
+  "context": {
+    "usage": 0.12,
+    "tokens": 31457,
+    "max_tokens": 262144
+  },
+  "rate_limits": [
+    {
+      "label": "Weekly limit",
+      "used": 120,
+      "limit": 1000,
+      "reset_hint": "resets in 2d"
+    }
+  ]
+}
+```
+
+For managed Kimi providers, `rate_limits` contains the available plan quota rows and is refreshed at most once every 30 seconds. It is an empty array for other providers or when usage data is unavailable.
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 

@@ -97,6 +97,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  isManagedUsageProvider,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
@@ -230,6 +231,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
+    statusLine: input.tuiConfig.statusLine,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -377,6 +379,10 @@ export class KimiTUI {
     this.harness = harness;
     const tuiOptions: KimiTUIOptions = {
       initialAppState: createInitialAppState(startupInput),
+      loadStatusLineManagedUsage: async (providerKey) => {
+        if (!isManagedUsageProvider(providerKey)) return undefined;
+        return harness.auth.getManagedUsage(providerKey);
+      },
       startup: {
         sessionFlag: startupInput.cliOptions.session,
         continueLast: startupInput.cliOptions.continue,

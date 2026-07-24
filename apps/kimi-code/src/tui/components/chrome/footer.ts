@@ -16,6 +16,14 @@ import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/danc
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { DEFAULT_TUI_CONFIG, type StatusLineConfig } from '#/tui/config';
+import {
+  runStatusLineCommand,
+  type StatusLineCommandPayload,
+  type StatusLineManagedUsage,
+  type StatusLineManagedUsageLoader,
+  type StatusLineRateLimit,
+} from '#/tui/utils/status-line-command';
 import {
   createGitStatusCache,
   formatGitBadgeBase,
@@ -31,6 +39,8 @@ import {
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
+const STATUS_LINE_REFRESH_INTERVAL_MS = 1_000;
+const STATUS_LINE_RATE_LIMIT_REFRESH_INTERVAL_MS = 30_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
 // joined by " | ") when space allows; tips flagged `solo` are long or
@@ -188,6 +198,17 @@ export class FooterComponent implements Component {
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
+  private statusLineText: string | null = null;
+  private statusLineInFlight = false;
+  private statusLineRefreshPending = false;
+  private statusLineTimer: ReturnType<typeof setInterval> | null = null;
+  private statusLineCommand: string | null = null;
+  private statusLineGeneration = 0;
+  private statusLineRateLimits: readonly StatusLineRateLimit[] = [];
+  private statusLineRateLimitsProvider: string | null = null;
+  private statusLineRateLimitsLoadedAt = 0;
+  private statusLineRateLimitsInFlight = false;
+  private disposed = false;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
@@ -201,13 +222,19 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, onRefresh: () => void = () => {}) {
+  constructor(
+    state: AppState,
+    onRefresh: () => void = () => {},
+    private readonly loadStatusLineManagedUsage: StatusLineManagedUsageLoader = async () =>
+      undefined,
+  ) {
     this.state = state;
     this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncStatusLineTimer(statusLineConfig(state).command);
   }
 
   setState(state: AppState): void {
@@ -218,6 +245,7 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
+    this.syncStatusLineTimer(statusLineConfig(state).command);
   }
 
   /**
@@ -332,29 +360,30 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
-    const contextText = formatContextStatus(
-      state.contextUsage,
-      state.contextTokens,
-      state.maxContextTokens,
-    );
-    const contextWidth = visibleWidth(contextText);
+    // ── Line 2: transient hint (bottom-left) + status line (right) ──
+    const statusLineText =
+      this.statusLineText ??
+      formatContextStatus(state.contextUsage, state.contextTokens, state.maxContextTokens);
+    const renderedStatusLine =
+      this.statusLineText === null ? chalk.hex(colors.text)(statusLineText) : statusLineText;
     let line2: string;
     if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
+      const statusLineWidth = visibleWidth(statusLineText);
+      const maxHintWidth = Math.max(0, width - statusLineWidth - 1);
       const shownHint =
         visibleWidth(this.transientHint) <= maxHintWidth
           ? this.transientHint
           : truncateToWidth(this.transientHint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
+      const pad = Math.max(0, width - hintWidth - statusLineWidth);
       line2 =
         chalk.hex(colors.warning).bold(shownHint) +
         ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+        renderedStatusLine;
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      const statusLineWidth = visibleWidth(statusLineText);
+      const leftPad = Math.max(0, width - statusLineWidth);
+      line2 = ' '.repeat(leftPad) + renderedStatusLine;
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
@@ -383,10 +412,143 @@ export class FooterComponent implements Component {
     }
   }
 
+  private syncStatusLineTimer(command: string | null): void {
+    const commandChanged = command !== this.statusLineCommand;
+    const providerKey = statusLineProvider(this.state);
+    const providerChanged = providerKey !== this.statusLineRateLimitsProvider;
+    if (command !== this.statusLineCommand) {
+      this.statusLineCommand = command;
+      this.statusLineGeneration += 1;
+      this.statusLineText = null;
+    }
+    if (providerChanged) {
+      this.statusLineRateLimitsProvider = providerKey;
+      this.statusLineRateLimits = [];
+      this.statusLineRateLimitsLoadedAt = 0;
+    }
+
+    if (command !== null) {
+      const timerCreated = this.statusLineTimer === null;
+      if (this.statusLineTimer === null) {
+        this.statusLineTimer = setInterval(() => {
+          void this.refreshStatusLineRateLimits();
+          void this.refreshStatusLine();
+        }, STATUS_LINE_REFRESH_INTERVAL_MS);
+        this.statusLineTimer.unref?.();
+      }
+      void this.refreshStatusLineRateLimits();
+      if (commandChanged || timerCreated || providerChanged) {
+        void this.refreshStatusLine();
+      }
+      return;
+    }
+
+    if (this.statusLineTimer !== null) {
+      clearInterval(this.statusLineTimer);
+      this.statusLineTimer = null;
+    }
+  }
+
+  private async refreshStatusLine(): Promise<void> {
+    const { command, timeoutMs } = statusLineConfig(this.state);
+    if (command === null) return;
+    if (this.statusLineInFlight) {
+      this.statusLineRefreshPending = true;
+      return;
+    }
+    this.statusLineRefreshPending = false;
+    const generation = this.statusLineGeneration;
+    this.statusLineInFlight = true;
+    let text: string | null = null;
+    try {
+      text = await runStatusLineCommand({
+        command,
+        timeoutMs,
+        payload: this.createStatusLinePayload(),
+      });
+    } catch {
+      text = null;
+    } finally {
+      this.statusLineInFlight = false;
+    }
+
+    if (
+      this.disposed ||
+      generation !== this.statusLineGeneration ||
+      statusLineConfig(this.state).command !== command
+    ) {
+      if (!this.disposed && statusLineConfig(this.state).command !== null) {
+        void this.refreshStatusLine();
+      }
+      return;
+    }
+
+    this.statusLineText = text;
+    this.onRefresh();
+    if (this.statusLineRefreshPending) {
+      void this.refreshStatusLine();
+    }
+  }
+
+  private async refreshStatusLineRateLimits(): Promise<void> {
+    const providerKey = this.statusLineRateLimitsProvider;
+    if (
+      providerKey === null ||
+      this.statusLineRateLimitsInFlight ||
+      Date.now() - this.statusLineRateLimitsLoadedAt <
+        STATUS_LINE_RATE_LIMIT_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.statusLineRateLimitsInFlight = true;
+    let result: StatusLineManagedUsage | undefined;
+    try {
+      result = await this.loadStatusLineManagedUsage(providerKey);
+    } catch {
+      result = undefined;
+    } finally {
+      this.statusLineRateLimitsInFlight = false;
+    }
+
+    if (this.disposed || providerKey !== this.statusLineRateLimitsProvider) return;
+    this.statusLineRateLimitsLoadedAt = Date.now();
+    this.statusLineRateLimits = managedUsageRateLimits(result);
+    if (statusLineConfig(this.state).command !== null) {
+      void this.refreshStatusLine();
+    }
+  }
+
+  private createStatusLinePayload(): StatusLineCommandPayload {
+    const state = this.state;
+    return {
+      session_id: state.sessionId,
+      model: state.model,
+      display_model: modelDisplayName(state),
+      cwd: state.workDir,
+      permission_mode: state.permissionMode,
+      plan_mode: state.planMode,
+      input_mode: state.inputMode,
+      swarm_mode: state.swarmMode,
+      thinking_effort: state.thinkingEffort,
+      context: {
+        usage: safeUsage(state.contextUsage),
+        tokens: state.contextTokens,
+        max_tokens: state.maxContextTokens,
+      },
+      rate_limits: this.statusLineRateLimits,
+    };
+  }
+
   dispose(): void {
+    this.disposed = true;
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
+    }
+    if (this.statusLineTimer !== null) {
+      clearInterval(this.statusLineTimer);
+      this.statusLineTimer = null;
     }
   }
 
@@ -410,4 +572,27 @@ function goalSnapshotKey(goal: AppState['goal']): string | null {
     String(goal.budget.turnBudget),
     String(goal.budget.wallClockBudgetMs),
   ].join('\u0000');
+}
+
+function statusLineConfig(state: AppState): StatusLineConfig {
+  return (state as Partial<AppState>).statusLine ?? DEFAULT_TUI_CONFIG.statusLine;
+}
+
+function statusLineProvider(state: AppState): string | null {
+  return state.availableModels[state.model]?.provider ?? null;
+}
+
+function managedUsageRateLimits(
+  result: StatusLineManagedUsage | undefined,
+): readonly StatusLineRateLimit[] {
+  if (result?.kind !== 'ok') return [];
+  const rows = result.summary === null ? result.limits : [result.summary, ...result.limits];
+  return rows
+    .filter((row) => row.limit > 0)
+    .map((row) => ({
+      label: row.label,
+      used: row.used,
+      limit: row.limit,
+      reset_hint: row.resetHint,
+    }));
 }
