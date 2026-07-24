@@ -13,6 +13,7 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
   _clearScopedRegistryForTests,
@@ -50,6 +51,8 @@ import {
 } from '#/session/sessionAgentProfileCatalog/projectFileAgentSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
@@ -216,6 +219,13 @@ describe('SessionAgentProfileCatalogService', () => {
     // profile contributions accumulate in a separate module-level list at
     // import time and are unaffected by the clear.
     _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionStateService,
+      SessionStateService,
+      InstantiationType.Eager,
+      'state',
+    );
     registerScopedService(
       LifecycleScope.App,
       IAgentProfileCatalogService,

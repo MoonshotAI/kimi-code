@@ -11,7 +11,10 @@
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
  * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
- * `onDidCreateMain`. Bound at Session scope.
+ * `onDidCreateMain`. The plain-data state (`tasks`, `parsedCache`,
+ * `lastSeenAt`, `seededFromStore`, `inFlight`, `started`) is registered into
+ * `sessionState` (`ISessionStateService`) and read/written through it. Bound
+ * at Session scope.
  */
 
 import { ulid } from 'ulid';
@@ -23,6 +26,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IntervalTimer } from '#/_base/utils/timer';
 
 import { IConfigService } from '#/app/config/config';
@@ -36,6 +40,7 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { renderCronFireXml } from '#/app/cron/format';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -57,6 +62,16 @@ export const CRON_FIRED = 'cron_fired' as const;
 export const CRON_MISSED = 'cron_missed' as const;
 export const CRON_DELETED = 'cron_deleted' as const;
 
+export const cronTasksKey = defineState<Map<string, CronTask>>('cron.tasks', () => new Map());
+export const cronParsedCacheKey = defineState<Map<string, ParsedCronExpression>>(
+  'cron.parsedCache',
+  () => new Map(),
+);
+export const cronLastSeenAtKey = defineState<Map<string, number>>('cron.lastSeenAt', () => new Map());
+export const cronSeededFromStoreKey = defineState<Set<string>>('cron.seededFromStore', () => new Set());
+export const cronInFlightKey = defineState<Set<string>>('cron.inFlight', () => new Set());
+export const cronStartedKey = defineState<boolean>('cron.started', () => false);
+
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const MAX_COALESCE_ITERATIONS = 10_000;
@@ -66,21 +81,16 @@ const MAX_ID_ATTEMPTS = 8;
 export class SessionCronServiceImpl extends Disposable implements ISessionCronService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly tasks = new Map<string, CronTask>();
-  private readonly parsedCache = new Map<string, ParsedCronExpression>();
-  private readonly lastSeenAt = new Map<string, number>();
-  private readonly seededFromStore = new Set<string>();
-  private readonly inFlight = new Set<string>();
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private readonly persistQueues = new Map<string, Promise<void>>();
 
   private clocks: ClockSources = SYSTEM_CLOCKS;
   readonly isEnabled: boolean = true;
 
-  private started = false;
   private sigusr1Handler: NodeJS.SignalsListener | null = null;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ICronTaskPersistence private readonly store: ICronTaskPersistence,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -88,6 +98,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
+
+    this.states.register(cronTasksKey);
+    this.states.register(cronParsedCacheKey);
+    this.states.register(cronLastSeenAtKey);
+    this.states.register(cronSeededFromStoreKey);
+    this.states.register(cronInFlightKey);
+    this.states.register(cronStartedKey);
 
     this._register(
       this.agentLifecycle.onDidCreate((handle) => {
@@ -106,6 +123,34 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
         void this.stop();
       }),
     );
+  }
+
+  private get tasks(): Map<string, CronTask> {
+    return this.states.get(cronTasksKey);
+  }
+
+  private get parsedCache(): Map<string, ParsedCronExpression> {
+    return this.states.get(cronParsedCacheKey);
+  }
+
+  private get lastSeenAt(): Map<string, number> {
+    return this.states.get(cronLastSeenAtKey);
+  }
+
+  private get seededFromStore(): Set<string> {
+    return this.states.get(cronSeededFromStoreKey);
+  }
+
+  private get inFlight(): Set<string> {
+    return this.states.get(cronInFlightKey);
+  }
+
+  private get started(): boolean {
+    return this.states.get(cronStartedKey);
+  }
+
+  private set started(value: boolean) {
+    this.states.set(cronStartedKey, value);
   }
 
   private bindMainAgent(handle: IAgentScopeHandle): void {

@@ -44,6 +44,8 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -982,6 +984,13 @@ describe('SessionLifecycleService', () => {
 
   describe('additional dirs', () => {
     beforeEach(() => {
+      registerScopedService(
+        LifecycleScope.Session,
+        ISessionStateService,
+        SessionStateService,
+        InstantiationType.Eager,
+        'state',
+      );
       registerScopedService(
         LifecycleScope.Session,
         ISessionWorkspaceContext,

@@ -3,15 +3,19 @@
  *
  * Stores the client-managed denylist as one atomic document below the session
  * scope and serializes replacements. A successful replacement awaits all
- * registered Agent prompt refreshes before returning. Bound at Session scope.
+ * registered Agent prompt refreshes before returning. The plain-data state
+ * (`state`) is registered into `sessionState` (`ISessionStateService`) and
+ * read/written through it. Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
   ISessionToolPolicy,
@@ -21,6 +25,10 @@ import {
 interface SessionToolPolicyState {
   readonly disabledTools: readonly string[];
 }
+
+export const sessionToolPolicyStateKey = defineState<SessionToolPolicyState>('sessionToolPolicy.state', () => ({
+  disabledTools: [],
+}));
 
 const STATE_KEY = 'state.json';
 
@@ -34,16 +42,25 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
   );
   private readonly scope: string;
   private updateQueue: Promise<void> = Promise.resolve();
-  private state: SessionToolPolicyState = { disabledTools: [] };
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext sessionContext: ISessionContext,
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
   ) {
     super();
+    this.states.register(sessionToolPolicyStateKey);
     this.scope = sessionContext.scope('tool-policy');
     this.onDidChange = this.changeEmitter.event;
     this.ready = this.load();
+  }
+
+  private get state(): SessionToolPolicyState {
+    return this.states.get(sessionToolPolicyStateKey);
+  }
+
+  private set state(value: SessionToolPolicyState) {
+    this.states.set(sessionToolPolicyStateKey, value);
   }
 
   disabledTools(): readonly string[] {

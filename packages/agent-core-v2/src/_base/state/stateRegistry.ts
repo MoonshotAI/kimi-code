@@ -44,6 +44,7 @@ export interface IStateRegistry {
   onDidChange<T>(key: StateKey<T>): Event<T>;
   readonly onDidChangeAny: Event<StateChange>;
   entries(): readonly [string, unknown][];
+  snapshot(): Record<string, unknown>;
 }
 
 export class StateRegistry extends Disposable implements IStateRegistry {
@@ -90,5 +91,47 @@ export class StateRegistry extends Disposable implements IStateRegistry {
 
   entries(): readonly [string, unknown][] {
     return Array.from(this.values.entries());
+  }
+
+  snapshot(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of this.values) {
+      out[key] = toJsonSafe(value, new WeakSet());
+    }
+    return out;
+  }
+}
+
+function toJsonSafe(value: unknown, seen: WeakSet<object>): unknown {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'function') return '(function)';
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value !== 'object') return value;
+  if (seen.has(value)) return '(circular)';
+  seen.add(value);
+  try {
+    if (value instanceof Date) return value.toJSON();
+    if (Array.isArray(value)) return value.map((item) => toJsonSafe(item, seen));
+    if (value instanceof Map) {
+      const entries = [...value.entries()];
+      const objectKeys = entries.every(([key]) => ['string', 'number'].includes(typeof key));
+      if (objectKeys) {
+        return Object.fromEntries(
+          entries.map(([key, item]) => [key, toJsonSafe(item, seen)] as const),
+        );
+      }
+      return entries.map(([key, item]) => [toJsonSafe(key, seen), toJsonSafe(item, seen)]);
+    }
+    if (value instanceof Set) {
+      return [...value.values()].map((item) => toJsonSafe(item, seen));
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === 'function') continue;
+      out[key] = toJsonSafe(item, seen);
+    }
+    return out;
+  } finally {
+    seen.delete(value);
   }
 }

@@ -21,6 +21,8 @@ import {
   type SessionActivityChangedEvent,
 } from '#/session/sessionActivity/sessionActivity';
 import { SessionActivityView } from '#/session/sessionActivity/sessionActivityService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
@@ -142,6 +144,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, InstantiationType.Eager, 'state');
     registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, InstantiationType.Delayed, 'interaction');
     registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, InstantiationType.Delayed, 'agentLifecycle');
     registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, InstantiationType.Delayed, 'sessionActivity');

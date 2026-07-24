@@ -20,12 +20,21 @@ import {
 import { AppLogService } from '#/_base/log/logService';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 let homeDir: string;
 let sessionDir: string;
 
 beforeEach(async () => {
   _clearScopedRegistryForTests();
+  registerScopedService(
+    LifecycleScope.Session,
+    ISessionStateService,
+    SessionStateService,
+    InstantiationType.Eager,
+    'state',
+  );
   registerScopedService(
     LifecycleScope.Session,
     ILogService,
@@ -132,6 +141,7 @@ describe('SessionLogService', () => {
 describe('ILogService cross-scope resolution', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, InstantiationType.Eager, 'state');
     registerScopedService(LifecycleScope.App, ILogService, AppLogService, InstantiationType.Delayed, 'log');
     registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, InstantiationType.Delayed, 'log');
   });

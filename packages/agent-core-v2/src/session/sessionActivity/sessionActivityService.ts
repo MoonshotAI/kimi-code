@@ -6,18 +6,23 @@
  * attach, `agent.activity.updated` over each agent's `event` bus afterwards)
  * — together with the pending-interaction set from `interaction` into the
  * session-level aggregate, and fires `onDidChange` with the domain cause
- * only when the aggregate tuple actually changes. Bound at Session scope.
+ * only when the aggregate tuple actually changes. The plain-data state
+ * (`folds`, `current`) is registered into `sessionState`
+ * (`ISessionStateService`) and read/written through it. Bound at Session
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService, type IAgentScopeHandle } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
   ISessionActivityView,
@@ -34,21 +39,33 @@ interface AgentWorkFold {
   lastTurnReason?: SessionTurnOutcome;
 }
 
+export const sessionActivityFoldsKey = defineState<Map<string, AgentWorkFold>>(
+  'sessionActivity.folds',
+  () => new Map(),
+);
+export const sessionActivityCurrentKey = defineState<SessionActivityState>('sessionActivity.current', () => ({
+  busy: false,
+  mainTurnActive: false,
+  pendingInteraction: 'none',
+  lastTurnReason: undefined,
+}));
+
 export class SessionActivityView extends Disposable implements ISessionActivityView {
   declare readonly _serviceBrand: undefined;
 
   private readonly _onDidChange = this._register(new Emitter<SessionActivityChangedEvent>());
   readonly onDidChange: Event<SessionActivityChangedEvent> = this._onDidChange.event;
 
-  private readonly folds = new Map<string, AgentWorkFold>();
   private readonly agentSubscriptions = new Map<string, IDisposable>();
-  private current: SessionActivityState;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
+    this.states.register(sessionActivityFoldsKey);
+    this.states.register(sessionActivityCurrentKey);
     for (const handle of this.agents.list()) this.attachAgent(handle);
     this.current = this.aggregate();
     this._register(
@@ -71,6 +88,18 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
         this.agentSubscriptions.clear();
       }),
     );
+  }
+
+  private get folds(): Map<string, AgentWorkFold> {
+    return this.states.get(sessionActivityFoldsKey);
+  }
+
+  private get current(): SessionActivityState {
+    return this.states.get(sessionActivityCurrentKey);
+  }
+
+  private set current(value: SessionActivityState) {
+    this.states.set(sessionActivityCurrentKey, value);
   }
 
   state(): SessionActivityState {

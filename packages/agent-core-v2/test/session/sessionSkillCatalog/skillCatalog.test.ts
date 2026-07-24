@@ -14,6 +14,7 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { InstantiationType } from '#/_base/di/extensions';
 import {
   _clearScopedRegistryForTests,
   LifecycleScope,
@@ -42,6 +43,8 @@ import { ExplicitFileSkillSource, IExplicitFileSkillSource } from '#/session/ses
 import { ExtraFileSkillSource, IExtraFileSkillSource } from '#/session/sessionSkillCatalog/extraFileSkillSource';
 import { IWorkspaceFileSkillSource, WorkspaceFileSkillSource } from '#/session/sessionSkillCatalog/workspaceFileSkillSource';
 import { IPluginSkillSource, PluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
@@ -212,6 +215,13 @@ describe('SessionSkillCatalogService', () => {
     // chain these tests exercise; every other dependency arrives as a seeded
     // stub via `createScopedTestHost`.
     _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionStateService,
+      SessionStateService,
+      InstantiationType.Eager,
+      'state',
+    );
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
     registerScopedService(LifecycleScope.App, IPluginService, PluginService);
