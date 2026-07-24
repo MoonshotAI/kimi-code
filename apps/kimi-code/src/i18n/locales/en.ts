@@ -121,6 +121,8 @@ export default {
       sessionWithoutIdInPromptMode: 'Cannot use --session without an id in prompt mode.',
       cannotCombineContinueAndSession: 'Cannot combine --continue, --session.',
       cannotCombineYoloAndAuto: 'Cannot combine --yolo with --auto.',
+      agentOnlyOnce: '--agent may only be specified once.',
+      agentFileOnlyOnce: '--agent-file may only be specified once.',
     },
   },
   startup: {

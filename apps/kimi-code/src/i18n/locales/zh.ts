@@ -123,6 +123,8 @@ export default {
       sessionWithoutIdInPromptMode: '在提示模式下不能不带 ID 使用 --session。',
       cannotCombineContinueAndSession: '--continue 不能与 --session 同时使用。',
       cannotCombineYoloAndAuto: '--yolo 不能与 --auto 同时使用。',
+      agentOnlyOnce: '--agent 只能指定一次。',
+      agentFileOnlyOnce: '--agent-file 只能指定一次。',
     },
   },
   startup: {
@@ -902,7 +904,7 @@ export default {
       noModelSelected: '未选择模型。请运行 /model 选择模型。',
       unknownTheme: '未知主题：{{theme}}',
       unknownModelAlias: '未知模型别名：{{alias}}',
-      unsupportedEffort: '{{alias}} 不支持的思考强度 "{{arg}"。可用：{{segments}}',
+      unsupportedEffort: '{{alias}} 不支持的思考强度 "{{arg}}"。可用：{{segments}}',
       switchModelFailed: '切换模型失败：{{msg}}',
       switchSavedButDefaultFailed: '已切换到 {{name}}，但保存默认设置失败：{{msg}}',
       loadExperimentsFailed: '加载实验性功能失败：{{error}}',

@@ -228,6 +228,7 @@ import '#/agent/goal/tools/create-goal';
 import '#/agent/goal/tools/get-goal';
 import '#/agent/goal/tools/set-goal-budget';
 import '#/agent/goal/tools/update-goal';
+import '#/agent/goal/judge/judgeAgentProfile';
 export * from '#/agent/goal/goalDeadlineScheduler';
 import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';

@@ -12,6 +12,8 @@
  * `agent.type === 'main'` gate.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -44,6 +46,19 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(UpdateGoalToolInputSchema);
 
+  /**
+   * Per-goal rejection counter. When the judge rejects completion N times
+   * consecutively for the same goal, the tool overrides the judge and allows
+   * completion — the judge is advisory, not a hard gate.
+   */
+  private readonly rejectionCounts = new Map<string, number>();
+  /**
+   * Tracks whether the most recent judge evaluation for a goal was a rejection.
+   * Prevents the agent from immediately calling `blocked` to bypass the judge.
+   */
+  private readonly pendingJudgeFix = new Set<string>();
+  private static readonly MAX_JUDGE_REJECTIONS = 3;
+
   constructor(
     @IAgentGoalService private readonly goal: IAgentGoalService,
     @IAgentGoalJudgeService private readonly judge: IAgentGoalJudgeService,
@@ -53,7 +68,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
     if (!isUpdateGoalStatus(args.status)) {
       return {
         isError: true,
-        output: 'Invalid goal status. Use `complete` or `blocked`.',
+        output: t('toolsV2.goal.invalidStatus'),
       };
     }
 
@@ -82,27 +97,68 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           if (!verdict.ok) {
             if (verdict.impossible) {
               // Judge says the goal is impossible — transition to blocked.
+              this.rejectionCounts.delete(goalAtExecution.goalId);
               const blocked = await this.goal.markBlocked({ reason: verdict.reason }, 'model');
               if (blocked === null) {
-                return { output: 'Goal not blocked: no active goal.' };
+                return { output: t('toolsV2.goal.notBlocked') };
               }
               return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
             }
-            // Judge rejects completion — let the agent continue working.
+            // Judge rejects completion — track consecutive rejections.
+            const prevCount = this.rejectionCounts.get(goalAtExecution.goalId) ?? 0;
+            const newCount = prevCount + 1;
+            this.rejectionCounts.set(goalAtExecution.goalId, newCount);
+
+            if (newCount >= UpdateGoalTool.MAX_JUDGE_REJECTIONS) {
+              // Judge has rejected 3+ times for this goal — override and allow.
+              // The judge is advisory; repeated rejection likely indicates a
+              // hallucination or stale context rather than a real gap.
+              this.rejectionCounts.delete(goalAtExecution.goalId);
+              this.pendingJudgeFix.delete(goalAtExecution.goalId);
+              const completed = await this.goal.markComplete({}, 'model');
+              if (completed === null) {
+                return { output: t('toolsV2.goal.notCompleted') };
+              }
+              return {
+                output: buildGoalCompletionSummaryPrompt(completed) +
+                  '\n\n(Note: completion was allowed after the judge rejected it ' +
+                  `${newCount} consecutive times. The judge override was applied.)`,
+                stopTurn: true,
+              };
+            }
+
+            // Under the threshold — let the agent continue working.
+            this.pendingJudgeFix.add(goalAtExecution.goalId);
             return {
-              output: `Goal completion rejected by judge: ${verdict.reason}\nContinue working toward the goal objective.`,
+              output: `Goal completion rejected by judge (attempt ${newCount}/${UpdateGoalTool.MAX_JUDGE_REJECTIONS}): ${verdict.reason}\n\n` +
+                'You MUST fix the issue described above, then call UpdateGoal("complete") again. ' +
+                'Do NOT call UpdateGoal("blocked") — a judge rejection is not a blocking condition; ' +
+                'it means there is remaining work you must finish.',
             };
           }
-          // Judge approved — proceed with completion.
+          // Judge approved — reset counter and proceed with completion.
+          this.rejectionCounts.delete(goalAtExecution.goalId);
+          this.pendingJudgeFix.delete(goalAtExecution.goalId);
           const completed = await this.goal.markComplete({}, 'model');
           if (completed === null) {
-            return { output: 'Goal not completed: no active goal.' };
+            return { output: t('toolsV2.goal.notCompleted') };
           }
           return { output: buildGoalCompletionSummaryPrompt(completed), stopTurn: true };
         }
         if (status === 'blocked') {
           if (goalAtExecution.status !== 'active') {
-            return { output: 'Goal not blocked: no active goal.' };
+            return { output: t('toolsV2.goal.notBlocked') };
+          }
+          // Prevent the agent from using 'blocked' to bypass a judge rejection.
+          // If the judge just rejected completion, the agent must fix the issue
+          // rather than claim it's blocked.
+          if (this.pendingJudgeFix.has(goalAtExecution.goalId)) {
+            return {
+              output: 'Cannot mark as blocked: the judge identified remaining work that must be completed. ' +
+                'Fix the issues the judge reported, then call UpdateGoal("complete") again. ' +
+                'Use "blocked" only for genuine external blockers (missing user input, unavailable resources), ' +
+                'not for unfinished work.',
+            };
           }
           const streak = currentGoal?.blockedStreak ?? 0;
           const MIN_BLOCKED_STREAK = 2; // 0-indexed: 0,1,2 = 3 turns
@@ -114,13 +170,13 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           }
           const blocked = await this.goal.markBlocked({}, 'model');
           if (blocked === null) {
-            return { output: 'Goal not blocked: no active goal.' };
+            return { output: t('toolsV2.goal.notBlocked') };
           }
           return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
         }
         return {
           isError: true,
-          output: 'Invalid goal status. Use `complete` or `blocked`.',
+          output: t('toolsV2.goal.invalidStatus'),
         };
       },
     };
@@ -132,13 +188,13 @@ function isUpdateGoalStatus(status: unknown): status is UpdateGoalToolInput['sta
 }
 
 function missingGoalOutput(status: UpdateGoalToolInput['status']): string {
-  if (status === 'complete') return 'Goal not completed: no active goal.';
-  return 'Goal not blocked: no active goal.';
+  if (status === 'complete') return t('toolsV2.goal.notCompleted');
+  return t('toolsV2.goal.notBlocked');
 }
 
 function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
-  if (status === 'complete') return 'Goal not completed: the current goal changed.';
-  return 'Goal not blocked: the current goal changed.';
+  if (status === 'complete') return t('toolsV2.goal.goalChanged');
+  return t('toolsV2.goal.goalChanged');
 }
 
 registerTool(UpdateGoalTool, {

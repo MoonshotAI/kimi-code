@@ -78,11 +78,11 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent <name>',
-        'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
+        t('cli.optionDescriptions.agent'),
       )
         .argParser((value: string, previous: string | undefined) => {
           if (previous !== undefined) {
-            throw new InvalidArgumentError('--agent may only be specified once.');
+            throw new InvalidArgumentError(t('cli.errors.agentOnlyOnce'));
           }
           return value;
         })
@@ -91,11 +91,11 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent-file <path>',
-        'Load an agent definition from a Markdown file and select it (v2 engine only).',
+        t('cli.optionDescriptions.agentFile'),
       )
         .argParser((value: string, previous: string[] | undefined) => {
           if ((previous?.length ?? 0) > 0) {
-            throw new InvalidArgumentError('--agent-file may only be specified once.');
+            throw new InvalidArgumentError(t('cli.errors.agentFileOnlyOnce'));
           }
           return [value];
         })
