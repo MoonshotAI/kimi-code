@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Emoji · 侧栏「hover 虚线框选 emoji」方案原型</title>
+<style>
+/* ===========================================================================
+   Tokens —— 与 packages/web-ui/src/style.css 的 token 层一一对应。
+   字体在真实应用中是自托管 Schibsted Grotesk + Noto Sans SC Variable，
+   原型退回系统字体栈（仅影响字腔，不影响节奏/颜色/层级）。
+   =========================================================================== */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #fafbfc;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-surface-sunken: #f3f5f8;
+  --color-well: #f3f5f8;
+  --color-sidebar-bg: #fbfaf9;
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9aa3af;
+  --color-line: #e7eaee;
+  --color-line-strong: #d4d9e0;
+  --color-selected: #00000014;
+  --color-hover: #0000000d;
+  --color-accent: #1783ff;
+  --color-accent-hover: #0f6fe0;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: #cfe6ff;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-xl: 16px; --radius-full: 999px;
+
+  --shadow-menu: 0 6px 18px lch(0% 0 0 / 0.02), 0 3px 9px lch(0% 0 0 / 0.04), 0 1px 1px lch(0% 0 0 / 0.04);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+
+  --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px;
+  --leading-tight: 1.25; --leading-normal: 1.5; --leading-prose: 1.6;
+  --weight-regular: 400; --weight-medium: 500;
+
+  --font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, monospace;
+
+  --p-content-max: 860px;
+}
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0d1117;
+  --color-surface: #13181e;
+  --color-surface-raised: #1c2128;
+  --color-surface-overlay: #22272e;
+  --color-surface-sunken: #0d1117;
+  --color-well: #13181e;
+  --color-sidebar-bg: #0a0d12;
+  --color-text: #e8eaed;
+  --color-text-muted: #9aa0a8;
+  --color-text-faint: #6b7280;
+  --color-line: #2d333b;
+  --color-line-strong: #3d444d;
+  --color-selected: #ffffff14;
+  --color-hover: #ffffff0d;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --color-accent-bd: rgba(88, 166, 255, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-prose);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; }
+code { font-family: var(--font-mono); font-size: var(--text-sm); background: var(--color-surface-sunken); border-radius: var(--radius-xs); padding: 1px 5px; }
+html[data-color-scheme="dark"] code { background: #ffffff1a; }
+::selection { background: rgba(23, 131, 255, 0.18); }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ============================= 顶栏 ============================= */
+.topbar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-bg); border-bottom: 0.5px solid var(--color-line);
+  user-select: none;
+}
+.topbar .brand { font-size: var(--text-sm); font-weight: var(--weight-medium); margin-right: var(--space-3); }
+.topbar .sp { flex: 1; }
+.demo-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 var(--space-3);
+  border-radius: var(--radius-full); border: 0.5px solid var(--color-line-strong);
+  background: var(--color-surface-raised); font-size: var(--text-xs); color: var(--color-text-muted);
+  transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.demo-btn:hover { color: var(--color-text); border-color: var(--color-text-faint); }
+.demo-btn.on { color: var(--color-accent); border-color: var(--color-accent-bd); background: var(--color-accent-soft); }
+
+/* ============================= 页面骨架 ============================= */
+.page { display: none; }
+.page.on { display: block; }
+.wrap { max-width: var(--p-content-max); margin: 0 auto; padding: var(--space-6) var(--space-6) 120px; }
+.wrap h1 { font-size: 20px; font-weight: 600; margin: 0 0 var(--space-1); }
+.wrap .sub { font-size: var(--text-sm); color: var(--color-text-faint); margin: 0 0 var(--space-5); }
+.wrap h2 {
+  font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--color-text-faint);
+  margin: var(--space-8) 0 var(--space-2); text-transform: none;
+}
+.wrap h2 .n { font-family: var(--font-mono); color: var(--color-accent); margin-right: 6px; }
+.wrap p, .wrap li { color: var(--color-text-muted); font-size: var(--text-sm); }
+.wrap p b, .wrap li b { color: var(--color-text); font-weight: var(--weight-medium); }
+.wrap ul { margin: 0 0 var(--space-3); padding-left: 20px; }
+.wrap li { margin-bottom: 4px; }
+.pro { color: var(--color-accent); font-weight: var(--weight-medium); }
+.con { color: var(--color-danger); font-weight: var(--weight-medium); }
+
+.demo-stage {
+  border: 0.5px dashed var(--color-line-strong); border-radius: var(--radius-lg);
+  padding: var(--space-5); display: flex; gap: var(--space-6); align-items: flex-start;
+  background: var(--color-surface);
+}
+.demo-hint { font-size: var(--text-xs); color: var(--color-text-faint); margin: 6px 0 0; }
+
+/* ============================= 侧栏 mock（还原截图语境） ============================= */
+.side {
+  width: 264px; flex: none; background: var(--color-sidebar-bg);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-2); user-select: none;
+}
+.ws-card {
+  display: flex; align-items: center; gap: var(--space-2);
+  background: var(--color-surface-sunken); border-radius: var(--radius-md);
+  padding: 7px var(--space-2); margin-bottom: var(--space-2);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+}
+.ws-card svg { flex: none; color: var(--color-text-muted); }
+html[data-color-scheme="dark"] .ws-card { background: var(--color-well); }
+
+/* 行基础 —— 三个方案共用骨架（对齐 SessionRow.vue：8px padding / 13px 标题 / 右侧时间） */
+.se {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px var(--space-2); border-radius: var(--radius-sm);
+  font-size: var(--text-sm); color: var(--color-text-muted);
+  cursor: pointer; position: relative;
+}
+.se:hover, .se.fh { background: var(--color-hover); color: var(--color-text); }
+.se.active { background: var(--color-selected); color: var(--color-text); }
+.se .st { width: 14px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.se .t {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--text-sm); line-height: var(--leading-tight);
+}
+.se .tm { flex: none; font-size: var(--text-xs); color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+.spin {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--color-line-strong); border-top-color: var(--color-text-muted);
+  animation: rot 0.8s linear infinite;
+}
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ===========================================================================
+   方案 A —— 独立 emoji 槽（emoji 提升为 session 元数据，槽位常驻宽度）
+   =========================================================================== */
+.pa .es {
+  width: 18px; height: 18px; flex: none;
+  display: grid; place-items: center;
+  border: 1px dashed transparent; border-radius: var(--radius-xs);
+  font-size: 13px; line-height: 1;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.pa .es .ph { font-size: 11px; color: var(--color-text-faint); opacity: 0; transition: opacity var(--duration-fast); }
+.pa .es .em { display: none; }
+.pa .es.has .em { display: block; }
+.pa .es.has .ph { display: none; }
+/* hover 行：空槽显虚线框 + 淡 +；有 emoji 的槽外套虚线圈 */
+.pa .se:hover .es, .pa .se.fh .es { border-color: var(--color-line-strong); }
+.pa .se:hover .es:not(.has) .ph, .pa .se.fh .es:not(.has) .ph { opacity: 1; }
+/* 直接 hover 槽位：accent 反馈，表达「可点」 */
+.pa .es:hover { border-color: var(--color-accent) !important; background: var(--color-accent-soft); }
+.pa .es:hover .ph { color: var(--color-accent); opacity: 1 !important; }
+.pa .es:focus-visible { outline: 1px solid var(--color-accent); outline-offset: 1px; }
+
+/* ===========================================================================
+   方案 B —— 标题内联（emoji 留在标题字符串，hover 虚线圈出首字符 / 覆盖式加号框）
+   =========================================================================== */
+.pb .t .e { border-radius: var(--radius-xs); cursor: pointer; }
+.pb .se:hover .t .e, .pb .se.fh .t .e { outline: 1px dashed var(--color-line-strong); outline-offset: 2px; }
+.pb .t .e:hover { outline: 1px dashed var(--color-accent) !important; background: var(--color-accent-soft); }
+/* 无 emoji 行：hover 时虚线框覆盖在标题起始处（不占位，会遮住首字符 —— 如实呈现） */
+.pb .ov {
+  position: absolute; left: 28px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; display: none; place-items: center;
+  border: 1px dashed var(--color-line-strong); border-radius: var(--radius-xs);
+  background: var(--color-sidebar-bg);
+  font-size: 11px; color: var(--color-text-faint); cursor: pointer; z-index: 2;
+}
+.pb .se:hover .ov, .pb .se.fh .ov { display: grid; }
+.pb .ov:hover { border-color: var(--color-accent); color: var(--color-accent); background: var(--color-accent-soft); }
+
+/* ===========================================================================
+   方案 C —— 菜单入口 + 轻提示（行上无新增常驻元素；kebab 菜单收「设置 Emoji…」）
+   =========================================================================== */
+.pc .t .e { border-radius: var(--radius-xs); cursor: pointer; }
+.pc .se:hover .t .e, .pc .se.fh .t .e { outline: 1px dashed var(--color-line-strong); outline-offset: 2px; }
+.pc .t .e:hover { outline: 1px dashed var(--color-accent) !important; background: var(--color-accent-soft); }
+/* 尾槽：时间与 kebab 互换（visibility，不换宽度 —— 沿用 §07 session row 语言） */
+.pc .act { position: relative; flex: none; display: inline-flex; align-items: center; min-width: 22px; justify-content: flex-end; }
+.pc .kb {
+  position: absolute; right: -4px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; display: grid; place-items: center;
+  border-radius: var(--radius-sm); color: var(--color-text-faint);
+  visibility: hidden; font-size: 14px; letter-spacing: 1px;
+  background: var(--color-sidebar-bg);
+}
+.pc .se:hover .kb, .pc .se.fh .kb { visibility: visible; }
+.pc .se:hover .kb ~ .tm, .pc .se.fh .kb ~ .tm { visibility: hidden; }
+.pc .kb:hover { color: var(--color-text); background: var(--color-hover); }
+
+/* ============================= Emoji picker（三方案共用） ============================= */
+.picker {
+  position: fixed; z-index: 300; display: none;
+  width: 240px; padding: var(--space-2);
+  background: var(--color-surface-overlay); border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-menu);
+}
+.pk-label { font-size: var(--text-xs); color: var(--color-text-faint); padding: 2px 6px 6px; }
+.pk-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.pk-e {
+  height: 26px; display: grid; place-items: center; font-size: 15px;
+  border-radius: var(--radius-xs); cursor: pointer;
+}
+.pk-e:hover { background: var(--color-hover); }
+.pk-e.sel { background: var(--color-accent-soft); outline: 1px solid var(--color-accent-bd); }
+.pk-foot { display: flex; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 0.5px solid var(--color-line); }
+.pk-act {
+  flex: 1; height: 24px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  font-size: var(--text-xs); color: var(--color-text-muted); border-radius: var(--radius-xs); cursor: pointer;
+}
+.pk-act:hover { background: var(--color-hover); color: var(--color-text); }
+.pk-act.danger:hover { color: var(--color-danger); }
+
+/* 静态陈列里的 picker 样张 */
+.pk-sample { position: static; display: block; width: 240px; }
+
+/* ============================= 方案 C 的 kebab 菜单 ============================= */
+.menu {
+  position: fixed; z-index: 310; display: none; min-width: 168px; padding: 4px;
+  background: var(--color-surface-overlay); border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-menu);
+  font-size: var(--text-sm);
+}
+.mi {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: 5px var(--space-2); border-radius: var(--radius-xs);
+  color: var(--color-text); cursor: pointer; text-align: left;
+}
+.mi:hover { background: var(--color-hover); }
+.mi svg { flex: none; color: var(--color-text-muted); }
+.mi-sep { height: 1px; margin: 4px 6px; background: var(--color-line); }
+
+/* ============================= 状态陈列 ============================= */
+.gal-row { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-3); }
+.gal-tag { width: 148px; flex: none; font-size: var(--text-xs); color: var(--color-text-faint); text-align: right; }
+.gal-row .side { width: 264px; }
+
+/* ============================= 对比表 ============================= */
+table.cmp { width: 100%; border-collapse: collapse; margin: var(--space-2) 0 var(--space-4); font-size: var(--text-sm); }
+.cmp th, .cmp td { text-align: left; padding: 8px 12px; border-bottom: 0.5px solid var(--color-line); vertical-align: top; }
+.cmp th { color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); }
+.cmp td { color: var(--color-text-muted); }
+.cmp td:first-child { color: var(--color-text); font-weight: var(--weight-medium); white-space: nowrap; }
+.callout {
+  border: 0.5px solid var(--color-warning-bd); background: var(--color-warning-soft);
+  border-radius: var(--radius-md); padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm); color: var(--color-text-muted); margin: var(--space-4) 0;
+}
+.callout b { color: var(--color-text); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="brand">Session Emoji · hover 虚线框方案原型</span>
+  <button class="demo-btn on" data-page="a">方案 A · 独立图标槽</button>
+  <button class="demo-btn" data-page="b">方案 B · 标题内联圈选</button>
+  <button class="demo-btn" data-page="c">方案 C · 菜单入口 + 轻提示</button>
+  <button class="demo-btn" data-page="cmp">对比与建议</button>
+  <span class="sp"></span>
+  <button class="demo-btn" id="btn-theme">◐ 主题</button>
+</header>
+
+<!-- ═══════════════════════════ 方案 A ═══════════════════════════ -->
+<section class="page on" id="page-a">
+  <div class="wrap">
+    <h1>方案 A · 独立图标槽</h1>
+    <p class="sub">emoji 提升为 session 的元数据（不再混在标题字符串里），行首常驻一个 18px 槽位；hover 时空槽显虚线框、已有 emoji 外套虚线圈，点击开 picker。</p>
+
+    <h2><span class="n">A1</span>交互 demo —— hover 行看虚线框，点槽位换 emoji</h2>
+    <div class="demo-stage">
+      <div class="side pa" id="demo-a">
+        <div class="ws-card">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          kimi-code-app2
+        </div>
+        <div class="se" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳">
+          <span class="st"></span>
+          <button class="es" aria-label="设置 Emoji"><span class="ph">+</span><span class="em"></span></button>
+          <span class="t">做一个 desktop 的需求，希望 …</span>
+          <span class="tm">1h</span>
+        </div>
+        <div class="se" data-title="排查一个 desktop 的 bug，现 …" data-emoji="⚠️">
+          <span class="st"></span>
+          <button class="es" aria-label="设置 Emoji"><span class="ph">+</span><span class="em"></span></button>
+          <span class="t">排查一个 desktop 的 bug，现 …</span>
+          <span class="tm">7h</span>
+        </div>
+        <div class="se" data-title="release: v0.3.2 changeset" data-emoji="">
+          <span class="st"><span class="spin"></span></span>
+          <button class="es" aria-label="设置 Emoji"><span class="ph">+</span><span class="em"></span></button>
+          <span class="t">release: v0.3.2 changeset</span>
+          <span class="tm">12m</span>
+        </div>
+        <div class="se" data-title="composer 工作区选择器" data-emoji="">
+          <span class="st"></span>
+          <button class="es" aria-label="设置 Emoji"><span class="ph">+</span><span class="em"></span></button>
+          <span class="t">composer 工作区选择器</span>
+          <span class="tm">昨天</span>
+        </div>
+      </div>
+      <div>
+        <p style="margin-top:0"><b>试一试</b>：hover 任意行 → 行首出现虚线框（已有 emoji 的行是虚线圈）；点击槽位打开 picker，选一个 emoji 或「移除」。第三行演示 busy 状态（spinner 占用更左的状态 gutter，与 emoji 槽并存）。</p>
+        <p class="demo-hint">槽位是 <code>&lt;button&gt;</code>，可 Tab 聚焦、Enter 打开 picker，Esc 关闭。</p>
+      </div>
+    </div>
+
+    <h2><span class="n">A2</span>状态陈列</h2>
+    <div class="gal-row"><span class="gal-tag">静止 · 无 emoji</span>
+      <div class="side pa"><div class="se" data-title="composer 工作区选择器" data-emoji=""><span class="st"></span><button class="es"><span class="ph">+</span><span class="em"></span></button><span class="t">composer 工作区选择器</span><span class="tm">昨天</span></div></div>
+      <span class="demo-hint">完全干净，与现状一致</span>
+    </div>
+    <div class="gal-row"><span class="gal-tag">hover · 无 emoji</span>
+      <div class="side pa"><div class="se fh" data-title="composer 工作区选择器" data-emoji=""><span class="st"></span><button class="es"><span class="ph">+</span><span class="em"></span></button><span class="t">composer 工作区选择器</span><span class="tm">昨天</span></div></div>
+      <span class="demo-hint">虚线框 + 淡「+」，只在 hover 出现</span>
+    </div>
+    <div class="gal-row"><span class="gal-tag">静止 · 有 emoji</span>
+      <div class="side pa"><div class="se" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳"><span class="st"></span><button class="es"><span class="ph">+</span><span class="em"></span></button><span class="t">做一个 desktop 的需求，希望 …</span><span class="tm">1h</span></div></div>
+      <span class="demo-hint">emoji 常显，标题起始位置全列表对齐</span>
+    </div>
+    <div class="gal-row"><span class="gal-tag">hover · 有 emoji</span>
+      <div class="side pa"><div class="se fh" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳"><span class="st"></span><button class="es"><span class="ph">+</span><span class="em"></span></button><span class="t">做一个 desktop 的需求，希望 …</span><span class="tm">1h</span></div></div>
+      <span class="demo-hint">虚线圈提示「可换」</span>
+    </div>
+    <div class="gal-row"><span class="gal-tag">picker 展开</span>
+      <div class="picker pk-sample">
+        <div class="pk-label">设置 Session Emoji</div>
+        <div class="pk-grid pk-grid-sample"></div>
+        <div class="pk-foot"><button class="pk-act danger">移除 Emoji</button><button class="pk-act">随机一个</button></div>
+      </div>
+      <span class="demo-hint">精选 32 个常用 emoji，8×4；锚定槽位下方，空间不足上翻</span>
+    </div>
+
+    <h2><span class="n">A3</span>优劣</h2>
+    <ul>
+      <li><span class="pro">优</span> <b>布局绝对稳定</b>：槽位常驻 18px，标题起始 x 全列表对齐，hover 零位移 —— 与 §07「session row 不因 hover reflow」的原则一致。</li>
+      <li><span class="pro">优</span> <b>语义干净</b>：emoji 是结构化字段，rename、搜索、导出都不受标题里 emoji 的干扰；自动标题生成后可把 emoji 前缀剥离进该字段。</li>
+      <li><span class="pro">优</span> 发现性好：hover 即见虚线框，且静止时完全无噪声。</li>
+      <li><span class="con">劣</span> <b>改动面最大</b>：session 需要新增 icon 字段（server 存储 + 多端同步策略），行布局多一个槽。</li>
+      <li><span class="con">劣</span> 行首水平空间更紧张：状态 gutter（spinner/unread）+ emoji 槽 + 标题，窄侧栏下标题更短。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ 方案 B ═══════════════════════════ -->
+<section class="page" id="page-b">
+  <div class="wrap">
+    <h1>方案 B · 标题内联圈选</h1>
+    <p class="sub">emoji 留在标题字符串里（现状如此：自动标题自带 emoji 前缀）；hover 时用虚线圈出标题首字符的 emoji 供点击更换，无 emoji 的行在标题起始处覆盖一个虚线加号框。</p>
+
+    <h2><span class="n">B1</span>交互 demo</h2>
+    <div class="demo-stage">
+      <div class="side pb" id="demo-b">
+        <div class="ws-card">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          kimi-code-app2
+        </div>
+        <div class="se" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳"><span class="st"></span><span class="t"></span><span class="tm">1h</span></div>
+        <div class="se" data-title="排查一个 desktop 的 bug，现 …" data-emoji="⚠️"><span class="st"></span><span class="t"></span><span class="tm">7h</span></div>
+        <div class="se" data-title="release: v0.3.2 changeset" data-emoji=""><span class="st"><span class="spin"></span></span><span class="t"></span><span class="tm">12m</span><span class="ov">+</span></div>
+        <div class="se" data-title="composer 工作区选择器" data-emoji=""><span class="st"></span><span class="t"></span><span class="tm">昨天</span><span class="ov">+</span></div>
+      </div>
+      <div>
+        <p style="margin-top:0"><b>试一试</b>：hover 有 emoji 的行 → 标题首字符被虚线圈出，点击更换；hover 无 emoji 的行 → 标题起始处覆盖一个虚线「+」框（<b>注意它会遮住标题第一个字</b>，这是该方案的真实代价）。</p>
+        <p class="demo-hint">零数据模型改动：picker 写入的就是标题字符串的 emoji 前缀，存量 session 天然兼容。</p>
+      </div>
+    </div>
+
+    <h2><span class="n">B2</span>状态陈列</h2>
+    <div class="gal-row"><span class="gal-tag">hover · 有 emoji</span>
+      <div class="side pb"><div class="se fh" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳"><span class="st"></span><span class="t"></span><span class="tm">1h</span></div></div>
+      <span class="demo-hint">虚线圈用 <code>outline: dashed</code>，不占布局</span>
+    </div>
+    <div class="gal-row"><span class="gal-tag">hover · 无 emoji</span>
+      <div class="side pb"><div class="se fh" data-title="composer 工作区选择器" data-emoji=""><span class="st"></span><span class="t"></span><span class="tm">昨天</span><span class="ov">+</span></div></div>
+      <span class="demo-hint">覆盖式虚线框，遮挡标题首字符</span>
+    </div>
+
+    <h2><span class="n">B3</span>优劣</h2>
+    <ul>
+      <li><span class="pro">优</span> <b>实现成本最低</b>：纯前端改动，不动数据模型、不动行布局；存量「emoji + 标题」的 session 直接可用。</li>
+      <li><span class="pro">优</span> 符合直觉：用户看到的就是标题的一部分，「改它」的心理模型直接。</li>
+      <li><span class="con">劣</span> <b>标题即数据的耦合风险</b>：识别「标题首字符是不是 emoji」需要 grapheme 级解析（ZWJ 序列、修饰符）；与双击 rename 的起点选择、标题搜索、排序都产生耦合。</li>
+      <li><span class="con">劣</span> <b>布局不齐</b>：有 emoji 的行标题整体右移，行间标题起始 x 不对齐；无 emoji 行的 hover 框遮挡首字符。</li>
+      <li><span class="con">劣</span> 自动标题重新生成时会覆盖用户手动选的 emoji（除非额外记录）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ 方案 C ═══════════════════════════ -->
+<section class="page" id="page-c">
+  <div class="wrap">
+    <h1>方案 C · 菜单入口 + 轻提示</h1>
+    <p class="sub">行上不新增任何常驻交互元素；kebab（⋯）/右键菜单收一个「设置 Emoji…」入口。已设 emoji 的行 hover 时给 emoji 一个虚线圈轻提示，点击也可直接唤起 picker。</p>
+
+    <h2><span class="n">C1</span>交互 demo</h2>
+    <div class="demo-stage">
+      <div class="side pc" id="demo-c">
+        <div class="ws-card">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          kimi-code-app2
+        </div>
+        <div class="se" data-title="做一个 desktop 的需求，希望 …" data-emoji="⏳"><span class="st"></span><span class="t"></span><span class="act"><button class="kb" aria-label="更多操作">⋯</button><span class="tm">1h</span></span></div>
+        <div class="se" data-title="排查一个 desktop 的 bug，现 …" data-emoji="⚠️"><span class="st"></span><span class="t"></span><span class="act"><button class="kb" aria-label="更多操作">⋯</button><span class="tm">7h</span></span></div>
+        <div class="se" data-title="release: v0.3.2 changeset" data-emoji=""><span class="st"><span class="spin"></span></span><span class="t"></span><span class="act"><button class="kb" aria-label="更多操作">⋯</button><span class="tm">12m</span></span></div>
+        <div class="se" data-title="composer 工作区选择器" data-emoji=""><span class="st"></span><span class="t"></span><span class="act"><button class="kb" aria-label="更多操作">⋯</button><span class="tm">昨天</span></span></div>
+      </div>
+      <div>
+        <p style="margin-top:0"><b>试一试</b>：hover 行 → 右侧出现 kebab「⋯」，点开菜单选「设置 Emoji…」；有 emoji 的行 hover 时 emoji 会被虚线圈出，点击它也能直接换。</p>
+        <p class="demo-hint">无 emoji 的行在静止与 hover 下都与现状完全一致 —— 零新增视觉元素。</p>
+      </div>
+    </div>
+
+    <h2><span class="n">C2</span>优劣</h2>
+    <ul>
+      <li><span class="pro">优</span> <b>最克制</b>：不给列表增加任何常驻/悬停视觉负担，与现有 kebab 词汇完全同构（重命名、归档的同款路径）。</li>
+      <li><span class="pro">优</span> <b>触屏可达</b>：不依赖 hover —— 移动端/触屏唯一的可用入口；键盘走同样的菜单路径。</li>
+      <li><span class="con">劣</span> <b>发现性最低</b>：功能藏在二级菜单里，用户大概率不知道可以设 emoji。</li>
+    </ul>
+    <div class="callout"><b>注意</b>：无论最终选 A 还是 B，C 的菜单入口都建议作为<b>必备兜底</b>一并实现 —— hover 在触屏上不存在，键盘用户也需要一个不依赖指针悬停的可达路径。</div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ 对比与建议 ═══════════════════════════ -->
+<section class="page" id="page-cmp">
+  <div class="wrap">
+    <h1>对比与建议</h1>
+    <p class="sub">三个方案不是互斥的全集 —— 推荐组合落地，详见文末。</p>
+
+    <h2><span class="n">T1</span>对比表</h2>
+    <table class="cmp">
+      <tr><th style="width:120px">维度</th><th>A · 独立图标槽</th><th>B · 标题内联圈选</th><th>C · 菜单入口</th></tr>
+      <tr><td>发现性</td><td>高：hover 即见虚线框</td><td>中：有 emoji 才直观</td><td>低：藏在菜单里</td></tr>
+      <tr><td>视觉噪声（静止）</td><td>无</td><td>无</td><td>无</td></tr>
+      <tr><td>布局稳定性</td><td>标题起始 x 全列表对齐，hover 零位移</td><td>有 emoji 的行标题右移不对齐；无 emoji 行 hover 框遮挡首字符</td><td>同 B（emoji 在标题内时）</td></tr>
+      <tr><td>数据模型</td><td>session 新增 icon 字段（server 存储 + 同步策略）</td><td>零改动，emoji 留在标题字符串</td><td>取决于选 A 还是 B 的存储</td></tr>
+      <tr><td>存量/自动标题兼容</td><td>需迁移：剥离自动标题的 emoji 前缀写入字段</td><td>天然兼容（现状即如此）</td><td>—</td></tr>
+      <tr><td>触屏 / 键盘</td><td>槽位是 button 可 Tab；触屏无 hover 需 C 兜底</td><td>同左</td><td>菜单路径天然可达</td></tr>
+      <tr><td>实现成本</td><td>中（布局 + 字段 + 迁移）</td><td>低（纯前端）</td><td>低</td></tr>
+      <tr><td>主要风险</td><td>行首空间与状态 gutter 争抢</td><td>grapheme 解析、rename/搜索耦合、自动标题覆盖手动选择</td><td>功能被埋没</td></tr>
+    </table>
+
+    <h2><span class="n">T2</span>建议</h2>
+    <ul>
+      <li><b>主方案选 A</b>：emoji 作为 session 元数据、独立槽位常显，hover 虚线框作为唯一新增交互。布局稳定、语义干净，长期债最少。</li>
+      <li><b>C 的菜单入口必备</b>：作为触屏与键盘的可达性兜底，与 A 共用同一个 picker。</li>
+      <li><b>B 可作零成本过渡</b>：如果 server 字段短期排不上期，先用 B 纯前端落地（picker 直接改写标题前缀），但接受 grapheme 解析与 rename 耦合的风险；A 上线后退役。</li>
+    </ul>
+
+    <h2><span class="n">T3</span>开放问题（实现前需定）</h2>
+    <ul>
+      <li><b>存储</b>：icon 字段存 server（随 session 同步多设备）还是本地？外部 server 模式下行为是否一致？</li>
+      <li><b>迁移</b>：存量「emoji + 标题」session 是自动剥离，还是保留双显由用户手动清理？自动标题重生成时是否保留用户手选的 emoji？</li>
+      <li><b>picker 选集</b>：固定精选 32 个（当前原型）/ 分组全量 + 搜索 / 直接唤起系统 emoji 键盘？</li>
+      <li><b>状态优先级</b>：busy（spinner）/ unread（蓝点）与 emoji 槽并存时的层级 —— 原型按「spinner 在更左的 gutter，emoji 槽不让位」演示，需确认。</li>
+      <li><b>设计系统</b>：§icon 的 no-emoji-icon 规则约束的是 UI chrome；session emoji 属于用户内容（同标题文本），建议在该节补一句豁免说明，避免后续误读。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 共享浮层：picker + kebab 菜单 -->
+<div class="picker" id="picker">
+  <div class="pk-label">设置 Session Emoji</div>
+  <div class="pk-grid" id="pk-grid"></div>
+  <div class="pk-foot">
+    <button class="pk-act danger" id="pk-remove">移除 Emoji</button>
+    <button class="pk-act" id="pk-random">随机一个</button>
+  </div>
+</div>
+
+<div class="menu" id="menu">
+  <button class="mi" data-act="emoji">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1 1.5 3.5 1.5 3.5-1.5 3.5-1.5"/><circle cx="9" cy="10" r="0.5" fill="currentColor"/><circle cx="15" cy="10" r="0.5" fill="currentColor"/></svg>
+    设置 Emoji…
+  </button>
+  <button class="mi" data-act="rename">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3l4 4L8 20l-5 1 1-5L17 3z"/></svg>
+    重命名
+  </button>
+  <div class="mi-sep"></div>
+  <button class="mi" data-act="archive">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9M10 13h4"/></svg>
+    归档
+  </button>
+</div>
+
+<script>
+/* ============================= 主题 / 页面切换 ============================= */
+document.getElementById('btn-theme').addEventListener('click', () => {
+  const el = document.documentElement;
+  el.dataset.colorScheme = el.dataset.colorScheme === 'light' ? 'dark' : 'light';
+});
+document.querySelectorAll('.topbar .demo-btn[data-page]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.topbar .demo-btn[data-page]').forEach(b => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'page-' + btn.dataset.page));
+    closePicker(); closeMenu();
+  });
+});
+
+/* ============================= 行渲染 ============================= */
+/* data-emoji 是唯一状态源；标题文本固定在 data-title，emoji 渲染进各自方案的容器 */
+function renderRow(se) {
+  const e = se.dataset.emoji || '';
+  const title = se.dataset.title || '';
+  const slot = se.querySelector('.es');            // 方案 A 的槽位
+  if (slot) {
+    slot.classList.toggle('has', !!e);
+    slot.querySelector('.em').textContent = e;
+  }
+  const t = se.querySelector('.t');
+  if (t && !slot) {                                // 方案 B / C：emoji 内联进标题
+    t.textContent = '';
+    if (e) {
+      const s = document.createElement('span');
+      s.className = 'e'; s.textContent = e; s.tabIndex = 0;
+      s.setAttribute('role', 'button'); s.setAttribute('aria-label', '更换 Emoji');
+      t.appendChild(s);
+      t.appendChild(document.createTextNode(' '));
+    }
+    t.appendChild(document.createTextNode(title));
+  }
+}
+document.querySelectorAll('.se[data-title]').forEach(renderRow);
+
+/* ============================= Emoji picker ============================= */
+const EMOJIS = ['⏳','⚠️','🐛','✨','🔥','🚀','🎯','🧪','📝','🔍','🛠️','💡','📦','🎨','🔒','📈',
+                '🧹','🚧','✅','❓','🌙','☕','🐳','🗂️','📊','🤖','🧩','⚙️','🌱','📌','💥','🕐'];
+const picker = document.getElementById('picker');
+const pkGrid = document.getElementById('pk-grid');
+const pkRemove = document.getElementById('pk-remove');
+let applyPick = null;
+
+function buildGrid(container) {
+  EMOJIS.forEach(e => {
+    const b = document.createElement('button');
+    b.className = 'pk-e'; b.textContent = e;
+    container.appendChild(b);
+  });
+}
+buildGrid(pkGrid);
+buildGrid(document.querySelector('.pk-grid-sample'));
+
+function openPicker(anchor, current, apply) {
+  applyPick = apply;
+  pkGrid.querySelectorAll('.pk-e').forEach(b => b.classList.toggle('sel', b.textContent === current));
+  pkRemove.style.display = current ? '' : 'none';
+  picker.style.display = 'block';
+  const r = anchor.getBoundingClientRect();
+  const pw = picker.offsetWidth, ph = picker.offsetHeight;
+  let top = r.bottom + 6;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - pw - 8);
+  picker.style.top = top + 'px';
+  picker.style.left = left + 'px';
+  setTimeout(() => document.addEventListener('mousedown', onDocDown), 0);
+}
+function closePicker() {
+  picker.style.display = 'none';
+  applyPick = null;
+  document.removeEventListener('mousedown', onDocDown);
+}
+function onDocDown(e) {
+  if (!picker.contains(e.target)) closePicker();
+  if (!menu.contains(e.target)) closeMenu();
+}
+pkGrid.addEventListener('click', e => {
+  const b = e.target.closest('.pk-e');
+  if (!b || !applyPick) return;
+  applyPick(b.textContent);
+  closePicker();
+});
+pkRemove.addEventListener('click', () => { if (applyPick) applyPick(''); closePicker(); });
+document.getElementById('pk-random').addEventListener('click', () => {
+  if (applyPick) applyPick(EMOJIS[Math.floor(Math.random() * EMOJIS.length)]);
+  closePicker();
+});
+
+/* ============================= 方案 C 的 kebab 菜单 ============================= */
+const menu = document.getElementById('menu');
+let menuRow = null;
+function openMenu(anchor, se) {
+  menuRow = se;
+  menu.style.display = 'block';
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  menu.style.top = top + 'px';
+  menu.style.left = Math.max(8, r.right - mw) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', onDocDown), 0);
+}
+function closeMenu() {
+  menu.style.display = 'none';
+  menuRow = null;
+}
+menu.addEventListener('click', e => {
+  const mi = e.target.closest('.mi');
+  if (!mi || !menuRow) return;
+  const se = menuRow;
+  closeMenu();
+  if (mi.dataset.act === 'emoji') {
+    openPicker(se.querySelector('.t .e') || se.querySelector('.t'), se.dataset.emoji, em => {
+      se.dataset.emoji = em; renderRow(se);
+    });
+  }
+  /* rename / archive 在原型中不实现 —— 重点是 emoji 入口 */
+});
+
+/* ============================= 事件委派 ============================= */
+document.addEventListener('click', e => {
+  const se = e.target.closest('.se');
+  if (!se) return;
+  if (e.target.closest('.es, .t .e, .ov')) {       // 三个方案的 emoji 触发点
+    e.stopPropagation();
+    openPicker(e.target.closest('.es, .t .e, .ov'), se.dataset.emoji, em => {
+      se.dataset.emoji = em; renderRow(se);
+    });
+    return;
+  }
+  const kb = e.target.closest('.kb');
+  if (kb) { e.stopPropagation(); openMenu(kb, se); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closePicker(); closeMenu(); }
+  if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('e')) {
+    const se = e.target.closest('.se');
+    openPicker(e.target, se.dataset.emoji, em => { se.dataset.emoji = em; renderRow(se); });
+  }
+});
+</script>
+</body>
+</html>

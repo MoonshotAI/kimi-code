@@ -105,6 +105,7 @@ import RiCalendarCloseLine from '~icons/ri/calendar-close-line';
 import RiCalendarScheduleLine from '~icons/ri/calendar-schedule-line';
 import RiCalendarTodoLine from '~icons/ri/calendar-todo-line';
 import RiCodeLine from '~icons/ri/code-line';
+import RiEmotionLine from '~icons/ri/emotion-line';
 import RiExternalLinkLine from '~icons/ri/external-link-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
@@ -190,6 +191,7 @@ import RawCalendarCloseLine from '~icons/ri/calendar-close-line?raw';
 import RawCalendarScheduleLine from '~icons/ri/calendar-schedule-line?raw';
 import RawCalendarTodoLine from '~icons/ri/calendar-todo-line?raw';
 import RawCodeLine from '~icons/ri/code-line?raw';
+import RawEmotionLine from '~icons/ri/emotion-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
@@ -274,6 +276,7 @@ export type IconName =
   | 'clock'
   | 'robot'
   | 'sparkles'
+  | 'emoji'
   | 'target'
   | 'pause'
   | 'play'
@@ -371,6 +374,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   clock: entry(KimiClock, RawKimiClock),
   robot: entry(KimiRobot, RawKimiRobot),
   sparkles: entry(KimiTask, RawKimiTask),
+  emoji: entry(RiEmotionLine, RawEmotionLine),
   target: entry(KimiTarget, RawKimiTarget),
   pause: entry(KimiPause, RawKimiPause),
   play: entry(KimiPlay, RawKimiPlay),
@@ -482,7 +486,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'microscope',
     ],
   ],
-  ['Communication', ['message', 'mail', 'user', 'robot']],
+  ['Communication', ['message', 'mail', 'user', 'robot', 'emoji']],
   [
     'Status & media',
     [

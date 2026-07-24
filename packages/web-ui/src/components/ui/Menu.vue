@@ -4,6 +4,10 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+// `menu` for action lists (the default); `dialog` for popovers whose content
+// isn't menuitems (search inputs, grids — e.g. SessionEmojiPicker).
+withDefaults(defineProps<{ role?: 'menu' | 'dialog' }>(), { role: 'menu' });
+
 // Expose the panel element so call sites can anchor / outside-click against the
 // menu surface (positioning is intentionally left to the consumer).
 const el = ref<HTMLElement>();
@@ -11,7 +15,7 @@ defineExpose({ el });
 </script>
 
 <template>
-  <div ref="el" class="ui-menu" role="menu">
+  <div ref="el" class="ui-menu" :role="role">
     <slot />
   </div>
 </template>

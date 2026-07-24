@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api/index.ts",
-    "./contracts": "./src/contracts.ts"
+    "./contracts": "./src/contracts.ts",
+    "./lib": "./src/lib/index.ts"
   },
   "peerDependencies": {
     "vue": "^3.5.35"

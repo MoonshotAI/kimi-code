@@ -8,7 +8,9 @@ withDefaults(defineProps<{
   separator?: boolean;
   /** md (desktop) · lg (touch / mobile, ≥44px row). */
   size?: 'md' | 'lg';
-}>(), { size: 'md' });
+  /** `menuitem` inside a Menu (default); `button` in non-menu popovers (e.g. dialogs). */
+  role?: 'menuitem' | 'button';
+}>(), { size: 'md', role: 'menuitem' });
 
 defineEmits<{ click: [event: MouseEvent] }>();
 </script>
@@ -20,7 +22,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
     class="ui-menu-item"
     :class="[`ui-menu-item--${size}`, { 'is-active': active, 'is-danger': danger }]"
     type="button"
-    role="menuitem"
+    :role="role"
     :disabled="disabled"
     @click="$emit('click', $event)"
   >

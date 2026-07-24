@@ -1,12 +1,15 @@
 <!-- apps/web/src/components/SessionRow.vue -->
 <!-- A single session row: status dot + title + time + attention pill + kebab. -->
-<!-- Inline rename (dblclick) and delete-confirm live here. -->
+<!-- Inline rename (dblclick), the emoji icon affordance (hover wash + picker, -->
+<!-- see SessionEmojiPicker) and delete-confirm live here. -->
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/web-core/lib';
+import SessionEmojiPicker from './SessionEmojiPicker.vue';
 
 const { t } = useI18n();
 
@@ -109,6 +112,7 @@ async function toggleMenu(e: Event): Promise<void> {
 // caller then anchors it — the ⋯ button for toggleMenu, the cursor for
 // right-click.
 async function openMenu(): Promise<void> {
+  closePicker();
   menuOpen.value = true;
   // Defer so the current click doesn't immediately close the menu.
   setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
@@ -124,8 +128,136 @@ function closeMenu(): void {
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick);
+  document.removeEventListener('mousedown', onPickerDocClick);
+  window.removeEventListener('keydown', onPickerKeydown, true);
   window.removeEventListener('resize', closeMenu);
+  window.removeEventListener('resize', closePicker);
 });
+
+// Emoji picker — picking rewrites the title's leading emoji cluster (web-core
+// splitSessionEmoji) through the ordinary rename path.
+const emojiSplit = computed(() => splitSessionEmoji(props.session.title));
+/** Title text after the emoji button — the stored separator + text, byte-for-byte. */
+const displayText = computed(() => {
+  const e = emojiSplit.value.emoji;
+  return e ? props.session.title.slice(e.length) : props.session.title;
+});
+const pickerOpen = ref(false);
+const pickerRef = ref<InstanceType<typeof SessionEmojiPicker> | null>(null);
+const pickerStyle = ref<Record<string, string>>({});
+/** Element the picker is anchored to — its own clicks toggle, so outside-click ignores it. */
+let pickerAnchor: HTMLElement | null = null;
+
+// Pointer-anchored: transform origin tracks the click even after clamping.
+// Keyboard "clicks" (clientX/Y = 0) fall back to the trigger rect's `side` corner.
+function positionPicker(r: DOMRect, side: 'left' | 'right', originX?: number): void {
+  const panel = pickerRef.value?.el;
+  const gap = 4;
+  const margin = 8;
+  const panelH = panel?.offsetHeight ?? 0;
+  const panelW = panel?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  let flipped = false;
+  if (top + panelH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - panelH - gap);
+    flipped = true;
+  }
+  const wantLeft = originX ?? (side === 'left' ? r.left : r.right - panelW);
+  const left = Math.max(margin, Math.min(wantLeft, window.innerWidth - panelW - margin));
+  const originXPart =
+    originX === undefined ? side : `${Math.round(Math.min(Math.max(originX - left, 0), panelW))}px`;
+  pickerStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    transformOrigin: `${originXPart} ${flipped ? 'bottom' : 'top'}`,
+    '--menu-pop-shift': flipped ? '2px' : '-2px',
+  };
+}
+
+async function openPicker(
+  anchor: HTMLElement | undefined,
+  rect?: DOMRect,
+  side: 'left' | 'right' = 'left',
+  originX?: number,
+): Promise<void> {
+  const r = rect ?? anchor?.getBoundingClientRect();
+  if (!r) return;
+  if (pickerOpen.value) {
+    closePicker();
+    return;
+  }
+  closeMenu();
+  pickerAnchor = anchor ?? null;
+  pickerOpen.value = true;
+  // Defer so the opening click doesn't immediately close the panel.
+  setTimeout(() => document.addEventListener('mousedown', onPickerDocClick), 0);
+  // Window capture, consumed: the top layer owns Escape — ahead of the side
+  // panel (document capture) and the conversation interrupt (document bubble).
+  window.addEventListener('keydown', onPickerKeydown, true);
+  window.addEventListener('resize', closePicker);
+  // Wait for the teleported panel to mount so its size can be measured.
+  await nextTick();
+  positionPicker(r, side, originX);
+}
+
+function closePicker(): void {
+  pickerOpen.value = false;
+  pickerAnchor = null;
+  document.removeEventListener('mousedown', onPickerDocClick);
+  window.removeEventListener('keydown', onPickerKeydown, true);
+  window.removeEventListener('resize', closePicker);
+}
+
+function onPickerDocClick(e: MouseEvent): void {
+  const target = e.target as Node;
+  if (pickerRef.value?.el?.contains(target)) return;
+  // The trigger's own click toggles the picker — leave it for openPicker,
+  // otherwise the mousedown closes and the click immediately reopens.
+  if (pickerAnchor?.contains(target)) return;
+  closePicker();
+}
+
+function onPickerKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return;
+  // An Escape that only cancels an IME candidate in the search box must not
+  // close the picker (the picker's own guard covers Safari's isComposing=false).
+  if (pickerRef.value?.isComposingKeyEvent(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  closePicker();
+}
+
+function pointRect(e: MouseEvent): DOMRect | undefined {
+  return e.clientX || e.clientY ? new DOMRect(e.clientX, e.clientY, 0, 0) : undefined;
+}
+
+function openPickerFromRow(e: Event): void {
+  e.stopPropagation();
+  const me = e as MouseEvent;
+  void openPicker(me.currentTarget as HTMLElement, pointRect(me), 'left', me.clientX || undefined);
+}
+
+function openPickerFromMenu(e: Event): void {
+  // Right-click opened the menu at the cursor: anchor the picker to the click
+  // point (or, as a keyboard fallback, the menu's rect captured before
+  // closeMenu unmounts it), not to the hidden kebab.
+  const fromCursor = menuAnchor.value === 'cursor';
+  const anchor = fromCursor ? menuRef.value?.el : kebabRef.value?.el;
+  const me = e as MouseEvent;
+  const rect = pointRect(me) ?? anchor?.getBoundingClientRect();
+  closeMenu();
+  void openPicker(anchor, rect, fromCursor ? 'left' : 'right', me.clientX || undefined);
+}
+
+function applyEmoji(emoji: string | null): void {
+  closePicker();
+  // Re-picking the current icon is a no-op — even for stored titles whose
+  // prefix isn't in the normalized `emoji + space` shape, don't rewrite them.
+  if (emoji === emojiSplit.value.emoji) return;
+  const newTitle = applySessionEmoji(props.session.title, emoji);
+  // Never PATCH an empty title (the title was emoji-only and the emoji is removed).
+  if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
+}
 
 // Inline rename
 const renaming = ref(false);
@@ -135,6 +267,7 @@ const renameInputRef = ref<HTMLInputElement | null>(null);
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 async function startRename(): Promise<void> {
   closeMenu();
+  closePicker();
   renaming.value = true;
   renameValue.value = props.session.title;
   await nextTick();
@@ -272,7 +405,14 @@ defineExpose({ closeMenu });
           @compositionend="handleCompositionEnd"
           @blur="commitRename"
         />
-        <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
+        <span v-else class="t" @dblclick.stop="startRename"><button
+          v-if="emojiSplit.emoji"
+          type="button"
+          class="emoji"
+          :aria-label="t('sidebar.setEmoji')"
+          @click.stop="openPickerFromRow"
+          @dblclick.stop
+        >{{ emojiSplit.emoji }}</button>{{ displayText }}</span>
       </div>
 
       <!-- Pending tags — coloured per kind, shown even when the row isn't
@@ -361,6 +501,10 @@ defineExpose({ closeMenu });
           <Icon name="pencil" size="sm" />
           {{ t('sidebar.rename') }}
         </MenuItem>
+        <MenuItem @click="openPickerFromMenu">
+          <Icon name="emoji" size="sm" />
+          {{ t('sidebar.setEmoji') }}
+        </MenuItem>
         <MenuItem @click="forkRow">
           <Icon name="git-fork" size="sm" />
           {{ t('sidebar.fork') }}
@@ -380,6 +524,23 @@ defineExpose({ closeMenu });
         <MenuItem separator />
         <div class="menu-time">{{ fullTime }}</div>
         </Menu>
+      </Transition>
+    </Teleport>
+
+    <!-- Emoji picker — teleported like the kebab menu so the collapsing
+         `.group-sessions` list's `overflow: hidden` can't clip it. -->
+    <Teleport to="body">
+      <Transition name="menu-pop">
+        <SessionEmojiPicker
+          v-if="pickerOpen"
+          ref="pickerRef"
+          class="picker"
+          :style="pickerStyle"
+          :current="emojiSplit.emoji"
+          :removable="emojiSplit.rest.length > 0"
+          @click.stop
+          @pick="applyEmoji"
+        />
       </Transition>
     </Teleport>
   </div>
@@ -471,6 +632,17 @@ defineExpose({ closeMenu });
   --sb-fade-len: 26px;
 }
 
+/* Leading emoji (the session icon): an ordinary title character — no
+   decoration at rest or on hover. It stays a <button> for a11y; the kebab
+   menu's "Set Emoji…" is the discoverable path. */
+.t .emoji {
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.t .emoji:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+
 .ts {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
@@ -548,6 +720,14 @@ defineExpose({ closeMenu });
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
    is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
 .menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-dropdown);
+}
+/* The emoji picker shares the menu's fixed + teleported placement (anchored by
+   positionPicker, either to the ⋯ button or to the title's emoji). */
+.picker {
   position: fixed;
   top: 0;
   left: 0;
