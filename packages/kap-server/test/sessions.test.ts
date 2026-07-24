@@ -1,7 +1,7 @@
 /**
  * Scenario: v1-compatible session routes, including blocked-goal Web resume.
  * Responsibilities: verify HTTP envelopes, persisted reads, and session actions.
- * Wiring: real kap-server; goal-resume cases observe the agent event stream.
+ * Wiring: real kap-server; route errors stub the agent service contract.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessions.test.ts`.
  */
 import { randomBytes } from 'node:crypto';
@@ -10,11 +10,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  Error2,
+  ErrorCodes,
   IBootstrapService,
   type DomainEvent,
+  IAgentConversationUndoService,
   IAgentGoalService,
   IAgentLifecycleService,
   IEventBus,
@@ -616,6 +619,33 @@ describe('server-v2 /api/v1/sessions', () => {
     // The thrown Error2's stack is surfaced so operators can locate the
     // source — the precheck/throw now lives in the undo service.
     expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+  });
+
+  it('returns 40901 when :undo reports a busy session', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const session = (server as RunningServer).core.accessor
+      .get(ISessionLifecycleService)
+      .get(created.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    const agent = await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const undo = vi
+      .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
+      .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
+
+    try {
+      const response = await postJson<null>(
+        `/api/v1/sessions/${created.body.data.id}:undo`,
+        { count: 1 },
+      );
+
+      expect(response.body.code).toBe(40901);
+    } finally {
+      undo.mockRestore();
+    }
   });
 
   it('rejects an unsupported action suffix (40001)', async () => {
