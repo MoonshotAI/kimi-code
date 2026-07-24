@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 
+import { PROVIDER_ID_PATTERN } from '@moonshot-ai/agent-core-v2';
 import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
@@ -100,7 +101,7 @@ function refineProviderForm(
 export const providerIdSchema = z
   .string()
   .regex(
-    /^[\p{L}\p{N}][\p{L}\p{N}\-_ ]*$/u,
+    PROVIDER_ID_PATTERN,
     'id must start with a letter or digit and may only contain letters, digits, "-", "_" and spaces',
   );
 

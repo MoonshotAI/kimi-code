@@ -1,72 +1,65 @@
 /**
- * models.dev catalog upstream — fetch, in-memory cache, built-in snapshot
- * fallback, and the pruned item mapping for the `/catalog/providers` routes.
+ * `kosongConfig` domain (L3) — models.dev upstream: fetch the third-party
+ * directory, in-memory cache, built-in snapshot fallback, and the pruned
+ * item mapping behind `IModelsDevImportService`'s browse methods.
  *
  * The normalization decisions (wire resolution, base-URL adaptation, model
- * pruning) all come from `@moonshot-ai/kosong`, the same functions the
- * TUI/CLI import paths use, so the GUI import stays behavior-identical.
- * The small glue pieces the node-sdk keeps (`fetchCatalog`,
- * `catalogModelToAlias`, `loadBuiltInCatalog`) are re-implemented here
- * because the node-sdk is the v1 in-process SDK and pulls a runtime the
- * server must not load; the config write itself is orchestrated by the
- * route through `IConfigService` sections (never `applyCatalogProvider`,
- * which would also move the global default pointers).
+ * pruning) all come from the sibling `modelsDev` module, the same functions
+ * the TUI/CLI import paths use (via the kosong copy), so a GUI import stays
+ * behavior-identical to a CLI import. The config write itself is
+ * orchestrated by the import service through `IConfigService` sections
+ * (never the node-sdk's `applyCatalogProvider`, which would also move the
+ * global default pointers).
  */
 
+import { Error2 } from '#/_base/errors/errors';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ModelRecord } from '#/kosong/model/model';
+
+import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
+import { ModelsDevImportErrors } from './errors';
 import {
-  catalogProviderModels,
-  resolveCatalogImport,
-  type Catalog,
-  type CatalogModel,
-  type CatalogProviderEntry,
-  type ModelCapability,
-} from '@moonshot-ai/kosong';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2';
+  modelsDevProviderModels,
+  resolveModelsDevImport,
+  type ModelsDevCatalog,
+  type ModelsDevModel,
+  type ModelsDevProviderEntry,
+} from './modelsDev';
+import type { ModelsDevModelItem, ModelsDevProviderItem } from './modelsDevImport';
 
-import { BUILT_IN_CATALOG_JSON } from './built-in-catalog';
-
-export const CATALOG_URL = 'https://models.dev/api.json';
+export const MODELS_DEV_URL = 'https://models.dev/api.json';
 const CACHE_TTL_MS = 10 * 60 * 1000;
-/** Shared upstream timeout for both the catalog and registry fetches. */
+/** Shared upstream timeout for both the models.dev and registry fetches. */
 export const UPSTREAM_FETCH_TIMEOUT_MS = 10_000;
 
-/** Thrown when neither the network nor a snapshot can produce a catalog. */
-export class CatalogUnavailableError extends Error {
-  constructor(cause: unknown) {
-    super(
-      `models.dev catalog unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-    this.name = 'CatalogUnavailableError';
-  }
-}
-
-/** Parses a built-in catalog snapshot string; undefined when missing/invalid. */
-export function loadBuiltInCatalog(text?: string): Catalog | undefined {
+/** Parses a built-in directory snapshot string; undefined when missing/invalid. */
+export function loadBuiltInModelsDevCatalog(text?: string): ModelsDevCatalog | undefined {
   if (typeof text !== 'string' || text.length === 0) return undefined;
   try {
-    return JSON.parse(text) as Catalog;
+    return JSON.parse(text) as ModelsDevCatalog;
   } catch {
     return undefined;
   }
 }
 
-interface CatalogCacheEntry {
-  readonly catalog: Catalog;
+interface ModelsDevCacheEntry {
+  readonly catalog: ModelsDevCatalog;
   readonly fetchedAt: number;
 }
 
-let cache: CatalogCacheEntry | undefined;
-let inFlight: Promise<Catalog> | undefined;
-let builtInMemo: Catalog | undefined | null = null;
+let cache: ModelsDevCacheEntry | undefined;
+let inFlight: Promise<ModelsDevCatalog> | undefined;
+let builtInMemo: ModelsDevCatalog | undefined | null = null;
 let fetchImpl: typeof fetch = fetch;
 let nowImpl: () => number = Date.now;
 
 /**
- * Test hook: swap the fetch/clock used by `getCatalog`. The cache is kept, so
- * TTL behavior can be exercised by advancing the injected clock; pair with
- * `resetCatalogUpstreamForTest` in test setup/teardown for isolation.
+ * Test hook: swap the fetch/clock used by `getModelsDevCatalog`. The cache is
+ * kept, so TTL behavior can be exercised by advancing the injected clock;
+ * pair with `resetModelsDevUpstreamForTest` in test setup/teardown for
+ * isolation.
  */
-export function setCatalogUpstreamForTest(options: {
+export function setModelsDevUpstreamForTest(options: {
   fetchImpl?: typeof fetch;
   now?: () => number;
 }): void {
@@ -75,7 +68,7 @@ export function setCatalogUpstreamForTest(options: {
 }
 
 /** Test hook: drop the cache and restore the real fetch/clock. */
-export function resetCatalogUpstreamForTest(): void {
+export function resetModelsDevUpstreamForTest(): void {
   cache = undefined;
   inFlight = undefined;
   builtInMemo = null;
@@ -83,18 +76,18 @@ export function resetCatalogUpstreamForTest(): void {
   nowImpl = Date.now;
 }
 
-/** The currently injected fetch — shared by the catalog and registry upstreams. */
+/** The currently injected fetch — shared by the models.dev and registry upstreams. */
 export function upstreamFetch(): typeof fetch {
   return fetchImpl;
 }
 
 /**
- * Returns the models.dev catalog: fresh cache hit → one shared network fetch
- * (concurrent misses join the same in-flight promise; cached on success) →
- * stale cache on fetch failure → built-in snapshot → throws
- * `CatalogUnavailableError`.
+ * Returns the models.dev directory: fresh cache hit → one shared network
+ * fetch (concurrent misses join the same in-flight promise; cached on
+ * success) → stale cache on fetch failure → built-in snapshot → throws
+ * `modelsDev.catalog_unavailable`.
  */
-export async function getCatalog(): Promise<Catalog> {
+export async function getModelsDevCatalog(): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   if (cache !== undefined && now - cache.fetchedAt < CACHE_TTL_MS) return cache.catalog;
   inFlight ??= fetchAndCache().finally(() => {
@@ -103,10 +96,10 @@ export async function getCatalog(): Promise<Catalog> {
   return inFlight;
 }
 
-async function fetchAndCache(): Promise<Catalog> {
+async function fetchAndCache(): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   try {
-    const res = await fetchImpl(CATALOG_URL, {
+    const res = await fetchImpl(MODELS_DEV_URL, {
       headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
@@ -115,60 +108,42 @@ async function fetchAndCache(): Promise<Catalog> {
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
       throw new Error('unexpected catalog payload shape');
     }
-    cache = { catalog: payload as Catalog, fetchedAt: now };
+    cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
   } catch (err) {
     if (cache !== undefined) return cache.catalog;
     const builtIn = builtInCatalog();
     if (builtIn !== undefined) {
       // Cache the snapshot too — an offline install would otherwise pay the
-      // full upstream timeout on every catalog call before falling back.
+      // full upstream timeout on every directory call before falling back.
       cache = { catalog: builtIn, fetchedAt: now };
       return builtIn;
     }
-    throw new CatalogUnavailableError(err);
+    throw new Error2(
+      ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE,
+      `models.dev catalog unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
 /** The built-in snapshot, parsed at most once per process (it can be MBs). */
-function builtInCatalog(): Catalog | undefined {
-  if (builtInMemo === null) builtInMemo = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+function builtInCatalog(): ModelsDevCatalog | undefined {
+  if (builtInMemo === null) builtInMemo = loadBuiltInModelsDevCatalog(BUILT_IN_MODELS_DEV_JSON);
   return builtInMemo;
 }
 
-/** Own-property lookup — a parsed catalog still carries the Object prototype
+/** Own-property lookup — a parsed directory still carries the Object prototype
  *  chain, so `catalog['constructor']` must not masquerade as a real entry. */
-export function catalogEntry(catalog: Catalog, id: string): CatalogProviderEntry | undefined {
+export function modelsDevEntry(
+  catalog: ModelsDevCatalog,
+  id: string,
+): ModelsDevProviderEntry | undefined {
   return Object.prototype.hasOwnProperty.call(catalog, id) ? catalog[id] : undefined;
 }
 
 // ---------------------------------------------------------------------------
-// Pruned item mapping (wire shape of GET /catalog/providers)
+// Pruned item mapping (the browse wire shape)
 // ---------------------------------------------------------------------------
-
-export interface CatalogModelItem {
-  readonly id: string;
-  readonly name?: string;
-  readonly max_context_size: number;
-  readonly capabilities?: readonly string[];
-  readonly reasoning: boolean;
-}
-
-export interface CatalogProviderItem {
-  readonly id: string;
-  readonly name: string;
-  readonly wire_type: string | null;
-  /** True when the wire came from the OpenAI-compatible fallback, not a declaration. */
-  readonly guessed: boolean;
-  /** True when the import form must collect a base URL from the user. */
-  readonly needs_base_url: boolean;
-  /** True when the entry cannot be imported at all (greyed out by clients). */
-  readonly rejected: boolean;
-  readonly reject_reason: string | null;
-  /** The credential env var the vendor conventionally uses, as a hint. */
-  readonly env_key: string | null;
-  readonly models: readonly CatalogModelItem[];
-}
 
 function capabilityToStrings(capability: ModelCapability): string[] | undefined {
   const caps: string[] = [];
@@ -181,7 +156,7 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
   return caps.length > 0 ? caps : undefined;
 }
 
-function toModelItem(model: CatalogModel): CatalogModelItem {
+function toModelItem(model: ModelsDevModel): ModelsDevModelItem {
   const caps = capabilityToStrings(model.capability);
   return {
     ...(model.name !== undefined ? { name: model.name } : {}),
@@ -192,10 +167,13 @@ function toModelItem(model: CatalogModel): CatalogModelItem {
   };
 }
 
-/** Maps one catalog entry to its pruned REST item, resolving import eligibility. */
-export function toCatalogProviderItem(id: string, entry: CatalogProviderEntry): CatalogProviderItem {
-  const resolution = resolveCatalogImport(entry);
-  const models = catalogProviderModels(entry).map(toModelItem);
+/** Maps one directory entry to its pruned browse item, resolving import eligibility. */
+export function toModelsDevProviderItem(
+  id: string,
+  entry: ModelsDevProviderEntry,
+): ModelsDevProviderItem {
+  const resolution = resolveModelsDevImport(entry);
+  const models = modelsDevProviderModels(entry).map(toModelItem);
   const base = {
     id,
     // An empty-string upstream name is as useless as a missing one — fall back.
@@ -232,21 +210,21 @@ export function toCatalogProviderItem(id: string, entry: CatalogProviderEntry): 
         reject_reason: resolution.reason,
       };
   }
-  // Unreachable in practice: CatalogImportResolution is a closed three-way
+  // Unreachable in practice: ModelsDevImportResolution is a closed three-way
   // union, but older TS control-flow cannot prove the switch exhaustive.
-  throw new Error(`unhandled catalog import resolution: ${JSON.stringify(resolution)}`);
+  throw new Error(`unhandled models.dev import resolution: ${JSON.stringify(resolution)}`);
 }
 
 // ---------------------------------------------------------------------------
-// Config record mapping (used by the import route)
+// Config record mapping (used by the models.dev import)
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the persisted model alias record for an imported catalog model —
+ * Builds the persisted model alias record for an imported models.dev model —
  * the same field set as the node-sdk's `catalogModelToAlias`, so a
  * GUI-imported provider is indistinguishable from a TUI-imported one.
  */
-export function catalogModelToRecord(providerId: string, model: CatalogModel): ModelRecord {
+export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel): ModelRecord {
   const caps = capabilityToStrings(model.capability);
   // A model that always reasons advertises `always_thinking` instead of
   // `thinking`, so the UI locks thinking on and offers no off option.

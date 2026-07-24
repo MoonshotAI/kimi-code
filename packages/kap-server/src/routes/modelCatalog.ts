@@ -4,7 +4,8 @@
  * Implements the v1 model/provider catalog wire contract on top of
  * `agent-core-v2`'s `IModelCatalog` (the remote-discovery refresh lives on
  * `IProviderDiscoveryService`; the OAuth-only managed refresh additionally
- * lives on `IOAuthService`):
+ * lives on `IOAuthService`; the models.dev directory browse and the
+ * catalog/registry imports live on `IModelsDevImportService`):
  *   GET    /models                       — list configured model aliases
  *   GET    /providers                    — list configured providers
  *   GET    /providers/{provider_id}      — get a configured provider by id
@@ -23,19 +24,22 @@
  * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
  * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
  * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
- * throws coded `Error2`s (`provider.not_found` / `model.not_found`); this
- * edge maps them to the numeric protocol codes by `code` (never `instanceof`).
+ * throws coded `Error2`s (`provider.not_found` / `model.not_found` /
+ * `provider.catalog_*` / `provider.*_import_invalid` / `provider.oauth_managed`);
+ * this edge maps them to the numeric protocol codes by `code` (never
+ * `instanceof`).
  *
  * **Write surface**: create/replace/delete write the user config layer through
- * `IConfigService`. Replace and delete use whole-section `replace` (deep-merge
+ * `IConfigService` (the catalog/registry imports write through
+ * `IModelsDevImportService` in the engine — this edge only maps the wire).
+ * Replace and delete use whole-section `replace` (deep-merge
  * `set` can never drop a key). One subtlety shapes all the write code below:
  * the providers/models TOML transforms rebuild each section's entries but
  * overlay each entry's fields onto the old on-disk raw — so an entry id
  * absent from the replacement truly disappears, while a FIELD absent from a
  * kept entry would silently survive on disk (and resurrect on the next boot).
  * Field-level clears therefore always assign an explicit `undefined` (the
- * transform's `setDefined` drops those), and the import refreshes swap
- * aliases in two passes (drop, then re-add onto clean slots). The kosong
+ * transform's `setDefined` drops those). The kosong
  * persistence bridge then pushes the change into the registries, which is
  * also what invalidates the catalog cache. Multi-step sequences are
  * serialized through `enqueueProviderWrite`.
@@ -47,7 +51,9 @@ import {
   IModelCatalog,
   IOAuthService,
   IProviderDiscoveryService,
+  IModelsDevImportService,
   isError2,
+  ModelsDevImportErrors,
   type ModelRecord,
   type ModelsSection,
   type ProviderConfig,
@@ -64,14 +70,6 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { z } from 'zod';
 
-import {
-  applyCustomRegistryProvider,
-  fetchCustomRegistry,
-  removeCustomRegistryProvider,
-  type CustomRegistryProviderEntry,
-  type CustomRegistrySource,
-  type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -86,21 +84,10 @@ import {
   listModelsResponseSchema,
   listProvidersResponseSchema,
   providerCollectionActionBodySchema,
-  providerIdSchema,
   replaceProviderRequestSchema,
   replaceProviderResponseSchema,
   type ProviderCollectionActionBody,
 } from '../protocol/rest-modelCatalog';
-import {
-  CatalogUnavailableError,
-  catalogEntry,
-  catalogModelToRecord,
-  getCatalog,
-  toCatalogProviderItem,
-  upstreamFetch,
-  UPSTREAM_FETCH_TIMEOUT_MS,
-} from '../catalogUpstream';
-import { catalogProviderModels, resolveCatalogImport } from '@moonshot-ai/kosong';
 import { parseActionSuffix } from './action-suffix';
 
 interface ModelCatalogRouteHost {
@@ -801,11 +788,10 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       try {
-        const catalog = await getCatalog();
-        const items = Object.entries(catalog).map(([id, entry]) => toCatalogProviderItem(id, entry));
+        const items = await core.accessor.get(IModelsDevImportService).listModelsDevProviders();
         reply.send(okEnvelope({ items }, req.id));
       } catch (err) {
-        if (sendCatalogError(reply, req.id, err)) return;
+        if (sendModelsDevImportError(reply, req.id, err)) return;
         throw err;
       }
     },
@@ -832,22 +818,11 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       try {
-        const catalog = await getCatalog();
         const { catalog_id } = req.params;
-        const entry = catalogEntry(catalog, catalog_id);
-        if (entry === undefined) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.CATALOG_ENTRY_NOT_FOUND,
-              `catalog entry ${catalog_id} does not exist`,
-              req.id,
-            ),
-          );
-          return;
-        }
-        reply.send(okEnvelope(toCatalogProviderItem(catalog_id, entry), req.id));
+        const item = await core.accessor.get(IModelsDevImportService).getModelsDevProvider(catalog_id);
+        reply.send(okEnvelope(item, req.id));
       } catch (err) {
-        if (sendCatalogError(reply, req.id, err)) return;
+        if (sendModelsDevImportError(reply, req.id, err)) return;
         throw err;
       }
     },
@@ -877,17 +852,26 @@ function sendMappedError(
   return false;
 }
 
-/** Map a catalog-upstream failure to the numeric protocol envelope. Returns true if handled. */
-function sendCatalogError(
+/** The engine's provider-import error codes mapped onto the numeric protocol codes. */
+const MODELS_DEV_IMPORT_ERROR_CODES: Record<string, number> = {
+  [ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE]: ErrorCode.CATALOG_UNAVAILABLE,
+  [ModelsDevImportErrors.codes.CATALOG_ENTRY_NOT_FOUND]: ErrorCode.CATALOG_ENTRY_NOT_FOUND,
+  [ModelsDevImportErrors.codes.CATALOG_IMPORT_INVALID]: ErrorCode.CATALOG_IMPORT_INVALID,
+  [ModelsDevImportErrors.codes.REGISTRY_IMPORT_INVALID]: ErrorCode.REGISTRY_IMPORT_INVALID,
+  [ModelsDevImportErrors.codes.PROVIDER_OAUTH_MANAGED]: ErrorCode.PROVIDER_OAUTH_MANAGED,
+};
+
+/** Map a provider-import domain error to the numeric protocol envelope. Returns true if handled. */
+function sendModelsDevImportError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
   err: unknown,
 ): boolean {
-  if (err instanceof CatalogUnavailableError) {
-    reply.send(errEnvelope(ErrorCode.CATALOG_UNAVAILABLE, err.message, requestId, err.stack));
-    return true;
-  }
-  return false;
+  if (!isError2(err)) return false;
+  const numeric = MODELS_DEV_IMPORT_ERROR_CODES[err.code];
+  if (numeric === undefined) return false;
+  reply.send(errEnvelope(numeric, err.message, requestId, err.stack));
+  return true;
 }
 
 /**
@@ -913,293 +897,61 @@ async function handleImportCatalog(
       return;
     }
 
-    const catalog = await getCatalog();
-    const { catalog_id } = body;
-    const entry = catalogEntry(catalog, catalog_id);
-    if (entry === undefined) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.CATALOG_ENTRY_NOT_FOUND,
-          `catalog entry ${catalog_id} does not exist`,
-          req.id,
-        ),
-      );
-      return;
-    }
-
-    const resolution = resolveCatalogImport(entry, body.base_url);
-    if (resolution.kind === 'invalid') {
-      reply.send(
-        errEnvelope(
-          ErrorCode.CATALOG_IMPORT_INVALID,
-          `catalog entry ${catalog_id} cannot be imported: ${resolution.reason}`,
-          req.id,
-        ),
-      );
-      return;
-    }
-    if (resolution.kind === 'needs-base-url') {
-      reply.send(
-        errEnvelope(
-          ErrorCode.CATALOG_IMPORT_INVALID,
-          `catalog entry ${catalog_id} requires a base_url`,
-          req.id,
-        ),
-      );
-      return;
-    }
-
-    const models = catalogProviderModels(entry);
-    if (models.length === 0) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.CATALOG_IMPORT_INVALID,
-          `catalog entry ${catalog_id} has no importable models`,
-          req.id,
-        ),
-      );
-      return;
-    }
-
-    const config = await loadConfig(core);
-    const targetId = body.id ?? catalog_id;
-    if (!providerIdSchema.safeParse(targetId).success) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.CATALOG_IMPORT_INVALID,
-          `catalog entry id ${targetId} cannot be used as a provider id`,
-          req.id,
-        ),
-      );
-      return;
-    }
-    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-    const existing = providers[targetId];
-    if (existing?.oauth !== undefined) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.PROVIDER_OAUTH_MANAGED,
-          `provider ${targetId} is managed by OAuth login; use POST /oauth/logout instead`,
-          req.id,
-        ),
-      );
-      return;
-    }
-
-    // api_key is tri-state like PUT: absent keeps the stored key on a
-    // re-import (a refresh must not silently drop the credential), "" clears
-    // it, anything else replaces it. base_url follows the catalog resolution —
-    // explicit `undefined` when the wire needs none, so a stale on-disk value
-    // is really cleared (the TOML transform is a raw overlay that only drops
-    // keys assigned an explicit undefined). The global default pointers are
-    // deliberately left alone (aside from the fresh-setup seeding below).
-    const provider: ProviderConfig = { type: resolution.wire };
-    provider.baseUrl = resolution.baseUrl;
-    provider.apiKey = body.api_key ?? existing?.apiKey;
-    await config.replace(PROVIDERS_SECTION, { ...providers, [targetId]: provider });
-
-    // Two-pass alias swap: pass 1 drops the provider's aliases for real
-    // (entry-level deletes ARE honored by the TOML overlay), pass 2 writes the
-    // fresh records onto clean slots — a kept alias id would otherwise keep
-    // stale on-disk fields the upstream no longer lists.
-    const records = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
-    const withoutTarget = Object.fromEntries(
-      Object.entries(records).filter(([, record]) => record.provider !== targetId),
-    );
-    await config.replace(MODELS_SECTION, withoutTarget);
-    const nextModels = { ...withoutTarget };
-    for (const model of models) {
-      nextModels[`${targetId}/${model.id}`] = catalogModelToRecord(targetId, model);
-    }
-    await config.replace(MODELS_SECTION, nextModels);
-
-    // Same fresh-setup seeding as POST /providers: an existing global
-    // default is never moved, but a setup with none becomes usable.
-    const firstCatalogModel = models[0];
-    if (firstCatalogModel !== undefined) {
-      await seedDefaultModelWhenUnset(config, `${targetId}/${firstCatalogModel.id}`);
-    }
-
-    const imported = await core.accessor.get(IModelCatalog).getProvider(targetId);
+    const result = await core.accessor.get(IModelsDevImportService).importModelsDevProvider({
+      catalogId: body.catalog_id,
+      id: body.id,
+      apiKey: body.api_key,
+      baseUrl: body.base_url,
+    });
     (reply as unknown as StatusReply)
       .code(201)
-      .send(okEnvelope({ provider: imported, models_imported: models.length }, req.id));
+      .send(
+        okEnvelope(
+          { provider: result.provider, models_imported: result.modelsImported },
+          req.id,
+        ),
+      );
   } catch (err) {
-    if (sendCatalogError(reply, req.id, err)) return;
+    if (sendModelsDevImportError(reply, req.id, err)) return;
     throw err;
   }
 }
 
 /**
  * The `:import_registry` collection action: fetch a models.dev-shaped private
- * registry (api.json) and apply every entry. Reuses the core's
- * `fetchCustomRegistry` (fetch + validation) and its
- * `removeCustomRegistryProvider` / `applyCustomRegistryProvider` primitives —
- * the exact remove-then-apply sequence of `applyCustomRegistryEntries`, split
- * into TWO persisted passes so deletions really reach the disk (the TOML
- * transform is a raw overlay that only honors entry-level deletes; applying
- * in the same pass would let stale fields of kept ids survive on disk). The
- * in-memory shapes deliberately omit the default pointers so the core's
- * removal logic can never clamp them: provider writes never move
- * default_provider/default_model (aside from the fresh-setup default_model
- * seeding at the end). An omitted `api_key` inherits the key from
- * the previous import of the same URL (the `source` blob), mirroring PUT's
- * keep-on-absent semantics; "" clears it.
+ * registry (api.json) and apply every entry. The orchestration (fetch +
+ * validation + the two persisted remove/apply passes) lives in the engine's
+ * `IModelsDevImportService`; this edge only validates the wire body and maps
+ * the result and errors.
  */
 async function handleImportRegistry(
   req: { id: string; body: ProviderCollectionActionBody | undefined },
   reply: { send(payload: unknown): unknown },
   core: Scope,
 ): Promise<void> {
-  const body = req.body;
-  if (body?.url === undefined) {
-    reply.send(
-      errEnvelope(ErrorCode.VALIDATION_FAILED, 'url is required for :import_registry', req.id),
-    );
-    return;
-  }
-  const url = body.url;
-
-  const config = await loadConfig(core);
-  const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url,
-    apiKey: body.api_key ?? registryKeyFromExisting(providers, url) ?? '',
-  };
-
-  let entries: Record<string, CustomRegistryProviderEntry>;
   try {
-    entries = await fetchCustomRegistry(source, {
-      fetchImpl: upstreamFetch(),
-      userAgent: 'kimi-code-kap-server',
-      signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
-    });
-  } catch (err) {
-    reply.send(
-      errEnvelope(
-        ErrorCode.REGISTRY_IMPORT_INVALID,
-        // Truncate the upstream's error text: a hostile registry could echo
-        // the Bearer token it received back inside its error payload.
-        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(err)}`,
-        req.id,
-      ),
-    );
-    return;
-  }
-  if (Object.keys(entries).length === 0) {
-    reply.send(
-      errEnvelope(
-        ErrorCode.REGISTRY_IMPORT_INVALID,
-        `custom registry at ${url} has no importable providers`,
-        req.id,
-      ),
-    );
-    return;
-  }
-
-  // A registry entry must never rewrite (or delete) an OAuth-managed provider.
-  for (const entry of Object.values(entries)) {
-    if (providers[entry.id]?.oauth !== undefined) {
+    const body = req.body;
+    if (body?.url === undefined) {
       reply.send(
-        errEnvelope(
-          ErrorCode.PROVIDER_OAUTH_MANAGED,
-          `provider ${entry.id} is managed by OAuth login; use POST /oauth/logout instead`,
-          req.id,
-        ),
+        errEnvelope(ErrorCode.VALIDATION_FAILED, 'url is required for :import_registry', req.id),
       );
       return;
     }
+    const result = await core.accessor.get(IModelsDevImportService).importCustomRegistry({
+      url: body.url,
+      apiKey: body.api_key,
+    });
+    (reply as unknown as StatusReply)
+      .code(201)
+      .send(
+        okEnvelope(
+          { providers: result.providers, models_imported: result.modelsImported },
+          req.id,
+        ),
+      );
+  } catch (err) {
+    if (sendModelsDevImportError(reply, req.id, err)) return;
+    throw err;
   }
-
-  // Pass 1 (delete): same-URL providers that vanished upstream, plus every
-  // listed provider's current records. OAuth-managed entries are defensive-
-  // skipped even on the removal path.
-  const removed = {
-    providers: { ...providers },
-    models: {
-      ...config.inspect<ModelsSection>(MODELS_SECTION).userValue,
-    },
-  } as ManagedKimiConfigShape;
-  const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-  for (const [providerId, provider] of Object.entries(removed.providers)) {
-    if (surviving.has(providerId)) continue;
-    if (!isRecord(provider)) continue;
-    if (provider['oauth'] !== undefined) continue;
-    const existingSource = provider['source'];
-    if (
-      isRecord(existingSource) &&
-      existingSource['kind'] === 'apiJson' &&
-      existingSource['url'] === url
-    ) {
-      removeCustomRegistryProvider(removed, providerId);
-    }
-  }
-  for (const entry of Object.values(entries)) {
-    if (entry.id in removed.providers) {
-      removeCustomRegistryProvider(removed, entry.id);
-    }
-  }
-  await config.replace(PROVIDERS_SECTION, removed.providers as ProvidersSection);
-  await config.replace(MODELS_SECTION, (removed.models ?? {}) as ModelsSection);
-
-  // Pass 2 (apply): fresh provider + alias records onto the cleaned slots.
-  const applied = {
-    providers: removed.providers,
-    models: removed.models,
-  } as ManagedKimiConfigShape;
-  for (const entry of Object.values(entries)) {
-    applyCustomRegistryProvider(applied, entry, source);
-  }
-  await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
-  await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
-
-  // Same fresh-setup seeding as POST /providers / :import_catalog: never
-  // moves an existing global default, seeds one from the first imported
-  // model when the setup has none.
-  const firstEntry = Object.values(entries)[0];
-  const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
-  if (firstEntry !== undefined && firstModelKey !== undefined) {
-    await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModelKey}`);
-  }
-
-  const imported = [];
-  for (const entry of Object.values(entries)) {
-    imported.push(await core.accessor.get(IModelCatalog).getProvider(entry.id));
-  }
-  const modelsImported = Object.values(entries).reduce(
-    (total, entry) => total + Object.keys(entry.models).length,
-    0,
-  );
-  (reply as unknown as StatusReply)
-    .code(201)
-    .send(okEnvelope({ providers: imported, models_imported: modelsImported }, req.id));
-}
-
-/** The api_key stored by the previous import of the same registry URL, if any. */
-function registryKeyFromExisting(
-  providers: ProvidersSection,
-  url: string,
-): string | undefined {
-  for (const provider of Object.values(providers)) {
-    if (!isRecord(provider)) continue;
-    const source = provider['source'];
-    if (isRecord(source) && source['kind'] === 'apiJson' && source['url'] === url) {
-      const key = source['apiKey'];
-      if (typeof key === 'string' && key.length > 0) return key;
-    }
-  }
-  return undefined;
-}
-
-/** Local mirror of the core's `isRecord` (not exported by the oauth package). */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Cap an upstream error text before it lands in banners/logs. */
-function truncateUpstreamMessage(err: unknown, limit = 300): string {
-  const text = err instanceof Error ? err.message : String(err);
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 

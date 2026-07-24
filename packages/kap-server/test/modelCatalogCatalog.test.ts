@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resetCatalogUpstreamForTest, setCatalogUpstreamForTest } from '../src/catalogUpstream';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 
@@ -129,12 +132,12 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-catalog-'));
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
-    resetCatalogUpstreamForTest();
-    setCatalogUpstreamForTest({ fetchImpl: catalogFetchOk() });
+    resetModelsDevUpstreamForTest();
+    setModelsDevUpstreamForTest({ fetchImpl: catalogFetchOk() });
   });
 
   afterEach(async () => {
-    resetCatalogUpstreamForTest();
+    resetModelsDevUpstreamForTest();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -248,7 +251,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
       calls += 1;
       return new Response(JSON.stringify(CATALOG), { status: 200 });
     }) as unknown as typeof fetch;
-    setCatalogUpstreamForTest({ fetchImpl: counting });
+    setModelsDevUpstreamForTest({ fetchImpl: counting });
 
     await boot();
     const first = await getJson('/api/v1/catalog/providers');
@@ -261,7 +264,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   it('falls back to the stale cache when a refetch fails', async () => {
     const t0 = 1_000_000;
     let now = t0;
-    setCatalogUpstreamForTest({ now: () => now });
+    setModelsDevUpstreamForTest({ now: () => now });
 
     await boot();
     const first = await getJson<{ items: unknown[] }>('/api/v1/catalog/providers');
@@ -269,14 +272,14 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
 
     // Past the 10-minute TTL, with the network now down: stale cache serves.
     now = t0 + 11 * 60 * 1000;
-    setCatalogUpstreamForTest({ fetchImpl: catalogFetchFail() });
+    setModelsDevUpstreamForTest({ fetchImpl: catalogFetchFail() });
     const second = await getJson<{ items: unknown[] }>('/api/v1/catalog/providers');
     expect(second.body.code).toBe(0);
     expect(second.body.data.items.length).toBe(first.body.data.items.length);
   });
 
   it('answers 50004 when the fetch fails and no cache or snapshot exists', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: catalogFetchFail() });
+    setModelsDevUpstreamForTest({ fetchImpl: catalogFetchFail() });
     await boot();
     const { status, body } = await getJson('/api/v1/catalog/providers');
     expect(status).toBe(200);
@@ -548,7 +551,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('answers 50004 when the catalog is unavailable', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: catalogFetchFail() });
+    setModelsDevUpstreamForTest({ fetchImpl: catalogFetchFail() });
     await boot();
     const { body } = await postJson('/api/v1/providers:import_catalog', {
       catalog_id: 'openai',
@@ -608,7 +611,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
 
   it('imports every valid registry entry with a source blob and full model metadata', async () => {
     const seen: { authorization?: string } = {};
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC, seen) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC, seen) });
     await boot();
     const { status, body } = await postJson<{
       providers: Array<Record<string, unknown>>;
@@ -651,7 +654,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('never touches the global default pointers on registry import', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
     await boot(DEFAULTED_TOML);
     const { status } = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
@@ -664,7 +667,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('seeds the global default_model from the first registry model on a fresh setup', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
     await boot();
     const { status } = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
@@ -676,7 +679,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('re-imports the same URL as a refresh: vanished providers dropped, survivors rebuilt', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
     await boot(DEFAULTED_TOML);
     const first = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
@@ -700,7 +703,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
 
     // The upstream doc no longer lists acme-claude.
     const slimDoc = { 'acme-gpt': REGISTRY_DOC['acme-gpt'] };
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(slimDoc) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(slimDoc) });
     const second = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
       api_key: 'tok-2',
@@ -741,7 +744,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
       'oauth = { storage = "file", key = "oauth/managed-one" }',
       '',
     ].join('\n');
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch(managed) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch(managed) });
     await boot(managedToml);
     const { body } = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
@@ -751,7 +754,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('answers 40005 when the registry is unreachable', async () => {
-    setCatalogUpstreamForTest({
+    setModelsDevUpstreamForTest({
       fetchImpl: (async () => {
         throw new Error('connection refused');
       }) as unknown as typeof fetch,
@@ -765,7 +768,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
   });
 
   it('answers 40005 when the document has no valid entries', async () => {
-    setCatalogUpstreamForTest({ fetchImpl: registryFetch({ bad: { id: 'bad' } }) });
+    setModelsDevUpstreamForTest({ fetchImpl: registryFetch({ bad: { id: 'bad' } }) });
     await boot();
     const { body } = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
