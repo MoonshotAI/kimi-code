@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.29.1 (2026-07-24)
+
+### Features
+
+- Add global default MCP server timeouts in `config.toml` and env vars.
+- Add environment variables to configure the web search and web fetch services without OAuth login.
+- Add experimental secondary-model bindings for newly spawned subagents, including per-agent model preferences and subagent-only model overrides.
+
+### Bug Fixes
+
+- Fix loss of thinking content with OpenAI-compatible endpoints that return reasoning under a different field name (e.g. newer vLLM).
+
 ## 0.29.0 (2026-07-22)
 
 ### Features
