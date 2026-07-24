@@ -332,7 +332,18 @@ describe('KimiOAuthToolkit', () => {
     expect(write).toHaveBeenCalledWith(config);
   });
 
-  it('replaces an existing API default during login', async () => {
+  it.each([
+    {
+      description: 'replaces an existing API default during Kimi Code login',
+      providerName: undefined,
+      expectedDefaultModel: 'kimi-code/kimi-for-coding',
+    },
+    {
+      description: 'preserves an existing API default during another provider login',
+      providerName: 'custom-provider',
+      expectedDefaultModel: 'api-provider/api-model',
+    },
+  ])('$description', async ({ providerName, expectedDefaultModel }) => {
     const storage = new MemoryTokenStorage();
     const fetchImpl = vi.fn(async () => managedModelsResponse()) as unknown as typeof fetch;
     const config: ManagedKimiConfigShape = {
@@ -365,12 +376,12 @@ describe('KimiOAuthToolkit', () => {
     });
 
     storage.tokens.set('kimi-code', token('access-1'));
-    await expect(toolkit.login()).resolves.toMatchObject({
+    await expect(toolkit.login(providerName)).resolves.toMatchObject({
       provision: {
-        defaultModel: 'kimi-code/kimi-for-coding',
+        defaultModel: expectedDefaultModel,
       },
     });
-    expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
+    expect(config.defaultModel).toBe(expectedDefaultModel);
   });
 
   it.each([401, 402])(
