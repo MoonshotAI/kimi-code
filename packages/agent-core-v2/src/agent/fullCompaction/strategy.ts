@@ -1,4 +1,5 @@
 import type { Message } from '#/kosong/contract/message';
+import { getModelInputTokenLimit } from '#/kosong/contract/capability';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
 import { estimateTokensForMessage } from '#/kosong/contract/tokens';
@@ -71,14 +72,14 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
   private delegate(): DefaultCompactionStrategy {
     const model = this.context();
     return new DefaultCompactionStrategy(
-      () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
+      () => getModelInputTokenLimit(model.modelCapabilities),
       this.config(model),
     );
   }
 
   private windowDelegate(): DefaultCompactionStrategy {
     return new DefaultCompactionStrategy(
-      () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
+      () => getModelInputTokenLimit(this.context().modelCapabilities),
       DEFAULT_COMPACTION_CONFIG,
     );
   }

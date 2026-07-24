@@ -49,7 +49,11 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
+import {
+  UNKNOWN_CAPABILITY,
+  getModelInputTokenLimit,
+  type ModelCapability,
+} from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type ModelOverrides } from '#/kosong/model/model.types';
@@ -587,9 +591,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingEffort: includeThinkingEffort
         ? this.getEffectiveThinkingLevel()
         : undefined,
-      maxContextTokens:
-        this.getModelCapabilities().max_input_tokens ??
-        this.getModelCapabilities().max_context_tokens,
+      maxContextTokens: getModelInputTokenLimit(this.getModelCapabilities()),
     });
   }
 

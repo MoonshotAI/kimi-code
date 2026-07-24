@@ -28,6 +28,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { getModelInputTokenLimit } from '#/kosong/contract/capability';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -160,14 +161,11 @@ export class SessionLegacyService implements ISessionLegacyService {
     const swarm = agent.accessor.get(IAgentSwarmService);
 
     const model = profile.getModel();
-    const caps = profile.getModelCapabilities() as {
-      max_context_tokens?: number;
-      max_input_tokens?: number;
-    };
+    const caps = profile.getModelCapabilities();
     const maxTokens =
       model === ''
         ? resolveDefaultModelContextTokens(agent)
-        : (caps.max_input_tokens ?? caps.max_context_tokens ?? 0);
+        : getModelInputTokenLimit(caps);
     const tokens = contextSize.get().size;
     const planData = await plan.status();
 
@@ -210,7 +208,7 @@ function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;
   try {
     const capabilities = agent.accessor.get(IModelCatalog).get(defaultModel).capabilities;
-    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+    return getModelInputTokenLimit(capabilities);
   } catch {
     return 0;
   }
