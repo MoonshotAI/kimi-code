@@ -6,6 +6,7 @@ import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
+import { registerImportCommand } from './sub/import';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerVisCommand } from './sub/vis';
@@ -114,6 +115,7 @@ export function createProgram(
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
+  registerImportCommand(program);
   registerProviderCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
