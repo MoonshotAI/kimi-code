@@ -88,7 +88,7 @@ describe('ChoicePickerComponent', () => {
       onSelect,
       onCancel,
     });
-    expect(theme.render(120).map(strip)).toContain('  ❯ Light ← current');
+    expect(theme.render(120).map(strip)).toContain('  ❯ 🌕 Light ← current');
 
     const permission = new PermissionSelectorComponent({
       currentValue: 'manual',
