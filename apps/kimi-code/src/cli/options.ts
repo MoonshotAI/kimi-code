@@ -42,6 +42,7 @@ export interface CLIOptions {
   yolo: boolean;
   auto: boolean;
   plan: boolean;
+  swarm: boolean;
   model: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
@@ -86,6 +87,9 @@ export function validateOptions(
   }
   if (promptMode && opts.plan) {
     throw new OptionConflictError('Cannot combine --prompt with --plan.');
+  }
+  if (promptMode && opts.swarm) {
+    throw new OptionConflictError('Cannot combine --prompt with --swarm.');
   }
   if (opts.agent !== undefined && opts.agent.trim().length === 0) {
     throw new OptionConflictError('Agent cannot be empty.');
