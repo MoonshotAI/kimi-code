@@ -30,6 +30,14 @@ export interface SocksProxyConfig {
 // normalizes brackets away — so including both covers every path.
 const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1', '[::1]'] as const;
 
+// Child processes (e.g. stdio MCP servers) must NOT receive the bracketed `[::1]`:
+// Python's httpx parses the `all://[::1]` bypass pattern and treats `:1]` as the
+// port, raising `httpx.InvalidURL` — crashing any Python-based MCP server when a
+// proxy is configured. The bracketed form is only needed in-process for undici's
+// EnvHttpProxyAgent; children rely on `NODE_USE_ENV_PROXY` (Node ≥ 22) which
+// handles bare `::1` correctly.
+const LOOPBACK_NO_PROXY_CHILD = ['localhost', '127.0.0.1', '::1'] as const;
+
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
 /** Lowercase URL scheme (without the trailing colon), or undefined if absent. */
@@ -130,6 +138,21 @@ export function isProxyConfigured(env: Env = process.env): boolean {
  * through the proxy.
  */
 export function resolveNoProxy(env: Env = process.env): string {
+  return resolveNoProxyWith(env, LOOPBACK_NO_PROXY);
+}
+
+/**
+ * Like {@link resolveNoProxy} but omits the bracketed `[::1]` that breaks
+ * non-Node HTTP clients (Python httpx, Go net/http). Use this for child
+ * process environments where the consumer is NOT undici.
+ *
+ * @see https://github.com/MoonshotAI/kimi-code/issues/1931
+ */
+export function resolveNoProxyForChild(env: Env = process.env): string {
+  return resolveNoProxyWith(env, LOOPBACK_NO_PROXY_CHILD);
+}
+
+function resolveNoProxyWith(env: Env, loopbacks: readonly string[]): string {
   // Prefer the first non-blank casing; an empty `no_proxy=''` must not mask a
   // populated `NO_PROXY` (`??` would, since `''` is not nullish).
   const raw = [env['no_proxy'], env['NO_PROXY']].find((value) => (value?.trim() ?? '').length > 0) ?? '';
@@ -138,7 +161,7 @@ export function resolveNoProxy(env: Env = process.env): string {
     .map((host) => host.trim())
     .filter((host) => host.length > 0);
   if (hosts.includes('*')) return '*';
-  for (const loopback of LOOPBACK_NO_PROXY) {
+  for (const loopback of loopbacks) {
     if (!hosts.includes(loopback)) hosts.push(loopback);
   }
   return hosts.join(',');
@@ -335,7 +358,7 @@ export function installGlobalProxyDispatcher(
  */
 export function proxyEnvForChild(env: Env = process.env): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveNoProxyForChild(env);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -372,7 +395,7 @@ export function reconcileChildNoProxy(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveNoProxyForChild({ no_proxy: override, NO_PROXY: override });
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }

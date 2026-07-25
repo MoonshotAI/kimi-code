@@ -130,8 +130,8 @@ describe('proxy utilities', () => {
     expect(proxyEnvForChild({ ALL_PROXY: 'socks5://127.0.0.1:1080' })).toEqual({});
     expect(proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp' })).toEqual({
       NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
       HTTP_PROXY: 'http://p:3128',
       http_proxy: 'http://p:3128',
     });
@@ -141,7 +141,7 @@ describe('proxy utilities', () => {
       no_proxy: 'aug',
     };
     reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'real.corp' });
-    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1');
   });
 });
