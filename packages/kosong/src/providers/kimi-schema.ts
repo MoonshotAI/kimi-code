@@ -116,8 +116,9 @@ const NUMERIC_STRUCTURE_KEYS = new Set([
  * a provider-compatibility normalizer, not a complete JSON Schema compiler:
  * it resolves local refs, preserves combinator nodes, infers obvious
  * scalar/object/array types, and falls back to `string` only for nested
- * typeless property schemas. The root schema object is treated as a container
- * and is not itself normalized.
+ * typeless property schemas. It also rewrites nodes that declare `type`
+ * alongside a combinator (`anyOf` / `oneOf` / `allOf`), which Moonshot
+ * rejects, by moving the parent `type` into each combinator item.
  */
 export function normalizeKimiToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
   return ensureKimiPropertyTypes(derefJsonSchema(schema));
@@ -128,8 +129,34 @@ function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string
   if (!isRecord(normalized)) {
     throw new Error('JSON Schema root must normalize to an object.');
   }
+  fixCombinatorParentType(normalized);
   recurseSchema(normalized);
   return normalized;
+}
+
+/**
+ * Moonshot's tool validator rejects schemas that declare `type` on the same
+ * node as a combinator (`anyOf` / `oneOf` / `allOf`): the type must live on
+ * each combinator item instead. Distribute the parent `type` into items that
+ * lack one and drop it from the parent. Since the parent `type` constrained
+ * every variant anyway, copying it into each item preserves the semantics.
+ */
+function fixCombinatorParentType(node: unknown): void {
+  if (!isRecord(node) || !hasOwn(node, 'type')) {
+    return;
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    const items = node[key];
+    if (!Array.isArray(items) || items.length === 0) {
+      continue;
+    }
+    for (const item of items) {
+      if (isRecord(item) && !hasOwn(item, 'type')) {
+        item['type'] = node['type'];
+      }
+    }
+    delete node['type'];
+  }
 }
 
 function hasUnresolvedDefinitionRef(node: unknown, bucketKey: string): boolean {
@@ -299,6 +326,8 @@ function normalizeProperty(node: unknown): void {
   if (!isRecord(node)) {
     return;
   }
+
+  fixCombinatorParentType(node);
 
   if (!hasOwn(node, 'type') && !hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS)) {
     const enumValues = node['enum'];
