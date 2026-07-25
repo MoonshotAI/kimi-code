@@ -59,7 +59,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | `--auto` | Start in auto permission mode: fully autonomous, the agent will not ask questions |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
-| `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit. Runs in auto permission mode, so tool calls are approved without prompting regardless of `default_permission_mode` |
+| `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit. Runs in auto permission mode, so tool calls are approved without prompting regardless of `default_permission_mode`; `deny` rules in `[[permission.rules]]` still block |
 | `--output-format <format>` | Output format for `-p` mode: `text` or `stream-json` |
 | `--skills-dir <dir>` | Replace auto-discovered Skills directories (repeatable; applies to this session only) |
 
