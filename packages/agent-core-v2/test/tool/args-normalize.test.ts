@@ -59,6 +59,11 @@ describe('normalizeToolArgs', () => {
     const result = normalizeToolArgs(schema, { big: '9007199254740993' });
     expect(result.args).toEqual({ big: '9007199254740993' });
     expect(result.coercions).toHaveLength(0);
+
+    const numberSchema = { type: 'object', properties: { big: { type: 'number' } } };
+    expect(normalizeToolArgs(numberSchema, { big: '9007199254740993' }).args).toEqual({
+      big: '9007199254740993',
+    });
   });
 
   it('leaves values alone when the schema already accepts strings', () => {
@@ -134,10 +139,27 @@ describe('normalizeToolArgs', () => {
   });
 
   it('returns the original reference when nothing was coerced', () => {
-    const schema = { type: 'object', properties: { n: { type: 'integer' } } };
-    const args = { n: 3, extra: 'kept' };
-    expect(normalizeToolArgs(schema, args).args).toBe(args);
+    const schema = {
+      type: 'object',
+      properties: { n: { type: 'integer' }, offsets: { type: 'array', items: { type: 'integer' } } },
+    };
+    const args = { n: 3, offsets: [1, 2, 3], extra: 'kept' };
+    const result = normalizeToolArgs(schema, args);
+    expect(result.args).toBe(args);
+    expect((result.args as typeof args).offsets).toBe(args.offsets);
     expect(normalizeToolArgs(schema, {}).coercions).toHaveLength(0);
+  });
+
+  it('under-coerces ambiguous allOf compositions instead of guessing', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        v: { allOf: [{ type: 'integer' }, { anyOf: [{ type: 'string' }, { type: 'number' }] }] },
+      },
+    };
+    const result = normalizeToolArgs(schema, { v: '3' });
+    expect(result.args).toEqual({ v: '3' });
+    expect(result.coercions).toHaveLength(0);
   });
 });
 

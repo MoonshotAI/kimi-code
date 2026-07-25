@@ -780,7 +780,7 @@ function coercionNote(toolName: string, coercions: readonly ArgCoercion[]): stri
   const details = coercions
     .map((coercion) => `${coercion.path}: ${coercion.received} -> ${coercion.expected}`)
     .join('; ');
-  return `<system>Note: tool "${toolName}" received argument type(s) that did not match its schema (${details}). They were coerced to the declared types and the call succeeded. Emit argument types exactly as the tool schema declares.</system>`;
+  return `<system>Note: tool "${toolName}" received argument type(s) that did not match its schema (${details}). They were coerced to the declared types before validation. Emit argument types exactly as the tool schema declares.</system>`;
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

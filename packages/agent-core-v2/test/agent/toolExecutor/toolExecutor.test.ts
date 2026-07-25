@@ -972,6 +972,8 @@ describe('tool args normalization at the parse boundary', () => {
       'tool "read_like" received argument type(s) that did not match its schema',
     );
     expect(results[0]?.note).toContain('/line_offset: string "3" -> integer');
+    expect(results[0]?.note).toContain('coerced to the declared types before validation');
+    expect(results[0]?.note).not.toContain('call succeeded');
   });
 
   it('keeps the coercion warning ahead of the tool own note', async () => {

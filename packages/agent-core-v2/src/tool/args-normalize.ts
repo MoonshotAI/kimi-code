@@ -13,6 +13,9 @@
  *   - only when the coercion is lossless and the schema does not already
  *     accept strings at that position
  *   - `$ref` nodes and ambiguous (string-accepting) schemas are left alone
+ *   - composition keywords are consulted for type discovery only, never as a
+ *     proof of validity; under-coercion is deliberate, since whatever this
+ *     layer misses still faces strict validation below
  *
  * Whatever cannot be normalized still fails validation afterwards, where the
  * error message reports what was actually received. Pure helper; no scoped
@@ -96,7 +99,8 @@ function coerceString(
   }
   if (expected.has('number') && NUMBER_TEXT.test(raw)) {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed)) return { value: parsed, target: 'number' };
+    const lossless = INTEGER_TEXT.test(raw) ? Number.isSafeInteger(parsed) : Number.isFinite(parsed);
+    if (lossless) return { value: parsed, target: 'number' };
     return undefined;
   }
   if (expected.has('boolean') && (raw === 'true' || raw === 'false')) {
@@ -143,9 +147,20 @@ function normalizeValue(
     if (items !== null && typeof items === 'object' && !Array.isArray(items)) {
       const itemSchema = items as Record<string, unknown>;
       if (itemSchema['$ref'] === undefined) {
-        return value.map((entry, index) =>
-          normalizeValue(itemSchema, entry, `${path}/${String(index)}`, coercions),
-        );
+        let changed: unknown[] | undefined;
+        for (let index = 0; index < value.length; index += 1) {
+          const normalized = normalizeValue(
+            itemSchema,
+            value[index],
+            `${path}/${String(index)}`,
+            coercions,
+          );
+          if (normalized !== value[index]) {
+            changed ??= [...value];
+            changed[index] = normalized;
+          }
+        }
+        return changed ?? value;
       }
     }
     return value;
