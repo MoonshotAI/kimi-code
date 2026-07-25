@@ -567,10 +567,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       history,
       OPENAI_CHAT_TOOL_CALL_ID_POLICY,
     );
+    const reasoningKey = this._reasoningKeyDialect.outboundKey();
     messages.push(
       ...convertHistoryMessages(
         normalizedHistory,
-        this._reasoningKeyDialect.outboundKey(),
+        reasoningKey,
         this._toolMessageConversion,
       ),
     );
@@ -608,10 +609,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       effort !== 'off' &&
       kwargs['reasoning_effort'] === undefined
     ) {
-      const hasThinkPart = history.some((message) =>
-        message.content.some((part) => part.type === 'think'),
+      const hasReasoningContent = messages.some(
+        (message) => message[reasoningKey] !== undefined,
       );
-      if (hasThinkPart) {
+      if (hasReasoningContent) {
         reasoningEffort = 'medium';
       }
     }

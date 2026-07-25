@@ -1384,6 +1384,7 @@ describe('OpenAILegacyChatProvider', () => {
         { role: 'user', content: 'Write a plan' },
         { role: 'user', content: 'Continue' },
       ]);
+      expect(body['reasoning_effort']).toBeUndefined();
     });
 
     it('serializes ThinkPart back to reasoning_content even without reasoningKey', async () => {
