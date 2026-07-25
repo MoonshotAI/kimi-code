@@ -207,6 +207,8 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
 };
 
 const FALLBACK_MAX_TOKENS = 128000;
+/** Conservative fallback for custom endpoints whose actual output ceiling is unknown. */
+const CUSTOM_ENDPOINT_FALLBACK_MAX_TOKENS = 32768;
 
 function lookupClaudeCeiling(version: AnthropicModelVersion): number | undefined {
   const { family, major, minor } = version;
@@ -219,11 +221,18 @@ function lookupClaudeCeiling(version: AnthropicModelVersion): number | undefined
   return CEILING_BY_FAMILY_VERSION[`${family}-${major}`];
 }
 
-export function resolveDefaultMaxTokens(model: string, override?: number): number {
+export function resolveDefaultMaxTokens(model: string, override?: number, baseUrl?: string): number {
   const parsed = parseAnthropicModelVersion(model, true);
   const ceiling = parsed === null ? undefined : lookupClaudeCeiling(parsed);
   if (ceiling === undefined) {
-    return override ?? FALLBACK_MAX_TOKENS;
+    if (override !== undefined) return override;
+    // Custom endpoint + unrecognized model: the 128k Claude-4 fallback is too
+    // aggressive for most Anthropic-compatible providers (32768 is the most
+    // common ceiling). Use the conservative value; the user can still override
+    // via defaultMaxTokens (max_output_size in config).
+    const isCustomEndpoint =
+      baseUrl !== undefined && baseUrl !== '' && !baseUrl.includes('api.anthropic.com');
+    return isCustomEndpoint ? CUSTOM_ENDPOINT_FALLBACK_MAX_TOKENS : FALLBACK_MAX_TOKENS;
   }
   return override === undefined ? ceiling : Math.min(override, ceiling);
 }
@@ -821,7 +830,9 @@ export class AnthropicChatProvider implements ChatProvider {
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
-      max_tokens: options.defaultMaxTokens ?? resolveDefaultMaxTokens(options.model),
+      max_tokens:
+        options.defaultMaxTokens ??
+        resolveDefaultMaxTokens(options.model, undefined, options.baseUrl),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
     };
   }
@@ -927,7 +938,7 @@ export class AnthropicChatProvider implements ChatProvider {
         cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
       }
       cap = Math.max(1, cap);
-      const requestedCap = resolveDefaultMaxTokens(this._model, cap);
+      const requestedCap = resolveDefaultMaxTokens(this._model, cap, this._baseUrl);
       const existingCap = kwargs.max_tokens;
       kwargs = {
         ...kwargs,

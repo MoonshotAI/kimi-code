@@ -3408,6 +3408,32 @@ describe('resolveDefaultMaxTokens', () => {
     expect(resolveDefaultMaxTokens('vendor-opus-4-7-preview')).toBe(128000);
     expect(resolveDefaultMaxTokens('vendor-opus-4-7-preview', 8000)).toBe(8000);
   });
+
+  it('uses the conservative 32k fallback for a custom endpoint with an unrecognized model', () => {
+    expect(
+      resolveDefaultMaxTokens('some-custom-model', undefined, 'https://ark.cn-beijing.volces.com/api/v3'),
+    ).toBe(32768);
+    expect(resolveDefaultMaxTokens('gpt-5', undefined, 'https://my-proxy.example.test')).toBe(32768);
+  });
+
+  it('keeps the 128k fallback for the official Anthropic endpoint with an unrecognized model', () => {
+    expect(resolveDefaultMaxTokens('gpt-5', undefined, 'https://api.anthropic.com')).toBe(128000);
+    expect(resolveDefaultMaxTokens('totally-unknown-model', undefined, undefined)).toBe(128000);
+  });
+
+  it('still applies the documented ceiling for a Claude model on a custom endpoint', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4-7', undefined, 'https://my-proxy.example.test')).toBe(
+      128000,
+    );
+    expect(resolveDefaultMaxTokens('claude-3-opus', undefined, 'https://my-proxy.example.test')).toBe(4096);
+  });
+
+  it('honors the user override over the custom-endpoint fallback', () => {
+    expect(resolveDefaultMaxTokens('some-custom-model', 16000, 'https://my-proxy.example.test')).toBe(
+      16000,
+    );
+    expect(resolveDefaultMaxTokens('some-custom-model', 8192, undefined)).toBe(8192);
+  });
 });
 
 describe('AnthropicChatProvider constructor max_tokens', () => {
