@@ -288,12 +288,10 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   ): Promise<ExecutableToolResult> {
     const info = this.backgroundManager.getTask(taskId);
     if (info?.status === 'completed') {
-      return {
-        output: formatForegroundAgentSuccess(
-          handle,
-          await this.backgroundManager.readOutput(taskId),
-        ),
-      };
+      // The task output buffer carries the live transcript plus the final
+      // result; the parent agent only wants the result itself.
+      const { result } = await handle.completion;
+      return { output: formatForegroundAgentSuccess(handle, result) };
     }
     const timedOut = info?.status === 'timed_out';
     const message =

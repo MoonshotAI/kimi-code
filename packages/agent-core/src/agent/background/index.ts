@@ -145,8 +145,10 @@ const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
  * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
  * without bound — filling the disk, or retaining each pending-write chunk until
  * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
- * and background); subagent and user-question results are appended once and must
- * always be persisted, so they are intentionally not capped here.
+ * and background). Agent tasks stream the subagent's live event transcript and
+ * question tasks append their answer; both are unbounded but text-sized (and
+ * killing a subagent over log volume would be worse than the leak), so they
+ * are intentionally not capped here.
  */
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
 
@@ -723,9 +725,10 @@ export class BackgroundManager {
     // live-forward buffer or the on-disk write chain until the process runs out
     // of memory or fills the disk. Trip once, then request graceful termination
     // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
-    // process tasks (foreground and background): subagent and user-question tasks
-    // append their bounded result in one shot and must always persist it, so they
-    // are intentionally not capped here.
+    // process tasks (foreground and background): agent tasks stream a live
+    // event transcript and question tasks append an answer — unbounded but
+    // text-sized, and never worth killing the task over — so they are
+    // intentionally not capped here.
     if (
       !entry.outputLimitTripped &&
       entry.task.kind === 'process' &&
