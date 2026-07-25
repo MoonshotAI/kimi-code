@@ -81,6 +81,7 @@ import {
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { TaskModel, taskStarted, taskTerminated } from './taskOps';
+import { pidAlive } from '#/agent/task/pidAlive';
 import { formatTaskList } from '#/agent/task/tools/task-list';
 import '#/agent/task/tools/task-output';
 import '#/agent/task/tools/task-stop';
@@ -860,6 +861,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     for (const [taskId, info] of this.ghosts) {
       if (TERMINAL_STATUSES.has(info.status)) continue;
+      // A ghost whose OS process is still running belongs to another live
+      // kimi-code process that is still driving it. Marking it `lost` tells the
+      // model it may resume the task, which starts a second worker alongside
+      // the first one.
+      if (info.kind === 'process' && pidAlive(info.pid)) continue;
       const updated: AgentTaskInfo = {
         ...info,
         status: 'lost',
