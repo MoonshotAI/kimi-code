@@ -1,4 +1,5 @@
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
+import { Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
@@ -1031,6 +1032,106 @@ describe('runPrompt', () => {
     await run;
 
     expect(mocks.harnessClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves completed stream-json output when signalled during cleanup', async () => {
+    let releaseCleanup: (() => void) | undefined;
+    mocks.harnessClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
+        }),
+    );
+
+    const chunks: string[] = [];
+    let blocked = true;
+    let releaseBufferedWrite: (() => void) | undefined;
+    const stdout = new Writable({
+      highWaterMark: 1,
+      write(chunk, _encoding, callback) {
+        chunks.push(chunk.toString());
+        if (!blocked) {
+          callback();
+          return;
+        }
+        releaseBufferedWrite = callback;
+      },
+    });
+
+    const processMock = fakeProcess();
+    const run = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+      process: processMock,
+    } as Parameters<typeof runPrompt>[2] & { process: ReturnType<typeof fakeProcess> });
+
+    await waitForAssertion(() => {
+      expect(mocks.harnessClose).toHaveBeenCalled();
+    });
+    expect(stdout.writableNeedDrain).toBe(true);
+    const signalHandler = processMock.listener('SIGTERM');
+    if (signalHandler === undefined) {
+      blocked = false;
+      releaseBufferedWrite?.();
+      releaseCleanup?.();
+      await run;
+    }
+    expect(signalHandler).toBeDefined();
+
+    const termination = signalHandler?.();
+    releaseCleanup?.();
+    await Promise.resolve();
+    expect(processMock.exit).not.toHaveBeenCalled();
+
+    blocked = false;
+    releaseBufferedWrite?.();
+    await termination;
+    await run;
+
+    expect(chunks.join('')).toContain('{"role":"assistant","content":"hello world"}\n');
+    expect(chunks.join('')).toContain('"type":"session.resume_hint"');
+    expect(processMock.exit).toHaveBeenCalledWith(143);
+  });
+
+  it('propagates cleanup failures after buffered output finishes draining', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.harnessClose.mockRejectedValueOnce(new Error('close failed'));
+
+      let releaseBufferedWrite: (() => void) | undefined;
+      let blocked = true;
+      const stdout = new Writable({
+        highWaterMark: 1,
+        write(_chunk, _encoding, callback) {
+          if (!blocked) {
+            callback();
+            return;
+          }
+          releaseBufferedWrite = callback;
+        },
+      });
+      const run = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+        stdout,
+        stderr: writer(),
+      });
+
+      for (
+        let attempt = 0;
+        attempt < 20 && mocks.harnessClose.mock.calls.length === 0;
+        attempt += 1
+      ) {
+        await Promise.resolve();
+      }
+      expect(mocks.harnessClose).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(PROMPT_CLEANUP_TIMEOUT_MS);
+      blocked = false;
+      releaseBufferedWrite?.();
+
+      await expect(run).rejects.toThrow('close failed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('waits for the pending auto permission write before signal restore', async () => {
