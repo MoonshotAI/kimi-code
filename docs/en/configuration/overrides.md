@@ -59,14 +59,14 @@ Options passed at startup have the highest priority and apply only to the curren
 | `--auto` | Start in auto permission mode: fully autonomous, the agent will not ask questions |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
-| `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |
+| `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit. Runs in auto permission mode, so tool calls are approved without prompting regardless of `default_permission_mode` |
 | `--output-format <format>` | Output format for `-p` mode: `text` or `stream-json` |
 | `--skills-dir <dir>` | Replace auto-discovered Skills directories (repeatable; applies to this session only) |
 
 Mutual exclusion rules (startup fails if violated):
 
 - `--output-format` can only be used with `-p`
-- `--prompt` cannot be combined with `--yolo` or `--plan`
+- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
 - `--continue` and `--session` cannot be used together
 - In non-prompt mode, `--yolo` and `--plan` cannot be combined with `--continue` or `--session`
 

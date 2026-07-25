@@ -59,7 +59,7 @@ export function createProgram(
     .addOption(
       new Option(
         '-p, --prompt <prompt>',
-        'Run one prompt non-interactively and print the response.',
+        'Run one prompt non-interactively and print the response. Runs in auto permission mode: tool calls are approved without prompting.',
       ),
     )
     .addOption(
