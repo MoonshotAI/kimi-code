@@ -304,6 +304,7 @@ function appendText(capture: TextCapture, chunk: string, maxBytes?: number): voi
     capture.value += chunk;
     return;
   }
+  if (capture.truncated) return;
 
   const remaining = maxBytes - capture.bytes;
   if (remaining <= 0) {
