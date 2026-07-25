@@ -7,7 +7,10 @@
  * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
  * events through `event`, records telemetry through `telemetry`, truncates
  * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. Bound at Agent scope.
+ * diagnostics through `log`. Non-conforming argument types are normalized
+ * through the `tool` domain's args normalization before validation, with
+ * coercions surfaced as model-visible notes on the tool result. Bound at
+ * Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -601,9 +604,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     const coercedResult = coerceToolResult(didCtx.result, call.toolName);
     const effectiveResult = normalizeToolResult(coercedResult);
-    // Args-normalization warnings ride the note side channel: model-visible at
-    // projection time, never shown in UIs, and preserved ahead of the tool's
-    // own note. The key stays absent (not undefined) when there is no note.
     const mergedNote = [call.normalizationNote, effectiveResult.note]
       .filter((part): part is string => typeof part === 'string' && part.length > 0)
       .join('\n');
@@ -776,11 +776,6 @@ export function parseToolCallArguments(raw: unknown): {
   }
 }
 
-/**
- * Model-facing warning for a call whose arguments had to be coerced to the
- * tool schema. The coercion keeps the turn alive; the note keeps the
- * provider's schema violation visible instead of silently absorbing it.
- */
 function coercionNote(toolName: string, coercions: readonly ArgCoercion[]): string {
   const details = coercions
     .map((coercion) => `${coercion.path}: ${coercion.received} -> ${coercion.expected}`)

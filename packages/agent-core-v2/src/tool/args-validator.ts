@@ -3,9 +3,10 @@
  *
  * Compiles tool-parameter JSON Schemas into AJV validators (draft-07 /
  * 2019-09 / 2020-12 detected per schema) and formats validation failures
- * into model-readable messages. Only the executor path loads this module,
- * so the AJV instances are paid for once, at execution time. Pure helper;
- * no scoped service.
+ * into model-readable messages — type failures report the value that was
+ * actually received, deduplicated across union branches. Only the executor
+ * path loads this module, so the AJV instances are paid for once, at
+ * execution time. Pure helper; no scoped service.
  */
 
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
@@ -90,8 +91,6 @@ function formatValidationError(error: ErrorObject, args: JsonType): string {
   }
 
   const path = error.instancePath ? `${error.instancePath} ` : '';
-  // Type failures are model-feedback signals: say what actually arrived so the
-  // model can self-correct instead of re-emitting the same shape blindly.
   const received =
     error.keyword === 'type'
       ? ` (received ${describeReceivedValue(valueAtInstancePath(args, error.instancePath))})`
@@ -114,6 +113,5 @@ export function validateToolArgs(validator: ToolArgsValidator, args: JsonType): 
     return 'Tool parameter validation failed';
   }
 
-  // Union schemas report the same type failure once per branch; dedupe.
   return [...new Set(errors.map((error) => formatValidationError(error, args)))].join('; ');
 }

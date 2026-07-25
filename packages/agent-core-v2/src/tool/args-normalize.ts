@@ -22,11 +22,8 @@
 export type CoercionTarget = 'integer' | 'number' | 'boolean';
 
 export interface ArgCoercion {
-  /** JSON-pointer path of the coerced value, e.g. `/line_offset`. */
   readonly path: string;
-  /** Model-readable description of what arrived, e.g. `string "3"`. */
   readonly received: string;
-  /** The schema-declared type the value was coerced to. */
   readonly expected: CoercionTarget;
 }
 
@@ -48,7 +45,7 @@ function collectPrimitiveTypes(node: Record<string, unknown>, into: Set<Primitiv
       if (typeof entry === 'string') into.add(entry as PrimitiveType);
     }
   }
-  for (const keyword of ['anyOf', 'oneOf'] as const) {
+  for (const keyword of ['anyOf', 'oneOf', 'allOf'] as const) {
     const branches = node[keyword];
     if (Array.isArray(branches)) {
       for (const branch of branches) {
@@ -58,6 +55,34 @@ function collectPrimitiveTypes(node: Record<string, unknown>, into: Set<Primitiv
       }
     }
   }
+}
+
+function isSchemaNode(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isUnconstrained(node: Record<string, unknown>): boolean {
+  return (
+    node['type'] === undefined &&
+    node['const'] === undefined &&
+    node['enum'] === undefined &&
+    node['$ref'] === undefined
+  );
+}
+
+function stringAlreadyValid(node: Record<string, unknown>, raw: string): boolean {
+  if (node['const'] === raw) return true;
+  const enumValues = node['enum'];
+  if (Array.isArray(enumValues) && enumValues.includes(raw)) return true;
+  for (const keyword of ['anyOf', 'oneOf'] as const) {
+    const branches = node[keyword];
+    if (!Array.isArray(branches)) continue;
+    for (const branch of branches) {
+      if (!isSchemaNode(branch)) continue;
+      if (isUnconstrained(branch) || stringAlreadyValid(branch, raw)) return true;
+    }
+  }
+  return false;
 }
 
 function coerceString(
@@ -99,7 +124,7 @@ function normalizeValue(
   if (typeof value === 'string') {
     const expected = new Set<PrimitiveType>();
     collectPrimitiveTypes(node, expected);
-    if (!expected.has('string')) {
+    if (!expected.has('string') && !stringAlreadyValid(node, value)) {
       const coerced = coerceString(value, expected);
       if (coerced !== undefined) {
         coercions.push({
@@ -155,11 +180,6 @@ function normalizeValue(
   return value;
 }
 
-/**
- * Best-effort normalization of parsed tool-call arguments against the tool's
- * parameter schema. Returns the original `args` reference unchanged when
- * nothing was coerced.
- */
 export function normalizeToolArgs(
   schema: Record<string, unknown>,
   args: unknown,

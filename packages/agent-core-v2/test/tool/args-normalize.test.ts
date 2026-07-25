@@ -71,6 +71,35 @@ describe('normalizeToolArgs', () => {
     expect(result.coercions).toHaveLength(0);
   });
 
+  it('does not coerce strings already valid via const, enum, or unconstrained branches', () => {
+    const constSchema = {
+      type: 'object',
+      properties: { v: { oneOf: [{ type: 'integer' }, { const: '3' }] } },
+    };
+    expect(normalizeToolArgs(constSchema, { v: '3' })).toEqual({ args: { v: '3' }, coercions: [] });
+
+    const enumSchema = { type: 'object', properties: { v: { enum: ['3', 3] } } };
+    expect(normalizeToolArgs(enumSchema, { v: '3' }).args).toEqual({ v: '3' });
+
+    const openBranchSchema = {
+      type: 'object',
+      properties: { v: { anyOf: [{ type: 'integer' }, {}] } },
+    };
+    expect(normalizeToolArgs(openBranchSchema, { v: '3' }).args).toEqual({ v: '3' });
+  });
+
+  it('discovers primitive types composed with allOf', () => {
+    const schema = {
+      type: 'object',
+      properties: { v: { allOf: [{ type: 'integer' }, { minimum: 1 }] } },
+    };
+    const result = normalizeToolArgs(schema, { v: '3' });
+    expect(result.args).toEqual({ v: 3 });
+    expect(result.coercions).toEqual([
+      { path: '/v', received: 'string "3"', expected: 'integer' },
+    ]);
+  });
+
   it('leaves non-string values and $ref nodes untouched', () => {
     const schema = {
       type: 'object',
