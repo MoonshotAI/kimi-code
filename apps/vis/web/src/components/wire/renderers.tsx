@@ -10,8 +10,10 @@ import type { ReactNode } from 'react';
 
 import { t } from '../../i18n';
 import type { AgentRecord, AgentRecordOf } from '../../types';
+import { JsonViewer } from '../shared/JsonViewer';
 import type { PillTone } from '../shared/Pill';
 import { Pill } from '../shared/Pill';
+import { SizePreview } from '../shared/SizePreview';
 import {
   Dim,
   type HeadlineRender,
@@ -24,8 +26,6 @@ import {
   truncate,
   loopEventSummary,
 } from './parts';
-import { SizePreview } from '../shared/SizePreview';
-import { JsonViewer } from '../shared/JsonViewer';
 
 export type RecordType = AgentRecord['type'];
 
@@ -162,7 +162,13 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'warning',
     label: 'cancel',
     headline: (r) => ({
-      main: <Mono>{r.turnId !== undefined ? t('wireRenderer.turnId', { id: r.turnId }) : t('wireRenderer.latest')}</Mono>,
+      main: (
+        <Mono>
+          {r.turnId !== undefined
+            ? t('wireRenderer.turnId', { id: r.turnId })
+            : t('wireRenderer.latest')}
+        </Mono>
+      ),
     }),
   },
 
@@ -171,7 +177,10 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'message',
     headline: (r) => {
       const m = r.message;
-      const tc = m.toolCalls.length > 0 ? t('wireRenderer.toolCallsCount', { count: m.toolCalls.length }) : '';
+      const tc =
+        m.toolCalls.length > 0
+          ? t('wireRenderer.toolCallsCount', { count: m.toolCalls.length })
+          : '';
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
@@ -194,11 +203,12 @@ export const WIRE_RENDERERS: RendererMap = {
             {m.origin?.kind ? <Dim>· origin={m.origin.kind}</Dim> : null}
           </span>
         ),
-        right: m.isError === true ? (
-          <Pill tone="error" variant="solid">
-            {t('wireRenderer.error')}
-          </Pill>
-        ) : undefined,
+        right:
+          m.isError === true ? (
+            <Pill tone="error" variant="solid">
+              {t('wireRenderer.error')}
+            </Pill>
+          ) : undefined,
       };
     },
     detail: (r) => <MessageDetail message={r.message} />,
@@ -222,6 +232,21 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'meta',
     label: 'tokens',
     headline: (r) => ({ main: <Dim>context {r.tokenCount} tok</Dim> }),
+  },
+
+  'context.replace_tool_result': {
+    tone: 'assistant',
+    label: 'replace',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.toolCallId}</Mono>
+          <Dim className="truncate">
+            {typeof r.result.output === 'string' ? r.result.output.slice(0, 120) : '[parts]'}
+          </Dim>
+        </span>
+      ),
+    }),
   },
 
   'context.clear': {
@@ -312,7 +337,8 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'tools',
     headline: (r) => {
       const head = r.names.slice(0, 3).join(', ');
-      const rest = r.names.length > 3 ? ` ${t('wireRenderer.more', { count: r.names.length - 3 })}` : '';
+      const rest =
+        r.names.length > 3 ? ` ${t('wireRenderer.more', { count: r.names.length - 3 })}` : '';
       return {
         main: (
           <Mono className="truncate">
@@ -454,9 +480,7 @@ export const WIRE_RENDERERS: RendererMap = {
           <Pill tone="compaction" variant="soft">
             {r.source}
           </Pill>
-          {r.instruction ? (
-            <Dim className="truncate">"{truncate(r.instruction, 40)}"</Dim>
-          ) : null}
+          {r.instruction ? <Dim className="truncate">"{truncate(r.instruction, 40)}"</Dim> : null}
         </span>
       ),
     }),
@@ -608,9 +632,7 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: (r) => ({
       main: (
         <span className="flex items-center gap-2 min-w-0">
-          <Mono>
-            {t('wireRenderer.toolsCount', { count: r.tools.length })}
-          </Mono>
+          <Mono>{t('wireRenderer.toolsCount', { count: r.tools.length })}</Mono>
           <Dim className="truncate">
             {r.tools
               .slice(0, 4)

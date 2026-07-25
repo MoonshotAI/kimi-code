@@ -21,9 +21,9 @@
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
-import type { ContentPart } from '#/kosong/contract/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import type { ContentPart } from '#/kosong/contract/message';
+import { defineModel } from '#/wire/model';
 
 export interface TurnModelState {
   readonly nextTurnId: number;
@@ -32,11 +32,14 @@ export interface TurnModelState {
 export const TurnModel = defineModel<TurnModelState>('turn', () => ({ nextTurnId: 0 }), {
   reducers: {
     'context.append_loop_event': (state, { event }) => {
-      if (event.type === 'tool.result' || event.turnId === undefined) {
+      // Only step-scoped events carry a `turnId`; tool results and other
+      // narrow variants don't participate in turn-id recovery.
+      const rawTurnId = 'turnId' in event ? event.turnId : undefined;
+      if (event.type === 'tool.result' || rawTurnId === undefined) {
         return state;
       }
 
-      const turnId = Number.parseInt(event.turnId, 10);
+      const turnId = Number.parseInt(rawTurnId, 10);
       return Number.isInteger(turnId) && turnId >= state.nextTurnId
         ? { nextTurnId: turnId + 1 }
         : state;

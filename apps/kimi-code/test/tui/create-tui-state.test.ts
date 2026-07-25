@@ -1,4 +1,3 @@
-
 import { describe, it, expect } from 'vitest';
 
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
@@ -22,6 +21,7 @@ function fakeInitialAppState(): AppState {
     isReplaying: false,
     streamingPhase: 'idle',
     streamingStartTime: 0,
+    outputTokens: 0,
     theme: 'dark',
     version: '0.0.0-test',
     locale: 'en',

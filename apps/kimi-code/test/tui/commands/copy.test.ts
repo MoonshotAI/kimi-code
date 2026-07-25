@@ -9,10 +9,10 @@ const mocks = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
   t: (key: string, params?: Record<string, string | number>) => {
     const translations: Record<string, string> = {
-      'tui.statusMessages.copyNative': `Copied to clipboard (${String(params?.count ?? '?')} characters).`,
-      'tui.statusMessages.copyEscape': `Copied via terminal escape sequence (unverified, ${String(params?.count ?? '?')} characters).`,
+      'tui.statusMessages.copyNative': `Copied to clipboard (${String(params?.['count'] ?? '?')} characters).`,
+      'tui.statusMessages.copyEscape': `Copied via terminal escape sequence (unverified, ${String(params?.['count'] ?? '?')} characters).`,
       'tui.statusMessages.copyNoMessage': 'No assistant message to copy.',
-      'tui.statusMessages.copyFailed': `Failed to copy to clipboard: ${String(params?.error ?? '?')}`,
+      'tui.statusMessages.copyFailed': `Failed to copy to clipboard: ${String(params?.['error'] ?? '?')}`,
     };
     return translations[key] ?? key;
   },

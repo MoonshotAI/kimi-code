@@ -13,6 +13,7 @@
  *   Stop       after 20 turns (7/20)      (or a dim "no stop condition" note)
  */
 
+import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 import {
   Text,
   truncateToWidth,
@@ -20,7 +21,6 @@ import {
   wrapTextWithAnsi,
   type Component,
 } from '@moonshot-ai/pi-tui';
-import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 
 import { t } from '#/i18n';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
@@ -28,6 +28,7 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
+
 import { formatGoalElapsed } from './goal-format';
 import { UsagePanelComponent } from './usage-panel';
 
@@ -67,10 +68,7 @@ export class UpcomingGoalAddedMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    return renderLifecycleLine(
-      t('tui.messages.goalPanel.upcomingAdded'),
-      width,
-    );
+    return renderLifecycleLine(t('tui.messages.goalPanel.upcomingAdded'), width);
   }
 }
 
@@ -150,7 +148,11 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
     lines.push(`${bar('▌')} ${value(line)}`);
   }
   if (goal.completionCriterion !== undefined) {
-    for (const line of wrap(`✓ ${goal.completionCriterion}`, blockquoteWrapWidth, MAX_CRITERION_LINES)) {
+    for (const line of wrap(
+      `✓ ${goal.completionCriterion}`,
+      blockquoteWrapWidth,
+      MAX_CRITERION_LINES,
+    )) {
       lines.push(`${bar('▌')} ${muted(line)}`);
     }
   }
@@ -167,9 +169,13 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
       ),
     );
   }
-  lines.push(row(t('tui.messages.goalPanel.runningLabel'), value(formatGoalElapsed(goal.wallClockMs))));
+  lines.push(
+    row(t('tui.messages.goalPanel.runningLabel'), value(formatGoalElapsed(goal.wallClockMs))),
+  );
   lines.push(row(t('tui.messages.goalPanel.turnsLabel'), value(`${goal.turnsUsed}`)));
-  lines.push(row(t('tui.messages.goalPanel.tokensLabel'), value(formatTokenCount(goal.tokensUsed))));
+  lines.push(
+    row(t('tui.messages.goalPanel.tokensLabel'), value(formatTokenCount(goal.tokensUsed))),
+  );
   if (!isComplete) {
     const stop = formatStopRow(goal);
     lines.push(
@@ -217,6 +223,8 @@ function statusToken(status: GoalStatus): ColorToken {
     case 'complete':
       return 'success';
     case 'blocked':
+    case 'budget_limited':
+    case 'usage_limited':
       return 'warning';
     case 'paused':
       return 'textDim';
@@ -233,6 +241,10 @@ function statusLabel(status: GoalStatus): string {
       return t('tui.messages.goalPanel.statusBlocked');
     case 'paused':
       return t('tui.messages.goalPanel.statusPaused');
+    case 'budget_limited':
+      return t('tui.messages.goalPanel.statusBudgetLimited');
+    case 'usage_limited':
+      return t('tui.messages.goalPanel.statusUsageLimited');
   }
 }
 

@@ -1,21 +1,18 @@
 import type { TUI } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { FooterComponent } from '#/tui/components/chrome/footer';
 import {
   ClipboardImageHintController,
   type ClipboardImageHintHost,
 } from '#/tui/controllers/clipboard-image-hint';
-import type { FooterComponent } from '#/tui/components/chrome/footer';
 import { TERMINAL_FOCUS_IN, TERMINAL_FOCUS_OUT } from '#/tui/utils/terminal-focus';
 import { clipboardHasImage } from '#/utils/clipboard/clipboard-has-image';
 
 vi.mock('#/i18n', () => ({
-  t: (
-    key: string,
-    params?: Record<string, string | number>,
-  ): string => {
+  t: (key: string, params?: Record<string, string | number>): string => {
     if (key === 'tui.messages.clipboardImageHint') {
-      return `Image in clipboard · ${String(params?.shortcut ?? 'Ctrl+V')} to paste`;
+      return `Image in clipboard · ${String(params?.['shortcut'] ?? 'Ctrl+V')} to paste`;
     }
     return key;
   },
@@ -362,7 +359,12 @@ describe('ClipboardImageHintController', () => {
 
   it('ignores stale clipboard read result when focus is lost', async () => {
     vi.mocked(clipboardHasImage).mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => { resolve(true); }, 1500)),
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            resolve(true);
+          }, 1500),
+        ),
     );
 
     const footer = createFakeFooter();
@@ -392,9 +394,10 @@ describe('ClipboardImageHintController', () => {
   it('ignores a pending clipboard read result after stop', async () => {
     let resolveDeferred: (value: boolean) => void = () => {};
     vi.mocked(clipboardHasImage).mockImplementation(
-      () => new Promise<boolean>((resolve) => {
-        resolveDeferred = resolve;
-      }),
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveDeferred = resolve;
+        }),
     );
 
     const footer = createFakeFooter();
@@ -640,7 +643,7 @@ describe('ClipboardImageHintController', () => {
         consumedEvents.push(data);
         return { consume: true };
       }
-      return undefined;
+      return;
     });
 
     // Baseline observation (consumed), then a new image on the next focus.

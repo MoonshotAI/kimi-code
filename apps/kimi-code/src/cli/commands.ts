@@ -1,7 +1,8 @@
+import { Command, InvalidArgumentError, Option } from 'commander';
+
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { t } from '#/i18n';
 import { registerMigrateCommand } from '#/migration/index';
-import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
@@ -31,14 +32,16 @@ export function createProgram(
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', t('cli.program.helpOption'))
     .usage(t('cli.program.usage'))
-    .addHelpText('after', `\n${t('cli.program.documentation')}        https://moonshotai.github.io/kimi-code/\n`);
+    .addHelpText(
+      'after',
+      `\n${t('cli.program.documentation')}        https://moonshotai.github.io/kimi-code/\n`,
+    );
 
   program
     .addOption(
-      new Option(
-        '-S, --session [id]',
-        t('cli.optionDescriptions.session'),
-      ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
+      new Option('-S, --session [id]', t('cli.optionDescriptions.session')).argParser(
+        (val: string | boolean) => (val === true ? '' : (val as string)),
+      ),
     )
     .addOption(
       new Option('-r, --resume [id]')
@@ -49,37 +52,21 @@ export function createProgram(
     .addOption(new Option('-C').hideHelp().default(false))
     .option('-y, --yolo', t('cli.optionDescriptions.yolo'), false)
     .option('--auto', t('cli.optionDescriptions.auto'), false)
+    .addOption(new Option('-m, --model <model>', t('cli.optionDescriptions.model')))
+    .addOption(new Option('-p, --prompt <prompt>', t('cli.optionDescriptions.prompt')))
     .addOption(
-      new Option(
-        '-m, --model <model>',
-        t('cli.optionDescriptions.model'),
-      ),
+      new Option('--output-format <format>', t('cli.optionDescriptions.outputFormat')).choices([
+        'text',
+        'stream-json',
+      ]),
     )
     .addOption(
-      new Option(
-        '-p, --prompt <prompt>',
-        t('cli.optionDescriptions.prompt'),
-      ),
-    )
-    .addOption(
-      new Option(
-        '--output-format <format>',
-        t('cli.optionDescriptions.outputFormat'),
-      ).choices(['text', 'stream-json']),
-    )
-    .addOption(
-      new Option(
-        '--skills-dir <dir>',
-        t('cli.optionDescriptions.skillsDir'),
-      )
+      new Option('--skills-dir <dir>', t('cli.optionDescriptions.skillsDir'))
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
     .addOption(
-      new Option(
-        '--agent <name>',
-        t('cli.optionDescriptions.agent'),
-      )
+      new Option('--agent <name>', t('cli.optionDescriptions.agent'))
         .argParser((value: string, previous: string | undefined) => {
           if (previous !== undefined) {
             throw new InvalidArgumentError(t('cli.errors.agentOnlyOnce'));
@@ -89,10 +76,7 @@ export function createProgram(
         .conflicts('agentFile'),
     )
     .addOption(
-      new Option(
-        '--agent-file <path>',
-        t('cli.optionDescriptions.agentFile'),
-      )
+      new Option('--agent-file <path>', t('cli.optionDescriptions.agentFile'))
         .argParser((value: string, previous: string[] | undefined) => {
           if ((previous?.length ?? 0) > 0) {
             throw new InvalidArgumentError(t('cli.errors.agentFileOnlyOnce'));
@@ -103,10 +87,7 @@ export function createProgram(
         .default([]),
     )
     .addOption(
-      new Option(
-        '--add-dir <dir>',
-        t('cli.optionDescriptions.addDir'),
-      )
+      new Option('--add-dir <dir>', t('cli.optionDescriptions.addDir'))
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
@@ -141,7 +122,9 @@ export function createProgram(
 
   program.argument('[args...]').action((args: string[]) => {
     if (args.length > 0) {
-      program.error(t('cli.errors.unknownCommand', { command: args[0], cliName: CLI_COMMAND_NAME }));
+      program.error(
+        t('cli.errors.unknownCommand', { command: args[0] ?? '', cliName: CLI_COMMAND_NAME }),
+      );
     }
 
     const raw = program.opts<Record<string, unknown>>();

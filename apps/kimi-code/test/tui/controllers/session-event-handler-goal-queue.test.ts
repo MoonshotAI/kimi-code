@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
-import { getBuiltInPalette } from '#/tui/theme';
 import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '#/tui/goal-queue-store';
+import { getBuiltInPalette } from '#/tui/theme';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   readGoalQueue: vi.fn(async () => ({
@@ -22,6 +22,8 @@ function fakeGoalSnapshot(objective: string, status: 'active' | 'blocked' | 'pau
     turnsUsed: 1,
     tokensUsed: 10,
     wallClockMs: 100,
+    createdAt: 1000,
+    updatedAt: 2000,
     budget: {
       tokenBudget: null,
       turnBudget: 20,
@@ -170,7 +172,10 @@ function modelBlockedEvent() {
 
 function addedTranscriptText(host: ReturnType<typeof makeHost>['host']): string {
   const component = host.state.transcriptContainer.addChild.mock.calls.at(-1)?.[0];
-  return component.render(80).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+  return component
+    .render(80)
+    .join('\n')
+    .replaceAll(/\[[0-9;]*m/g, '');
 }
 
 describe('SessionEventHandler goal queue promotion', () => {
@@ -312,7 +317,9 @@ describe('SessionEventHandler goal queue promotion', () => {
         replace: false,
       });
     });
-    const sendQueuedCalls = host.sendQueuedMessage.mock.calls as Array<[unknown, { text?: string }]>;
+    const sendQueuedCalls = host.sendQueuedMessage.mock.calls as Array<
+      [unknown, { text?: string }]
+    >;
     const userMessageIndex = sendQueuedCalls.findIndex(
       ([, item]) => item.text === 'queued user turn',
     );

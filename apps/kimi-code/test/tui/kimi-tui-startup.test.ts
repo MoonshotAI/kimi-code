@@ -14,8 +14,6 @@ import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { REPLAY_TURN_LIMIT } from '#/tui/utils/message-replay';
-import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
-import { quoteShellArg } from '#/utils/shell-quote';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -23,6 +21,8 @@ import {
   QUERY_TERMINAL_THEME,
   TERMINAL_THEME_LIGHT,
 } from '#/tui/utils/terminal-theme';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
@@ -141,6 +141,8 @@ function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     turnsUsed: 2,
     tokensUsed: 100,
     wallClockMs: 1000,
+    createdAt: 1000,
+    updatedAt: 2000,
     budget: {
       tokenBudget: null,
       turnBudget: null,
@@ -772,10 +774,14 @@ describe('KimiTUI startup', () => {
     await expect(driver.init()).resolves.toBe(false);
 
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
-    const firstPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    const firstPicker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+    };
     firstPicker.handleInput('\u0001');
     await new Promise((resolve) => setImmediate(resolve));
-    const allPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    const allPicker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+    };
     allPicker.handleInput('\u0001');
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -964,7 +970,7 @@ describe('KimiTUI startup', () => {
       listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: '' }));
-    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue();
     copyTextToClipboardMock.mockClear();
 
     await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
@@ -1030,7 +1036,7 @@ describe('KimiTUI startup', () => {
       ]),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: '' }));
-    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue();
 
     await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
     await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
@@ -1103,15 +1109,15 @@ describe('KimiTUI startup', () => {
     expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_THEME_REPORTING);
   });
 
-  it("only shows provider refresh status for added models", async () => {
+  it('only shows provider refresh status for added models', async () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, makeStartupInput());
-    const showStatus = vi.spyOn(driver as any, "showStatus").mockImplementation(() => {});
-    vi.spyOn((driver as any).authFlow, "refreshProviderModels").mockResolvedValue({
+    const showStatus = vi.spyOn(driver as any, 'showStatus').mockImplementation(() => {});
+    vi.spyOn((driver as any).authFlow, 'refreshProviderModels').mockResolvedValue({
       changed: [
-        { providerId: "new-models", providerName: "New Models", added: 2, removed: 0 },
-        { providerId: "removed-models", providerName: "Removed Models", added: 0, removed: 3 },
-        { providerId: "metadata-only", providerName: "Metadata Only", added: 0, removed: 0 },
+        { providerId: 'new-models', providerName: 'New Models', added: 2, removed: 0 },
+        { providerId: 'removed-models', providerName: 'Removed Models', added: 0, removed: 3 },
+        { providerId: 'metadata-only', providerName: 'Metadata Only', added: 0, removed: 0 },
       ],
       unchanged: [],
       failed: [],
@@ -1120,10 +1126,10 @@ describe('KimiTUI startup', () => {
     await (driver as any).refreshProviderModelsInBackground();
 
     expect(showStatus).toHaveBeenCalledTimes(1);
-    expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+    expect(showStatus).toHaveBeenCalledWith('New Models · +2 models.');
   });
 
-  it("starts TUI without a session when fresh startup needs OAuth login", async () => {
+  it('starts TUI without a session when fresh startup needs OAuth login', async () => {
     const harness = makeHarness(makeSession(), {
       createSession: vi.fn(async () => {
         throw loginRequiredError();
@@ -1670,7 +1676,9 @@ describe('KimiTUI startup', () => {
 
       await vi.waitFor(() => {
         expect(
-          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+          driver.state.transcriptContainer.children.some(
+            (child) => child instanceof BannerComponent,
+          ),
         ).toBe(true);
       });
 
@@ -1727,7 +1735,9 @@ describe('KimiTUI startup', () => {
 
       await vi.waitFor(() => {
         expect(
-          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+          driver.state.transcriptContainer.children.some(
+            (child) => child instanceof BannerComponent,
+          ),
         ).toBe(true);
       });
 

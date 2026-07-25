@@ -9,22 +9,23 @@ import type {
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
+
+import type { TodoItem } from '../components/chrome/todo-panel';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
 import { currentTheme } from '../theme';
-import type { TodoItem } from '../components/chrome/todo-panel';
+import type { TUIState } from '../tui-state';
 import type {
   AppState,
   BackgroundAgentMetadata,
   ToolResultBlockData,
   TranscriptEntry,
 } from '../types';
-import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
-import { formatBashOutputForDisplay } from '../utils/shell-output';
-import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
@@ -46,10 +47,10 @@ import {
   type SkillActivationProjection,
   type PluginCommandProjection,
 } from '../utils/message-replay';
-import { t } from '#/i18n';
-import type { StreamingUIController } from './streaming-ui';
+import { formatBashOutputForDisplay } from '../utils/shell-output';
+import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import type { SessionEventHandler } from './session-event-handler';
-import type { TUIState } from '../tui-state';
+import type { StreamingUIController } from './streaming-ui';
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 type CompactionReplayRecord = Extract<AgentReplayRecord, { type: 'compaction' }>;
@@ -182,7 +183,9 @@ export class SessionReplayRenderer {
         sessionEventHandler.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
     }
-    state.footer.setBackgroundCounts(countActiveBackgroundTasks(sessionEventHandler.backgroundTasks));
+    state.footer.setBackgroundCounts(
+      countActiveBackgroundTasks(sessionEventHandler.backgroundTasks),
+    );
     state.ui.requestRender();
   }
 
@@ -218,7 +221,14 @@ export class SessionReplayRenderer {
         }
         context.suppressNextPlanModeOffNotice = false;
         this.host.appendTranscriptEntry(
-          replayEntry(context, 'status', record.enabled ? t('tui.statusMessages.replayPlanModeOn') : t('tui.statusMessages.replayPlanModeOff'), 'notice'),
+          replayEntry(
+            context,
+            'status',
+            record.enabled
+              ? t('tui.statusMessages.replayPlanModeOn')
+              : t('tui.statusMessages.replayPlanModeOff'),
+            'notice',
+          ),
         );
         return;
       case 'permission_updated':
@@ -427,7 +437,12 @@ export class SessionReplayRenderer {
     context.skillActivationIds.add(skill.activationId);
     sessionEventHandler.renderedSkillActivationIds.add(skill.activationId);
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'skill_activation', t('tui.statusMessages.replaySkillActivated', { skillName: skill.skillName }), 'plain'),
+      ...replayEntry(
+        context,
+        'skill_activation',
+        t('tui.statusMessages.replaySkillActivated', { skillName: skill.skillName }),
+        'plain',
+      ),
       skillActivationId: skill.activationId,
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
@@ -498,7 +513,12 @@ export class SessionReplayRenderer {
         return;
       case 'completion':
         this.host.appendTranscriptEntry(
-          replayEntry(context, 'assistant', buildGoalCompletionMessage(record.snapshot), 'markdown'),
+          replayEntry(
+            context,
+            'assistant',
+            buildGoalCompletionMessage(record.snapshot),
+            'markdown',
+          ),
         );
         return;
       case 'lifecycle': {
@@ -564,7 +584,12 @@ export class SessionReplayRenderer {
     if (message.origin?.kind !== 'cron_missed') return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'cron', stripCronEnvelope(contentPartsToText(message.content)), 'plain'),
+      ...replayEntry(
+        context,
+        'cron',
+        stripCronEnvelope(contentPartsToText(message.content)),
+        'plain',
+      ),
       cronData: {
         missedCount: message.origin.count,
       },
@@ -584,7 +609,9 @@ export class SessionReplayRenderer {
       replayEntry(
         context,
         'status',
-        mode === 'manual' ? t('tui.statusMessages.replayYoloModeOff') : t('tui.statusMessages.replayPermissionMode', { mode }),
+        mode === 'manual'
+          ? t('tui.statusMessages.replayYoloModeOff')
+          : t('tui.statusMessages.replayPermissionMode', { mode }),
         'notice',
       ),
     );
@@ -603,7 +630,11 @@ export class SessionReplayRenderer {
     const parts: string[] = [];
     switch (result.decision) {
       case 'approved':
-        parts.push(result.scope === 'session' ? t('tui.statusMessages.approvedForSession') : t('tui.statusMessages.approved'));
+        parts.push(
+          result.scope === 'session'
+            ? t('tui.statusMessages.approvedForSession')
+            : t('tui.statusMessages.approved'),
+        );
         break;
       case 'rejected':
         parts.push(t('tui.statusMessages.rejected'));
@@ -634,7 +665,9 @@ export class SessionReplayRenderer {
     switch (result.decision) {
       case 'rejected':
         content =
-          result.selectedLabel === 'Revise' ? t('tui.statusMessages.planSentBackForRevision') : t('tui.statusMessages.planReviewRejected');
+          result.selectedLabel === 'Revise'
+            ? t('tui.statusMessages.planSentBackForRevision')
+            : t('tui.statusMessages.planReviewRejected');
         break;
       case 'cancelled':
         content = t('tui.statusMessages.planReviewCancelled');
@@ -739,6 +772,8 @@ function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
     case 'blocked':
       return t('tui.statusMessages.replayGoalBlocked');
     case 'complete':
+    case 'budget_limited':
+    case 'usage_limited':
     case undefined:
       return t('tui.statusMessages.replayGoalUpdated');
   }
@@ -761,11 +796,7 @@ function extractCronPrompt(text: string): string {
 
 function stripCronEnvelope(text: string): string {
   const lines = text.split('\n');
-  if (
-    lines.length >= 2 &&
-    lines[0]?.startsWith('<cron-fire ') &&
-    lines.at(-1) === '</cron-fire>'
-  ) {
+  if (lines.length >= 2 && lines[0]?.startsWith('<cron-fire ') && lines.at(-1) === '</cron-fire>') {
     return lines.slice(1, -1).join('\n');
   }
   return text;

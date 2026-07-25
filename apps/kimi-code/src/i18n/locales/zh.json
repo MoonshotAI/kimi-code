@@ -120,7 +120,9 @@
       "cannotCombinePromptAndPlan": "--prompt 不能与 --plan 同时使用。",
       "sessionWithoutIdInPromptMode": "在提示模式下不能不带 ID 使用 --session。",
       "cannotCombineContinueAndSession": "--continue 不能与 --session 同时使用。",
-      "cannotCombineYoloAndAuto": "--yolo 不能与 --auto 同时使用。"
+      "cannotCombineYoloAndAuto": "--yolo 不能与 --auto 同时使用。",
+      "agentOnlyOnce": "--agent 只能指定一次。",
+      "agentFileOnlyOnce": "--agent-file 只能指定一次。"
     }
   },
   "startup": {
@@ -191,6 +193,10 @@
         "statusDone": "已完成",
         "statusInProgress": "进行中",
         "statusPending": "待处理"
+      },
+      "workflowPanel": {
+        "header": "工作流",
+        "running": "运行中"
       },
       "activityPane": {
         "tipPrefix": " · 提示：{{tip}}"
@@ -1380,7 +1386,9 @@
         "statusActive": "进行中",
         "statusComplete": "已完成",
         "statusBlocked": "已阻塞",
-        "statusPaused": "已暂停"
+        "statusPaused": "已暂停",
+        "statusBudgetLimited": "预算已耗尽",
+        "statusUsageLimited": "用量已耗尽"
       },
       "planBox": {
         "fallback": " 计划 ",

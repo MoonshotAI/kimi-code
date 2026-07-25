@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']);
+export const goalStatusSchema = z.enum([
+  'active',
+  'paused',
+  'blocked',
+  'complete',
+  'budget_limited',
+  'usage_limited',
+]);
 export type GoalStatus = z.infer<typeof goalStatusSchema>;
 
 export const goalBudgetReportSchema = z.object({
@@ -14,6 +21,8 @@ export const goalBudgetReportSchema = z.object({
   turnBudgetReached: z.boolean(),
   wallClockBudgetReached: z.boolean(),
   overBudget: z.boolean(),
+  inputTokensUsed: z.number(),
+  outputTokensUsed: z.number(),
 });
 export type GoalBudgetReport = z.infer<typeof goalBudgetReportSchema>;
 
@@ -24,8 +33,13 @@ export const goalSnapshotSchema = z.object({
   status: goalStatusSchema,
   turnsUsed: z.number(),
   tokensUsed: z.number(),
+  inputTokensUsed: z.number(),
+  outputTokensUsed: z.number(),
   wallClockMs: z.number(),
   budget: goalBudgetReportSchema,
   terminalReason: z.string().optional(),
+  blockedStreak: z.number().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
 });
 export type GoalSnapshotWire = z.infer<typeof goalSnapshotSchema>;

@@ -13,18 +13,18 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
-import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
-import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
-import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import {
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
 } from '#/tui/utils/transcript-window';
-import { ToolCallComponent } from '#/tui/components/messages/tool-call';
-import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -116,6 +116,8 @@ function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     turnsUsed: 0,
     tokensUsed: 0,
     wallClockMs: 0,
+    createdAt: 1000,
+    updatedAt: 2000,
     budget: {
       tokenBudget: null,
       turnBudget: null,
@@ -132,10 +134,7 @@ function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
   };
 }
 
-function goalReplay(
-  snapshot: GoalSnapshot,
-  change: GoalReplayRecord['change'],
-): GoalReplayRecord {
+function goalReplay(snapshot: GoalSnapshot, change: GoalReplayRecord['change']): GoalReplayRecord {
   return {
     time: REPLAY_TIME,
     type: 'goal_updated',
@@ -387,15 +386,17 @@ describe('KimiTUI resume message replay', () => {
   it('renders persisted goal replay records as goal transcript UI', async () => {
     const driver = await replayIntoDriver([
       goalReplay(goalSnapshot(), { kind: 'created' }),
-      goalReplay(
-        goalSnapshot({ status: 'paused', terminalReason: 'taking a break' }),
-        { kind: 'lifecycle', status: 'paused', reason: 'taking a break' },
-      ),
+      goalReplay(goalSnapshot({ status: 'paused', terminalReason: 'taking a break' }), {
+        kind: 'lifecycle',
+        status: 'paused',
+        reason: 'taking a break',
+      }),
       goalReplay(goalSnapshot({ status: 'active' }), { kind: 'lifecycle', status: 'active' }),
-      goalReplay(
-        goalSnapshot({ status: 'blocked', terminalReason: 'needs credentials' }),
-        { kind: 'lifecycle', status: 'blocked', reason: 'needs credentials' },
-      ),
+      goalReplay(goalSnapshot({ status: 'blocked', terminalReason: 'needs credentials' }), {
+        kind: 'lifecycle',
+        status: 'blocked',
+        reason: 'needs credentials',
+      }),
       goalReplay(
         goalSnapshot({
           status: 'complete',
@@ -430,10 +431,11 @@ describe('KimiTUI resume message replay', () => {
   it('filters resume-normalization goal pause markers in TUI replay', async () => {
     const driver = await replayIntoDriver([
       goalReplay(goalSnapshot(), { kind: 'created' }),
-      goalReplay(
-        goalSnapshot({ status: 'paused', terminalReason: 'Paused after agent resume' }),
-        { kind: 'lifecycle', status: 'paused', reason: 'Paused after agent resume' },
-      ),
+      goalReplay(goalSnapshot({ status: 'paused', terminalReason: 'Paused after agent resume' }), {
+        kind: 'lifecycle',
+        status: 'paused',
+        reason: 'Paused after agent resume',
+      }),
     ]);
 
     expect(
@@ -546,10 +548,11 @@ describe('KimiTUI resume message replay', () => {
 
   it('does not replay the model-blocked lifecycle marker when the follow-up is replayed', async () => {
     const driver = await replayIntoDriver([
-      goalReplay(
-        goalSnapshot({ status: 'blocked' }),
-        { kind: 'lifecycle', status: 'blocked', actor: 'model' },
-      ),
+      goalReplay(goalSnapshot({ status: 'blocked' }), {
+        kind: 'lifecycle',
+        status: 'blocked',
+        actor: 'model',
+      }),
       message(
         'user',
         [
@@ -560,10 +563,7 @@ describe('KimiTUI resume message replay', () => {
         ],
         { origin: { kind: 'system_trigger', name: 'goal_blocked' } },
       ),
-      message(
-        'assistant',
-        [{ type: 'text', text: 'I am blocked because I need credentials.' }],
-      ),
+      message('assistant', [{ type: 'text', text: 'I am blocked because I need credentials.' }]),
     ]);
 
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'goal')).toEqual([]);
@@ -574,10 +574,11 @@ describe('KimiTUI resume message replay', () => {
 
   it('does not replay model-blocked lifecycle markers without a follow-up', async () => {
     const driver = await replayIntoDriver([
-      goalReplay(
-        goalSnapshot({ status: 'blocked' }),
-        { kind: 'lifecycle', status: 'blocked', actor: 'model' },
-      ),
+      goalReplay(goalSnapshot({ status: 'blocked' }), {
+        kind: 'lifecycle',
+        status: 'blocked',
+        actor: 'model',
+      }),
     ]);
 
     expect(
@@ -589,10 +590,7 @@ describe('KimiTUI resume message replay', () => {
 
   it('keeps replayed blocked lifecycle markers when actor is unavailable', async () => {
     const driver = await replayIntoDriver([
-      goalReplay(
-        goalSnapshot({ status: 'blocked' }),
-        { kind: 'lifecycle', status: 'blocked' },
-      ),
+      goalReplay(goalSnapshot({ status: 'blocked' }), { kind: 'lifecycle', status: 'blocked' }),
     ]);
 
     expect(
@@ -604,10 +602,11 @@ describe('KimiTUI resume message replay', () => {
 
   it('keeps replayed runtime-blocked lifecycle markers', async () => {
     const driver = await replayIntoDriver([
-      goalReplay(
-        goalSnapshot({ status: 'blocked' }),
-        { kind: 'lifecycle', status: 'blocked', actor: 'runtime' },
-      ),
+      goalReplay(goalSnapshot({ status: 'blocked' }), {
+        kind: 'lifecycle',
+        status: 'blocked',
+        actor: 'runtime',
+      }),
     ]);
 
     expect(
@@ -698,16 +697,18 @@ describe('KimiTUI resume message replay', () => {
       }),
       message(
         'tool',
-        [{
-          type: 'text',
-          text: [
-            '<agent_swarm_result>',
-            '<summary>completed: 1, failed: 1</summary>',
-            '<subagent index="1" outcome="completed">Reviewed src/a.ts.</subagent>',
-            '<subagent index="2" outcome="failed">Agent timed out.</subagent>',
-            '</agent_swarm_result>',
-          ].join('\n'),
-        }],
+        [
+          {
+            type: 'text',
+            text: [
+              '<agent_swarm_result>',
+              '<summary>completed: 1, failed: 1</summary>',
+              '<subagent index="1" outcome="completed">Reviewed src/a.ts.</subagent>',
+              '<subagent index="2" outcome="failed">Agent timed out.</subagent>',
+              '</agent_swarm_result>',
+            ].join('\n'),
+          },
+        ],
         { toolCallId: 'call_swarm' },
       ),
     ];
@@ -734,20 +735,22 @@ describe('KimiTUI resume message replay', () => {
       }),
       message(
         'tool',
-        [{
-          type: 'text',
-          text: [
-            '<agent_swarm_result>',
-            '<summary>failed: 1, aborted: 1</summary>',
-            '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values ' +
-              'in this result to continue unfinished work.</resume_hint>',
-            '<subagent agent_id="agent-1" item="src/a.ts" outcome="failed">' +
-              'Agent timed out.</subagent>',
-            '<subagent agent_id="agent-2" item="src/b.ts" outcome="aborted">' +
-              'User interrupted.</subagent>',
-            '</agent_swarm_result>',
-          ].join('\n'),
-        }],
+        [
+          {
+            type: 'text',
+            text: [
+              '<agent_swarm_result>',
+              '<summary>failed: 1, aborted: 1</summary>',
+              '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values ' +
+                'in this result to continue unfinished work.</resume_hint>',
+              '<subagent agent_id="agent-1" item="src/a.ts" outcome="failed">' +
+                'Agent timed out.</subagent>',
+              '<subagent agent_id="agent-2" item="src/b.ts" outcome="aborted">' +
+                'User interrupted.</subagent>',
+              '</agent_swarm_result>',
+            ].join('\n'),
+          },
+        ],
         { toolCallId: 'call_swarm' },
       ),
     ];
@@ -781,7 +784,9 @@ describe('KimiTUI resume message replay', () => {
     ]);
     expect(driver.sessionEventHandler.backgroundTasks.has('agent-bg1')).toBe(true);
     expect(driver.sessionEventHandler.backgroundTasks.has('bash-bg1')).toBe(true);
-    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(
+      true,
+    );
   });
 
   it('matches completed resumed background agents by agent id when task id differs', async () => {
@@ -872,8 +877,9 @@ describe('KimiTUI resume message replay', () => {
         'agent-bg-timeout',
       ),
     ).toBe(false);
-    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
-      .toBe(true);
+    expect(
+      driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'),
+    ).toBe(true);
     expect(
       driver.state.transcriptEntries.some(
         (entry) => entry.backgroundAgentStatus?.phase === 'failed',
@@ -1187,10 +1193,14 @@ describe('KimiTUI resume message replay', () => {
           result: { decision: 'rejected', selectedLabel: 'Reject' },
         },
       },
-      message('tool', [{ type: 'text', text: 'Plan rejected by user. Plan mode remains active.' }], {
-        toolCallId: 'call_exit_reject',
-        isError: true,
-      }),
+      message(
+        'tool',
+        [{ type: 'text', text: 'Plan rejected by user. Plan mode remains active.' }],
+        {
+          toolCallId: 'call_exit_reject',
+          isError: true,
+        },
+      ),
       message('assistant', [], {
         toolCalls: [toolCall('call_exit_final', 'ExitPlanMode', {})],
       }),

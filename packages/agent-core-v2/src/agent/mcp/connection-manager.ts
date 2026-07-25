@@ -10,21 +10,28 @@
  * to subscribers. Constructed by `SessionMcpService`.
  */
 
-import { ErrorCodes, Error2 } from '#/errors';
-import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
+import { abortable } from '#/_base/utils/abort';
+import type { McpOAuthService } from '#/agent/mcp/oauth/service';
+import { ErrorCodes, Error2 } from '#/errors';
 import type { Tool } from '#/kosong/contract/tool';
 
-import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';
-import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
+import { SseMcpClient } from './client-sse';
 import { StdioMcpClient } from './client-stdio';
-import type { McpOAuthService } from '#/agent/mcp/oauth/service';
+import type { McpConfigSource } from './config-loader';
+import type { McpServerConfig } from './config-schema';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
-export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+export type McpServerStatus =
+  | 'pending'
+  | 'pending-approval'
+  | 'connected'
+  | 'failed'
+  | 'disabled'
+  | 'needs-auth';
 
 export interface McpServerEntry {
   readonly name: string;
@@ -121,9 +128,7 @@ export class McpConnectionManager {
     return entry !== undefined ? toPublicEntry(entry) : undefined;
   }
 
-  resolved(
-    name: string,
-  ):
+  resolved(name: string):
     | {
         client: MCPClient;
         tools: readonly Tool[];
@@ -148,11 +153,14 @@ export class McpConnectionManager {
     };
   }
 
-  connectAll(configs: Record<string, McpServerConfig>): Promise<void> {
+  connectAll(
+    configs: Record<string, McpServerConfig>,
+    sources?: Readonly<Record<string, McpConfigSource>>,
+  ): Promise<void> {
     const attemptId = ++this.initialLoadAttemptId;
     this.initialLoadStartedAt = Date.now();
     this.initialLoadFinishedAt = undefined;
-    const initialLoad = this.connectAllNow(configs).finally(() => {
+    const initialLoad = this.connectAllNow(configs, sources).finally(() => {
       if (this.initialLoadAttemptId === attemptId) {
         this.initialLoadFinishedAt = Date.now();
       }
@@ -206,23 +214,46 @@ export class McpConnectionManager {
     return Math.max(0, endedAt - this.initialLoadStartedAt);
   }
 
-  private async connectAllNow(configs: Record<string, McpServerConfig>): Promise<void> {
+  private async connectAllNow(
+    configs: Record<string, McpServerConfig>,
+    sources?: Readonly<Record<string, McpConfigSource>>,
+  ): Promise<void> {
     const tasks: Promise<unknown>[] = [];
     for (const [name, config] of Object.entries(configs)) {
       const disabled = config.enabled === false;
+      // Stdio servers from `<repoRoot>/.mcp.json` are untrusted (the file is
+      // typically checked into git): hold them in `pending-approval` until
+      // the user explicitly trusts them via `approveServer`.
+      const needsApproval =
+        !disabled && config.transport === 'stdio' && sources?.[name] === 'project-root';
       const entry: InternalEntry = {
         name,
         config,
         attemptId: 0,
-        status: disabled ? 'disabled' : 'pending',
+        status: disabled ? 'disabled' : needsApproval ? 'pending-approval' : 'pending',
       };
       this.entries.set(name, entry);
       this.emit(entry);
-      if (!disabled) {
+      if (!disabled && !needsApproval) {
         tasks.push(this.connectOne(entry, this.beginConnectAttempt(entry)));
       }
     }
     await Promise.allSettled(tasks);
+  }
+
+  /**
+   * Mark a `pending-approval` server (stdio server sourced from
+   * `<repoRoot>/.mcp.json`) as trusted and start connecting it.
+   */
+  async approveServer(name: string): Promise<void> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) {
+      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
+    }
+    if (entry.status !== 'pending-approval') return;
+    entry.status = 'pending';
+    this.emit(entry);
+    await this.connectOne(entry, this.beginConnectAttempt(entry));
   }
 
   async reconnect(name: string): Promise<void> {
@@ -413,8 +444,7 @@ export class McpConnectionManager {
   private async closeRuntimeClient(client: RuntimeMcpClient): Promise<void> {
     try {
       await client.close();
-    } catch {
-    }
+    } catch {}
   }
 
   private isCurrent(entry: InternalEntry, attemptId: number): boolean {
@@ -434,8 +464,7 @@ export class McpConnectionManager {
     for (const listener of this.listeners) {
       try {
         listener(view);
-      } catch {
-      }
+      } catch {}
     }
   }
 }

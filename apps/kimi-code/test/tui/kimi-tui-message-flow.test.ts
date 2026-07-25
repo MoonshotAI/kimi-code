@@ -3,60 +3,57 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import {
-  deleteAllKittyImages,
-  resetCapabilitiesCache,
-  setCapabilities,
-} from '@moonshot-ai/pi-tui';
 import type {
   ApprovalRequest,
   ApprovalResponse,
   Event,
   GoalSnapshot,
 } from '@moonshot-ai/kimi-code-sdk';
+import { deleteAllKittyImages, resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
-import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
-import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
-import {
-  AgentSwarmProgressComponent,
-  agentSwarmGridHeightForTerminalRows,
-} from '#/tui/components/messages/agent-swarm-progress';
-import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
-import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
-import { ToolCallComponent } from '#/tui/components/messages/tool-call';
-import {
-  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
-  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
-  TRANSCRIPT_KEEP_RECENT_STEPS,
-} from '#/tui/utils/transcript-window';
-import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
-import { ThinkingComponent } from '#/tui/components/messages/thinking';
-import { WelcomeComponent } from '#/tui/components/chrome/welcome';
-import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
-import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
-import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
-import {
-  PluginInstallTrustConfirmComponent,
-  PluginMcpSelectorComponent,
-  PluginRemoveConfirmComponent,
-  PluginsPanelComponent,
-} from '#/tui/components/dialogs/plugins-selector';
-import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
-import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
-import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
-import { uploadArchive } from '../../src/feedback/upload';
 import {
   promptFeedbackAttachment,
   promptFeedbackInput,
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
+import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
+import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import {
+  PluginInstallTrustConfirmComponent,
+  PluginMcpSelectorComponent,
+  PluginRemoveConfirmComponent,
+  PluginsPanelComponent,
+} from '#/tui/components/dialogs/plugins-selector';
+import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
+import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
+import {
+  AgentSwarmProgressComponent,
+  agentSwarmGridHeightForTerminalRows,
+} from '#/tui/components/messages/agent-swarm-progress';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
+import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import {
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+} from '#/tui/utils/transcript-window';
+
+import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
+import { uploadArchive } from '../../src/feedback/upload';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
@@ -71,7 +68,7 @@ vi.mock('../../src/feedback/codebase', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/feedback/codebase')>();
   return {
     ...actual,
-    scanCodebase: vi.fn().mockResolvedValue(undefined),
+    scanCodebase: vi.fn().mockResolvedValue(),
     packageCodebase: vi.fn(),
   };
 });
@@ -87,8 +84,8 @@ vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 // Load the full English locale JSON so the mock resolves all keys.
 const { enLocale, resolveKey, interpolate } = vi.hoisted(() => {
-  const { join } = require('path');
-  const { readFileSync } = require('fs');
+  const { join } = require('node:path');
+  const { readFileSync } = require('node:fs');
   const jsonPath = join(__dirname, '../../src/i18n/locales/en.json');
   const json = JSON.parse(readFileSync(jsonPath, 'utf-8'));
   function resolve(key: string): string | undefined {
@@ -97,11 +94,15 @@ const { enLocale, resolveKey, interpolate } = vi.hoisted(() => {
     for (const part of parts) {
       if (obj === null || obj === undefined || typeof obj !== 'object') {
         // Fallback: try the last key part as a flat lookup in tui.messages
-        const lastName = parts[parts.length - 1];
-        const msgs = (json as Record<string, unknown>).tui as Record<string, unknown> | undefined;
+        const lastName = parts.at(-1) ?? '';
+        const msgs = (json as Record<string, unknown>)['tui'] as
+          | Record<string, unknown>
+          | undefined;
         if (msgs) {
-          const msgObj = (msgs as Record<string, unknown>).messages as Record<string, unknown> | undefined;
-          if (msgObj && typeof msgObj[lastName] === 'string') return msgObj[lastName] as string;
+          const msgObj = (msgs)['messages'] as
+            | Record<string, unknown>
+            | undefined;
+          if (msgObj && typeof msgObj[lastName] === 'string') return msgObj[lastName];
         }
         return undefined;
       }
@@ -383,6 +384,8 @@ function makeActiveGoalSnapshot(): GoalSnapshot {
     turnsUsed: 3,
     tokensUsed: 100,
     wallClockMs: 1000,
+    createdAt: 1000,
+    updatedAt: 2000,
     budget: {
       tokenBudget: null,
       turnBudget: null,
@@ -601,20 +604,17 @@ command = "vim"
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -637,25 +637,24 @@ command = "vim"
   });
 
   it('submits text feedback before preparing requested attachments', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
-    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    harness.listSessions.mockResolvedValueOnce([
+      { id: 'ses-1', sessionDir: '/tmp/session-a' },
+    ] as never);
 
     const zipPath = await makeExportedSessionZip();
     let resolveExport!: () => void;
@@ -703,20 +702,17 @@ command = "vim"
   });
 
   it('waits for the codebase upload to finish before returning', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -790,20 +786,17 @@ command = "vim"
   });
 
   it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -812,7 +805,9 @@ command = "vim"
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
-    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    harness.listSessions.mockResolvedValueOnce([
+      { id: 'ses-1', sessionDir: '/tmp/session-a' },
+    ] as never);
     const sessionZipPath = await makeExportedSessionZip();
     vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
     harness.exportSession.mockResolvedValueOnce({
@@ -840,20 +835,17 @@ command = "vim"
   });
 
   it('tells the user when feedback is sent but codebase packaging fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     vi.mocked(packageCodebase).mockReset();
@@ -862,7 +854,9 @@ command = "vim"
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
-    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    harness.listSessions.mockResolvedValueOnce([
+      { id: 'ses-1', sessionDir: '/tmp/session-a' },
+    ] as never);
     const sessionZipPath = await makeExportedSessionZip();
 
     vi.mocked(scanCodebase).mockResolvedValueOnce({
@@ -881,7 +875,9 @@ command = "vim"
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<
+      [Record<string, unknown>]
+    >;
     expect(calls[0]?.[0]?.['info']).toBeUndefined();
     expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
@@ -895,20 +891,17 @@ command = "vim"
   });
 
   it('tells the user when the codebase upload fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
@@ -938,20 +931,17 @@ command = "vim"
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -970,22 +960,19 @@ command = "vim"
   });
 
   it('does not track feedback when the dialog is cancelled', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
+    const { driver, harness } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            provider: 'managed:kimi-code',
           },
-        })),
-      },
-    );
+        },
+      })),
+    });
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => {});
     harness.track.mockClear();
 
     await handleFeedbackCommand(feedbackDriver as any);
@@ -1686,7 +1673,11 @@ command = "vim"
       expect(session.prompt).not.toHaveBeenCalled();
       expect(driver.state.queuedMessages).toHaveLength(1);
       const queued = driver.state.queuedMessages[0];
-      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+      const parts = queued?.parts as Array<{
+        type: string;
+        text?: string;
+        videoUrl?: { url: string };
+      }>;
       expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
       expect(parts?.[1]?.type).toBe('video_url');
       expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
@@ -1697,7 +1688,6 @@ command = "vim"
       await rm(dir, { recursive: true, force: true });
     }
   });
-
 
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
@@ -1891,9 +1881,7 @@ command = "vim"
     driver.handleUserInput('ls');
 
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.queuedMessages).toEqual([
-      { text: 'ls', agentId: 'main', mode: 'bash' },
-    ]);
+    expect(driver.state.queuedMessages).toEqual([{ text: 'ls', agentId: 'main', mode: 'bash' }]);
   });
 
   it('dispatches a queued bash item to runShellCommand instead of prompt', async () => {
@@ -1943,9 +1931,7 @@ command = "vim"
     driver.state.editor.onCtrlS?.();
 
     expect(session.steer).toHaveBeenCalledWith('focus on tests');
-    expect(driver.state.queuedMessages).toEqual([
-      { text: 'ls', agentId: 'main', mode: 'bash' },
-    ]);
+    expect(driver.state.queuedMessages).toEqual([{ text: 'ls', agentId: 'main', mode: 'bash' }]);
   });
 
   it('does not steer while a shell command is running', async () => {
@@ -3170,9 +3156,7 @@ command = "vim"
 
   it('replaces a running /btw panel when another /btw command is submitted', async () => {
     const session = makeSession({
-      startBtw: vi.fn()
-        .mockResolvedValueOnce('agent-btw-1')
-        .mockResolvedValueOnce('agent-btw-2'),
+      startBtw: vi.fn().mockResolvedValueOnce('agent-btw-1').mockResolvedValueOnce('agent-btw-2'),
     });
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session, 'first question');
@@ -3293,7 +3277,7 @@ command = "vim"
   });
 
   it('renders an ended marker when a one-shot /swarm task exits', async () => {
-    const { driver, session } = await makeDriver(undefined);
+    const { driver, session } = await makeDriver();
     driver.state.appState.permissionMode = 'auto';
 
     driver.handleUserInput('/swarm Ship feature X');
@@ -3464,7 +3448,8 @@ command = "vim"
         agentId: 'main',
         sessionId: 'ses-1',
         code: 'compaction.failed',
-        message: "APIStatusError: 400 the message at position 82 with role 'assistant' must not be empty",
+        message:
+          "APIStatusError: 400 the message at position 82 with role 'assistant' must not be empty",
         retryable: false,
       } as Event,
       vi.fn(),
@@ -3840,8 +3825,7 @@ command = "vim"
     if (swarmProgress === undefined) throw new Error('expected AgentSwarm progress');
 
     const transcriptWidth = Math.max(1, terminalColumns - 2);
-    const renderSwarm = (): string =>
-      stripSgr(swarmProgress.render(transcriptWidth).join('\n'));
+    const renderSwarm = (): string => stripSgr(swarmProgress.render(transcriptWidth).join('\n'));
 
     expect(renderSwarm()).toContain('001 Queued...');
 
@@ -4168,7 +4152,9 @@ command = "vim"
       expect(output).toContain('/mcp-config login linear');
       expect(output).toContain('disabled-tools');
       expect(output).toContain('disabled');
-      expect(output).toContain('1 connected · 1 needs auth · 1 failed · 1 disabled · 2 tools available');
+      expect(output).toContain(
+        '1 connected · 1 needs auth · 1 failed · 1 disabled · 2 tools available',
+      );
     });
   });
 
@@ -4474,9 +4460,7 @@ command = "vim"
     driver.handleUserInput('/plugins remove kimi-webbridge');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginRemoveConfirmComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginRemoveConfirmComponent);
     });
     const confirm = driver.state.editorContainer.children[0] as PluginRemoveConfirmComponent;
     confirm.handleInput('\u001B[B');
@@ -4490,17 +4474,25 @@ command = "vim"
 
   it('installs default marketplace entries through plain install', async () => {
     const originalFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          tier: 'official',
-          displayName: 'Kimi Datasource',
-          description: 'Datasource plugin',
-          source: './official/kimi-datasource.zip',
-        },
-      ],
-    }))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              plugins: [
+                {
+                  id: 'kimi-datasource',
+                  tier: 'official',
+                  displayName: 'Kimi Datasource',
+                  description: 'Datasource plugin',
+                  source: './official/kimi-datasource.zip',
+                },
+              ],
+            }),
+          ),
+      ),
+    );
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
@@ -4663,9 +4655,11 @@ command = "vim"
         ],
         diagnostics: [],
       })),
-      setPluginMcpServerEnabled: vi.fn(async (_id: string, _server: string, nextEnabled: boolean) => {
-        serverEnabled.set(_server, nextEnabled);
-      }),
+      setPluginMcpServerEnabled: vi.fn(
+        async (_id: string, _server: string, nextEnabled: boolean) => {
+          serverEnabled.set(_server, nextEnabled);
+        },
+      ),
     });
     const { driver } = await makeDriver(session);
 
@@ -4678,9 +4672,7 @@ command = "vim"
     panel.handleInput('m');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginMcpSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const mcpPicker = driver.state.editorContainer.children[0] as PluginMcpSelectorComponent;
     mcpPicker.handleInput('\u001B[B');
@@ -4710,9 +4702,7 @@ command = "vim"
     driver.handleUserInput('/plugins remove demo');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginRemoveConfirmComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginRemoveConfirmComponent);
     });
     expect(session.removePlugin).not.toHaveBeenCalled();
 
@@ -4789,7 +4779,9 @@ command = "vim"
     expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
     (picker as TabbedModelSelectorComponent).handleInput('t');
     (picker as TabbedModelSelectorComponent).handleInput('u');
-    const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+    const filteredOutput = stripSgr(
+      (picker as TabbedModelSelectorComponent).render(120).join('\n'),
+    );
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo');
     expect(filteredOutput).not.toContain('Kimi K2');
@@ -5143,10 +5135,14 @@ command = "vim"
       await Promise.resolve();
 
       expect(refreshOAuthProviderModels).toHaveBeenCalledOnce();
-      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(
+        TabbedModelSelectorComponent,
+      );
 
       await vi.advanceTimersByTimeAsync(1_999);
-      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(
+        TabbedModelSelectorComponent,
+      );
 
       await vi.advanceTimersByTimeAsync(1);
       const picker = driver.state.editorContainer.children[0];
@@ -5835,9 +5831,9 @@ describe('transcript step and assistant folding', () => {
 
     // Below the active-turn caps, nothing folds while the turn is live.
     let children = driver.state.transcriptContainer.children;
-    expect(
-      children.filter((child) => child instanceof AssistantMessageComponent),
-    ).toHaveLength(cycles);
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(
+      cycles,
+    );
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -5857,7 +5853,9 @@ describe('transcript step and assistant folding', () => {
     const summaries = children.filter((child) => child instanceof StepSummaryComponent);
     expect(summaries).toHaveLength(1);
     const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
-    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
+    expect(summaryText).toContain(
+      `${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`,
+    );
 
     // Steps below the step cap are untouched by the completed-turn fold.
     expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(cycles);

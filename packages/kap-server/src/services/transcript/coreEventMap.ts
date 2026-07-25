@@ -635,8 +635,7 @@ export class AgentTranscriptProjector {
     if (this.currentStep !== undefined && this.currentStep.turnId === turnId) {
       return this.currentStep;
     }
-    const ordinal =
-      this.lookups?.stepOrdinal?.(turnId) ?? this.stepOrdinals.get(turnId) ?? 1;
+    const ordinal = this.lookups?.stepOrdinal?.(turnId) ?? this.stepOrdinals.get(turnId) ?? 1;
     this.currentStep = {
       kind: 'step',
       stepId: `${turnId}.${ordinal}`,
@@ -742,7 +741,10 @@ export class AgentTranscriptProjector {
       // Argument text accumulated from `tool.call.delta` before this event.
       inputText: this.toolFrames.get(event.toolCallId)?.frame.inputText,
       display: event.display,
-      todoId: event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined ? TODO_ENTITY_ID : undefined,
+      todoId:
+        event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined
+          ? TODO_ENTITY_ID
+          : undefined,
     };
     this.toolFrames.set(event.toolCallId, { turnId, stepId: step.stepId, frame });
     ops.push({ op: 'frame.upsert', turnId, stepId: step.stepId, frame });
@@ -899,7 +901,8 @@ export class AgentTranscriptProjector {
    * and the terminal state of a command that did run.
    */
   private shellTaskId(event: { commandId: string; taskId?: string }): string {
-    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId ?? `shell-${event.commandId}`;
+    const taskId =
+      this.shellTasks.get(event.commandId) ?? event.taskId ?? `shell-${event.commandId}`;
     this.shellTasks.set(event.commandId, taskId);
     return taskId;
   }
@@ -1083,7 +1086,7 @@ export class AgentTranscriptProjector {
     readonly type: string;
     snapshot: {
       objective: string;
-      status: 'active' | 'paused' | 'blocked' | 'complete';
+      status: 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'usage_limited';
       completionCriterion?: string;
       tokensUsed: number;
       budget: { tokenBudget: number | null };

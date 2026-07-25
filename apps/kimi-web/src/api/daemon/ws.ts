@@ -141,7 +141,10 @@ export class DaemonEventSocket {
     };
 
     ws.onclose = (ev?: CloseEvent) => {
-      traceWsLifecycle('close', ev ? { code: ev.code, reason: ev.reason, wasClean: ev.wasClean } : undefined);
+      traceWsLifecycle(
+        'close',
+        ev ? { code: ev.code, reason: ev.reason, wasClean: ev.wasClean } : undefined,
+      );
       this.connected = false;
       this.ws = null;
       this.handlers.onConnectionState(false);
@@ -345,11 +348,16 @@ export class DaemonEventSocket {
       }
 
       case 'ping':
-        this.send({ type: 'pong', payload: { nonce: (frame.payload as { nonce?: unknown } | undefined)?.nonce } });
+        this.send({
+          type: 'pong',
+          payload: { nonce: (frame.payload as { nonce?: unknown } | undefined)?.nonce },
+        });
         break;
 
       case 'resync_required': {
-        const payload = frame.payload as { session_id?: unknown; epoch?: unknown; current_seq?: unknown } | undefined;
+        const payload = frame.payload as
+          | { session_id?: unknown; epoch?: unknown; current_seq?: unknown }
+          | undefined;
         if (typeof payload?.session_id !== 'string') break;
         const sid = payload.session_id;
         const epoch = payload.epoch as string | undefined;
@@ -366,7 +374,9 @@ export class DaemonEventSocket {
         // must surface in the conversation. A connection-level control error
         // (no session_id) goes to onError.
         const sid = (frame as { session_id?: unknown }).session_id;
-        const payload = frame.payload as { code?: unknown; msg?: unknown; fatal?: unknown } | undefined;
+        const payload = frame.payload as
+          | { code?: unknown; msg?: unknown; fatal?: unknown }
+          | undefined;
         if (typeof sid === 'string' && this.handlers.onRawAgentEvent) {
           this.handlers.onRawAgentEvent({
             type: 'error',
@@ -376,7 +386,11 @@ export class DaemonEventSocket {
             payload: frame.payload,
           });
         } else {
-          this.handlers.onError(payload?.code, payload?.msg, payload?.fatal);
+          this.handlers.onError(
+            typeof payload?.code === 'number' ? payload.code : 0,
+            typeof payload?.msg === 'string' ? payload.msg : 'Unknown error',
+            payload?.fatal === true,
+          );
         }
         break;
       }
@@ -535,7 +549,7 @@ export class DaemonEventSocket {
     const existing = this.subscriptions.get(sid);
     if (!existing) return; // not a session we manage
     if (seq <= existing.seq && existing.epoch !== undefined) return;
-    const epoch = typeof frame['epoch'] === 'string' ? (frame['epoch'] as string) : existing.epoch;
+    const epoch = typeof frame['epoch'] === 'string' ? (frame['epoch']) : existing.epoch;
     this.subscriptions.set(sid, { seq: Math.max(seq, existing.seq), epoch });
   }
 

@@ -1,7 +1,8 @@
-import { createI18n } from 'vue-i18n';
 import { detectLocaleWeb } from '@moonshot-ai/i18n-shared';
+import { createI18n } from 'vue-i18n';
+
+import { safeSetString, STORAGE_KEYS } from '../lib/storage';
 import { messages } from './locales';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
 
 export const availableLocales = [
   { code: 'en', label: 'English' },

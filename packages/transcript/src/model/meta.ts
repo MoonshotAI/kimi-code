@@ -9,7 +9,13 @@
 
 import type { StepUsage } from './turn';
 
-export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
+export type GoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'complete'
+  | 'budget_limited'
+  | 'usage_limited';
 
 export interface GoalMeta {
   readonly objective: string;

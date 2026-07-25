@@ -1,10 +1,10 @@
+import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
@@ -48,6 +48,7 @@ const appState: AppState = {
   isReplaying: false,
   streamingPhase: 'idle',
   streamingStartTime: 0,
+  outputTokens: 0,
   locale: 'en',
   planMode: false,
   inputMode: 'prompt',
@@ -207,7 +208,7 @@ describe('FooterComponent swarm-plan badge', () => {
     const rendered = footer.render(120).join('\n');
 
     // Strip ANSI to check plain text
-    const plain = rendered.replaceAll(/\u001b\[[0-9;]*m/g, '');
+    const plain = rendered.replaceAll(/\u001B\[[0-9;]*m/g, '');
     expect(plain).toContain('swarm-plan');
 
     // Rainbow gradient uses multiple different truecolor codes

@@ -118,7 +118,14 @@ const TASK_STATES = new Set<TranscriptTask['state']>([
   'lost',
 ]);
 
-const GOAL_STATUSES = new Set<GoalStatus>(['active', 'paused', 'blocked', 'complete']);
+const GOAL_STATUSES = new Set<GoalStatus>([
+  'active',
+  'paused',
+  'blocked',
+  'complete',
+  'budget_limited',
+  'usage_limited',
+]);
 
 /** Interaction terminal state — mirrors the live path's `mapInteractionEndState`. */
 function mapInteractionEndState(
@@ -227,9 +234,7 @@ export function foldWireRecordFacts(
       agentId: typeof info.agentId === 'string' ? info.agentId : prev?.agentId,
       // `task.terminated` records may carry the captured output tail.
       outputTail:
-        typeof record['outputTail'] === 'string'
-          ? record['outputTail']
-          : (prev?.outputTail ?? ''),
+        typeof record['outputTail'] === 'string' ? record['outputTail'] : (prev?.outputTail ?? ''),
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: epochMsToIso(info.endedAt) ?? prev?.endedAt,
     };
@@ -286,8 +291,7 @@ export function foldWireRecordFacts(
           goal = {
             ...goal,
             status:
-              typeof payload.status === 'string' &&
-              GOAL_STATUSES.has(payload.status as GoalStatus)
+              typeof payload.status === 'string' && GOAL_STATUSES.has(payload.status as GoalStatus)
                 ? (payload.status as GoalStatus)
                 : goal.status,
             budgetUsed:

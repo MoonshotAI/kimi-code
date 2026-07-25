@@ -6,10 +6,7 @@ import {
 
 import type { ModelAlias, ProviderType } from './schema';
 
-export function effectiveModelAlias(
-  alias: ModelAlias,
-  providerType?: ProviderType,
-): ModelAlias {
+export function effectiveModelAlias(alias: ModelAlias, providerType?: ProviderType): ModelAlias {
   const { overrides, ...base } = alias;
   const effective: ModelAlias = overrides === undefined ? alias : { ...base, ...overrides };
 
@@ -48,7 +45,28 @@ function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): M
     providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
       ? (matchKnownAnthropicModelProfile(model.model) ?? matchUnknownClaudeProfile(model.model))
       : matchKnownAnthropicModelProfile(model.model);
-  if (profile === undefined) return model;
+  if (profile === undefined) {
+    // A non-Claude model on the Anthropic protocol normally gets no inferred
+    // efforts — but an explicit `adaptive_thinking = false` is a positive
+    // declaration that the endpoint speaks budget thinking (e.g. GLM /
+    // DeepSeek behind an Anthropic-compatible gateway), so advertise the
+    // budget effort levels.
+    if (protocol === 'anthropic' && model.adaptiveThinking === false) {
+      const capabilities = model.capabilities ?? [];
+      const hasThinking = capabilities.some(
+        (candidate) => candidate.trim().toLowerCase() === 'thinking',
+      );
+      const supportEfforts = model.supportEfforts ?? [...BUDGET_THINKING_EFFORTS];
+      return {
+        ...model,
+        capabilities: hasThinking ? capabilities : [...capabilities, 'thinking'],
+        supportEfforts,
+        defaultEffort:
+          model.defaultEffort ?? (supportEfforts.includes('high') ? 'high' : undefined),
+      };
+    }
+    return model;
+  }
 
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';
   const capabilities = model.capabilities ?? [];
@@ -66,8 +84,7 @@ function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): M
     ...model,
     capabilities: hasCapability ? capabilities : [...capabilities, capability],
     supportEfforts,
-    defaultEffort:
-      model.defaultEffort ?? (supportEfforts.includes('high') ? 'high' : undefined),
+    defaultEffort: model.defaultEffort ?? (supportEfforts.includes('high') ? 'high' : undefined),
   };
 }
 

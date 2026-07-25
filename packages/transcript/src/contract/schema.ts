@@ -230,7 +230,7 @@ export const transcriptTaskSchema = z.object({
 
 export const goalMetaSchema = z.object({
   objective: z.string(),
-  status: z.enum(['active', 'paused', 'blocked', 'complete']),
+  status: z.enum(['active', 'paused', 'blocked', 'complete', 'budget_limited', 'usage_limited']),
   completionCriterion: z.string().optional(),
   budgetUsed: z.number().optional(),
   budgetLimit: z.number().optional(),
@@ -406,7 +406,11 @@ export const appendTargetSchema = z.discriminatedUnion('type', [
 ]);
 
 export const transcriptOperationSchema = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('reset'), agentId: agentIdSchema, snapshot: agentTranscriptSnapshotSchema }),
+  z.object({
+    op: z.literal('reset'),
+    agentId: agentIdSchema,
+    snapshot: agentTranscriptSnapshotSchema,
+  }),
   z.object({ op: z.literal('turn.upsert'), turn: turnHeaderSchema }),
   z.object({ op: z.literal('step.upsert'), turnId: turnIdSchema, step: stepHeaderSchema }),
   z.object({
@@ -562,9 +566,7 @@ export const transcriptResponseSchema = z.object({
  */
 export const transcriptOpsCatchupResponseSchema = z.object({
   agent_id: agentIdSchema,
-  batches: z.array(
-    z.object({ seq: transcriptSeqSchema, ops: z.array(transcriptOperationSchema) }),
-  ),
+  batches: z.array(z.object({ seq: transcriptSeqSchema, ops: z.array(transcriptOperationSchema) })),
   latest_seq: transcriptSeqSchema,
   complete: z.boolean(),
 });
@@ -629,9 +631,7 @@ export const transcriptPlanEntrySchema = z.object({
   plan: z.string(),
   /** The plan file path, when known. */
   path: z.string().optional(),
-  options: z
-    .array(z.object({ label: z.string(), description: z.string().optional() }))
-    .optional(),
+  options: z.array(z.object({ label: z.string(), description: z.string().optional() })).optional(),
   review: transcriptPlanReviewSchema.optional(),
 });
 

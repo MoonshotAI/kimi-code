@@ -17,6 +17,7 @@ import {
   type CompactionInput,
   type CompactionResult,
 } from '../compaction';
+import { stripDynamicToolContext } from './dynamic-tools';
 import {
   captureMediaStripSnapshot,
   degradeOlderMediaParts,
@@ -27,7 +28,6 @@ import {
   type ProjectOptions,
   trimTrailingOpenToolExchange,
 } from './projector';
-import { stripDynamicToolContext } from './dynamic-tools';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -292,10 +292,7 @@ export class ContextMemory {
     this.agent.microCompaction.reset(this._history.length);
     this.agent.emitStatusUpdated();
 
-    if (
-      !this.agent.records.restoring &&
-      (stoppedAtBoundary || removedUserCount < count)
-    ) {
+    if (!this.agent.records.restoring && (stoppedAtBoundary || removedUserCount < count)) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
         formatUndoUnavailableMessage(count, removedUserCount, stoppedAtBoundary),
@@ -356,8 +353,7 @@ export class ContextMemory {
     // so their `summary` remains the model-context text during restore.
     const contextSummary = input.contextSummary ?? input.summary;
     const tokensAfter =
-      input.tokensAfter ??
-      estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
+      input.tokensAfter ?? estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
     const keptUserMessageCount =
       input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
     const keptHeadUserMessageCount =
@@ -487,7 +483,9 @@ export class ContextMemory {
       return;
     }
     const signature = notable
-      .map((anomaly) => ('toolCallId' in anomaly ? `${anomaly.kind}:${anomaly.toolCallId}` : anomaly.kind))
+      .map((anomaly) =>
+        'toolCallId' in anomaly ? `${anomaly.kind}:${anomaly.toolCallId}` : anomaly.kind,
+      )
       .toSorted()
       .join('|');
     if (signature === this.lastProjectionRepairSignature) return;
@@ -683,8 +681,7 @@ export class ContextMemory {
         this.openSteps.delete(event.uuid);
         if (event.usage !== undefined) {
           const openStepIndex = openStep === undefined ? -1 : this._history.indexOf(openStep);
-          const coveredCount =
-            openStepIndex === -1 ? this._history.length : openStepIndex + 1;
+          const coveredCount = openStepIndex === -1 ? this._history.length : openStepIndex + 1;
           const totalUsage =
             event.usage.inputCacheRead +
             event.usage.inputCacheCreation +
@@ -779,7 +776,15 @@ export class ContextMemory {
     toolCallId: string,
     result: { output: unknown; isError?: boolean | undefined; note?: string | undefined },
   ): boolean {
-    const message = createToolMessage(toolCallId, result.output);
+    // Normalize the free-form output into the shapes history stores: plain
+    // text or content parts. Anything else is serialized.
+    const output: string | ContentPart[] =
+      typeof result.output === 'string'
+        ? result.output
+        : Array.isArray(result.output)
+          ? (result.output as ContentPart[])
+          : JSON.stringify(result.output ?? '');
+    const message = createToolMessage(toolCallId, output);
     const replacement = {
       ...message,
       role: 'tool' as const,
@@ -790,11 +795,12 @@ export class ContextMemory {
     // Find the existing tool result message by toolCallId and replace it.
     for (let i = this._history.length - 1; i >= 0; i--) {
       const msg = this._history[i];
-      if (msg.role === 'tool' && msg.toolCallId === toolCallId) {
+      if (msg !== undefined && msg.role === 'tool' && msg.toolCallId === toolCallId) {
         this._history[i] = replacement;
         this.agent.records.logRecord({
           type: 'context.replace_tool_result',
           toolCallId,
+          result: { output, isError: result.isError, note: result.note },
         });
         return true;
       }

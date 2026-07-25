@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { z } from 'zod';
 
 import type { McpOAuthStore } from '#/agent/mcp/oauth/store';
 import type { MCPClient, MCPToolDefinition } from '#/agent/mcp/types';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -17,26 +18,30 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
-export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
-export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
-export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
-export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url).pathname;
-export const slowToolStdioFixture = new URL(
-  './fixtures/slow-tool-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const hangingListStdioFixture = new URL(
-  './fixtures/hanging-list-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const crashAfterConnectFixture = new URL(
-  './fixtures/crash-after-connect-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const stderrThenExitFixture = new URL(
-  './fixtures/stderr-then-exit-stdio-server.mjs',
-  import.meta.url,
-).pathname;
+// `fileURLToPath` (not `URL.pathname`) so fixture paths stay valid on
+// Windows, where the pathname form is `/D:/...` and breaks child spawns.
+export const fixturesDir = fileURLToPath(new URL('./fixtures/', import.meta.url));
+export const stdioFixture = fileURLToPath(
+  new URL('./fixtures/mock-stdio-server.mjs', import.meta.url),
+);
+export const cwdStdioFixture = fileURLToPath(
+  new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url),
+);
+export const slowStdioFixture = fileURLToPath(
+  new URL('./fixtures/slow-stdio-server.mjs', import.meta.url),
+);
+export const slowToolStdioFixture = fileURLToPath(
+  new URL('./fixtures/slow-tool-stdio-server.mjs', import.meta.url),
+);
+export const hangingListStdioFixture = fileURLToPath(
+  new URL('./fixtures/hanging-list-stdio-server.mjs', import.meta.url),
+);
+export const crashAfterConnectFixture = fileURLToPath(
+  new URL('./fixtures/crash-after-connect-stdio-server.mjs', import.meta.url),
+);
+export const stderrThenExitFixture = fileURLToPath(
+  new URL('./fixtures/stderr-then-exit-stdio-server.mjs', import.meta.url),
+);
 
 export function createMemoryMcpOAuthStore(): McpOAuthStore {
   const data = new Map<string, unknown>();
@@ -218,6 +223,8 @@ export function closeServer(server: Server): Promise<void> {
   });
 }
 
-function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
+function isPromiseLike(
+  value: ToolExecution | Promise<ToolExecution>,
+): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }

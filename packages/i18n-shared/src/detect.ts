@@ -35,14 +35,17 @@ function isEn(lang: string | undefined | null): boolean {
  * Priority: `KIMI_LANG` > `LANG` > `LC_ALL` > `LC_MESSAGES`.
  */
 export function detectLocaleNode(): Locale {
-  const env = globalThis.process?.env;
+  // Typed view of `globalThis.process` so this stays compilable in
+  // browser-only TS configs without @types/node.
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
   if (!env) return 'en';
 
   const kimiLang = env['KIMI_LANG'];
   if (kimiLang === 'zh' || isZh(kimiLang)) return 'zh';
   if (kimiLang === 'en' || isEn(kimiLang)) return 'en';
 
-  const systemLang = env['LANG'] || env['LC_ALL'] || env['LC_MESSAGES'];
+  const systemLang = (env['LANG'] ?? env['LC_ALL']) ?? env['LC_MESSAGES'];
   if (isZh(systemLang)) return 'zh';
 
   return 'en';
@@ -82,7 +85,8 @@ export function detectLocaleWeb(storageKey?: string): Locale {
  * @param storageKey - Optional localStorage key for browser stored preference.
  */
 export function detectLocale(storageKey?: string): Locale {
-  if (typeof globalThis.process !== 'undefined' && globalThis.process.env) {
+  const nodeProcess = (globalThis as { process?: { env?: unknown } }).process;
+  if (nodeProcess !== undefined && nodeProcess.env) {
     return detectLocaleNode();
   }
   return detectLocaleWeb(storageKey);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import en from '@/i18n/locales/en';
-import zh from '@/i18n/locales/zh';
+
+import en from '../webview-ui/src/i18n/locales/en';
+import zh from '../webview-ui/src/i18n/locales/zh';
 
 type MessageValue = string | { [key: string]: MessageValue };
 

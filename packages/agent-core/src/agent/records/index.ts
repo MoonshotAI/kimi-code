@@ -11,10 +11,7 @@ import type { AgentRecord, AgentRecordPersistence } from './types';
 
 export * from './types';
 export { AGENT_WIRE_PROTOCOL_VERSION } from './migration';
-export {
-  FileSystemAgentRecordPersistence,
-  InMemoryAgentRecordPersistence,
-} from './persistence';
+export { FileSystemAgentRecordPersistence, InMemoryAgentRecordPersistence } from './persistence';
 export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 export { BlobStore, isBlobRef } from './blobref';
 export type { BlobStoreOptions } from './blobref';
@@ -86,6 +83,13 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.append_message':
       agent.context.appendMessage(input.message);
+      return;
+    case 'context.replace_tool_result':
+      agent.context.replaceToolResult(input.toolCallId, {
+        output: input.result.output,
+        isError: input.result.isError,
+        note: input.result.note,
+      });
       return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);

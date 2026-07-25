@@ -8,21 +8,18 @@
  * - Type-safe `TranslationKey` derived from the English locale data
  */
 
+import type { Locale, TranslationKey as TranslationKeyOf } from '@moonshot-ai/i18n-shared';
 import { createI18n } from '@moonshot-ai/i18n-shared/web';
-import type { Locale, TranslationKey } from '@moonshot-ai/i18n-shared';
 
 import en from './locales/en';
 import zh from './locales/zh';
 
 export type { Locale };
-export type TranslationKey = TranslationKey<typeof en>;
+export type TranslationKey = TranslationKeyOf<typeof en>;
 
 const STORAGE_KEY = 'kimi-vscode.locale';
 
-const i18n = createI18n(
-  { en, zh },
-  { storageKey: STORAGE_KEY },
-);
+const i18n = createI18n({ en, zh }, { storageKey: STORAGE_KEY });
 
 export const t = i18n.t;
 export const setLocale = i18n.setLocale;

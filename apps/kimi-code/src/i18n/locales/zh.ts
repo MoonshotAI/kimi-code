@@ -73,14 +73,16 @@ export default {
       outputFormat: '提示模式的输出格式。默认为 text。',
       skillsDir: '从指定目录加载 skills，替代自动发现的用户和项目目录。可重复指定。',
       addDir: '为本会话添加额外的工作区目录。可重复指定。',
-      agent: '本次调用使用的智能体配置文件（仅 v2 引擎）。从智能体目录自动发现或通过 --agent-file 加载。',
+      agent:
+        '本次调用使用的智能体配置文件（仅 v2 引擎）。从智能体目录自动发现或通过 --agent-file 加载。',
       agentFile: '从 Markdown 文件加载智能体定义并选用（仅 v2 引擎）。',
       yes: '自动确认提示。',
       autoApprove: '自动批准所有操作。',
       exportOutput: '输出 ZIP 路径。',
       exportYes: '跳过上一个会话的确认。',
       exportSessionId: '要导出的会话 ID。默认为最近的会话。',
-      exportNoIncludeGlobalLog: '跳过打包活动全局诊断日志（~/.kimi-code/logs/kimi-code.log，不包含轮转的 .1 文件）。默认包含全局日志。',
+      exportNoIncludeGlobalLog:
+        '跳过打包活动全局诊断日志（~/.kimi-code/logs/kimi-code.log，不包含轮转的 .1 文件）。默认包含全局日志。',
       acpLogin: '运行设备码登录流程后退出（ACP 终端认证的入口点）。',
       visPort: '绑定的端口。默认自动选择一个空闲端口。',
       visHost: '绑定的主机。默认：127.0.0.1。',
@@ -90,17 +92,27 @@ export default {
       doctorTuiPath: '将此文件作为 tui.toml 进行验证，替代默认路径。',
       serverPsJson: '将原始连接列表以 JSON 格式输出。',
       serverRunOptionPort: '绑定的端口（默认：{{port}}）。',
-      serverRunOptionHost: '绑定的主机。省略时绑定 {{host}}（仅本机）；传入 --host 绑定 {{lanHost}}（所有接口），或 --host <host> 绑定指定地址。启动时会打印令牌。',
-      serverRunOptionAllowedHost: '允许通过 DNS 反绑检查的额外 Host 头值。可重复或逗号分隔；前导点号匹配域名后缀（例如 .example.com）。',
-      serverRunOptionKeepAlive: '保持服务器运行，不在无客户端连接 60 秒后退出。由 --host / --allowed-host 隐含启用，--foreground 模式下始终开启。',
-      serverRunOptionInsecureNoTls: '允许非回环绑定不使用 TLS 反向代理。默认为 true，仅对非回环绑定有效。',
-      serverRunOptionAllowRemoteShutdown: '在非回环绑定上保持 POST /api/v1/shutdown 启用（默认：禁用 → 404）。',
-      serverRunOptionAllowRemoteTerminals: '在非回环绑定上保持 PTY /api/v1/terminals/* 路由启用（默认：禁用 → 404）。远程 Shell 具有高风险。',
-      serverRunOptionDangerousBypassAuth: '禁用所有 REST 和 WebSocket 路由的 Bearer 令牌认证，并通过 /api/v1/meta 广播此状态。仅可在受信任的网络或自有认证代理后使用。',
+      serverRunOptionHost:
+        '绑定的主机。省略时绑定 {{host}}（仅本机）；传入 --host 绑定 {{lanHost}}（所有接口），或 --host <host> 绑定指定地址。启动时会打印令牌。',
+      serverRunOptionAllowedHost:
+        '允许通过 DNS 反绑检查的额外 Host 头值。可重复或逗号分隔；前导点号匹配域名后缀（例如 .example.com）。',
+      serverRunOptionKeepAlive:
+        '保持服务器运行，不在无客户端连接 60 秒后退出。由 --host / --allowed-host 隐含启用，--foreground 模式下始终开启。',
+      serverRunOptionInsecureNoTls:
+        '允许非回环绑定不使用 TLS 反向代理。默认为 true，仅对非回环绑定有效。',
+      serverRunOptionAllowRemoteShutdown:
+        '在非回环绑定上保持 POST /api/v1/shutdown 启用（默认：禁用 → 404）。',
+      serverRunOptionAllowRemoteTerminals:
+        '在非回环绑定上保持 PTY /api/v1/terminals/* 路由启用（默认：禁用 → 404）。远程 Shell 具有高风险。',
+      serverRunOptionDangerousBypassAuth:
+        '禁用所有 REST 和 WebSocket 路由的 Bearer 令牌认证，并通过 /api/v1/meta 广播此状态。仅可在受信任的网络或自有认证代理后使用。',
       serverRunOptionLogLevel: '服务器日志级别：{{levels}}。省略则关闭日志。',
-      serverRunOptionDebugEndpoints: '挂载 /api/v1/debug/* 路由用于测试自省。默认关闭；生产环境请勿启用。',
-      serverRunOptionForeground: '在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（不守护进程化）。',
-      serverRunOptionForegroundDefault: '在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（默认；传递 --background 以守护进程方式运行）。',
+      serverRunOptionDebugEndpoints:
+        '挂载 /api/v1/debug/* 路由用于测试自省。默认关闭；生产环境请勿启用。',
+      serverRunOptionForeground:
+        '在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（不守护进程化）。',
+      serverRunOptionForegroundDefault:
+        '在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（默认；传递 --background 以守护进程方式运行）。',
       serverRunOptionBackground: '以后台守护进程方式运行服务器，健康检查通过后返回并释放此终端。',
       serverRunOptionOpen: '服务器就绪后在默认浏览器中打开 Web UI。',
       serverRunOptionNoOpen: '不在默认浏览器中打开 Web UI。',
@@ -243,8 +255,7 @@ export default {
         yoloMode: '/yolo 跳过多数审批，适用于你信任的仓库批量操作',
         helpCommands: '/help：显示命令',
         compactContext: '/compact 在上下文变长时进行压缩',
-        ctrlOToolOutput:
-          'ctrl-o 在简洁聊天视图与完整执行详情之间切换工具输出的显示',
+        ctrlOToolOutput: 'ctrl-o 在简洁聊天视图与完整执行详情之间切换工具输出的显示',
         shiftTabPlanMode: 'shift-tab 进入计划模式，在 Kimi 编辑文件前审阅方案',
         modelSwitch: '/model：切换模型',
       },
@@ -558,15 +569,17 @@ export default {
         features: {
           'tool-select': {
             title: '工具选择（渐进式工具披露）',
-            description: '将 MCP 工具架构从不可变的顶层 tools[] 中移出；模型通过 select_tools 工具按需加载。仅在模型能力目录声明了动态加载工具时生效。',
+            description:
+              '将 MCP 工具架构从不可变的顶层 tools[] 中移出；模型通过 select_tools 工具按需加载。仅在模型能力目录声明了动态加载工具时生效。',
           },
-          'native_tools': {
+          native_tools: {
             title: '原生工具',
             description: '使用 Rust 原生实现 Read、Write、Edit、Grep、Glob 和 Bash 工具。',
           },
-          'rpc_microtask': {
+          rpc_microtask: {
             title: 'RPC 微任务调度',
-            description: '使用 queueMicrotask 替代 setTimeout(0) 进行进程内 RPC 模拟，降低每次调用的延迟。',
+            description:
+              '使用 queueMicrotask 替代 setTimeout(0) 进行进程内 RPC 模拟，降低每次调用的延迟。',
           },
         },
       },
@@ -603,7 +616,8 @@ export default {
         optionYoloKeepLabel: '保持 YOLO 并启动',
         optionYoloKeepDesc: '工具和计划变更保持自动审批。Kimi Code 仍可能向你提问。',
         optionManualLabel: '以手动模式启动',
-        optionManualDesc: '保持审批开启。Kimi Code 会在有风险操作前询问，因此目标可能会暂停并等待你。',
+        optionManualDesc:
+          '保持审批开启。Kimi Code 会在有风险操作前询问，因此目标可能会暂停并等待你。',
         optionCancelLabel: '不启动',
         optionCancelDesc: '返回输入框，保留你的目标命令。',
       },
@@ -713,7 +727,8 @@ export default {
         enterDetails: 'Enter 详情',
         removeConfirmHint: '↑↓ 导航 · Enter/Space 选择 · ←/Esc 取消',
         installTrustHint: '↑↓ 导航 · Enter/Space 选择 · ←/Esc 取消',
-        installTrustNotice: '⚠️ 这是 Kimi 未审核的第三方插件。它可能捆绑 MCP 服务器、技能或可运行代码并访问工作区的文件。仅在信任来源时安装。',
+        installTrustNotice:
+          '⚠️ 这是 Kimi 未审核的第三方插件。它可能捆绑 MCP 服务器、技能或可运行代码并访问工作区的文件。仅在信任来源时安装。',
         mcpEnable: 'Enter/Space 启用',
         mcpDisable: 'Enter/Space 禁用',
         webBridgeDescription: '从 Kimi Code 控制你的真实浏览器——导航、点击、输入和截图',
@@ -725,7 +740,8 @@ export default {
         noMcpServers: '未声明 MCP 服务器。',
         noPluginsInstalled: '未安装插件。',
         countInstalled: '已安装 {{count}} 个',
-        tabHintInstalled: ' Tab 切换 · Space 开关 · D 删除 · M MCP · {{enterAction}} · I 详情 · R 重载 · Esc 取消',
+        tabHintInstalled:
+          ' Tab 切换 · Space 开关 · D 删除 · M MCP · {{enterAction}} · I 详情 · R 重载 · Esc 取消',
         tabHintCustom: ' Tab 切换 · Enter 安装 · Esc 取消',
         tabHintMarketplace: ' Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · Esc 取消',
         loadingMarketplace: '正在加载市场…',
@@ -837,7 +853,8 @@ export default {
       outputFiltered: '模型输出已被过滤（{{reason}}）。',
       maxTokensTruncated: '模型达到 max_tokens — 工具调用在运行前被截断。',
       maxTokensNoToolCall: '模型达到 max_tokens — 未发出工具调用。',
-      maxTokensHint: '如果此限制对你的模型不正确，请在 kimi-code 配置中为模型别名设置 `max_output_size`。',
+      maxTokensHint:
+        '如果此限制对你的模型不正确，请在 kimi-code 配置中为模型别名设置 `max_output_size`。',
       interruptedByUser: '用户中断',
       stepMaxSteps: '达到每轮步骤限制（max_steps）',
       stepInterrupted: '步骤中断（{{reason}}）',
@@ -871,7 +888,8 @@ export default {
       failedToUpdateUpcomingGoal: '更新待启动目标失败：{{error}}',
       goalNotStarted: '目标未启动。',
       failedToSetPermission: '设置权限模式失败：{{error}}',
-      goalAlreadyActive: '已有活动目标。请使用 `/goal replace <objective>` 替换它，或使用 `/goal status` 查看状态。',
+      goalAlreadyActive:
+        '已有活动目标。请使用 `/goal replace <objective>` 替换它，或使用 `/goal status` 查看状态。',
       noGoalToPause: '没有要暂停的目标。',
       goalPaused: '目标已暂停。使用 `/goal resume` 继续。',
       noGoalToResume: '没有要恢复的目标。',
@@ -1034,7 +1052,8 @@ export default {
       pluginsMcpDisabled: '已为 {{id}} 禁用 MCP 服务器 {{server}}。运行 /reload 或 /new 生效。',
       pluginsEnabled: '已启用 {{id}}。运行 /reload 或 /new 生效。',
       pluginsDisabled: '已禁用 {{id}}。运行 /reload 或 /new 生效。',
-      pluginsMcpDisabledHint: ' 部分 MCP 服务器已禁用；使用 /plugins mcp enable {{id}} <server> 重新启用。',
+      pluginsMcpDisabledHint:
+        ' 部分 MCP 服务器已禁用；使用 /plugins mcp enable {{id}} <server> 重新启用。',
       pluginsInlineMcpDisabled: ' · MCP 服务器已禁用',
       pluginsRemoveCancelled: '删除已取消：{{id}}。',
       pluginsRemoved: '已删除 {{id}}。',
@@ -1089,7 +1108,8 @@ export default {
       webOpenUrl: '打开 {{url}}',
       webToken: '令牌：    {{token}}',
       webNewServer: '启动新服务器',
-      webNewServerDesc: '在 TUI 退出后，在前台终端上运行一个新服务器（按 Ctrl+C 停止），然后在浏览器中打开会话深度链接。',
+      webNewServerDesc:
+        '在 TUI 退出后，在前台终端上运行一个新服务器（按 Ctrl+C 停止），然后在浏览器中打开会话深度链接。',
       webServerNotResponding: '{{origin}} 的 Kimi 服务器无响应。',
       webVersionUnknown: '版本未知（由旧版本注册）· id {{id}}',
       webVersionMismatch: '版本 {{hostVersion}}（本 CLI：{{cliVersion}}）· id {{id}}',
@@ -1126,7 +1146,8 @@ export default {
       serverReadyBanner: 'Kimi 服务器就绪',
       serverReadyLocalUi: '本机可访问本地 Web UI。',
       serverDangerAuthDisabled: '⚠ 危险：认证已禁用（--dangerous-bypass-auth）。',
-      serverDangerAnyoneAccess: '任何能访问此端口的人都将获得完全访问权限。仅在了解风险的情况下继续。',
+      serverDangerAnyoneAccess:
+        '任何能访问此端口的人都将获得完全访问权限。仅在了解风险的情况下继续。',
       serverDangerUnsure: '如果不确定，请运行 ',
       serverDangerUnsureCmd: 'kimi server kill',
       serverDangerUnsureSuffix: ' 立即停止此进程。',
@@ -1140,7 +1161,8 @@ export default {
       serverReuseNoticeBody: '在 {{origin}} — 此命令的选项未生效。',
       serverReuseNoticeHint: '请先运行 `kimi server kill` 以绑定新的主机/端口。',
       serverVersionMismatch: '服务器版本不匹配',
-      serverVersionMismatchDetail: '运行中的服务器版本为 {{runningVersion}}，当前 CLI 版本为 {{cliVersion}} — 重启后将使用新版本。',
+      serverVersionMismatchDetail:
+        '运行中的服务器版本为 {{runningVersion}}，当前 CLI 版本为 {{cliVersion}} — 重启后将使用新版本。',
       serverTokenLabel: 'Token:    ',
       // sub/server/daemon.ts
       serverDaemonTimeout: 'Kimi 服务器守护进程在 {{ms}} 毫秒内未能启动。',
@@ -1159,7 +1181,8 @@ export default {
       serverInvalidValue: '错误：无效的 {{label}} 值：{{raw}}',
       serverInvalidLogLevel: '错误：无效的 --log-level 值：{{raw}}（允许：{{allowed}}）',
       serverTokenNotFound: '无法读取 {{path}} 处的服务器令牌；服务器是否至少启动过一次？',
-      serverNotServingWebUi: '{{origin}} 上的服务器未提供 Kimi Web UI{{reason}}。停止现有服务器并重新运行 `kimi server run`。',
+      serverNotServingWebUi:
+        '{{origin}} 上的服务器未提供 Kimi Web UI{{reason}}。停止现有服务器并重新运行 `kimi server run`。',
       // sub/server/ps.ts
       serverNoRunning: '没有正在运行的 Kimi 服务器。使用 `kimi server run` 或 `kimi web` 启动。',
       serverNoActiveClients: '没有活跃的客户端。\n',
@@ -1194,7 +1217,8 @@ export default {
       providerCatalogNoMatch: '目录中没有匹配"{{filter}}"的提供商。',
       providerCatalogEmpty: '目录为空。',
       providerCatalogUnsupported: '提供商"{{id}}"在目录中的传输类型不受支持。',
-      providerCatalogModelNotInProvider: '模型"{{model}}"不在提供商"{{id}}"中。运行"kimi provider catalog list {{id}}"查看可用 ID。',
+      providerCatalogModelNotInProvider:
+        '模型"{{model}}"不在提供商"{{id}}"中。运行"kimi provider catalog list {{id}}"查看可用 ID。',
       providerImported: '已从 {{url}} 导入 {{name}}（{{id}}），包含 {{count}} 个模型。',
       providerMultipleImported: '已从 {{url}} 导入 {{count}} 个提供商（{{modelCount}} 个模型）：',
       providerDefaultSet: '默认模型已设置为 {{id}}/{{model}}。',
@@ -1277,7 +1301,8 @@ export default {
       promptTurnEnded: '提示轮次以原因结束：{{reason}}',
       promptBlocked: '提示词钩子拦截了请求。',
       promptTurnCannotStart: '提示轮次无法启动',
-      sessionDifferentDir: '会话"{{sessionId}}"是在其他目录下创建的。\n  cd "{{cwd}}" && kimi -r {{sessionId}}\n\n',
+      sessionDifferentDir:
+        '会话"{{sessionId}}"是在其他目录下创建的。\n  cd "{{cwd}}" && kimi -r {{sessionId}}\n\n',
       printGoalWaitCeiling: '目标打印等待超时（{{ceilingS}}秒），正在结束',
       printSteerCeiling: '引导打印超时（{{ceilingS}}秒），正在结束',
       printSteerMaxTurns: '引导打印达到最大轮次（{{maxTurns}}），正在结束',
@@ -1289,7 +1314,8 @@ export default {
       goalNoGoalFound: '目标：未找到目标。',
       // run-prompt.ts
       sessionNotFound: '会话 "{{sessionId}}" 未找到。',
-      noModelPrompt: '未配置模型。请运行 `kimi` 并使用 /login 登录后重试；或在 config.toml 中设置 default_model。',
+      noModelPrompt:
+        '未配置模型。请运行 `kimi` 并使用 /login 登录后重试；或在 config.toml 中设置 default_model。',
       // sub/server/run.ts
       serverNetworkOff: '关闭',
       serverNetworkUseHost: '使用 --host 开启',
@@ -1438,6 +1464,8 @@ export default {
         statusComplete: '已完成',
         statusBlocked: '已阻塞',
         statusPaused: '已暂停',
+        statusBudgetLimited: '预算已耗尽',
+        statusUsageLimited: '用量已耗尽',
       },
       planBox: {
         fallback: ' 计划 ',
@@ -1689,10 +1717,13 @@ export default {
       configAutoUpdateEnabled: '开启',
       configAutoUpdateDisabled: '关闭',
       configNoExperimentalChanges: '没有需要应用的实验性功能变更。',
-      configModelCachedWarning: '注意：切换模型会使现有的提示缓存失效。使用 /new 可避免额外的 token 开销。',
-      configEffortCachedWarning: '注意：切换思考力度会使现有的提示缓存失效。使用 /new 可避免额外的 token 开销。',
+      configModelCachedWarning:
+        '注意：切换模型会使现有的提示缓存失效。使用 /new 可避免额外的 token 开销。',
+      configEffortCachedWarning:
+        '注意：切换思考力度会使现有的提示缓存失效。使用 /new 可避免额外的 token 开销。',
       configNoneDeclared: '未声明',
-      configUnknownEffort: '思考力度 "{{arg}}" 未在 {{alias}} 的列表中（已知：{{knownEfforts}}）。原样发送 "{{arg}}"；配置的 provider 将进行校验。',
+      configUnknownEffort:
+        '思考力度 "{{arg}}" 未在 {{alias}} 的列表中（已知：{{knownEfforts}}）。原样发送 "{{arg}}"；配置的 provider 将进行校验。',
       configThemeTracking: ' （跟随终端；当前：{{resolved}}）',
       configPermissionUnchanged: '权限模式未更改：{{mode}}。',
       configPermissionMode: '权限模式：{{mode}}',
@@ -1767,7 +1798,8 @@ export default {
       feedbackHttpFailed: '提交反馈失败（HTTP {{status}}）。',
       feedbackSession: '会话：{{sessionId}}',
       feedbackId: '反馈 ID：{{id}}',
-      feedbackPersistHint: '如果持续出现，运行 `/export-debug-zip` 并与我们分享文件以供诊断。请勿公开分享。',
+      feedbackPersistHint:
+        '如果持续出现，运行 `/export-debug-zip` 并与我们分享文件以供诊断。请勿公开分享。',
       // tui/utils/goal-completion.ts
       goalComplete: '✓ 目标完成{{reason}}。',
       goalCompleteTurns: '{{count}} 轮',
@@ -1828,15 +1860,18 @@ export default {
       registryAddDirShow: '显示已配置的额外工作目录',
       // tui/commands/discuss.ts
       discussUsage: '用法：/discuss [--debate] <话题> with <角色1>[:立场],<角色2>[:立场],...',
-      discussUsageDebate: '  --debate  使用结构化辩论模式（开场陈述 → 自由辩论 → 总结陈词 → 共识提取）。',
+      discussUsageDebate:
+        '  --debate  使用结构化辩论模式（开场陈述 → 自由辩论 → 总结陈词 → 共识提取）。',
       discussNeedTopic: '请提供讨论话题。',
       discussNeedRoles: '请至少指定 2 个讨论角色。',
       // tui/commands/workflow.ts
       workflowSearchExample: '/workflow deep-research "RAG 最新进展"',
-      workflowListHint: '使用 Workflow 工具列出所有可用的内置工作流。它会显示名称、描述和必需的参数。',
+      workflowListHint:
+        '使用 Workflow 工具列出所有可用的内置工作流。它会显示名称、描述和必需的参数。',
       workflowStatusHintPattern: '使用 Workflow 工具检查工作流运行 "{{runId}}" 的状态。',
       workflowCancelHintPattern: '使用 Workflow 工具取消工作流运行 "{{runId}}"。',
-      workflowRunHintPattern: '使用 Workflow 工具运行 "{{name}}" 工作流。请提供工作流定义中所需的所有参数。',
+      workflowRunHintPattern:
+        '使用 Workflow 工具运行 "{{name}}" 工作流。请提供工作流定义中所需的所有参数。',
     },
     diffPreview: {
       moreChangesHidden: '还有 {{n}} 处变更已隐藏（ctrl+o 展开）',

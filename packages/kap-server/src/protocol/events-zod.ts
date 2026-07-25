@@ -1,15 +1,5 @@
-/**
- * Zod schema half of the v1 event catalog (`packages/protocol/src/events.ts`),
- * ported verbatim for byte-level AsyncAPI/JSON-Schema compatibility. Interface
- * declarations and the deprecated volatile-event helpers are intentionally not
- * ported; `satisfies z.ZodType<T>` clauses are kept only where `T` is
- * importable from an agent-core-v2 leaf path and dropped elsewhere (dropped
- * clauses do not affect the emitted JSON Schema).
- */
-import { z } from 'zod';
-
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type {
   CompactionSummaryOrigin,
   CronJobOrigin,
@@ -25,7 +15,6 @@ import type {
   TaskOrigin,
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type { HookResultEvent } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
 import type {
   CompactionBlockedEvent,
@@ -45,6 +34,7 @@ import type {
   GoalStatus,
   GoalToolResult,
 } from '@moonshot-ai/agent-core-v2/agent/goal/types';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
@@ -68,7 +58,6 @@ import type {
   ShellOutputEvent,
   ShellStartedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
-
 import type { TurnStepRetryingEvent } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
@@ -87,6 +76,15 @@ import type {
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import type { SubagentSuspendedEvent } from '@moonshot-ai/agent-core-v2/session/swarm/sessionSwarmService';
 import type { ToolUpdate } from '@moonshot-ai/agent-core-v2/tool/toolContract';
+/**
+ * Zod schema half of the v1 event catalog (`packages/protocol/src/events.ts`),
+ * ported verbatim for byte-level AsyncAPI/JSON-Schema compatibility. Interface
+ * declarations and the deprecated volatile-event helpers are intentionally not
+ * ported; `satisfies z.ZodType<T>` clauses are kept only where `T` is
+ * importable from an agent-core-v2 leaf path and dropped elsewhere (dropped
+ * clauses do not affect the emitted JSON Schema).
+ */
+import { z } from 'zod';
 
 import { ToolInputDisplaySchema } from './display';
 import { configResponseSchema } from './rest-config';
@@ -115,9 +113,18 @@ export const usageStatusSchema = z.object({
   total: tokenUsageSchema.optional(),
 }) satisfies z.ZodType<UsageStatus>;
 
-export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']) satisfies z.ZodType<PermissionMode>;
+export const permissionModeSchema = z.enum([
+  'manual',
+  'yolo',
+  'auto',
+]) satisfies z.ZodType<PermissionMode>;
 
-export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'builtin']) satisfies z.ZodType<SkillSource>;
+export const skillSourceSchema = z.enum([
+  'project',
+  'user',
+  'extra',
+  'builtin',
+]) satisfies z.ZodType<SkillSource>;
 
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),
@@ -227,9 +234,21 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   retryOriginSchema,
 ]);
 
-export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']) satisfies z.ZodType<GoalStatus>;
+export const goalStatusSchema = z.enum([
+  'active',
+  'paused',
+  'blocked',
+  'complete',
+  'budget_limited',
+  'usage_limited',
+]) satisfies z.ZodType<GoalStatus>;
 
-export const goalActorSchema = z.enum(['user', 'model', 'runtime', 'system']) satisfies z.ZodType<GoalActor>;
+export const goalActorSchema = z.enum([
+  'user',
+  'model',
+  'runtime',
+  'system',
+]) satisfies z.ZodType<GoalActor>;
 
 export const goalBudgetLimitsSchema = z.object({
   tokenBudget: z.number().optional(),
@@ -248,6 +267,8 @@ export const goalBudgetReportSchema = z.object({
   turnBudgetReached: z.boolean(),
   wallClockBudgetReached: z.boolean(),
   overBudget: z.boolean(),
+  inputTokensUsed: z.number(),
+  outputTokensUsed: z.number(),
 }) satisfies z.ZodType<GoalBudgetReport>;
 
 export const goalSnapshotSchema = z.object({
@@ -257,9 +278,14 @@ export const goalSnapshotSchema = z.object({
   status: goalStatusSchema,
   turnsUsed: z.number(),
   tokensUsed: z.number(),
+  inputTokensUsed: z.number(),
+  outputTokensUsed: z.number(),
   wallClockMs: z.number(),
   budget: goalBudgetReportSchema,
   terminalReason: z.string().optional(),
+  blockedStreak: z.number().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
 }) satisfies z.ZodType<GoalSnapshot>;
 
 export const goalToolResultSchema = z.object({
@@ -272,7 +298,10 @@ export const goalChangeStatsSchema = z.object({
   wallClockMs: z.number(),
 }) satisfies z.ZodType<GoalChangeStats>;
 
-export const goalChangeKindSchema = z.enum(['lifecycle', 'completion']) satisfies z.ZodType<GoalChangeKind>;
+export const goalChangeKindSchema = z.enum([
+  'lifecycle',
+  'completion',
+]) satisfies z.ZodType<GoalChangeKind>;
 
 export const goalChangeSchema = z.object({
   kind: goalChangeKindSchema,
@@ -381,7 +410,7 @@ export const kimiErrorCodeSchema = z.enum([
   'internal',
 ]);
 
-export const kimiErrorPayloadSchema: z.ZodType<unknown> = z.lazy(
+export const kimiErrorPayloadSchema: z.ZodType = z.lazy(
   () => kimiErrorPayloadObjectSchema,
 );
 
@@ -454,7 +483,12 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   authorizationUrl: z.string(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum([
+  'completed',
+  'cancelled',
+  'failed',
+  'blocked',
+]) satisfies z.ZodType<TurnEndReason>;
 
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),

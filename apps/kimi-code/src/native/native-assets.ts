@@ -12,10 +12,15 @@ import {
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join, win32 as pathWin32 } from 'node:path';
+
 import { join as joinPosix } from 'pathe';
 
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
-import { NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION, buildManifestKey } from './manifest-keys';
+
+import {
+  NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION,
+  buildManifestKey,
+} from './manifest-keys';
 
 export const NATIVE_ASSET_MANIFEST_VERSION = MANIFEST_VERSION;
 
@@ -152,7 +157,10 @@ export function getNativeCacheBase(options: NativeAssetOptions = {}): string {
       : pathWin32.join(home, 'AppData', 'Local', 'kimi-code', 'Cache');
   }
 
-  return joinPosix(optionalEnvValue(env, 'XDG_CACHE_HOME') ?? joinPosix(home, '.cache'), 'kimi-code');
+  return joinPosix(
+    optionalEnvValue(env, 'XDG_CACHE_HOME') ?? joinPosix(home, '.cache'),
+    'kimi-code',
+  );
 }
 
 export function getNativeAssetCacheRoot(
@@ -219,8 +227,7 @@ export function ensureNativeAssetTree(options: NativeAssetOptions = {}): string 
   const source = options.source ?? getSeaAssetSource();
   if (source === null) return null;
 
-  const manifest =
-    options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
+  const manifest = options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
   if (manifest === null) return null;
 
   const cacheRoot = getNativeAssetCacheRoot(manifest, options);
@@ -247,8 +254,7 @@ export function getNativePackageRoot(
   const source = options.source ?? getSeaAssetSource();
   if (source === null) return null;
 
-  const manifest =
-    options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
+  const manifest = options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
   if (manifest === null) return null;
 
   const pkg = manifest.packages.find((entry) => entry.name === packageName);
@@ -260,7 +266,7 @@ export function getNativePackageRoot(
 
 // Expose globally for modules that can't import this function directly
 // (e.g. packages/kap-server/src/i18n.ts in the same SEA bundle).
-(globalThis as Record<string, unknown>).__kimi_getNativePackageRoot = getNativePackageRoot;
+(globalThis as Record<string, unknown>)['__kimi_getNativePackageRoot'] = getNativePackageRoot;
 
 export function hasNativePackage(packageName: string, manifest: NativeAssetManifest): boolean {
   return manifest.packages.some((pkg) => pkg.name === packageName);
@@ -359,8 +365,7 @@ export function cleanupStaleNativeCacheForCurrent(
   const source = options.source ?? getSeaAssetSource();
   if (source === null) return null;
 
-  const manifest =
-    options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
+  const manifest = options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
   if (manifest === null) return null;
 
   const cacheBase = getNativeCacheBase(options);

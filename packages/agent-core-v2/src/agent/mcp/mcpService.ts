@@ -1,32 +1,28 @@
 import { createHash } from 'node:crypto';
 
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
-
-import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
-import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
-import { IEventBus } from '#/app/event/eventBus';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
+import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
-import { createMcpTool } from '#/agent/mcp/tools/mcp';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ErrorCodes, makeErrorPayload } from '#/errors';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IWireService } from '#/wire/wire';
+
 import type { McpServerEntry } from './connection-manager';
 import { IAgentMcpService } from './mcp';
+import { McpDiscoveryModel, mcpToolsDiscovered, type McpToolCollision } from './mcpDiscoveryOps';
 import { qualifyMcpToolName } from './tool-naming';
 import type { MCPClient, MCPToolDefinition } from './types';
-import { IWireService } from '#/wire/wire';
-import {
-  McpDiscoveryModel,
-  mcpToolsDiscovered,
-  type McpToolCollision,
-} from './mcpDiscoveryOps';
 
 export interface ErrorEvent extends KimiErrorPayload {
   readonly type: 'error';
@@ -35,7 +31,13 @@ export interface ErrorEvent extends KimiErrorPayload {
 export interface McpServerStatusPayload {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly status:
+    | 'pending'
+    | 'pending-approval'
+    | 'connected'
+    | 'failed'
+    | 'disabled'
+    | 'needs-auth';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -125,6 +127,10 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     signal?.throwIfAborted();
     await this.sessionMcp.connectionManager().reconnect(name);
     signal?.throwIfAborted();
+  }
+
+  approveServer(name: string): Promise<void> {
+    return this.sessionMcp.connectionManager().approveServer(name);
   }
 
   private reconnectForToolCall(
@@ -345,10 +351,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     }
   }
 
-  private emitMcpToolCollisions(
-    serverName: string,
-    collisions: readonly McpToolCollision[],
-  ): void {
+  private emitMcpToolCollisions(serverName: string, collisions: readonly McpToolCollision[]): void {
     if (collisions.length === 0) return;
     const summary = collisions
       .map((collision) =>

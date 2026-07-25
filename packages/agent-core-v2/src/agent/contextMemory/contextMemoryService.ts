@@ -21,21 +21,21 @@
  * Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import { IEventBus } from '#/app/event/eventBus';
 import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
-import { IWireService } from '#/wire/wire';
+import { IEventBus } from '#/app/event/eventBus';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { Op } from '#/wire/op';
+import { IWireService } from '#/wire/wire';
 
+import { buildContextCompactionShape } from './compactionHandoff';
 import {
   IAgentContextMemoryService,
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from './contextMemory';
-import { buildContextCompactionShape } from './compactionHandoff';
 import {
   computeUndoCut,
   ContextModel,
@@ -73,6 +73,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   get(): readonly ContextMessage[] {
     return this.wire.getModel(ContextModel) as readonly ContextMessage[];
+  }
+
+  get contextTokenEstimate(): number {
+    return this.wire.getModel(ContextSizeModel).tokens;
   }
 
   append(...messages: readonly ContextMessage[]): void {

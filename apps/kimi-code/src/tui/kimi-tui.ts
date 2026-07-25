@@ -1,6 +1,3 @@
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
@@ -23,7 +20,12 @@ import {
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
-import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
+import { getLocale } from '#/i18n';
+import {
+  MigrationScreenComponent,
+  type MigrationScreenResult,
+  writeSkipMigrationMarker,
+} from '#/migration/index';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
@@ -35,7 +37,6 @@ import { restoreTerminalModes } from '#/utils/terminal-restore';
 import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
-  BUILTIN_SLASH_COMMANDS,
   getBuiltinSlashCommands,
   buildPluginSlashCommands,
   buildSkillSlashCommands,
@@ -222,6 +223,8 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
+    outputTokens: 0,
+    locale: getLocale(),
     isCompacting: false,
     isReplaying: false,
     streamingPhase: 'idle',
@@ -424,8 +427,12 @@ export class KimiTUI {
     this.workflowPanelController = new WorkflowPanelController({
       workflowPanel: this.state.workflowPanel,
       session: this.session,
-      requestRender: () => { this.state.ui.requestRender(); },
-      showError: (msg: string) => { this.showError(msg); },
+      requestRender: () => {
+        this.state.ui.requestRender();
+      },
+      showError: (msg: string) => {
+        this.showError(msg);
+      },
     });
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
@@ -1052,7 +1059,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: '',
     };
-    const outputComponent = new ShellRunComponent(() => this.state.ui.requestRender());
+    const outputComponent = new ShellRunComponent(() =>{  this.state.ui.requestRender(); });
     this.shellOutputStreams.set(commandId, { entry: outputEntry, component: outputComponent });
     this.state.transcriptEntries.push(outputEntry);
     markTranscriptComponent(outputComponent, outputEntry);
@@ -2428,7 +2435,7 @@ export class KimiTUI {
     switch (effectiveMode) {
       case 'hidden':
         this.stopActivitySpinner();
-        this.syncAgentSwarmActivitySpinner(undefined);
+        this.syncAgentSwarmActivitySpinner();
         this.state.ui.requestRender();
         return;
       case 'waiting': {
@@ -2446,14 +2453,14 @@ export class KimiTUI {
       }
       case 'thinking': {
         this.stopActivitySpinner();
-        this.syncAgentSwarmActivitySpinner(undefined);
+        this.syncAgentSwarmActivitySpinner();
         break;
       }
       case 'composing': {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           currentTheme.fg('primary', s),
         );
-        this.syncAgentSwarmActivitySpinner(undefined);
+        this.syncAgentSwarmActivitySpinner();
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
@@ -2479,7 +2486,7 @@ export class KimiTUI {
       case 'idle':
       case 'session': {
         this.stopActivitySpinner();
-        this.syncAgentSwarmActivitySpinner(undefined);
+        this.syncAgentSwarmActivitySpinner();
         // Keep a placeholder row so the activity area does not fully shrink
         // when the spinner is removed at the end of streaming; combined with
         // pi-tui's clamp, this avoids a destructive full redraw (viewport jump).
@@ -2834,11 +2841,7 @@ export class KimiTUI {
     if (result.decision === 'never') {
       // Persist the skip marker `detectPendingMigration` checks, so "Never ask
       // again" actually stops the prompt from reappearing every launch.
-      try {
-        writeFileSync(join(this.harness.homeDir, '.skip-migration-from-kimi-cli'), '', 'utf-8');
-      } catch {
-        // Non-blocking: a failed marker write must never crash startup.
-      }
+      writeSkipMigrationMarker(this.harness.homeDir);
     }
     return result;
   }

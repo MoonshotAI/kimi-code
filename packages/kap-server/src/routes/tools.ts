@@ -62,7 +62,6 @@ import {
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   listMcpServersResponseSchema,
@@ -71,6 +70,7 @@ import {
   restartMcpServerResultSchema,
 } from '../protocol/rest-tool';
 import type { McpServer, ToolDescriptor } from '../protocol/tool';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 /** v2 MCP tool-name prefix / separator (see `mcp/tool-naming.ts`). */
@@ -140,7 +140,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       tags: ['tools'],
     },
     async (req, reply) => {
-      const agent = await resolveEffectiveAgent(core, undefined);
+      const agent = await resolveEffectiveAgent(core);
       const servers =
         agent === undefined
           ? []
@@ -180,13 +180,11 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       }
       if (parsed.kind === 'bare') {
         // No bare form for /mcp/servers/{id} — only :restart.
-        reply.send(
-          errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id),
-        );
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id));
         return;
       }
 
-      const agent = await resolveEffectiveAgent(core, undefined);
+      const agent = await resolveEffectiveAgent(core);
       if (agent === undefined) {
         reply.send(mcpServerNotFound(parsed.id, req.id));
         return;
@@ -221,9 +219,9 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
-  if (sid === undefined) return undefined;
+  if (sid === undefined) return;
   const session = core.accessor.get(ISessionLifecycleService).get(sid);
-  if (session === undefined) return undefined;
+  if (session === undefined) return;
   return ensureMainAgent(session);
 }
 
@@ -283,6 +281,9 @@ function mapMcpStatus(status: McpEntry['status']): McpServer['status'] {
   switch (status) {
     case 'pending':
       return 'connecting';
+    case 'pending-approval':
+      // Awaiting explicit user trust — not an error, not yet connecting.
+      return 'disconnected';
     case 'connected':
       return 'connected';
     case 'disabled':

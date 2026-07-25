@@ -1,18 +1,23 @@
-import { useMemo, useState } from "react";
-import { t } from "@/i18n";
-import { useRequest } from "ahooks";
-import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
-import { Input } from "@/components/ui/input";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
-import { bridge } from "@/services";
-import type { SessionInfo } from "shared/legacy-sdk";
-import { cn } from "@/lib/utils";
-import { useChatStore, useSettingsStore } from "@/stores";
-import { cleanSystemTags } from "shared/utils";
-import { toast } from "./ui/sonner";
-import { t } from "@/i18n";
-import { t } from "@/i18n";
+import { IconSearch, IconDots, IconTrash, IconCheck } from '@tabler/icons-react';
+import { useRequest } from 'ahooks';
+import { useMemo, useState } from 'react';
+import type { SessionInfo } from 'shared/legacy-sdk';
+import { cleanSystemTags } from 'shared/utils';
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { t } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { bridge } from '@/services';
+import { useChatStore, useSettingsStore } from '@/stores';
+
+import { StreamingConfirmDialog } from './StreamingConfirmDialog';
+import { toast } from './ui/sonner';
 
 interface SessionListProps {
   onClose: () => void;
@@ -23,7 +28,7 @@ function formatRelativeDate(timestamp: number): string {
   const m = Math.floor(diff / 60000);
   const h = Math.floor(diff / 3600000);
   const d = Math.floor(diff / 86400000);
-  if (m < 1) return "Just now";
+  if (m < 1) return 'Just now';
   if (m < 60) return `${m}m ago`;
   if (h < 24) return `${h}h ago`;
   if (d < 7) return `${d}d ago`;
@@ -43,22 +48,36 @@ function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: Sess
 
   return (
     <div
-      className={cn("group relative px-2 py-1 rounded-md cursor-pointer transition-colors", isSelected ? "bg-accent" : "hover:bg-accent/50")}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className={cn(
+        'group relative px-2 py-1 rounded-md cursor-pointer transition-colors',
+        isSelected ? 'bg-accent' : 'hover:bg-accent/50',
+      )}
+      onMouseEnter={() =>{  setIsHovered(true); }}
+      onMouseLeave={() =>{  setIsHovered(false); }}
       onClick={onSelect}
     >
-      <p className="text-xs leading-relaxed line-clamp-3 text-foreground">{cleanSystemTags(session.brief) || "Untitled"}</p>
+      <p className="text-xs leading-relaxed line-clamp-3 text-foreground">
+        {cleanSystemTags(session.brief) || 'Untitled'}
+      </p>
       <div className="flex items-center justify-between mt-0.5">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {isSelected && <IconCheck className="size-3 text-blue-500 shrink-0" />}
-          <span className="text-[10px] text-muted-foreground shrink-0">{formatRelativeDate(session.updatedAt)}</span>
-          {dirLabel && <span className="text-[10px] text-muted-foreground/70 truncate" title={session.workDir}>· {dirLabel}</span>}
+          <span className="text-[10px] text-muted-foreground shrink-0">
+            {formatRelativeDate(session.updatedAt)}
+          </span>
+          {dirLabel && (
+            <span className="text-[10px] text-muted-foreground/70 truncate" title={session.workDir}>
+              · {dirLabel}
+            </span>
+          )}
         </div>
-        <div className={cn("transition-opacity", isHovered ? "opacity-100" : "opacity-0")}>
+        <div className={cn('transition-opacity', isHovered ? 'opacity-100' : 'opacity-0')}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="p-1 -m-1 rounded hover:bg-muted transition-colors" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="p-1 -m-1 rounded hover:bg-muted transition-colors"
+                onClick={(e) =>{  e.stopPropagation(); }}
+              >
                 <IconDots className="size-3.5 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
@@ -84,23 +103,27 @@ function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: Sess
 export function SessionList({ onClose }: SessionListProps) {
   const { loadSession, sessionId, startNewConversation, isStreaming } = useChatStore();
   const { workspaceRoot, currentWorkDir, setCurrentWorkDir } = useSettingsStore();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [pendingSession, setPendingSession] = useState<SessionInfo | null>(null);
 
-  const { data: kimiSessions = [], loading, mutate } = useRequest(() => bridge.getAllKimiSessions());
+  const {
+    data: kimiSessions = [],
+    loading,
+    mutate,
+  } = useRequest(() => bridge.getAllKimiSessions());
 
   const getWorkDirLabel = (sessionWorkDir: string): string | null => {
-    const activeWorkDir = currentWorkDir || workspaceRoot;
+    const activeWorkDir = currentWorkDir ?? workspaceRoot;
     if (sessionWorkDir === activeWorkDir) return null;
     if (!workspaceRoot) return sessionWorkDir;
     // Show (root) for workspace root, relative path for subdirs
     if (sessionWorkDir === workspaceRoot) {
-      return "/";
+      return '/';
     }
     if (sessionWorkDir.startsWith(workspaceRoot)) {
-      return "." + sessionWorkDir.slice(workspaceRoot.length);
+      return '.' + sessionWorkDir.slice(workspaceRoot.length);
     }
     return sessionWorkDir;
   };
@@ -112,7 +135,7 @@ export function SessionList({ onClose }: SessionListProps) {
   }, [kimiSessions, searchQuery]);
 
   const handleSelect = async (session: SessionInfo) => {
-    console.log("[SessionList] Loading session:", session.id);
+    console.log('[SessionList] Loading session:', session.id);
 
     // If streaming, show confirmation dialog
     if (isStreaming) {
@@ -126,7 +149,7 @@ export function SessionList({ onClose }: SessionListProps) {
   const doLoadSession = async (session: SessionInfo) => {
     try {
       // Switch workDir if session is from a different directory
-      const activeWorkDir = currentWorkDir || workspaceRoot;
+      const activeWorkDir = currentWorkDir ?? workspaceRoot;
       if (session.workDir !== activeWorkDir) {
         const newWorkDir = session.workDir === workspaceRoot ? null : session.workDir;
         const result = await bridge.setWorkDir(newWorkDir);
@@ -138,8 +161,10 @@ export function SessionList({ onClose }: SessionListProps) {
       await loadSession(session.id, events);
       onClose();
     } catch (error) {
-      console.error("[SessionList] Failed to load session:", error);
-      toast.error(`Unable to open the conversation: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('[SessionList] Failed to load session:', error);
+      toast.error(
+        `Unable to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   };
 
@@ -160,10 +185,12 @@ export function SessionList({ onClose }: SessionListProps) {
         await startNewConversation();
       }
 
-      mutate((prev) => prev?.filter((s) => s.id !== deleteTarget.id) || []);
+      mutate((prev) => prev?.filter((s) => s.id !== deleteTarget.id) ?? []);
     } catch (error) {
-      console.error("[SessionList] Failed to delete session:", error);
-      toast.error(`Unable to delete the conversation: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('[SessionList] Failed to delete session:', error);
+      toast.error(
+        `Unable to delete the conversation: ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       setIsDeleting(false);
       setDeleteTarget(null);
@@ -176,7 +203,12 @@ export function SessionList({ onClose }: SessionListProps) {
         <div className="p-2 border-b border-border shrink-0">
           <div className="relative">
             <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input placeholder="Search conversations..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8 h-8 text-xs" />
+            <Input
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) =>{  setSearchQuery(e.target.value); }}
+              className="pl-8 h-8 text-xs"
+            />
           </div>
         </div>
         <div className="overflow-y-auto flex-1 min-h-0">
@@ -184,7 +216,9 @@ export function SessionList({ onClose }: SessionListProps) {
             {loading ? (
               <div className="px-3 py-8 text-center text-xs text-muted-foreground">Loading...</div>
             ) : filteredSessions.length === 0 ? (
-              <div className="px-3 py-8 text-center text-xs text-muted-foreground">{searchQuery ? "No conversations found" : "No conversations yet"}</div>
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                {searchQuery ? 'No conversations found' : 'No conversations yet'}
+              </div>
             ) : (
               filteredSessions.map((session) => (
                 <SessionItem
@@ -194,7 +228,7 @@ export function SessionList({ onClose }: SessionListProps) {
                   onSelect={() => {
                     void handleSelect(session);
                   }}
-                  onDelete={() => setDeleteTarget(session)}
+                  onDelete={() =>{  setDeleteTarget(session); }}
                   dirLabel={getWorkDirLabel(session.workDir)}
                 />
               ))

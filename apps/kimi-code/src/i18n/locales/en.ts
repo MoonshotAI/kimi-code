@@ -51,7 +51,8 @@ export default {
       serverRun: 'Start the Kimi server (background daemon; use --foreground to attach).',
       serverPs: 'List clients currently connected to the running Kimi server.',
       serverKill: 'Stop the running Kimi server (graceful API + forced PID kill).',
-      serverRotateToken: 'Generate a new persistent server token; the previous token stops working immediately.',
+      serverRotateToken:
+        'Generate a new persistent server token; the previous token stops working immediately.',
       providerAdd: 'Import every provider listed in a custom registry (api.json).',
       providerRemove: 'Remove a provider and every model alias that referenced it.',
       providerList: 'Show configured providers and their model counts.',
@@ -66,19 +67,23 @@ export default {
       yolo: 'Automatically approve all actions.',
       auto: 'Start in auto permission mode.',
       plan: 'Start in plan mode.',
-      model: 'LLM model alias to use for this invocation. Defaults to default_model in config.toml.',
+      model:
+        'LLM model alias to use for this invocation. Defaults to default_model in config.toml.',
       prompt: 'Run one prompt non-interactively and print the response.',
       outputFormat: 'Output format for prompt mode. Defaults to text.',
-      skillsDir: 'Load skills from this directory instead of auto-discovered user and project directories. Can be repeated.',
+      skillsDir:
+        'Load skills from this directory instead of auto-discovered user and project directories. Can be repeated.',
       addDir: 'Add an additional workspace directory for this session. Can be repeated.',
-      agent: 'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
+      agent:
+        'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
       agentFile: 'Load an agent definition from a Markdown file and select it (v2 engine only).',
       yes: 'Automatically confirm prompts.',
       autoApprove: 'Automatically approve all actions.',
       exportOutput: 'Output ZIP path.',
       exportYes: 'Skip previous-session confirmation.',
       exportSessionId: 'Session id to export. Defaults to the most recent session.',
-      exportNoIncludeGlobalLog: 'Skip bundling the active global diagnostic log (~/.kimi-code/logs/kimi-code.log, not rotated .1 files). By default the global log is included.',
+      exportNoIncludeGlobalLog:
+        'Skip bundling the active global diagnostic log (~/.kimi-code/logs/kimi-code.log, not rotated .1 files). By default the global log is included.',
       acpLogin: 'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
       visPort: 'Port to bind. Default: auto-pick a free port.',
       visHost: 'Host to bind. Default: 127.0.0.1.',
@@ -88,18 +93,29 @@ export default {
       doctorTuiPath: 'Validate this file as tui.toml instead of the default path.',
       serverPsJson: 'Print the raw connection list as JSON.',
       serverRunOptionPort: 'Bind port (default {{port}}).',
-      serverRunOptionHost: 'Bind host. Omit for {{host}} (local); pass --host for {{lanHost}} (all interfaces), or --host <host> for a specific address. The bearer token is printed at startup.',
-      serverRunOptionAllowedHost: 'Extra Host header values to allow through the DNS-rebinding check. Repeatable or comma-separated; a leading dot matches a domain suffix (e.g. .example.com).',
-      serverRunOptionKeepAlive: 'Keep the server running instead of exiting after 60s with no connected clients. Implied by --host / --allowed-host, always on in --foreground.',
-      serverRunOptionInsecureNoTls: 'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
-      serverRunOptionAllowRemoteShutdown: 'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: disabled → 404).',
-      serverRunOptionAllowRemoteTerminals: 'On a non-loopback bind, keep PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
-      serverRunOptionDangerousBypassAuth: 'Disable bearer-token auth on all REST and WebSocket routes, and advertise it via /api/v1/meta. Only use on a trusted network or behind your own authenticating proxy.',
+      serverRunOptionHost:
+        'Bind host. Omit for {{host}} (local); pass --host for {{lanHost}} (all interfaces), or --host <host> for a specific address. The bearer token is printed at startup.',
+      serverRunOptionAllowedHost:
+        'Extra Host header values to allow through the DNS-rebinding check. Repeatable or comma-separated; a leading dot matches a domain suffix (e.g. .example.com).',
+      serverRunOptionKeepAlive:
+        'Keep the server running instead of exiting after 60s with no connected clients. Implied by --host / --allowed-host, always on in --foreground.',
+      serverRunOptionInsecureNoTls:
+        'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
+      serverRunOptionAllowRemoteShutdown:
+        'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: disabled → 404).',
+      serverRunOptionAllowRemoteTerminals:
+        'On a non-loopback bind, keep PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
+      serverRunOptionDangerousBypassAuth:
+        'Disable bearer-token auth on all REST and WebSocket routes, and advertise it via /api/v1/meta. Only use on a trusted network or behind your own authenticating proxy.',
       serverRunOptionLogLevel: 'Server log level: {{levels}}. Omit to keep logs off.',
-      serverRunOptionDebugEndpoints: 'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
-      serverRunOptionForeground: 'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
-      serverRunOptionForegroundDefault: 'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (default; pass --background to run as a daemon instead).',
-      serverRunOptionBackground: 'Run the server as a background daemon and return once it is healthy, releasing this terminal.',
+      serverRunOptionDebugEndpoints:
+        'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
+      serverRunOptionForeground:
+        'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
+      serverRunOptionForegroundDefault:
+        'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (default; pass --background to run as a daemon instead).',
+      serverRunOptionBackground:
+        'Run the server as a background daemon and return once it is healthy, releasing this terminal.',
       serverRunOptionOpen: 'Open the web UI in the default browser once the server is healthy.',
       serverRunOptionNoOpen: 'Do not open the web UI in the default browser.',
       providerApiKey: 'Registry API key. Falls back to KIMI_REGISTRY_API_KEY.',
@@ -238,7 +254,8 @@ export default {
         ctrlCCancel: 'ctrl+c: cancel',
         themeSwitch: '/theme to switch the terminal UI theme',
         autoMode: '/auto when you want Kimi to handle approvals and keep going unattended',
-        yoloMode: '/yolo to skip most approvals for trusted batch work, only use it in repos you trust',
+        yoloMode:
+          '/yolo to skip most approvals for trusted batch work, only use it in repos you trust',
         helpCommands: '/help: show commands',
         compactContext: '/compact compresses context when it gets long',
         ctrlOToolOutput:
@@ -549,15 +566,18 @@ export default {
         features: {
           'tool-select': {
             title: 'Tool select (progressive tool disclosure)',
-            description: 'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
+            description:
+              'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
           },
-          'native_tools': {
+          native_tools: {
             title: 'Native tools',
-            description: 'Use Rust-native implementations for Read, Write, Edit, Grep, Glob and Bash tools.',
+            description:
+              'Use Rust-native implementations for Read, Write, Edit, Grep, Glob and Bash tools.',
           },
-          'rpc_microtask': {
+          rpc_microtask: {
             title: 'RPC microtask scheduling',
-            description: 'Use queueMicrotask instead of setTimeout(0) for in-process RPC simulation, reducing per-call latency.',
+            description:
+              'Use queueMicrotask instead of setTimeout(0) for in-process RPC simulation, reducing per-call latency.',
           },
         },
       },
@@ -581,34 +601,43 @@ export default {
       goalStartPermissionPrompt: {
         titleYolo: 'Start a goal in YOLO mode?',
         titleManual: 'Start a goal with approvals on?',
-        notice1: 'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
+        notice1:
+          'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
         notice2: 'Manual mode is not suitable for unattended goal work.',
         notice3: 'You can go back without losing your command.',
         yoloNotice1: 'YOLO mode approves tools and plan changes automatically.',
         yoloNotice2: 'YOLO mode can still stop for questions.',
         yoloNotice3: 'Switch to Auto if you want questions skipped during goal work.',
         optionAutoLabel: 'Switch to Auto and start',
-        optionAutoDesc: 'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+        optionAutoDesc:
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
         optionYoloLabel: 'Switch to YOLO and start',
-        optionYoloDesc: 'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+        optionYoloDesc:
+          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
         optionYoloKeepLabel: 'Keep YOLO and start',
-        optionYoloKeepDesc: 'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+        optionYoloKeepDesc:
+          'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
         optionManualLabel: 'Start in Manual',
-        optionManualDesc: 'Keep approvals on. Kimi Code will ask before risky actions, so the goal may stop and wait for you.',
+        optionManualDesc:
+          'Keep approvals on. Kimi Code will ask before risky actions, so the goal may stop and wait for you.',
         optionCancelLabel: 'Do not start',
         optionCancelDesc: 'Return to the input box with your goal command.',
       },
       swarmStartPermissionPrompt: {
         title: 'Start a swarm task with approvals on?',
-        notice1: 'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
+        notice1:
+          'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
         notice2: 'Manual mode can block swarm work while agents are running.',
         notice3: 'You can go back without losing your command.',
         optionAutoLabel: 'Switch to Auto and start',
-        optionAutoDesc: 'Best for swarm tasks. Tools are approved automatically, and questions are skipped.',
+        optionAutoDesc:
+          'Best for swarm tasks. Tools are approved automatically, and questions are skipped.',
         optionYoloLabel: 'Switch to YOLO and start',
-        optionYoloDesc: 'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+        optionYoloDesc:
+          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
         optionManualLabel: 'Start in Manual',
-        optionManualDesc: 'Keep approvals on. Kimi Code may stop and wait for you during the swarm task.',
+        optionManualDesc:
+          'Keep approvals on. Kimi Code may stop and wait for you during the swarm task.',
       },
       startPermissionPrompt: {
         navHint: '↑↓ navigate · Enter select · Esc cancel',
@@ -711,10 +740,12 @@ export default {
         enterDetails: 'Enter details',
         removeConfirmHint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
         installTrustHint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
-        installTrustNotice: '⚠️ This is a third-party plugin that Kimi has not reviewed. It can bundle MCP servers, skills, or files that run code and access your workspace. Install it only if you trust the source.',
+        installTrustNotice:
+          '⚠️ This is a third-party plugin that Kimi has not reviewed. It can bundle MCP servers, skills, or files that run code and access your workspace. Install it only if you trust the source.',
         mcpEnable: 'Enter/Space enable',
         mcpDisable: 'Enter/Space disable',
-        webBridgeDescription: 'Control your real browser from Kimi Code — navigate, click, type, and screenshot',
+        webBridgeDescription:
+          'Control your real browser from Kimi Code — navigate, click, type, and screenshot',
         statusEnabled: 'enabled',
         statusDisabled: 'disabled',
         panelTitle: 'Plugins',
@@ -723,7 +754,8 @@ export default {
         noMcpServers: 'No MCP servers declared.',
         noPluginsInstalled: 'No plugins installed.',
         countInstalled: '{{count}} installed',
-        tabHintInstalled: ' Tab switch · Space toggle · D remove · M MCP · {{enterAction}} · I details · R reload · Esc cancel',
+        tabHintInstalled:
+          ' Tab switch · Space toggle · D remove · M MCP · {{enterAction}} · I details · R reload · Esc cancel',
         tabHintCustom: ' Tab switch · Enter install · Esc cancel',
         tabHintMarketplace: ' Tab switch · ↑↓ navigate · Enter open/install · Esc cancel',
         loadingMarketplace: 'Loading marketplace…',
@@ -835,7 +867,8 @@ export default {
       outputFiltered: 'The model output was filtered ({{reason}}).',
       maxTokensTruncated: 'Model hit max_tokens — tool call was truncated before it could run.',
       maxTokensNoToolCall: 'Model hit max_tokens — no tool call was emitted.',
-      maxTokensHint: 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.',
+      maxTokensHint:
+        'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.',
       interruptedByUser: 'Interrupted by user',
       stepMaxSteps: 'reached per-turn step limit (max_steps)',
       stepInterrupted: 'step interrupted ({{reason}})',
@@ -854,8 +887,7 @@ export default {
       // goal.ts
       resumeGoalInput: 'Resume the active goal.',
       startingNow: 'No active goal. Starting this goal now.',
-      provideObjective:
-        'Provide a goal objective, e.g. `/goal Ship feature X`.',
+      provideObjective: 'Provide a goal objective, e.g. `/goal Ship feature X`.',
       objectiveTooLong:
         'Goal objective is too long (max {{max}} characters). Reference long details by file path.',
       provideNextObjective:
@@ -864,7 +896,8 @@ export default {
       failedToLoadUpcomingGoals: 'Failed to load upcoming goals: {{error}}',
       failedToUpdateUpcomingGoals: 'Failed to update upcoming goals: {{error}}',
       failedToReadUpcomingGoals: 'Failed to read upcoming goals: {{error}}',
-      queuedGoalRemoveFailed: 'Queued goal started, but could not be removed from the queue: {{error}}',
+      queuedGoalRemoveFailed:
+        'Queued goal started, but could not be removed from the queue: {{error}}',
       queuedGoalRestoreFailed: 'Queued goal could not be restored: {{error}}',
       queuedGoalCancelFailed: 'Queued goal could not be cancelled: {{error}}',
       queuedGoalNoLongerExists: 'Queued goal no longer exists.',
@@ -916,7 +949,8 @@ export default {
       noModelSelected: 'No model selected. Run /model to select one first.',
       unknownTheme: 'Unknown theme: {{theme}}',
       unknownModelAlias: 'Unknown model alias: {{alias}}',
-      unsupportedEffort: 'Unsupported thinking effort "{{arg}}" for {{alias}}. Available: {{segments}}',
+      unsupportedEffort:
+        'Unsupported thinking effort "{{arg}}" for {{alias}}. Available: {{segments}}',
       switchModelFailed: 'Failed to switch model: {{msg}}',
       switchSavedButDefaultFailed: 'Switched to {{name}}, but failed to save default: {{msg}}',
       loadExperimentsFailed: 'Failed to load experimental features: {{error}}',
@@ -935,7 +969,8 @@ export default {
       modelsAdded_other: '{{providerName}} · +{{count}} models.',
       skippedRefreshing: 'Skipped refreshing {{provider}}: {{reason}}',
       warningLabel: 'Warning: {{warning}}',
-      noSessionsToContinue: 'No sessions to continue under "{{workDir}}"; starting a fresh session.',
+      noSessionsToContinue:
+        'No sessions to continue under "{{workDir}}"; starting a fresh session.',
       cannotSendWhileReplaying: 'Cannot send input while session history is replaying.',
       noActiveSessionShell: 'No active session for shell command.',
       shellCommandFailed: 'Shell command failed: {{message}}',
@@ -947,12 +982,15 @@ export default {
       skillFailed: 'Skill "{{skillName}}" failed: {{message}}',
       pluginCommandFailed: 'Command "{{pluginId}}:{{commandName}}" failed: {{message}}',
       failedToSteer: 'Failed to steer: {{message}}',
-      resumeOtherWorkDir: 'Current session is in a different working directory.\n  To resume, run: {{command}}',
+      resumeOtherWorkDir:
+        'Current session is in a different working directory.\n  To resume, run: {{command}}',
       commandCopiedToClipboard: 'Command copied to clipboard',
       failedToCopyCommand: 'Failed to copy command to clipboard',
       alreadyOnSession: 'Already on this session.',
-      cannotSwitchWhileStreaming: 'Cannot switch sessions while streaming — press Esc or Ctrl-C first.',
-      cannotSwitchModelsWhileStreaming: 'Cannot switch models while streaming — press Esc or Ctrl-C first.',
+      cannotSwitchWhileStreaming:
+        'Cannot switch sessions while streaming — press Esc or Ctrl-C first.',
+      cannotSwitchModelsWhileStreaming:
+        'Cannot switch models while streaming — press Esc or Ctrl-C first.',
       cannotSwitchWhileReplaying: 'Cannot switch sessions while history is replaying.',
       failedToResumeSession: 'Failed to resume session {{sessionId}}: {{message}}',
       resumedSession: 'Resumed session ({{sessionId}}).',
@@ -1004,7 +1042,8 @@ export default {
       replaySkillActivated: 'Activated skill: {{skillName}}',
       replayFeedback: 'Feedback: {{feedback}}',
       noModelsConfigured: 'No models configured',
-      noModelsConfiguredSub: 'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+      noModelsConfiguredSub:
+        'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
       experimentalUpdated: 'Experimental features updated.',
       experimentalUpdatedSessionReloaded: 'Experimental features updated. Session reloaded.',
       // commands/session.ts
@@ -1013,7 +1052,8 @@ export default {
       sessionFailedToSetTitle: 'Failed to set title: {{message}}',
       sessionTitleSetTo: 'Session title set to: {{title}}',
       sessionFailedToFork: 'Failed to fork session: {{message}}',
-      sessionForked: 'Session forked ({{forkedId}}). To return to the original session: kimi -r {{originalId}}',
+      sessionForked:
+        'Session forked ({{forkedId}}). To return to the original session: kimi -r {{originalId}}',
       sessionFailedToSwitchToForked: 'Failed to switch to forked session: {{message}}',
       sessionExportingMarkdown: 'Exporting session as Markdown…',
       sessionNoMessagesToExport: 'No messages to export.',
@@ -1025,7 +1065,8 @@ export default {
       pluginsUsageInstall: 'Usage: /plugins install <local-path-or-zip-url>',
       pluginsUsageRemove: 'Usage: /plugins remove <id>',
       pluginsUsageMcp: 'Usage: /plugins mcp enable|disable <id> <server>',
-      pluginsUnknownAction: 'Unknown /plugins action: {{action}}. Run /plugins to choose interactively.',
+      pluginsUnknownAction:
+        'Unknown /plugins action: {{action}}. Run /plugins to choose interactively.',
       pluginsCommandFailed: '/plugins {{action}} failed: {{error}}',
       pluginsFailedToLoad: 'Failed to load plugins: {{error}}',
       pluginsFailedToLoadMcp: 'Failed to load plugin MCP servers: {{error}}',
@@ -1039,10 +1080,12 @@ export default {
       pluginsInstallingOrUpdating: 'Installing or updating {{label}} from marketplace...',
       pluginsFailedToInstall: 'Failed to install {{label}}: {{error}}',
       pluginsMcpEnabled: 'Enabled MCP server {{server}} for {{id}}. Run /reload or /new to apply.',
-      pluginsMcpDisabled: 'Disabled MCP server {{server}} for {{id}}. Run /reload or /new to apply.',
+      pluginsMcpDisabled:
+        'Disabled MCP server {{server}} for {{id}}. Run /reload or /new to apply.',
       pluginsEnabled: 'Enabled {{id}}. Run /reload or /new to apply.',
       pluginsDisabled: 'Disabled {{id}}. Run /reload or /new to apply.',
-      pluginsMcpDisabledHint: ' Some MCP servers are disabled; re-enable with /plugins mcp enable {{id}} <server>.',
+      pluginsMcpDisabledHint:
+        ' Some MCP servers are disabled; re-enable with /plugins mcp enable {{id}} <server>.',
       pluginsInlineMcpDisabled: ' · MCP servers disabled',
       pluginsRemoveCancelled: 'Remove cancelled: {{id}}.',
       pluginsRemoved: 'Removed {{id}}.',
@@ -1052,8 +1095,10 @@ export default {
       pluginsIfNotOpened: 'If it did not open, visit {{url}}',
       pluginsReloadResult: 'Reload: +{{added}} -{{removed}}',
       pluginsReloadResultErrors: ' ({{count}} errors)',
-      pluginsDeclaresMcp_one: ' Declares {{count}} MCP server; enabled by default and configurable from /plugins.',
-      pluginsDeclaresMcp_other: ' Declares {{count}} MCP servers; enabled by default and configurable from /plugins.',
+      pluginsDeclaresMcp_one:
+        ' Declares {{count}} MCP server; enabled by default and configurable from /plugins.',
+      pluginsDeclaresMcp_other:
+        ' Declares {{count}} MCP servers; enabled by default and configurable from /plugins.',
       pluginsInstalledDesc: 'Installed {{displayName}}{{version}} {{sourcePhrase}}',
       pluginsUpdatedDesc: 'Updated {{displayName}}{{version}} {{sourcePhrase}}',
       pluginsMigratedDesc: 'Migrated {{displayName}}: {{prevSource}} → {{source}}{{version}}',
@@ -1079,7 +1124,8 @@ export default {
       undoUsage: 'Usage: /undo [count], where count is a positive integer.',
       undoNothingToUndo: 'Nothing to undo.',
       undoFailed: 'Failed to undo: {{message}}',
-      undoLimit: 'Cannot undo {{requested}}; only {{max}} can be undone in the active context{{reason}}.',
+      undoLimit:
+        'Cannot undo {{requested}}; only {{max}} can be undone in the active context{{reason}}.',
       undoLimitAfterCompaction: ' after the last compaction',
       undoNothingToUndoAfterCompaction: 'Nothing to undo after the last compaction.',
       undoUserMessage: 'User message',
@@ -1097,7 +1143,8 @@ export default {
       webOpenUrl: 'open {{url}}',
       webToken: 'Token:    {{token}}',
       webNewServer: 'Start a new server',
-      webNewServerDesc: 'Run a new server in the foreground on this terminal after the TUI exits (stop with Ctrl+C), then open the session deep link in your browser.',
+      webNewServerDesc:
+        'Run a new server in the foreground on this terminal after the TUI exits (stop with Ctrl+C), then open the session deep link in your browser.',
       webServerNotResponding: 'Kimi server at {{origin}} is not responding.',
       webVersionUnknown: 'version unknown (registered by an older build) · id {{id}}',
       webVersionMismatch: 'version {{hostVersion}} (this CLI: {{cliVersion}}) · id {{id}}',
@@ -1108,7 +1155,8 @@ export default {
       copyEscape: 'Copied via terminal escape sequence (unverified, {{count}} characters).',
       copyFailed: 'Failed to copy to clipboard: {{error}}',
       // sub/server/lifecycle.ts
-      serverInstallDesc: 'Install the Kimi server as an OS-managed service (launchd/systemd/schtasks).',
+      serverInstallDesc:
+        'Install the Kimi server as an OS-managed service (launchd/systemd/schtasks).',
       serverPortOption: 'Bind port (default {{port}})',
       serverLogLevelOption: 'Log level: {{levels}} (default {{default}})',
       serverReinstallOption: 'Reinstall and overwrite if already installed',
@@ -1129,7 +1177,8 @@ export default {
       serverReadyBanner: 'Kimi server ready',
       serverReadyLocalUi: 'Local web UI is available from this machine.',
       serverDangerAuthDisabled: '⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).',
-      serverDangerAnyoneAccess: 'Anyone who can reach this port gets full access. Only continue if you understand the risk.',
+      serverDangerAnyoneAccess:
+        'Anyone who can reach this port gets full access. Only continue if you understand the risk.',
       serverDangerUnsure: 'If you are unsure, run ',
       serverDangerUnsureCmd: 'kimi server kill',
       serverDangerUnsureSuffix: ' now to stop this process.',
@@ -1138,12 +1187,14 @@ export default {
       serverKillNoRunning: 'No running Kimi server.',
       serverKillStopped: 'Kimi server (pid {{pid}}) stopped.',
       serverKillKilled: 'Kimi server (pid {{pid}}) killed.',
-      serverKillFailedPermissions: 'Failed to stop Kimi server (pid {{pid}}); insufficient permissions?',
+      serverKillFailedPermissions:
+        'Failed to stop Kimi server (pid {{pid}}); insufficient permissions?',
       serverReuseNoticeTitle: 'A server is already running',
       serverReuseNoticeBody: 'at {{origin}} — the options from this command were not applied.',
       serverReuseNoticeHint: 'Run `kimi server kill` first to bind a new host/port.',
       serverVersionMismatch: 'Server version mismatch',
-      serverVersionMismatchDetail: 'the running server is {{runningVersion}}, this CLI is {{cliVersion}} — restarting picks up the new version.',
+      serverVersionMismatchDetail:
+        'the running server is {{runningVersion}}, this CLI is {{cliVersion}} — restarting picks up the new version.',
       serverTokenLabel: 'Token:    ',
       // sub/server/daemon.ts
       serverDaemonTimeout: 'Kimi server daemon failed to start within {{ms}}ms.',
@@ -1151,7 +1202,8 @@ export default {
       serverDaemonCheckLog: 'Check the log for details: {{path}}',
       serverDaemonLogTail: 'Last log lines ({{path}}):',
       // sub/server/rotate-token.ts
-      serverTokenRotated: 'The previous token is now invalid. A running server picks up the new token automatically.',
+      serverTokenRotated:
+        'The previous token is now invalid. A running server picks up the new token automatically.',
       serverNewToken: 'New server token: {{token}}',
       // sub/server/access-urls.ts
       serverAccessLocal: 'Local:    ',
@@ -1161,8 +1213,10 @@ export default {
       serverInvalidIdleGrace: 'error: invalid --idle-grace-ms value: {{raw}}',
       serverInvalidValue: 'error: invalid {{label}} value: {{raw}}',
       serverInvalidLogLevel: 'error: invalid --log-level value: {{raw}} (allowed: {{allowed}})',
-      serverTokenNotFound: 'unable to read server token at {{path}}; has the server been started at least once?',
-      serverNotServingWebUi: 'Server at {{origin}} does not serve the Kimi web UI{{reason}}. Stop the existing server and rerun `kimi server run`.',
+      serverTokenNotFound:
+        'unable to read server token at {{path}}; has the server been started at least once?',
+      serverNotServingWebUi:
+        'Server at {{origin}} does not serve the Kimi web UI{{reason}}. Stop the existing server and rerun `kimi server run`.',
       // sub/server/ps.ts
       serverNoRunning: 'No running Kimi server. Start one with `kimi server run` or `kimi web`.',
       serverNoActiveClients: 'No active clients.\n',
@@ -1197,9 +1251,11 @@ export default {
       providerCatalogNoMatch: 'No providers in catalog match "{{filter}}".',
       providerCatalogEmpty: 'Catalog is empty.',
       providerCatalogUnsupported: 'Provider "{{id}}" has an unsupported wire type in the catalog.',
-      providerCatalogModelNotInProvider: 'Model "{{model}}" is not in provider "{{id}}". Run "kimi provider catalog list {{id}}" to see available ids.',
+      providerCatalogModelNotInProvider:
+        'Model "{{model}}" is not in provider "{{id}}". Run "kimi provider catalog list {{id}}" to see available ids.',
       providerImported: 'Imported {{name}} ({{id}}) with {{count}} model{{plural}} from {{url}}.',
-      providerMultipleImported: 'Imported {{count}} provider{{plural}} ({{modelCount}} model{{modelPlural}}) from {{url}}:',
+      providerMultipleImported:
+        'Imported {{count}} provider{{plural}} ({{modelCount}} model{{modelPlural}}) from {{url}}:',
       providerDefaultSet: 'Default model set to {{id}}/{{model}}.',
       providerCatalogFetchFailed: 'Failed to fetch catalog from {{url}}{{suffix}}: {{error}}',
       // tui/commands/provider.ts
@@ -1233,7 +1289,8 @@ export default {
       feedbackLogsOnly: 'Logs',
       feedbackLogsOnlyDesc: 'Send this message, your feedback, and recent logs.',
       feedbackLogsAndCodebase: 'Logs and codebase',
-      feedbackLogsAndCodebaseDesc: 'Send this message, your feedback, recent logs, and the source code of files used during this session.',
+      feedbackLogsAndCodebaseDesc:
+        'Send this message, your feedback, recent logs, and the source code of files used during this session.',
       shareDiagnosticInfo: 'Share diagnostic information',
       apiKeySavedTo: 'Saved to ~/.kimi-code/config.toml',
       // sub/upgrade.ts
@@ -1257,7 +1314,8 @@ export default {
       doctorInvalidConfig: 'Invalid configuration in {{path}}.',
       doctorValidationIssues: 'Validation issues:',
       // update/preflight.ts
-      updateUnsupportedPlatform: 'native ({{platform}}). Auto-update is not supported on this platform.',
+      updateUnsupportedPlatform:
+        'native ({{platform}}). Auto-update is not supported on this platform.',
       updateUnsupportedManager: 'unsupported package manager or layout.',
       updateNewerAvailable: 'A newer version of {{name}} is available ({{version}}).',
       updateDetectedSource: 'Detected install source: {{source}}',
@@ -1280,7 +1338,8 @@ export default {
       promptTurnEnded: 'Prompt turn ended with reason: {{reason}}',
       promptBlocked: 'Prompt hook blocked the request.',
       promptTurnCannotStart: 'Prompt turn could not be started',
-      sessionDifferentDir: 'Session "{{sessionId}}" was created under a different directory.\n  cd "{{cwd}}" && kimi -r {{sessionId}}\n\n',
+      sessionDifferentDir:
+        'Session "{{sessionId}}" was created under a different directory.\n  cd "{{cwd}}" && kimi -r {{sessionId}}\n\n',
       printGoalWaitCeiling: 'print goal wait ceiling reached ({{ceilingS}}s), finishing',
       printSteerCeiling: 'print steer ceiling reached ({{ceilingS}}s), finishing',
       printSteerMaxTurns: 'print steer max turns reached ({{maxTurns}}), finishing',
@@ -1292,7 +1351,8 @@ export default {
       goalNoGoalFound: 'Goal: no goal found.',
       // run-prompt.ts
       sessionNotFound: 'Session "{{sessionId}}" not found.',
-      noModelPrompt: 'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+      noModelPrompt:
+        'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
       // sub/server/run.ts
       serverNetworkOff: 'off',
       serverNetworkUseHost: 'use --host to enable',
@@ -1441,6 +1501,8 @@ export default {
         statusComplete: 'complete',
         statusBlocked: 'blocked',
         statusPaused: 'paused',
+        statusBudgetLimited: 'budget limit reached',
+        statusUsageLimited: 'usage limit reached',
       },
       planBox: {
         fallback: ' plan ',
@@ -1677,7 +1739,8 @@ export default {
       configEditorSet: 'Editor set to "{{value}}".',
       configEditorAutoSet: 'Editor set to auto-detect ($VISUAL / $EDITOR).',
       configModelSwitched: 'Switched to {{name}} with thinking {{effort}}.',
-      configModelSwitchedSession: 'Switched to {{name}} with thinking {{effort}} for this session only.',
+      configModelSwitchedSession:
+        'Switched to {{name}} with thinking {{effort}} for this session only.',
       configThinkingSet: 'Thinking set to {{effort}}.',
       configThinkingSetSession: 'Thinking set to {{effort}} for this session only.',
       configModelSavedDefault: 'Saved {{name}} with thinking {{effort}} as default.',
@@ -1692,10 +1755,13 @@ export default {
       configAutoUpdateEnabled: 'enabled',
       configAutoUpdateDisabled: 'disabled',
       configNoExperimentalChanges: 'No experimental feature changes to apply.',
-      configModelCachedWarning: 'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.',
-      configEffortCachedWarning: 'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.',
+      configModelCachedWarning:
+        'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.',
+      configEffortCachedWarning:
+        'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.',
       configNoneDeclared: 'none declared',
-      configUnknownEffort: 'Thinking effort "{{arg}}" is not listed for {{alias}} (known: {{knownEfforts}}). Sending "{{arg}}" unchanged; the configured provider will validate it.',
+      configUnknownEffort:
+        'Thinking effort "{{arg}}" is not listed for {{alias}} (known: {{knownEfforts}}). Sending "{{arg}}" unchanged; the configured provider will validate it.',
       configThemeTracking: ' (tracking terminal; current: {{resolved}})',
       configPermissionUnchanged: 'Permission mode unchanged: {{mode}}.',
       configPermissionMode: 'Permission mode: {{mode}}',
@@ -1715,12 +1781,15 @@ export default {
       configUnknownPlanSubcommand: 'Unknown plan subcommand: {{subcmd}}',
       configPlanPath: 'Plan will be created here: {{path}}',
       configUnknownModelAlias: 'Unknown model alias: {{alias}}',
-      configUnsupportedEffort: 'Unsupported thinking effort "{{arg}}" for {{alias}}. Available: {{segments}}',
-      configCannotSwitchWhileStreaming: 'Cannot switch models while streaming — press Esc or Ctrl-C first.',
+      configUnsupportedEffort:
+        'Unsupported thinking effort "{{arg}}" for {{alias}}. Available: {{segments}}',
+      configCannotSwitchWhileStreaming:
+        'Cannot switch models while streaming — press Esc or Ctrl-C first.',
       configModelSwitchedSaveFailed: 'Switched to {{name}}, but failed to save default: {{msg}}',
       // tui/commands/resolve.ts
       resolveCannotWhileStreaming: 'Cannot /{{name}} while streaming — press Esc or Ctrl-C first.',
-      resolveCannotWhileCompacting: 'Cannot /{{name}} while compacting — wait for compaction to finish first.',
+      resolveCannotWhileCompacting:
+        'Cannot /{{name}} while compacting — wait for compaction to finish first.',
       // tui/commands/btw.ts
       btwStartFailed: 'Failed to start /btw: {{error}}',
       // tui/commands/discuss.ts
@@ -1766,17 +1835,20 @@ export default {
       feedbackNetworkError: 'Network error, failed to submit feedback.',
       feedbackOpeningGithub: 'Opening GitHub Issues as fallback…',
       feedbackNotSignedIn: "You're not signed in. Opening GitHub Issues for feedback…",
-      feedbackSentUploadFailed: 'Feedback sent; attachment upload failed — see feedback-upload.log.',
+      feedbackSentUploadFailed:
+        'Feedback sent; attachment upload failed — see feedback-upload.log.',
       feedbackHttpFailed: 'Failed to submit feedback (HTTP {{status}}).',
       feedbackSession: 'Session: {{sessionId}}',
       feedbackId: 'Feedback ID: {{id}}',
-      feedbackPersistHint: "If this persists, run `/export-debug-zip` and share the file with us for diagnosis. Please don't share it publicly.",
+      feedbackPersistHint:
+        "If this persists, run `/export-debug-zip` and share the file with us for diagnosis. Please don't share it publicly.",
       // tui/utils/goal-completion.ts
       goalComplete: '✓ Goal complete{{reason}}.',
       goalCompleteTurns: '{{count}} turn{{plural}}',
       goalCompleteSummary: 'Worked {{turns}} over {{elapsed}}, using {{tokens}} tokens.',
       // tui/utils/event-payload.ts
-      eventFilteredResponse: 'Provider filtered the response before visible output (finishReason={{reason}}{{raw}}).',
+      eventFilteredResponse:
+        'Provider filtered the response before visible output (finishReason={{reason}}{{raw}}).',
       // tui/utils/background-task-status.ts
       bgTaskAgent: 'agent task',
       bgTaskQuestion: 'question task',
@@ -1831,15 +1903,19 @@ export default {
       registryAddDirShow: 'Show configured additional workspace directories',
       // tui/commands/discuss.ts
       discussUsage: 'Usage: /discuss [--debate] <topic> with <role1>[:stance],<role2>[:stance],...',
-      discussUsageDebate: '  --debate  Use structured debate mode (opening → free debate → closing → consensus).',
+      discussUsageDebate:
+        '  --debate  Use structured debate mode (opening → free debate → closing → consensus).',
       discussNeedTopic: 'Please provide a discussion topic.',
       discussNeedRoles: 'Please specify at least 2 roles for the discussion.',
       // tui/commands/workflow.ts
       workflowSearchExample: '/workflow deep-research "latest advances in RAG"',
-      workflowListHint: 'Use the Workflow tool to list all available built-in workflows. It will show their names, descriptions, and required parameters.',
-      workflowStatusHintPattern: 'Use the Workflow tool to check the status of workflow run "{{runId}}".',
+      workflowListHint:
+        'Use the Workflow tool to list all available built-in workflows. It will show their names, descriptions, and required parameters.',
+      workflowStatusHintPattern:
+        'Use the Workflow tool to check the status of workflow run "{{runId}}".',
       workflowCancelHintPattern: 'Use the Workflow tool to cancel workflow run "{{runId}}".',
-      workflowRunHintPattern: 'Use the Workflow tool to run the "{{name}}" workflow. Provide all required parameters from the workflow definition.',
+      workflowRunHintPattern:
+        'Use the Workflow tool to run the "{{name}}" workflow. Provide all required parameters from the workflow definition.',
     },
     diffPreview: {
       moreChangesHidden: '{{n}} more change(s) hidden (ctrl+o to expand)',
@@ -1876,7 +1952,8 @@ export default {
       pluginsNotSupported: '  ⚠ {{count}} kimi-cli plugins — not yet supported for migration',
       hooksDropped: '  ⚠ {{count}} hooks dropped (incompatible)',
       configConflicts: '  ⚠ {{count}} config conflicts kept yours: {{keys}}',
-      configParseError: '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
+      configParseError:
+        '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
       tuiConflict: '  ⚠ tui.toml conflicted — review tui.migrated-from-kimi-cli.toml',
       mcpUnreadable: '  ⚠ mcp.json unreadable — review mcp.migrated-from-kimi-cli.json',
       mcpNeedsAuth: '  ⚠ {{count}} MCP servers need re-authentication',

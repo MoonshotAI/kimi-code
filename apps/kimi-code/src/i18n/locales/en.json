@@ -120,7 +120,9 @@
       "cannotCombinePromptAndPlan": "Cannot combine --prompt with --plan.",
       "sessionWithoutIdInPromptMode": "Cannot use --session without an id in prompt mode.",
       "cannotCombineContinueAndSession": "Cannot combine --continue, --session.",
-      "cannotCombineYoloAndAuto": "Cannot combine --yolo with --auto."
+      "cannotCombineYoloAndAuto": "Cannot combine --yolo with --auto.",
+      "agentOnlyOnce": "--agent may only be specified once.",
+      "agentFileOnlyOnce": "--agent-file may only be specified once."
     }
   },
   "startup": {
@@ -191,6 +193,10 @@
         "statusDone": "done",
         "statusInProgress": "in progress",
         "statusPending": "pending"
+      },
+      "workflowPanel": {
+        "header": "Workflows",
+        "running": "running"
       },
       "activityPane": {
         "tipPrefix": " · Tip: {{tip}}"
@@ -1380,7 +1386,9 @@
         "statusActive": "active",
         "statusComplete": "complete",
         "statusBlocked": "blocked",
-        "statusPaused": "paused"
+        "statusPaused": "paused",
+        "statusBudgetLimited": "budget limit reached",
+        "statusUsageLimited": "usage limit reached"
       },
       "planBox": {
         "fallback": " plan ",

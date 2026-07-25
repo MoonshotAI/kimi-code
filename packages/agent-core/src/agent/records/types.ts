@@ -1,16 +1,16 @@
 import type { ContentPart, ThinkingEffort, TokenUsage } from '@moonshot-ai/kosong';
 
 import type { LoopRecordedEvent } from '../../loop';
-import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../goal';
 import type { MCPToolDefinition } from '../../mcp/types';
 import type { ToolStoreUpdate } from '../../tools/store';
 import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
 import type { ContextMessage, PromptOrigin } from '../context';
+import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../goal';
 import type { PermissionApprovalResultRecord, PermissionMode } from '../permission';
+import type { SwarmModeTrigger } from '../swarm';
 import type { McpToolCollision, UserToolRegistration } from '../tool';
 import type { UsageRecordScope } from '../usage';
-import type { SwarmModeTrigger } from '../swarm';
 
 /** One entry of a tools table as sent in a request's top-level `tools[]`. */
 export interface LlmRequestToolSchema {
@@ -95,6 +95,20 @@ export interface AgentRecordEvents {
 
   'context.append_message': { message: ContextMessage };
   'context.append_loop_event': { event: LoopRecordedEvent };
+  /**
+   * A tool result already in history was replaced in-place (Rust engine
+   * prediction fast-path: the precise result overwrites the prediction).
+   * Replayed so a resumed session sees the precise content, not the
+   * prediction.
+   */
+  'context.replace_tool_result': {
+    toolCallId: string;
+    result: {
+      output: string | readonly ContentPart[];
+      isError?: boolean | undefined;
+      note?: string | undefined;
+    };
+  };
   'context.update_token_count': { tokenCount: number };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;

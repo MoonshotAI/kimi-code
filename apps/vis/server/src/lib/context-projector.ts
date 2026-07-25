@@ -9,6 +9,7 @@ import {
   selectCompactionUserMessages,
   selectRecentUserMessages,
 } from '@moonshot-ai/agent-core';
+
 import type {
   ContentPart,
   ContextMessage,
@@ -160,7 +161,7 @@ export function projectContext(
         } else if (ev.type === 'content.part') {
           const projected = openSteps.get(ev.stepUuid);
           if (projected !== undefined) {
-            (projected.message.content as ContentPart[]).push(ev.part);
+            (projected.message.content).push(ev.part);
           }
         } else if (ev.type === 'tool.call') {
           const projected = openSteps.get(ev.stepUuid);
@@ -171,7 +172,7 @@ export function projectContext(
                 : ev.args === undefined
                   ? null
                   : JSON.stringify(ev.args);
-            (projected.message.toolCalls as ToolCall[]).push({
+            (projected.message.toolCalls).push({
               type: 'function',
               id: ev.toolCallId,
               name: ev.name,
@@ -221,6 +222,24 @@ export function projectContext(
       case 'context.update_token_count':
         contextTokens = rec.tokenCount;
         break;
+      case 'context.replace_tool_result': {
+        // In-place replacement (Rust engine prediction fast-path): the
+        // precise result overwrites the recorded prediction content.
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const candidate = messages[i];
+          if (candidate === undefined) continue;
+          const msg = candidate.message;
+          if (msg.role === 'tool' && msg.toolCallId === rec.toolCallId) {
+            const content =
+              typeof rec.result.output === 'string'
+                ? [{ type: 'text' as const, text: rec.result.output }]
+                : [...rec.result.output];
+            candidate.message = { ...msg, content };
+            break;
+          }
+        }
+        break;
+      }
       case 'context.clear':
         if (mode === 'model') {
           messages = [];
@@ -293,7 +312,10 @@ export function projectContext(
           // and use the kept-user selection below; legacy records fall back to the
           // old verbatim-tail shape (handled first).
           const historyEntries = messages.filter(isHistoryEntry);
-          if (rec.keptUserMessageCount === undefined && rec.compactedCount < historyEntries.length) {
+          if (
+            rec.keptUserMessageCount === undefined &&
+            rec.compactedCount < historyEntries.length
+          ) {
             // Legacy (pre-rework) record: it has no `keptUserMessageCount`, so
             // agent-core's ContextMemory restore reproduces the old
             // `[summary, ...history.slice(compactedCount)]` semantics — a verbatim
@@ -339,9 +361,7 @@ export function projectContext(
             const realUserEntries = historyEntries.filter(
               (pm) => collectCompactableUserMessages([pm.message]).length === 1,
             );
-            const selection = selectCompactionUserMessages(
-              realUserEntries.map((pm) => pm.message),
-            );
+            const selection = selectCompactionUserMessages(realUserEntries.map((pm) => pm.message));
             const tailStart = realUserEntries.length - selection.tail.length;
             const headEntries: ProjectedMessage[] = selection.head.map((message, i) => {
               const original = i < tailStart ? realUserEntries[i]! : realUserEntries[tailStart]!;
@@ -392,7 +412,7 @@ export function projectContext(
         // contextTokens; byScope/byModel are for the cumulative breakdown only.
         const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
         addUsage(usage.byScope[scope], rec.usage);
-        if (!usage.byModel[rec.model]) usage.byModel[rec.model] = { ...ZERO };
+        usage.byModel[rec.model] ??= { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);
         break;
       }
@@ -409,10 +429,14 @@ export function projectContext(
         permissionMode = rec.mode;
         break;
       case 'plan_mode.enter':
-        planActive = true; planId = rec.id; break;
+        planActive = true;
+        planId = rec.id;
+        break;
       case 'plan_mode.cancel':
       case 'plan_mode.exit':
-        planActive = false; planId = undefined; break;
+        planActive = false;
+        planId = undefined;
+        break;
       case 'context.undo': {
         // Mirror agent-core `undo` (`agent/context/index.ts`): walk from the
         // end, skip `origin.kind === 'injection'`, stop at

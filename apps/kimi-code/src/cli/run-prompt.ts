@@ -1,12 +1,5 @@
-import {
-  setCrashPhase,
-  setTelemetryContext,
-  shutdownTelemetry,
-  track,
-  withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
-import chalk from 'chalk';
 import os from 'node:os';
+
 import {
   createKimiHarness,
   log,
@@ -15,14 +8,20 @@ import {
   type SessionStatus,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
+import {
+  setCrashPhase,
+  setTelemetryContext,
+  shutdownTelemetry,
+  track,
+  withTelemetryContext,
+} from '@moonshot-ai/kimi-telemetry';
+import chalk from 'chalk';
 import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 import { t } from '#/i18n';
 
 import { isKimiV2Enabled } from './experimental-v2';
-import { resolveOutputFormat } from './options';
-import type { CLIOptions, PromptOutputFormat } from './options';
 import {
   formatGoalSummaryText,
   goalExitCode,
@@ -30,11 +29,14 @@ import {
   parseHeadlessGoalCreate,
   type HeadlessGoalCreate,
 } from './goal-prompt';
-import type { PromptHarness, PromptSession } from './prompt-session';
+import { resolveOutputFormat } from './options';
+import type { CLIOptions, PromptOutputFormat } from './options';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
+import type { PromptHarness, PromptSession } from './prompt-session';
+import { maybeLoadRustEngine } from './rust-engine';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
-import { maybeLoadRustEngine } from './rust-engine';
+import { preheatWorkspaceIndex } from './workspace-preheat';
 
 /**
  * Await `promise`, but stop waiting after `timeoutMs`.
@@ -175,17 +177,16 @@ export async function runPrompt(
     for (const warning of (await harness.getConfigDiagnostics()).warnings) {
       stderr.write(`${t('tui.statusMessages.promptWarning', { warning })}\n`);
     }
-    const { session, restorePermission, telemetryModel, goalModel } =
-      await resolvePromptSession(
-        harness,
-        opts,
-        workDir,
-        config.defaultModel,
-        stderr,
-        (restorePermission) => {
-          restorePromptSessionPermission = restorePermission;
-        },
-      );
+    const { session, restorePermission, telemetryModel, goalModel } = await resolvePromptSession(
+      harness,
+      opts,
+      workDir,
+      config.defaultModel,
+      stderr,
+      (restorePermission) => {
+        restorePromptSessionPermission = restorePermission;
+      },
+    );
     restorePromptSessionPermission = restorePermission;
 
     initializeCliTelemetry({
@@ -199,6 +200,11 @@ export async function runPrompt(
     });
     setCrashPhase('runtime');
 
+    // Preheat the workspace file index off the hot path so the first Read
+    // tool call can return an instant prediction. Runs in the background;
+    // a missing/broken native module degrades silently to precise reads.
+    preheatWorkspaceIndex(workDir);
+
     // Headless goal mode: `kimi -p "/goal <objective>"`. The goal driver keeps
     // the turn-run alive across continuation turns, so the normal prompt-turn
     // waiter blocks until the goal is terminal; we then emit a summary and set a
@@ -207,13 +213,7 @@ export async function runPrompt(
     if (goalCreate !== undefined) {
       await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);
     } else {
-      await runPromptTurn(
-        session as PrintTurnSession,
-        opts.prompt!,
-        outputFormat,
-        stdout,
-        stderr,
-      );
+      await runPromptTurn(session as PrintTurnSession, opts.prompt!, outputFormat, stdout, stderr);
     }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
 
@@ -233,7 +233,7 @@ async function createPromptHarness(
   // Wire the Rust agent engine if config has `agent.engine = "rust"`.
   const runTurnOverride = await maybeLoadRustEngine(options.homeDir, options.configPath);
   if (runTurnOverride !== undefined) {
-    (options as Record<string, unknown>).runTurnOverride = runTurnOverride;
+    (options as Record<string, unknown>)['runTurnOverride'] = runTurnOverride;
   }
   return createKimiHarness(options);
 }
@@ -265,13 +265,7 @@ async function runHeadlessGoal(
   try {
     // The objective is sent as the normal prompt; goal continuation keeps the
     // turn alive until a terminal state is reached.
-    await runPromptTurn(
-      session as PrintTurnSession,
-      goal.objective,
-      outputFormat,
-      stdout,
-      stderr,
-    );
+    await runPromptTurn(session as PrintTurnSession, goal.objective, outputFormat, stdout, stderr);
   } finally {
     unsubscribeGoalEvents();
     const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
@@ -308,7 +302,7 @@ async function resolvePromptSession(
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
     if (target === undefined) {
-      throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session! }));
+      throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session }));
     }
     if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
@@ -317,9 +311,7 @@ async function resolvePromptSession(
             `  cd "${target.workDir}" && kimi -r ${opts.session}`,
         )}\n\n`,
       );
-      throw new Error(
-        `Session "${opts.session}" was created under a different directory.`,
-      );
+      throw new Error(`Session "${opts.session}" was created under a different directory.`);
     }
     const session = await harness.resumeSession({
       id: opts.session,
@@ -414,9 +406,7 @@ async function forcePromptPermission(
 export function requireConfiguredModel(...models: readonly (string | undefined)[]): string {
   const model = configuredModel(...models);
   if (model === undefined) {
-    throw new Error(
-      t('tui.statusMessages.noModelPrompt'),
-    );
+    throw new Error(t('tui.statusMessages.noModelPrompt'));
   }
   return model;
 }

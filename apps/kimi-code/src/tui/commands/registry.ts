@@ -1,16 +1,17 @@
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative, resolve } from 'pathe';
 
 import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
+import { basename, dirname, join, relative, resolve } from 'pathe';
 
 import { t } from '#/i18n';
+
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
 /** Map hyphenated command names to i18n keys under `tui.slashCommands.<key>`. */
 function slashI18nKey(name: string): string {
-  return `tui.slashCommands.${name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}`;
+  return `tui.slashCommands.${name.replaceAll(/-([a-z])/g, (_, c: string) => c.toUpperCase())}`;
 }
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
@@ -64,7 +65,14 @@ export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteI
 }
 
 function isPathLikeAddDirArgument(argumentPrefix: string): boolean {
-  return argumentPrefix === '.' || argumentPrefix === '..' || argumentPrefix.startsWith('./') || argumentPrefix.startsWith('../') || argumentPrefix.startsWith('/') || argumentPrefix.startsWith('~');
+  return (
+    argumentPrefix === '.' ||
+    argumentPrefix === '..' ||
+    argumentPrefix.startsWith('./') ||
+    argumentPrefix.startsWith('../') ||
+    argumentPrefix.startsWith('/') ||
+    argumentPrefix.startsWith('~')
+  );
 }
 
 function completeAddDirPath(argumentPrefix: string): AutocompleteItem[] | null {
@@ -83,7 +91,8 @@ function completeAddDirPath(argumentPrefix: string): AutocompleteItem[] | null {
   const items: AutocompleteItem[] = [];
   for (const entry of entries) {
     if (entry.name === '.' || entry.name === '..' || entry.name.startsWith('.')) continue;
-    if (partialName.length > 0 && !entry.name.toLowerCase().startsWith(partialName.toLowerCase())) continue;
+    if (partialName.length > 0 && !entry.name.toLowerCase().startsWith(partialName.toLowerCase()))
+      continue;
     const absolutePath = join(parentDir, entry.name);
     if (!isDirectoryPath(absolutePath, entry.isDirectory(), entry.isSymbolicLink())) continue;
     const value = formatDirectoryCompletionValue(normalizedPrefix, parentInput, entry.name);
@@ -126,7 +135,11 @@ function isDirectoryPath(path: string, isDirectory: boolean, isSymlink: boolean)
   }
 }
 
-function formatDirectoryCompletionValue(argumentPrefix: string, parentInput: string, entryName: string): string {
+function formatDirectoryCompletionValue(
+  argumentPrefix: string,
+  parentInput: string,
+  entryName: string,
+): string {
   if (argumentPrefix.startsWith('~/')) {
     const home = homedir();
     const homeRelative = relative(home, parentInput);
@@ -142,7 +155,8 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    description:
+      'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
     priority: 101,
     availability: 'always',
   },
@@ -184,6 +198,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'discuss',
+    aliases: [],
+    description: 'Run a multi-agent discussion on a topic and converge on a consensus',
+    priority: 95,
+    argumentHint: '<topic>',
+    availability: 'idle-only',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
@@ -202,6 +224,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['providers'],
     description: 'Manage AI providers (add / delete / refresh)',
     priority: 95,
+    availability: 'always',
+  },
+  {
+    name: 'multi-llm',
+    aliases: ['multillm'],
+    description: 'Configure MultiLLM concurrent providers (Rust engine)',
+    priority: 90,
     availability: 'always',
   },
   {
@@ -346,6 +375,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'workflow',
+    aliases: [],
+    description: 'Run or manage workflows (list, status, cancel, or run by name)',
+    priority: 80,
+    argumentHint: '<name> [args...] | list | status <runId> | cancel <runId>',
+    availability: 'always',
+  },
+  {
     name: 'undo',
     aliases: [],
     description: 'Withdraw the last prompt from the transcript',
@@ -445,6 +482,9 @@ export function sortSlashCommands(commands: readonly KimiSlashCommand[]): KimiSl
 export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
   return BUILTIN_SLASH_COMMANDS.map((cmd) => ({
     ...cmd,
-    description: t(slashI18nKey(cmd.name) as any, undefined as any) || cmd.description,
+    // `t()` accepts any string key and falls back to the key's English message;
+    // the hardcoded `description` below is the last-resort fallback for a
+    // missing locale entry.
+    description: t(slashI18nKey(cmd.name)) || cmd.description,
   }));
 }
