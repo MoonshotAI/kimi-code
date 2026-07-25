@@ -105,11 +105,13 @@ pub fn execute_loop_step_with_retry<'a>(
             Ok(StepResult {
                 usage,
                 stop_reason: LoopStepStopReason::Complete,
+                content: response.content,
             })
         } else {
             Ok(StepResult {
                 usage,
                 stop_reason: LoopStepStopReason::ToolCalls(response.tool_calls),
+                content: response.content,
             })
         }
     })
@@ -156,6 +158,7 @@ mod tests {
                     return Err(format!("simulated failure {}", call + 1).into());
                 }
                 Ok(LLMChatResponse {
+                    content: String::new(),
                     tool_calls: vec![],
                     finish_reason: Some("stop".into()),
                     usage: TokenUsage { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -238,6 +241,7 @@ mod tests {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move {
                     Ok(LLMChatResponse {
+                        content: String::new(),
                         tool_calls: if call == 0 {
                             vec![ToolCall { id: "c1".into(), name: "read".into(), arguments: serde_json::json!({}) }]
                         } else {

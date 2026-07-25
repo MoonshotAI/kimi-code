@@ -182,7 +182,8 @@ pub fn run_turn<'a>(
                     // `content`) lets a native provider round-trip them.
                     messages.push(LLMMessage {
                         role: "assistant".into(),
-                        content: String::new(),
+                        content: step_result.content.clone(),
+                        blocks: Vec::new(),
                         tool_calls: tool_calls.clone(),
                         tool_call_id: None,
                     });
@@ -231,6 +232,7 @@ pub fn run_turn<'a>(
                         messages.push(LLMMessage {
                             role: "tool".into(),
                             content: tr.content.clone(),
+                            blocks: Vec::new(),
                             tool_calls: Vec::new(),
                             tool_call_id: tool_calls.get(i).map(|tc| tc.id.clone()),
                         });
@@ -546,12 +548,14 @@ mod tests {
             Box::pin(async move {
                 if return_tc {
                     Ok(LLMChatResponse {
+                        content: String::new(),
                         tool_calls: tcs,
                         finish_reason: Some("tool_calls".into()),
                         usage: TokenUsage { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
                     })
                 } else {
                     Ok(LLMChatResponse {
+                        content: String::new(),
                         tool_calls: vec![],
                         finish_reason: Some("stop".into()),
                         usage: TokenUsage { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
@@ -926,6 +930,7 @@ mod tests {
                 Box::pin(async move {
                     if call == 0 {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![ToolCall {
                                 id: "tc1".into(),
                                 name: "read".into(),
@@ -936,6 +941,7 @@ mod tests {
                         })
                     } else {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![],
                             finish_reason: Some("stop".into()),
                             usage: TokenUsage { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
@@ -1331,6 +1337,7 @@ mod tests {
                 Box::pin(async move {
                     if call == 0 {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![ToolCall {
                                 id: "pc1".into(),
                                 name: "read".into(),
@@ -1341,6 +1348,7 @@ mod tests {
                         })
                     } else {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![],
                             finish_reason: Some("stop".into()),
                             usage: TokenUsage { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
@@ -1405,6 +1413,7 @@ mod tests {
                         *captured.lock().unwrap() = Some(params.messages[0].content.clone());
                     }
                     Ok(LLMChatResponse {
+                        content: String::new(),
                         tool_calls: vec![],
                         finish_reason: Some("stop".into()),
                         usage: TokenUsage { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
@@ -1701,6 +1710,7 @@ mod tests {
                     captured.lock().unwrap().push(params.messages.clone());
                     if call == 0 {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![ToolCall {
                                 id: "tc1".into(),
                                 name: "read".into(),
@@ -1711,6 +1721,7 @@ mod tests {
                         })
                     } else {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![],
                             finish_reason: Some("stop".into()),
                             usage: TokenUsage { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
@@ -1797,6 +1808,7 @@ mod tests {
                 Box::pin(async move {
                     if call == 0 {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![ToolCall {
                                 id: "tc1".into(),
                                 name: "read".into(),
@@ -1807,6 +1819,7 @@ mod tests {
                         })
                     } else {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![],
                             finish_reason: Some("stop".into()),
                             usage: TokenUsage::default(),
@@ -1896,6 +1909,7 @@ mod tests {
                 Box::pin(async move {
                     if call == 0 {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![
                                 ToolCall {
                                     id: "tc1".into(),
@@ -1913,6 +1927,7 @@ mod tests {
                         })
                     } else {
                         Ok(LLMChatResponse {
+                            content: String::new(),
                             tool_calls: vec![],
                             finish_reason: Some("stop".into()),
                             usage: TokenUsage::default(),

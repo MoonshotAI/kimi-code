@@ -11,6 +11,7 @@
     }
   },
   "devDependencies": {
-    "@moonshot-ai/agent-core": "workspace:*"
+    "@moonshot-ai/agent-core": "workspace:*",
+    "@moonshot-ai/agent-core-v2": "workspace:*"
   }
 }

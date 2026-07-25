@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::Parser;
 
 use kimi_agent::{
-    callbacks::{HostCallbacks, RpcHostCallbacks},
-    llm::{proxy::HostLlmProxy, multi::{LlmProvider, MultiLLM}},
+    callbacks::{HostCallbacks, NativeToolCallbacks, RpcHostCallbacks},
+    llm::{http::NativeHttpLlm, proxy::HostLlmProxy, multi::{LlmProvider, MultiLLM}},
     rpc::{
         server::RpcServer,
         types::{self, CancelTurnParams, HealthStatus, RunTurnResult, TokenUsage},
@@ -79,13 +79,34 @@ async fn main() -> anyhow::Result<()> {
                     map.insert(turn_id.clone(), cancel_flag.clone());
                 }
 
-                // Build the HostCallbacks from the RPC server.
-                let callbacks: Arc<dyn HostCallbacks> = Arc::new(
+                // Build the HostCallbacks from the RPC server, optionally
+                // wrapped so read-only tools execute natively inside the
+                // workspace sandbox.
+                let base_callbacks: Arc<dyn HostCallbacks> = Arc::new(
                     RpcHostCallbacks { server: server.clone() },
                 );
+                let callbacks: Arc<dyn HostCallbacks> = match (
+                    input.native_tools,
+                    input.workspace_root.as_deref(),
+                ) {
+                    (true, Some(root)) => match kimi_agent::tools::NativeToolset::new(root) {
+                        Some(toolset) => Arc::new(NativeToolCallbacks {
+                            inner: base_callbacks.clone(),
+                            toolset: Arc::new(toolset),
+                        }),
+                        None => base_callbacks.clone(),
+                    },
+                    _ => base_callbacks.clone(),
+                };
 
-                // Build the LLM — single provider or MultiLLM
-                let llm: Box<dyn LLM> = if input.providers.is_empty() {
+                // Build the LLM — native HTTP, MultiLLM, or host proxy.
+                let llm: Box<dyn LLM> = if let Some(cfg) = input.native_llm.clone() {
+                    let sink_callbacks = callbacks.clone();
+                    Box::new(
+                        NativeHttpLlm::new(cfg, input.system_prompt.clone())
+                            .with_sink(Arc::new(move |event| sink_callbacks.emit_event(event))),
+                    )
+                } else if input.providers.is_empty() {
                     Box::new(
                         HostLlmProxy::new(input.system_prompt.clone(), input.model_name.clone())
                             .with_callbacks(callbacks.clone()),
@@ -111,7 +132,13 @@ async fn main() -> anyhow::Result<()> {
                     .map(|m| LLMMessage {
                         role: m.role,
                         content: m.content,
-                        ..Default::default()
+                        blocks: m.blocks,
+                        tool_calls: m
+                            .tool_calls
+                            .into_iter()
+                            .map(|tc| ToolCall { id: tc.id, name: tc.name, arguments: tc.arguments })
+                            .collect(),
+                        tool_call_id: m.tool_call_id,
                     })
                     .collect();
 
@@ -315,6 +342,7 @@ impl LLM for MockLlm {
     fn chat(&self, _params: LLMChatParams) -> kimi_agent::rpc::types::BoxFuture<'_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>> {
         Box::pin(async move {
             Ok(LLMChatResponse {
+                content: String::new(),
                 tool_calls: vec![],
                 finish_reason: Some("stop".into()),
                 usage: TokenUsage {

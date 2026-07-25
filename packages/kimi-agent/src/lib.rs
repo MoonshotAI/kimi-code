@@ -8,4 +8,5 @@ pub mod hooks;
 pub mod llm;
 pub mod napi_bindings;
 pub mod rpc;
+pub mod tools;
 pub mod turn_loop;

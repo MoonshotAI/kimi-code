@@ -96,6 +96,51 @@ pub mod methods {
 
     /// Execute a tool call (Rust → JS host proxy).
     pub const HOST_EXECUTE_TOOL: &str = "host/execute_tool";
+
+    /// Fire-and-forget event notification (Rust → JS host).
+    /// Used by the native LLM / native tool paths to report step
+    /// boundaries, streaming deltas, and natively-executed tool results
+    /// so the host can record them in the transcript.
+    pub const HOST_EVENT: &str = "host/event";
+}
+
+// ── Message content blocks (multimodal) ─────────────────────────────────
+
+/// A single content block within a message. Text-only messages keep using
+/// the plain `content` string; multimodal messages carry ordered blocks in
+/// addition (blocks win over `content` when non-empty).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlock {
+    /// Plain text.
+    Text { text: String },
+    /// Base64-encoded image data with a MIME media type (e.g. `image/png`).
+    Image { media_type: String, data: String },
+    /// Image referenced by URL (https or data URL).
+    ImageUrl { url: String },
+}
+
+// ── Native LLM configuration (Rust-side HTTP transport) ───────────────────
+
+/// Configuration for the native HTTP LLM transport. When present on
+/// `RunTurnParams`, the Rust engine calls the provider directly over
+/// HTTP with SSE streaming instead of proxying `llm_chat` to the JS host.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NativeLlmConfig {
+    /// Wire protocol: `"openai"` (Chat Completions) or `"anthropic"` (Messages).
+    pub protocol: String,
+    /// API base URL including the version segment (e.g. `https://api.example.com/v1`).
+    pub base_url: String,
+    /// Bearer token (OpenAI) or x-api-key (Anthropic).
+    pub api_key: String,
+    /// Model name sent to the provider.
+    pub model: String,
+    /// `max_tokens` for the Anthropic Messages API (required there).
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Extra headers sent with every request.
+    #[serde(default)]
+    pub custom_headers: std::collections::HashMap<String, String>,
 }
 
 // ── RunTurn request/response types ─────────────────────────────────────────
@@ -119,6 +164,18 @@ pub struct RunTurnParams {
     /// injects steering text into the system prompt.
     #[serde(default)]
     pub goal: Option<crate::turn_loop::types::GoalContext>,
+    /// Native HTTP LLM transport. When present, the Rust engine calls the
+    /// provider directly (streaming) instead of proxying through the host.
+    #[serde(default)]
+    pub native_llm: Option<NativeLlmConfig>,
+    /// Workspace root used to sandbox native tool execution.
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    /// When true (and `workspace_root` is set), read-only tools
+    /// (Read/Grep/Glob/ListDirectory) execute inside the Rust process,
+    /// bypassing the host round-trip.
+    #[serde(default)]
+    pub native_tools: bool,
 }
 
 /// LLM provider definition for MultiLLM.
@@ -142,6 +199,16 @@ pub struct CancelTurnParams {
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// Optional multimodal content blocks. When non-empty, providers
+    /// project these instead of the plain `content` string.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<ContentBlock>,
+    /// Tool calls issued by an `assistant` message (empty otherwise).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<LlmToolCall>,
+    /// For a `tool` message: the id of the tool call this result answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// Tool definition passed from the JS side.
@@ -177,11 +244,18 @@ pub struct LlmChatRequest {
 pub struct LlmChatMessage {
     pub role: String,
     pub content: String,
+    /// Optional multimodal content blocks (see [`ContentBlock`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<ContentBlock>,
 }
 
 /// Response from the host/llm_chat RPC call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmChatResponse {
+    /// Assistant text content. The host proxy path may leave this empty
+    /// (the host owns the transcript there); the native HTTP path fills it.
+    #[serde(default)]
+    pub content: String,
     pub tool_calls: Vec<LlmToolCall>,
     pub finish_reason: Option<String>,
     pub usage: TokenUsage,
@@ -371,7 +445,7 @@ mod tests {
             system_prompt: "You are helpful.".to_string(),
             model_name: "gpt-4".to_string(),
             messages: vec![
-                LlmChatMessage { role: "user".to_string(), content: "Hi".to_string() },
+                LlmChatMessage { role: "user".to_string(), content: "Hi".to_string(), blocks: Vec::new() },
             ],
             tools: vec![
                 ToolDef {
@@ -394,6 +468,7 @@ mod tests {
     #[test]
     fn test_llm_chat_response_roundtrip() {
         let resp = LlmChatResponse {
+            content: String::new(),
             tool_calls: vec![
                 LlmToolCall {
                     id: "call_1".to_string(),
@@ -506,6 +581,9 @@ mod tests {
         let msg = Message {
             role: "user".to_string(),
             content: "Hello world".to_string(),
+            blocks: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "user");

@@ -14,12 +14,18 @@
 ///
 /// If neither is available, it falls back to the JS implementation.
 
-import { ChildProcess, spawn } from 'node:child_process';
+import type { ChildProcess} from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
+import {
+  tryNativeWorkspaceIndexPredictRead,
+  type NativeReadPrediction,
+} from '@moonshot-ai/agent-core-v2';
+
 // Project root: packages/kimi-agent/rust-loop.ts → ../../ (project root)
-const projectRoot = resolve(import.meta.dirname!, '..', '..');
+const projectRoot = resolve(import.meta.dirname, '..', '..');
 
 /** Token usage carried on step.end (structurally matches kosong's TokenUsage). */
 interface HostTokenUsage {
@@ -80,10 +86,50 @@ interface LlmProviderDef {
   system_prompt: string;
 }
 
+/** Native HTTP LLM transport config (snake_case matches the Rust wire). */
+export interface NativeLlmDef {
+  /** "openai" (Chat Completions) or "anthropic" (Messages). */
+  protocol: 'openai' | 'anthropic';
+  /** API base URL including the version segment (e.g. `.../v1`). */
+  base_url: string;
+  api_key: string;
+  model: string;
+  max_tokens?: number;
+}
+
+/** Options controlling the native (in-Rust) execution paths. */
+export interface RustEngineOptions {
+  /** When set, the Rust engine calls this provider directly over HTTP. */
+  nativeLlm?: NativeLlmDef;
+  /** When true, Read/Grep/Glob execute inside the Rust process. */
+  nativeTools?: boolean;
+}
+
+/** A content block on the Rust wire (see `ContentBlock` in rpc/types.rs). */
+type WireContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; media_type: string; data: string }
+  | { type: 'image_url'; url: string };
+
+/** Fire-and-forget engine event (Rust → host, `host/event`). */
+interface EngineEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
 interface RunTurnResult {
   stop_reason: string;
   steps: number;
   usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
+/** A message on the Rust wire, with optional multimodal/tool-call payloads. */
+interface WireMessage {
+  role: string;
+  content: string;
+  blocks?: WireContentBlock[];
+  tool_calls?: { id: string; name: string; arguments: unknown }[];
+  tool_call_id?: string;
 }
 
 interface LlmChatRequest {
@@ -140,8 +186,20 @@ interface NapiRunTurnResult {
 
 // ── Napi engine (in-process native addon) ─────────────────────────────────
 
+/** Shape of the loaded `kimi_agent.node` native addon. */
+interface KimiAgentNativeModule {
+  getCallbackPayload(id: number): string | null;
+  resolveCallback(id: number, error: string | null, result: string | null): void;
+  runTurnRust(
+    params: unknown,
+    llmChatCb: (callbackId: number) => void,
+    executeToolCb: (callbackId: number) => void,
+    emitEventCb?: (callbackId: number) => void,
+  ): Promise<NapiRunTurnResult>;
+}
+
 class NapiEngine {
-  private nativeModule: ReturnType<typeof import('node:module').createRequire> | null = null;
+  private nativeModule: KimiAgentNativeModule | null = null;
   private loaded = false;
 
   static findModule(): string | null {
@@ -149,7 +207,7 @@ class NapiEngine {
     const fs = require('node:fs') as typeof import('node:fs');
     const candidates = [
       // Development: alongside rust-loop.ts in the package directory
-      resolve(import.meta.dirname!, 'kimi_agent.node'),
+      resolve(import.meta.dirname, 'kimi_agent.node'),
       // Production: may be bundled elsewhere
       resolve(projectRoot, 'packages/kimi-agent/kimi_agent.node'),
     ];
@@ -176,11 +234,11 @@ class NapiEngine {
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      this.nativeModule = require(modulePath);
+      this.nativeModule = require(modulePath) as KimiAgentNativeModule;
       this.loaded = true;
       return true;
-    } catch (err) {
-      console.warn('[kimi-agent] Failed to load napi module:', err);
+    } catch (error) {
+      console.warn('[kimi-agent] Failed to load napi module:', error);
       return false;
     }
   }
@@ -208,7 +266,13 @@ class NapiEngine {
       turnId: string;
       systemPrompt: string;
       modelName: string;
-      messages: Array<{ role: string; content: string }>;
+      messages: Array<{
+        role: string;
+        content: string;
+        blocksJson?: string;
+        toolCallsJson?: string;
+        toolCallId?: string;
+      }>;
       tools: Array<{ name: string; description: string; inputSchema: string }>;
       maxSteps?: number;
       goal?: {
@@ -220,9 +284,19 @@ class NapiEngine {
         tokensUsed: number;
         turnsUsed: number;
       };
+      nativeLlm?: {
+        protocol: string;
+        baseUrl: string;
+        apiKey: string;
+        model: string;
+        maxTokens?: number;
+      };
+      workspaceRoot?: string;
+      nativeTools?: boolean;
     },
     llmChatCb: (request: string) => Promise<string>,
     executeToolCb: (request: string) => Promise<string>,
+    emitEventCb?: (event: EngineEvent) => void,
   ): Promise<NapiRunTurnResult> {
     if (!this.nativeModule) {
       throw new Error('Napi module not loaded');
@@ -238,29 +312,42 @@ class NapiEngine {
      * calls the user's async handler with the payload, then resolves via
      * `resolveCallback(id, error?, result?)`.
      */
-    const makeCallbackHandler = (
-      handler: (request: string) => Promise<string>,
-    ) => {
+    const makeCallbackHandler = (handler: (request: string) => Promise<string>) => {
       return (callbackId: number) => {
         const payload = nativeModule.getCallbackPayload(callbackId);
         if (!payload) return;
         handler(payload).then(
-          (result) => nativeModule.resolveCallback(callbackId, null, result),
-          (err: unknown) =>
+          (result) =>{  nativeModule.resolveCallback(callbackId, null, result); },
+          (error: unknown) =>{ 
             nativeModule.resolveCallback(
               callbackId,
-              err instanceof Error ? err.message : String(err),
+              error instanceof Error ? error.message : String(error),
               null,
-            ),
+            ); },
         );
       };
     };
+
+    // Fire-and-forget event channel: fetch the payload but never resolve.
+    const eventHandler =
+      emitEventCb === undefined
+        ? undefined
+        : (callbackId: number) => {
+            const payload = nativeModule.getCallbackPayload(callbackId);
+            if (!payload) return;
+            try {
+              emitEventCb(JSON.parse(payload) as EngineEvent);
+            } catch {
+              // Malformed events are dropped; they must never break the turn.
+            }
+          };
 
     return nativeModule.runTurnRust(
       params,
       makeCallbackHandler(llmChatCb),
       makeCallbackHandler(executeToolCb),
-    ) as Promise<NapiRunTurnResult>;
+      eventHandler,
+    );
   }
 }
 
@@ -269,7 +356,10 @@ class NapiEngine {
 class AgentProcess {
   private process: ChildProcess | null = null;
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   private buffer = '';
   private ready = false;
 
@@ -277,7 +367,11 @@ class AgentProcess {
   private llmChatHandler: ((req: LlmChatRequest) => Promise<LlmChatResponse>) | null = null;
 
   /** Callback for handling host/execute_tool requests from the Rust side. */
-  private toolExecuteHandler: ((req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) | null = null;
+  private toolExecuteHandler: ((req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) | null =
+    null;
+
+  /** Callback for fire-and-forget host/event notifications from Rust. */
+  private eventHandler: ((event: EngineEvent) => void) | null = null;
 
   setLlmChatHandler(handler: (req: LlmChatRequest) => Promise<LlmChatResponse>) {
     this.llmChatHandler = handler;
@@ -285,6 +379,10 @@ class AgentProcess {
 
   setToolExecuteHandler(handler: (req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) {
     this.toolExecuteHandler = handler;
+  }
+
+  setEventHandler(handler: (event: EngineEvent) => void) {
+    this.eventHandler = handler;
   }
 
   static findBinary(): string | null {
@@ -342,15 +440,15 @@ class AgentProcess {
 
       this.ready = true;
       return true;
-    } catch (err) {
-      console.warn('[kimi-agent] Failed to start:', err);
+    } catch (error) {
+      console.warn('[kimi-agent] Failed to start:', error);
       return false;
     }
   }
 
   private processBuffer() {
     const lines = this.buffer.split('\n');
-    this.buffer = lines.pop() || '';
+    this.buffer = lines.pop() ?? '';
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -361,8 +459,8 @@ class AgentProcess {
 
         switch (classifyRpcMessage(msg)) {
           case 'request':
-            this.handleHostRequest(msg).catch((err) => {
-              console.error('[kimi-agent] Failed to handle host request:', err);
+            this.handleHostRequest(msg).catch((error) => {
+              console.error('[kimi-agent] Failed to handle host request:', error);
             });
             break;
           case 'response': {
@@ -378,6 +476,15 @@ class AgentProcess {
             break;
           }
           case 'ignore':
+            // A method without an id is a notification — the engine's
+            // fire-and-forget event channel arrives this way.
+            if (msg.method === 'host/event' && this.eventHandler) {
+              try {
+                this.eventHandler(msg.params as EngineEvent);
+              } catch {
+                // Event handler failures must never break the RPC loop.
+              }
+            }
             break;
         }
       } catch {
@@ -409,8 +516,8 @@ class AgentProcess {
     try {
       const result = await this.llmChatHandler(msg.params as LlmChatRequest);
       this.writeHostResult(msg.id, result);
-    } catch (err) {
-      this.writeHostError(msg.id, err instanceof Error ? err.message : String(err));
+    } catch (error) {
+      this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -422,8 +529,8 @@ class AgentProcess {
     try {
       const result = await this.toolExecuteHandler(msg.params as ToolExecuteRequest);
       this.writeHostResult(msg.id, result);
-    } catch (err) {
-      this.writeHostError(msg.id, err instanceof Error ? err.message : String(err));
+    } catch (error) {
+      this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -530,8 +637,8 @@ export async function runTurnRust(
   try {
     const result = await agent.request('agent/run_turn', params);
     return result as RunTurnResult;
-  } catch (err) {
-    console.error('[kimi-agent] RPC call failed:', err);
+  } catch (error) {
+    console.error('[kimi-agent] RPC call failed:', error);
     return null;
   }
 }
@@ -556,9 +663,13 @@ export async function runTurnRust(
 export function createRunTurnOverride(
   providers?: LlmProviderDef[],
   workspaceRoot?: string,
+  options?: RustEngineOptions,
 ): import('@moonshot-ai/agent-core').RunTurnOverride | undefined {
   const mode = initEngine();
   if (mode === 'js') return undefined;
+
+  const nativeLlm = options?.nativeLlm;
+  const nativeTools = options?.nativeTools === true;
 
   // Build a lightweight workspace predictor for the Read prediction fast-path.
   // When the Rust engine calls host/execute_tool with force_precise=false for
@@ -591,13 +702,152 @@ export function createRunTurnOverride(
     const outputToContent = (output: unknown): string =>
       typeof output === 'string' ? output : JSON.stringify(output);
 
+    // ── Engine event handler (native LLM / native tool paths) ────────
+    // Rust reports step boundaries, streaming deltas, and natively-executed
+    // tool results over the fire-and-forget event channel. Events arrive
+    // synchronously but dispatching is async, so they are serialized
+    // through a promise chain to preserve transcript ordering.
+    let eventChain: Promise<void> = Promise.resolve();
+    const processEngineEvent = async (event: EngineEvent): Promise<void> => {
+      switch (event.type) {
+        case 'llm.step.begin': {
+          await closeOpenStep();
+          currentStep += 1;
+          const stepUuid = randomUUID();
+          await input.dispatchEvent({
+            type: 'step.begin',
+            uuid: stepUuid,
+            turnId: input.turnId,
+            step: currentStep,
+          });
+          openStep = { uuid: stepUuid, step: currentStep, usage: { ...ZERO_USAGE } };
+          break;
+        }
+        case 'llm.delta': {
+          if (openStep === undefined) break;
+          await input.dispatchEvent({
+            type: 'content.part',
+            uuid: randomUUID(),
+            turnId: input.turnId,
+            step: openStep.step,
+            stepUuid: openStep.uuid,
+            part: event['part'] as never,
+          });
+          break;
+        }
+        case 'llm.step.end': {
+          if (openStep === undefined) break;
+          const usage = event['usage'] as
+            | { input_tokens?: number; output_tokens?: number }
+            | undefined;
+          openStep.usage = {
+            inputOther: usage?.input_tokens ?? 0,
+            output: usage?.output_tokens ?? 0,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+          };
+          break;
+        }
+        case 'tool.native': {
+          // A tool that executed inside the Rust process — mirror the
+          // call/result pair into the transcript.
+          if (openStep === undefined) break;
+          const rawCallId = event['tool_call_id'];
+          const toolCallId = typeof rawCallId === 'string' ? rawCallId : randomUUID();
+          const toolName = typeof event['tool_name'] === 'string' ? event['tool_name'] : '';
+          await input.dispatchEvent({
+            type: 'tool.call',
+            uuid: toolCallId,
+            turnId: input.turnId,
+            step: openStep.step,
+            stepUuid: openStep.uuid,
+            toolCallId,
+            name: toolName,
+            args: event['arguments'],
+          });
+          await input.dispatchEvent({
+            type: 'tool.result',
+            parentUuid: toolCallId,
+            toolCallId,
+            result: { output: event['content'], isError: event['is_error'] === true } as never,
+          });
+          break;
+        }
+        default:
+          break;
+      }
+    };
+    const handleEngineEvent = (event: EngineEvent): void => {
+      eventChain = eventChain.then(() => processEngineEvent(event)).catch(() => {});
+    };
+
+    // ── Native LLM initial messages ───────────────────────────────
+    // When Rust calls the provider directly it owns the in-turn message
+    // history, so the host serializes the current history (text, images,
+    // and tool-call structure) once at turn start.
+    interface HostContentPart {
+      type: string;
+      text?: string;
+      imageUrl?: { url: string };
+    }
+    interface HostMessage {
+      role: string;
+      content: HostContentPart[];
+      toolCalls?: { id: string; name: string; arguments: string | null }[];
+      toolCallId?: string;
+    }
+    const toWireMessage = (m: HostMessage): WireMessage => {
+      let text = '';
+      let hasMedia = false;
+      const blocks: WireContentBlock[] = [];
+      for (const part of m.content) {
+        if (part.type === 'text' && typeof part.text === 'string') {
+          text += part.text;
+          blocks.push({ type: 'text', text: part.text });
+        } else if (part.type === 'image_url' && part.imageUrl?.url !== undefined) {
+          hasMedia = true;
+          blocks.push({ type: 'image_url', url: part.imageUrl.url });
+        }
+        // think/audio/video parts are not projected to the native wire.
+      }
+      const toolCalls = (m.toolCalls ?? []).map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments === null ? {} : tryParseJson(tc.arguments),
+      }));
+      return {
+        role: m.role,
+        content: text,
+        blocks: hasMedia ? blocks : undefined,
+        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        tool_call_id: m.toolCallId,
+      };
+    };
+    const buildWireMessages = async (): Promise<WireMessage[]> => {
+      const messages = (await input.buildMessages()) as unknown as HostMessage[];
+      return messages.map(toWireMessage);
+    };
+    const buildWireTools = (): { name: string; description: string; parameters: unknown }[] => {
+      const stepTools = input.buildTools?.() ?? input.tools ?? [];
+      return stepTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: (t as { parameters?: unknown }).parameters ?? {},
+      }));
+    };
+
     // ── LLM chat handler ──────────────────────────────────────────────
     const llmChatHandler = async (): Promise<LlmChatResponse> => {
       await closeOpenStep();
       currentStep += 1;
       const stepUuid = randomUUID();
       const stepNum = currentStep;
-      await input.dispatchEvent({ type: 'step.begin', uuid: stepUuid, turnId: input.turnId, step: stepNum });
+      await input.dispatchEvent({
+        type: 'step.begin',
+        uuid: stepUuid,
+        turnId: input.turnId,
+        step: stepNum,
+      });
       openStep = { uuid: stepUuid, step: stepNum, usage: { ...ZERO_USAGE } };
 
       const messages = await input.buildMessages();
@@ -631,11 +881,12 @@ export function createRunTurnOverride(
       if (openStep !== undefined) openStep.usage = response.usage;
 
       return {
-        tool_calls: response.toolCalls?.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments ? tryParseJson(tc.arguments) : null,
-        })) ?? [],
+        tool_calls:
+          response.toolCalls?.map((tc) => ({
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments ? tryParseJson(tc.arguments) : null,
+          })) ?? [],
         finish_reason: response.providerFinishReason ?? 'stop',
         usage: {
           input_tokens: response.usage?.inputOther ?? 0,
@@ -681,8 +932,11 @@ export function createRunTurnOverride(
         callArgs: unknown,
       ): Promise<ToolExecuteResponse> => {
         if (isPreciseReplacement) {
-          input.replaceToolResult!(toolCallId, toolResult);
-          return { content: outputToContent(toolResult.output), is_error: toolResult.isError === true };
+          input.replaceToolResult(toolCallId, toolResult);
+          return {
+            content: outputToContent(toolResult.output),
+            is_error: toolResult.isError === true,
+          };
         }
         await emitCall(callArgs);
         if (stepUuid !== undefined) {
@@ -693,7 +947,10 @@ export function createRunTurnOverride(
             result: toolResult as never,
           });
         }
-        return { content: outputToContent(toolResult.output), is_error: toolResult.isError === true };
+        return {
+          content: outputToContent(toolResult.output),
+          is_error: toolResult.isError === true,
+        };
       };
 
       // ── Prediction fast-path ────────────────────────────────────────
@@ -701,7 +958,7 @@ export function createRunTurnOverride(
         const args = req.arguments as { path?: string } | null;
         const filePath = args?.path;
         if (filePath) {
-          const prediction = predictor!.predictRead(filePath);
+          const prediction = predictor.predictRead(filePath);
           if (prediction !== null) {
             await emitCall(req.arguments);
             if (stepUuid !== undefined) {
@@ -718,7 +975,8 @@ export function createRunTurnOverride(
       }
 
       if (!tool) {
-        const missing = input.describeMissingTool?.(req.tool_name) ?? `Tool "${req.tool_name}" not found`;
+        const missing =
+          input.describeMissingTool?.(req.tool_name) ?? `Tool "${req.tool_name}" not found`;
         return settle({ output: missing, isError: true }, req.arguments);
       }
 
@@ -733,10 +991,16 @@ export function createRunTurnOverride(
       };
 
       let effectiveArgs: unknown = req.arguments;
-      const prep = await input.hooks?.prepareToolExecution?.({ ...hookCtxBase, args: effectiveArgs });
+      const prep = await input.hooks?.prepareToolExecution?.({
+        ...hookCtxBase,
+        args: effectiveArgs,
+      });
       if (prep?.updatedArgs !== undefined) effectiveArgs = prep.updatedArgs;
       if (prep?.block === true) {
-        return settle({ output: prep.reason ?? `Tool call "${req.tool_name}" was blocked`, isError: true }, effectiveArgs);
+        return settle(
+          { output: prep.reason ?? `Tool call "${req.tool_name}" was blocked`, isError: true },
+          effectiveArgs,
+        );
       }
       if (prep?.syntheticResult !== undefined) {
         return settle(prep.syntheticResult, effectiveArgs);
@@ -746,20 +1010,33 @@ export function createRunTurnOverride(
       let execution;
       try {
         execution = await tool.resolveExecution(effectiveArgs);
-      } catch (err) {
-        return settle({ output: err instanceof Error ? err.message : String(err), isError: true }, effectiveArgs);
+      } catch (error) {
+        return settle(
+          { output: error instanceof Error ? error.message : String(error), isError: true },
+          effectiveArgs,
+        );
       }
 
       if ('isError' in execution && execution.isError === true) {
         return settle(execution, effectiveArgs);
       }
       if (!('execute' in execution)) {
-        return settle({ output: 'Tool execution resolved without executable', isError: true }, effectiveArgs);
+        return settle(
+          { output: 'Tool execution resolved without executable', isError: true },
+          effectiveArgs,
+        );
       }
 
-      const auth = await input.hooks?.authorizeToolExecution?.({ ...hookCtxBase, args: effectiveArgs, execution });
+      const auth = await input.hooks?.authorizeToolExecution?.({
+        ...hookCtxBase,
+        args: effectiveArgs,
+        execution,
+      });
       if (auth?.block === true) {
-        return settle({ output: auth.reason ?? `Tool call "${req.tool_name}" was blocked`, isError: true }, effectiveArgs);
+        return settle(
+          { output: auth.reason ?? `Tool call "${req.tool_name}" was blocked`, isError: true },
+          effectiveArgs,
+        );
       }
       if (auth?.syntheticResult !== undefined) {
         return settle(auth.syntheticResult, effectiveArgs);
@@ -776,21 +1053,29 @@ export function createRunTurnOverride(
           metadata: executionMetadata,
           signal: input.signal,
         });
-      } catch (err) {
-        rawResult = { output: err instanceof Error ? err.message : String(err), isError: true };
+      } catch (error) {
+        rawResult = { output: error instanceof Error ? error.message : String(error), isError: true };
       }
 
       const finalized =
-        (await input.hooks?.finalizeToolResult?.({ ...hookCtxBase, args: effectiveArgs, result: rawResult as never })) ??
-        rawResult;
+        (await input.hooks?.finalizeToolResult?.({
+          ...hookCtxBase,
+          args: effectiveArgs,
+          result: rawResult as never,
+        })) ?? rawResult;
 
       return settle(finalized, effectiveArgs);
     };
 
     // ── Drive the turn ────────────────────────────────────────────────
-    // Message content and the tool table are NOT sent here: the host
-    // rebuilds both from `context` on every host/llm_chat callback (the
-    // source of truth), so Rust only needs metadata to drive control flow.
+    // In host-proxy mode, message content and the tool table are NOT sent:
+    // the host rebuilds both from `context` on every host/llm_chat callback
+    // (the source of truth), so Rust only needs metadata to drive control
+    // flow. In native LLM mode, Rust calls the provider itself, so the
+    // initial history and tool schemas are serialized up front and progress
+    // flows back over the event channel.
+    const wireMessages = nativeLlm === undefined ? [] : await buildWireMessages();
+    const wireTools = nativeLlm === undefined ? [] : buildWireTools();
     let rustResult: RunTurnResult;
     try {
       if (mode === 'napi') {
@@ -801,12 +1086,34 @@ export function createRunTurnOverride(
             turnId: input.turnId,
             systemPrompt: input.llm.systemPrompt,
             modelName: input.llm.modelName,
-            messages: [],
-            tools: [],
+            messages: wireMessages.map((m) => ({
+              role: m.role,
+              content: m.content,
+              blocksJson: m.blocks === undefined ? undefined : JSON.stringify(m.blocks),
+              toolCallsJson: m.tool_calls === undefined ? undefined : JSON.stringify(m.tool_calls),
+              toolCallId: m.tool_call_id,
+            })),
+            tools: wireTools.map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: JSON.stringify(t.parameters ?? {}),
+            })),
             maxSteps: input.maxSteps ?? 10,
+            nativeLlm:
+              nativeLlm === undefined
+                ? undefined
+                : {
+                    protocol: nativeLlm.protocol,
+                    apiKey: nativeLlm.api_key,
+                    baseUrl: nativeLlm.base_url,
+                    model: nativeLlm.model,
+                    maxTokens: nativeLlm.max_tokens,
+                  },
+            workspaceRoot,
+            nativeTools,
           },
           // Wrap structured handler with JSON serialization for napi
-          async (requestJson: string) => {
+          async (_requestJson: string) => {
             const response = await llmChatHandler();
             return JSON.stringify(response);
           },
@@ -815,6 +1122,7 @@ export function createRunTurnOverride(
             const response = await toolExecuteHandler(req);
             return JSON.stringify(response);
           },
+          handleEngineEvent,
         );
         rustResult = {
           stop_reason: napiResult.stopReason,
@@ -830,15 +1138,23 @@ export function createRunTurnOverride(
         const agent = getAgent()!;
         agent.setLlmChatHandler(llmChatHandler);
         agent.setToolExecuteHandler(toolExecuteHandler);
+        agent.setEventHandler(handleEngineEvent);
 
         const result = await agent.request('agent/run_turn', {
           turn_id: input.turnId,
           system_prompt: input.llm.systemPrompt,
           model_name: input.llm.modelName,
-          messages: [],
-          tools: [],
+          messages: wireMessages,
+          tools: wireTools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.parameters ?? {},
+          })),
           max_steps: input.maxSteps ?? 10,
           providers: providers ?? [],
+          native_llm: nativeLlm,
+          workspace_root: workspaceRoot,
+          native_tools: nativeTools,
         });
         if (!result) {
           throw new Error('Rust engine returned null result');
@@ -846,6 +1162,9 @@ export function createRunTurnOverride(
         rustResult = result as RunTurnResult;
       }
     } finally {
+      // Flush queued engine events before closing the last step so the
+      // transcript records deltas/tool results in order.
+      await eventChain.catch(() => {});
       await closeOpenStep();
     }
 
@@ -871,13 +1190,20 @@ export function mapStopReason(
   reason: string,
 ): Awaited<ReturnType<import('@moonshot-ai/agent-core').RunTurnOverride>>['stopReason'] {
   switch (reason) {
-    case 'EndTurn': return 'end_turn' as never;
-    case 'MaxTokens': return 'max_tokens' as never;
-    case 'Filtered': return 'filtered' as never;
-    case 'Paused': return 'paused' as never;
-    case 'Aborted': return 'aborted' as never;
-    case 'BudgetLimited': return 'budget_limited' as never;
-    default: return 'unknown' as never;
+    case 'EndTurn':
+      return 'end_turn' as never;
+    case 'MaxTokens':
+      return 'max_tokens' as never;
+    case 'Filtered':
+      return 'filtered' as never;
+    case 'Paused':
+      return 'paused' as never;
+    case 'Aborted':
+      return 'aborted' as never;
+    case 'BudgetLimited':
+      return 'budget_limited' as never;
+    default:
+      return 'unknown' as never;
   }
 }
 
@@ -924,8 +1250,13 @@ const PREDICTION_PREVIEW_LINES = 5;
  *
  * The prediction includes the first few lines with line numbers and a
  * note that it's a prediction — the precise result will replace it shortly.
+ *
+ * When the Rust `WorkspaceIndex` has been preheated (via
+ * `nativeBuildWorkspaceIndex`), predictions are served from it first —
+ * the on-demand JS stat path is only a fallback for files the index
+ * missed (e.g. created after the index was built).
  */
-class WorkspacePredictor {
+export class WorkspacePredictor {
   private readonly root: string;
 
   constructor(root: string) {
@@ -935,6 +1266,10 @@ class WorkspacePredictor {
   /**
    * Generate a Read prediction for the given path.
    *
+   * Tries the preheated Rust workspace index first (instant, no I/O on
+   * the JS side). On miss, falls back to an on-demand stat + read of the
+   * first N lines.
+   *
    * Returns null when:
    *   - The file doesn't exist or is not a regular file
    *   - The file is too large (> 100 KB)
@@ -942,6 +1277,35 @@ class WorkspacePredictor {
    *   - fs/stat is not available (sandboxed environment)
    */
   predictRead(path: string): string | null {
+    // 1) Try the preheated native workspace index first.
+    const nativePrediction = tryNativeWorkspaceIndexPredictRead(path);
+    if (nativePrediction !== undefined && nativePrediction !== null) {
+      return this.formatNativePrediction(path, nativePrediction);
+    }
+
+    // 2) Fall back to on-demand JS stat + read.
+    return this.predictReadViaFs(path);
+  }
+
+  /**
+   * Format a native index prediction into the same shape as the JS path.
+   */
+  private formatNativePrediction(path: string, p: NativeReadPrediction): string {
+    const previewLines = p.preview.split('\n').slice(0, PREDICTION_PREVIEW_LINES);
+    const numbered = previewLines
+      .map((line, i) => `${String(i + 1).padStart(6)}→${line}`)
+      .join('\n');
+    return (
+      `cat ${path}  (prediction: ${p.lineCount} lines, ${p.size} bytes)\n` +
+      `${numbered}\n` +
+      `\n[... prediction — precise result loading ...]`
+    );
+  }
+
+  /**
+   * On-demand JS fallback: stat + read first N lines.
+   */
+  private predictReadViaFs(path: string): string | null {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('node:fs') as typeof import('node:fs');
@@ -992,9 +1356,7 @@ class WorkspacePredictor {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pathMod = require('node:path') as typeof import('node:path');
-      const resolved = pathMod.isAbsolute(path)
-        ? path
-        : pathMod.resolve(this.root, path);
+      const resolved = pathMod.isAbsolute(path) ? path : pathMod.resolve(this.root, path);
       return resolved;
     } catch {
       return null;

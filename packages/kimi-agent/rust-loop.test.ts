@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 
-import { classifyRpcMessage, mapStopReason } from './rust-loop';
+import { classifyRpcMessage, mapStopReason, WorkspacePredictor } from './rust-loop';
+
+// Mock the native workspace index so we can test the native-first /
+// fs-fallback prediction path without requiring the Rust module.
+vi.mock('@moonshot-ai/agent-core-v2', () => ({
+  tryNativeWorkspaceIndexPredictRead: vi.fn(),
+  tryNativeBuildWorkspaceIndex: vi.fn(),
+}));
+
+const { tryNativeWorkspaceIndexPredictRead } = await import('@moonshot-ai/agent-core-v2');
 
 describe('classifyRpcMessage', () => {
   it('classifies a host request (method + id) as a request', () => {
@@ -14,9 +23,9 @@ describe('classifyRpcMessage', () => {
   });
 
   it('classifies an error response (id, no method) as a response', () => {
-    expect(
-      classifyRpcMessage({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'x' } }),
-    ).toBe('response');
+    expect(classifyRpcMessage({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'x' } })).toBe(
+      'response',
+    );
   });
 
   // Regression: a Rust host request carrying an id that collides with a pending
@@ -67,5 +76,62 @@ describe('mapStopReason', () => {
 
   it('maps empty string to unknown', () => {
     expect(mapStopReason('')).toBe('unknown');
+  });
+});
+
+describe('WorkspacePredictor', () => {
+  const predictor = new WorkspacePredictor(process.cwd());
+
+  afterEach(() => {
+    vi.mocked(tryNativeWorkspaceIndexPredictRead).mockReset();
+  });
+
+  it('serves a prediction from the native index when available', () => {
+    vi.mocked(tryNativeWorkspaceIndexPredictRead).mockReturnValue({
+      lineCount: 42,
+      size: 1024,
+      preview: 'line one\nline two\nline three\nline four\nline five',
+      estimatedReadMs: 1,
+    });
+
+    const result = predictor.predictRead('some/file.rs');
+
+    expect(result).not.toBeNull();
+    expect(result).toContain('prediction: 42 lines, 1024 bytes');
+    expect(result).toContain('line one');
+    expect(result).toContain('[... prediction — precise result loading ...]');
+    expect(tryNativeWorkspaceIndexPredictRead).toHaveBeenCalledWith('some/file.rs');
+  });
+
+  it('falls back to fs stat when the native index misses (returns null)', () => {
+    // Native index miss → returns null → predictor falls back to fs.
+    vi.mocked(tryNativeWorkspaceIndexPredictRead).mockReturnValue(null);
+
+    // Point at a real file on disk so the fs fallback path succeeds.
+    const realFile = new URL('./rust-loop.test.ts', import.meta.url).pathname.replace(/^\//, '');
+    const result = predictor.predictRead(realFile);
+
+    expect(result).not.toBeNull();
+    expect(result).toContain('prediction:');
+    expect(result).toContain('[... prediction — precise result loading ...]');
+  });
+
+  it('falls back to fs when the native module is unavailable (returns undefined)', () => {
+    // Native module absent → returns undefined → predictor falls back to fs.
+    vi.mocked(tryNativeWorkspaceIndexPredictRead).mockReturnValue();
+
+    const realFile = new URL('./rust-loop.test.ts', import.meta.url).pathname.replace(/^\//, '');
+    const result = predictor.predictRead(realFile);
+
+    expect(result).not.toBeNull();
+    expect(result).toContain('prediction:');
+  });
+
+  it('returns null for a non-existent file when both paths miss', () => {
+    vi.mocked(tryNativeWorkspaceIndexPredictRead).mockReturnValue(null);
+
+    const result = predictor.predictRead('definitely/does/not/exist.txt');
+
+    expect(result).toBeNull();
   });
 });

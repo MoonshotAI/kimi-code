@@ -65,6 +65,7 @@ impl LLM for HostLlmProxy {
                 .map(|m| LlmChatMessage {
                     role: m.role.clone(),
                     content: m.content.clone(),
+                    blocks: m.blocks.clone(),
                 })
                 .collect();
 
@@ -109,6 +110,7 @@ impl LLM for HostLlmProxy {
             };
 
             Ok(LLMChatResponse {
+                content: response.content,
                 tool_calls,
                 finish_reason: response.finish_reason,
                 usage,

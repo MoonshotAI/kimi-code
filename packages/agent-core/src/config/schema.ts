@@ -1,7 +1,9 @@
-import { HOOK_EVENT_TYPES } from '../session/hooks/types';
+import { z } from 'zod';
+
 import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
-import { z } from 'zod';
+
+import { HOOK_EVENT_TYPES } from '../session/hooks/types';
 
 export const ProviderTypeSchema = z.enum([
   'anthropic',
@@ -201,6 +203,30 @@ export const AgentConfigSchema = z.object({
    * ```
    */
   multiLlm: z.array(z.string()).optional(),
+  /**
+   * Native HTTP LLM transport (Rust engine only). Names a provider from
+   * `providers` that the Rust engine should call directly over HTTP with
+   * SSE streaming, instead of proxying each LLM call back through the JS
+   * host. Only `openai`/`kimi` (Chat Completions) and `anthropic`
+   * (Messages) provider types are supported; other types fall back to the
+   * host proxy.
+   *
+   * Example:
+   * ```toml
+   * [agent]
+   * engine = "rust"
+   * nativeLlmProvider = "my-kimi"
+   * ```
+   */
+  nativeLlmProvider: z.string().optional(),
+  /**
+   * Native tool execution (Rust engine only). When true, read-only tools
+   * (Read/Grep/Glob) execute inside the Rust engine process, sandboxed to
+   * the workspace root — skipping the host round-trip. Anything outside
+   * the sandbox or not natively supported still executes on the JS host
+   * under the full permission system.
+   */
+  nativeTools: z.boolean().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
@@ -462,6 +488,7 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const AgentConfigPatchSchema = AgentConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
@@ -491,6 +518,7 @@ export const KimiConfigPatchSchema = z
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
+    agent: AgentConfigPatchSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
@@ -511,9 +539,13 @@ export function validateConfig(config: unknown): KimiConfig {
   try {
     return KimiConfigSchema.parse(config);
   } catch (error) {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid configuration: ${formatConfigValidationError(error)}`, {
-      cause: error,
-    });
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid configuration: ${formatConfigValidationError(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 

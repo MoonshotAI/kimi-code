@@ -37,9 +37,10 @@ use napi::{
 use napi_derive::napi;
 use tokio::sync::oneshot;
 
-use crate::callbacks::HostCallbacks;
+use crate::callbacks::{HostCallbacks, NativeToolCallbacks};
+use crate::llm::http::NativeHttpLlm;
 use crate::llm::proxy::HostLlmProxy;
-use crate::rpc::types::{LlmChatRequest, LlmChatResponse, ToolExecuteRequest, ToolExecuteResponse};
+use crate::rpc::types::{LlmChatRequest, LlmChatResponse, NativeLlmConfig, ToolExecuteRequest, ToolExecuteResponse};
 use crate::turn_loop::{
     run_turn::run_turn,
     types::*,
@@ -105,6 +106,9 @@ pub fn resolve_callback(id: u32, error: Option<String>, result: Option<String>) 
 struct NapiHostCallbacks {
     llm_chat_fn: Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
     execute_tool_fn: Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
+    /// Optional fire-and-forget event channel. The JS side fetches the
+    /// payload via `getCallbackPayload(id)` but must NOT resolve it.
+    emit_event_fn: Option<Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>>,
 }
 
 impl HostCallbacks for NapiHostCallbacks {
@@ -128,6 +132,18 @@ impl HostCallbacks for NapiHostCallbacks {
             format!(r#"{{"error":"serialize: {}"}}"#, e)
         });
         Box::pin(napi_execute_tool(tsfn, input))
+    }
+
+    fn emit_event(&self, event: serde_json::Value) {
+        let Some(ref tsfn) = self.emit_event_fn else { return };
+        let Ok(payload) = serde_json::to_string(&event) else { return };
+        let id = NEXT_CALLBACK_ID.fetch_add(1, Ordering::SeqCst);
+        // Payload-only registration: no oneshot — JS fetches and forgets.
+        PAYLOAD_REGISTRY.lock().unwrap().insert(id, payload);
+        let status = tsfn.call(id, ThreadsafeFunctionCallMode::NonBlocking);
+        if status != napi::Status::Ok {
+            PAYLOAD_REGISTRY.lock().unwrap().remove(&id);
+        }
     }
 }
 
@@ -203,6 +219,25 @@ pub struct JsRunTurnParams {
     pub tools: Vec<JsToolDef>,
     pub max_steps: Option<u32>,
     pub goal: Option<JsGoalContext>,
+    /// Native HTTP LLM transport. When present, Rust calls the provider
+    /// directly (SSE streaming) instead of proxying through the host.
+    pub native_llm: Option<JsNativeLlmConfig>,
+    /// Workspace root used to sandbox native tool execution.
+    pub workspace_root: Option<String>,
+    /// When true (with `workspace_root`), Read/Grep/Glob run in-process.
+    pub native_tools: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsNativeLlmConfig {
+    /// "openai" (Chat Completions) or "anthropic" (Messages).
+    pub protocol: String,
+    /// API base URL including the version segment (e.g. `.../v1`).
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub max_tokens: Option<u32>,
 }
 
 #[napi(object)]
@@ -210,6 +245,14 @@ pub struct JsRunTurnParams {
 pub struct JsMessage {
     pub role: String,
     pub content: String,
+    /// JSON-serialized `ContentBlock[]` for multimodal messages
+    /// (`[{"type":"text",...},{"type":"image_url",...}]`). Optional.
+    pub blocks_json: Option<String>,
+    /// JSON-serialized tool calls (`[{id,name,arguments}]`) for an
+    /// assistant history message. Optional.
+    pub tool_calls_json: Option<String>,
+    /// For a `tool` history message: the tool call id it answers.
+    pub tool_call_id: Option<String>,
 }
 
 #[napi(object)]
@@ -256,6 +299,8 @@ pub struct JsRunTurnResult {
 ///
 /// * `llm_chat_cb` — receives callback ID, fetches `LlmChatRequest` JSON
 /// * `execute_tool_cb` — receives callback ID, fetches `ToolExecuteRequest` JSON
+/// * `emit_event_cb` — optional; receives callback ID, fetches a JSON event
+///   payload. Fire-and-forget: the JS side must NOT call `resolveCallback`.
 ///
 /// JsFunction is converted to ThreadsafeFunction synchronously, then the
 /// async work is dispatched via `env.execute_tokio_future` so the JS event
@@ -266,6 +311,7 @@ pub fn run_turn_rust(
     params: JsRunTurnParams,
     #[napi(ts_arg_type = "(callbackId: number) => void")] llm_chat_cb: JsFunction,
     #[napi(ts_arg_type = "(callbackId: number) => void")] execute_tool_cb: JsFunction,
+    #[napi(ts_arg_type = "(callbackId: number) => void")] emit_event_cb: Option<JsFunction>,
 ) -> napi::Result<JsObject> {
     // ── Convert JsFunction → ThreadsafeFunction synchronously ──────────
     // The TSFN passes only the callback ID (u32). The JS side fetches
@@ -289,12 +335,22 @@ pub fn run_turn_rust(
             Ok(args)
         })?;
 
+    let emit_event_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>> = match emit_event_cb {
+        Some(cb) => Some(cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<u32>| {
+            let id = ctx.value;
+            let js_num = ctx.env.create_uint32(id)?;
+            let args: Vec<napi::JsUnknown> = vec![js_num.into_unknown()];
+            Ok(args)
+        })?),
+        None => None,
+    };
+
     // ── Dispatch async work via execute_tokio_future ───────────────────
     // The future is Send because JsFunction has been converted to TSFN
     // and dropped from scope before the async block.
     env.execute_tokio_future(
         async move {
-            run_turn_rust_impl(params, llm_chat_tsfn, execute_tool_tsfn).await
+            run_turn_rust_impl(params, llm_chat_tsfn, execute_tool_tsfn, emit_event_tsfn).await
         },
         |env: &mut Env, val: JsRunTurnResult| {
             let mut obj = env.create_object()?;
@@ -313,14 +369,54 @@ async fn run_turn_rust_impl(
     params: JsRunTurnParams,
     llm_chat_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal>,
     execute_tool_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal>,
+    emit_event_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
 ) -> napi::Result<JsRunTurnResult> {
-    let callbacks: Arc<dyn HostCallbacks> = Arc::new(NapiHostCallbacks {
+    let base_callbacks: Arc<dyn HostCallbacks> = Arc::new(NapiHostCallbacks {
         llm_chat_fn: Arc::new(llm_chat_tsfn),
         execute_tool_fn: Arc::new(execute_tool_tsfn),
+        emit_event_fn: emit_event_tsfn.map(Arc::new),
     });
 
-    let llm = HostLlmProxy::new(params.system_prompt.clone(), params.model_name.clone())
-        .with_callbacks(callbacks.clone());
+    // Native tool execution: wrap the callbacks so Read/Grep/Glob run
+    // in-process (sandboxed to the workspace) and everything else — and
+    // anything that escapes the sandbox — still round-trips to the host.
+    let callbacks: Arc<dyn HostCallbacks> = match (
+        params.native_tools.unwrap_or(false),
+        params.workspace_root.as_deref(),
+    ) {
+        (true, Some(root)) => match crate::tools::NativeToolset::new(root) {
+            Some(toolset) => Arc::new(NativeToolCallbacks {
+                inner: base_callbacks.clone(),
+                toolset: Arc::new(toolset),
+            }),
+            None => base_callbacks.clone(),
+        },
+        _ => base_callbacks.clone(),
+    };
+
+    // Native HTTP LLM (streaming) when configured; host proxy otherwise.
+    let llm: Box<dyn LLM> = match params.native_llm {
+        Some(cfg) => {
+            let sink_callbacks = callbacks.clone();
+            let native = NativeHttpLlm::new(
+                NativeLlmConfig {
+                    protocol: cfg.protocol,
+                    base_url: cfg.base_url,
+                    api_key: cfg.api_key,
+                    model: cfg.model,
+                    max_tokens: cfg.max_tokens,
+                    custom_headers: Default::default(),
+                },
+                params.system_prompt.clone(),
+            )
+            .with_sink(Arc::new(move |event| sink_callbacks.emit_event(event)));
+            Box::new(native)
+        }
+        None => Box::new(
+            HostLlmProxy::new(params.system_prompt.clone(), params.model_name.clone())
+                .with_callbacks(callbacks.clone()),
+        ),
+    };
 
     let messages: Vec<LLMMessage> = params
         .messages
@@ -328,7 +424,17 @@ async fn run_turn_rust_impl(
         .map(|m| LLMMessage {
             role: m.role.clone(),
             content: m.content.clone(),
-            ..Default::default()
+            blocks: m
+                .blocks_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default(),
+            tool_calls: m
+                .tool_calls_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default(),
+            tool_call_id: m.tool_call_id.clone(),
         })
         .collect();
 
@@ -362,7 +468,7 @@ async fn run_turn_rust_impl(
 
     let input = RunTurnInput {
         turn_id: params.turn_id,
-        llm: &llm,
+        llm: &*llm,
         messages,
         tools: &[],
         tool_defs,

@@ -326,6 +326,20 @@ impl RpcServer {
         println!("{}", serde_json::to_string(&notification)?);
         Ok(())
     }
+
+    /// Synchronous variant of [`notify`] for non-async call sites
+    /// (e.g. `HostCallbacks::emit_event`). Serialization failures are
+    /// swallowed — a lost notification must never break the turn loop.
+    pub fn notify_now(method: &str, params: &impl serde::Serialize) {
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        if let Ok(line) = serde_json::to_string(&notification) {
+            println!("{line}");
+        }
+    }
 }
 
 #[cfg(test)]

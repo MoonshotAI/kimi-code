@@ -2,12 +2,13 @@
 //! specific provider's request format.
 #![allow(dead_code)]
 
-use crate::turn_loop::types::{LLMMessage, ToolCall};
+use crate::turn_loop::types::{ContentBlock, LLMMessage, ToolCall};
 
 /// A single chat message to be projected into a provider wire format.
 ///
-/// Content is text-only for now (media / thinking projection is a later
-/// phase). Tool calls (assistant) and the tool-result linkage (`tool_call_id`)
+/// Content is text-first, with optional multimodal `blocks` (text/image)
+/// that take precedence when non-empty. Tool calls (assistant) and the
+/// tool-result linkage (`tool_call_id`)
 /// are carried structurally so multi-step tool turns round-trip faithfully
 /// across providers with different tool-call encodings (OpenAI stringified
 /// `function.arguments` vs. Anthropic `tool_use.input` objects).
@@ -17,6 +18,9 @@ pub struct WireMessage {
     pub role: String,
     /// Text content. May be empty for an assistant turn that only calls tools.
     pub content: String,
+    /// Multimodal content blocks. When non-empty, provider projections use
+    /// these instead of the plain `content` text.
+    pub blocks: Vec<ContentBlock>,
     /// Tool calls requested by an assistant turn (empty otherwise).
     pub tool_calls: Vec<ToolCall>,
     /// For `role == "tool"`: the id of the tool call this message answers.
@@ -29,6 +33,18 @@ impl WireMessage {
         Self {
             role: role.to_string(),
             content: content.to_string(),
+            blocks: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    /// A message carrying multimodal content blocks.
+    pub fn with_blocks(role: &str, blocks: Vec<ContentBlock>) -> Self {
+        Self {
+            role: role.to_string(),
+            content: String::new(),
+            blocks,
             tool_calls: Vec::new(),
             tool_call_id: None,
         }
@@ -39,6 +55,7 @@ impl WireMessage {
         Self {
             role: "assistant".to_string(),
             content: content.to_string(),
+            blocks: Vec::new(),
             tool_calls,
             tool_call_id: None,
         }
@@ -49,6 +66,7 @@ impl WireMessage {
         Self {
             role: "tool".to_string(),
             content: content.to_string(),
+            blocks: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: Some(tool_call_id.to_string()),
         }
@@ -65,6 +83,7 @@ pub fn to_wire(messages: &[LLMMessage]) -> Vec<WireMessage> {
         .map(|m| WireMessage {
             role: m.role.clone(),
             content: m.content.clone(),
+            blocks: m.blocks.clone(),
             tool_calls: m.tool_calls.clone(),
             tool_call_id: m.tool_call_id.clone(),
         })
@@ -83,6 +102,7 @@ mod tests {
             LLMMessage {
                 role: "assistant".into(),
                 content: String::new(),
+                blocks: Vec::new(),
                 tool_calls: vec![ToolCall {
                     id: "c1".into(),
                     name: "Read".into(),
@@ -93,6 +113,7 @@ mod tests {
             LLMMessage {
                 role: "tool".into(),
                 content: "body".into(),
+                blocks: Vec::new(),
                 tool_calls: Vec::new(),
                 tool_call_id: Some("c1".into()),
             },

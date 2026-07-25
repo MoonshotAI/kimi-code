@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::rpc::types::TokenUsage;
 
+pub use crate::rpc::types::ContentBlock;
+
 // ── TurnResult ─────────────────────────────────────────────────────────────
 
 /// The final result of a completed turn.
@@ -58,6 +60,10 @@ pub struct LLMChatParams {
 pub struct LLMMessage {
     pub role: String,
     pub content: String,
+    /// Optional multimodal content blocks (text/image). When non-empty,
+    /// provider projections use these instead of the plain `content` text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<ContentBlock>,
     /// Tool calls issued by an `assistant` message (empty otherwise). Carried
     /// structurally so multi-step tool turns project faithfully to a native
     /// provider instead of being flattened into `content`.
@@ -77,9 +83,13 @@ pub struct ToolInfo {
 }
 
 /// The LLM's response to a chat call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub struct LLMChatResponse {
+    /// Assistant text content. Empty on the host-proxy path (the host owns
+    /// the transcript there); filled by the native HTTP transport so the
+    /// loop can thread assistant text into the message history.
+    pub content: String,
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: Option<String>,
     pub usage: TokenUsage,
@@ -708,6 +718,9 @@ pub struct RunTurnInput<'a> {
 pub struct StepResult {
     pub usage: TokenUsage,
     pub stop_reason: LoopStepStopReason,
+    /// Assistant text produced in this step (may be empty on the host-proxy
+    /// path, where the host owns the transcript).
+    pub content: String,
 }
 
 /// Reasons a single step can stop.

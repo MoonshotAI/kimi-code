@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::llm::wire::WireMessage;
 use crate::rpc::types::TokenUsage;
-use crate::turn_loop::types::{LLMChatResponse, ToolCall, ToolInfo};
+use crate::turn_loop::types::{ContentBlock, LLMChatResponse, ToolCall, ToolInfo};
 
 /// Build an OpenAI Chat Completions request body.
 ///
@@ -18,13 +18,28 @@ use crate::turn_loop::types::{LLMChatResponse, ToolCall, ToolInfo};
 /// - Tool results become `{ role: "tool", tool_call_id, content }`.
 /// - An assistant turn that only calls tools sends `content: null`.
 pub fn build_request(model: &str, messages: &[WireMessage], tools: &[ToolInfo]) -> Value {
+    build_request_with_options(model, messages, tools, false)
+}
+
+/// Build an OpenAI Chat Completions request body, optionally streaming.
+/// Streaming requests set `stream_options.include_usage` so the final
+/// chunk carries token usage.
+pub fn build_request_with_options(
+    model: &str,
+    messages: &[WireMessage],
+    tools: &[ToolInfo],
+    stream: bool,
+) -> Value {
     let msgs: Vec<Value> = messages.iter().map(project_message).collect();
 
     let mut req = json!({
         "model": model,
         "messages": msgs,
-        "stream": false,
+        "stream": stream,
     });
+    if stream {
+        req["stream_options"] = json!({ "include_usage": true });
+    }
 
     if !tools.is_empty() {
         let tool_defs: Vec<Value> = tools
@@ -50,9 +65,13 @@ fn project_message(m: &WireMessage) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("role".into(), json!(m.role));
 
-    // An assistant turn that only calls tools carries a null content per the
+    // Multimodal blocks project to the content-parts array form. An
+    // assistant turn that only calls tools carries a null content per the
     // OpenAI schema; everything else carries its (possibly empty) text.
-    if m.role == "assistant" && !m.tool_calls.is_empty() && m.content.is_empty() {
+    if !m.blocks.is_empty() {
+        let parts: Vec<Value> = m.blocks.iter().map(project_block).collect();
+        obj.insert("content".into(), json!(parts));
+    } else if m.role == "assistant" && !m.tool_calls.is_empty() && m.content.is_empty() {
         obj.insert("content".into(), Value::Null);
     } else {
         obj.insert("content".into(), json!(m.content));
@@ -85,6 +104,21 @@ fn project_message(m: &WireMessage) -> Value {
     Value::Object(obj)
 }
 
+/// Project a single content block to the OpenAI content-parts form.
+fn project_block(b: &ContentBlock) -> Value {
+    match b {
+        ContentBlock::Text { text } => json!({ "type": "text", "text": text }),
+        ContentBlock::Image { media_type, data } => json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{media_type};base64,{data}") },
+        }),
+        ContentBlock::ImageUrl { url } => json!({
+            "type": "image_url",
+            "image_url": { "url": url },
+        }),
+    }
+}
+
 /// Parse an OpenAI Chat Completions (non-streaming) response.
 pub fn parse_response(v: &Value) -> Result<LLMChatResponse, String> {
     let choice = v
@@ -100,6 +134,12 @@ pub fn parse_response(v: &Value) -> Result<LLMChatResponse, String> {
         .get("finish_reason")
         .and_then(|f| f.as_str())
         .map(|s| s.to_string());
+
+    let content = message
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let mut tool_calls = Vec::new();
     if let Some(tcs) = message.get("tool_calls").and_then(|t| t.as_array()) {
@@ -122,6 +162,7 @@ pub fn parse_response(v: &Value) -> Result<LLMChatResponse, String> {
     }
 
     Ok(LLMChatResponse {
+        content,
         tool_calls,
         finish_reason,
         usage: parse_usage(v.get("usage")),
@@ -143,6 +184,98 @@ fn parse_usage(usage: Option<&Value>) -> TokenUsage {
         .map(|t| t as u32)
         .unwrap_or(input_tokens + output_tokens);
     TokenUsage { input_tokens, output_tokens, total_tokens }
+}
+
+// ── Streaming (SSE) accumulation ───────────────────────────────────────
+
+/// A tool call being accumulated across stream chunks, keyed by its
+/// provider-assigned `index`.
+#[derive(Debug, Default, Clone)]
+struct PartialToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Accumulates OpenAI Chat Completions stream chunks into a final
+/// [`LLMChatResponse`]. Feed each SSE `data:` JSON payload to [`feed`];
+/// text deltas are returned so the caller can forward them to the host.
+#[derive(Debug, Default)]
+pub struct StreamAccumulator {
+    content: String,
+    tool_calls: Vec<PartialToolCall>,
+    finish_reason: Option<String>,
+    usage: TokenUsage,
+}
+
+impl StreamAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one stream chunk. Returns the text delta contained in the
+    /// chunk, if any.
+    pub fn feed(&mut self, v: &Value) -> Option<String> {
+        // The final usage-only chunk has an empty `choices` array.
+        if let Some(usage) = v.get("usage") {
+            if !usage.is_null() {
+                self.usage = parse_usage(Some(usage));
+            }
+        }
+        let choice = v.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first())?;
+        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+            self.finish_reason = Some(fr.to_string());
+        }
+        let delta = choice.get("delta")?;
+
+        if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+            for tc in tcs {
+                let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                while self.tool_calls.len() <= index {
+                    self.tool_calls.push(PartialToolCall::default());
+                }
+                let slot = &mut self.tool_calls[index];
+                if let Some(id) = tc.get("id").and_then(|x| x.as_str()) {
+                    slot.id.push_str(id);
+                }
+                if let Some(func) = tc.get("function") {
+                    if let Some(name) = func.get("name").and_then(|x| x.as_str()) {
+                        slot.name.push_str(name);
+                    }
+                    if let Some(args) = func.get("arguments").and_then(|x| x.as_str()) {
+                        slot.arguments.push_str(args);
+                    }
+                }
+            }
+        }
+
+        let text = delta.get("content").and_then(|c| c.as_str())?;
+        if text.is_empty() {
+            return None;
+        }
+        self.content.push_str(text);
+        Some(text.to_string())
+    }
+
+    /// Finalize the accumulated stream into a response.
+    pub fn finish(self) -> LLMChatResponse {
+        let tool_calls = self
+            .tool_calls
+            .into_iter()
+            .filter(|tc| !tc.name.is_empty())
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({})),
+            })
+            .collect();
+        LLMChatResponse {
+            content: self.content,
+            tool_calls,
+            finish_reason: self.finish_reason,
+            usage: self.usage,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -251,5 +384,89 @@ mod tests {
     #[test]
     fn parse_response_errors_on_missing_choices() {
         assert!(parse_response(&json!({})).is_err());
+    }
+
+    #[test]
+    fn build_request_streaming_sets_stream_options() {
+        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], true);
+        assert_eq!(req["stream"], true);
+        assert_eq!(req["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn build_request_projects_image_blocks() {
+        use crate::turn_loop::types::ContentBlock;
+        let msg = WireMessage::with_blocks(
+            "user",
+            vec![
+                ContentBlock::Text { text: "what is this?".into() },
+                ContentBlock::Image { media_type: "image/png".into(), data: "AAAA".into() },
+                ContentBlock::ImageUrl { url: "https://example.com/x.png".into() },
+            ],
+        );
+        let req = build_request("m", &[msg], &[]);
+        let content = req["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "what is this?");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+        assert_eq!(content[2]["image_url"]["url"], "https://example.com/x.png");
+    }
+
+    #[test]
+    fn parse_response_extracts_content_text() {
+        let v = json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hello" }, "finish_reason": "stop" }],
+        });
+        let parsed = parse_response(&v).unwrap();
+        assert_eq!(parsed.content, "hello");
+    }
+
+    #[test]
+    fn stream_accumulator_collects_text_and_tool_calls() {
+        let mut acc = StreamAccumulator::new();
+
+        // Text deltas.
+        let d1 = acc.feed(&json!({ "choices": [{ "delta": { "content": "Hel" } }] }));
+        assert_eq!(d1.as_deref(), Some("Hel"));
+        let d2 = acc.feed(&json!({ "choices": [{ "delta": { "content": "lo" } }] }));
+        assert_eq!(d2.as_deref(), Some("lo"));
+
+        // Tool call split across chunks (arguments arrive in fragments).
+        acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "id": "call_1", "function": { "name": "Grep", "arguments": "{\"q\":" } }
+        ] } }] }));
+        acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "function": { "arguments": "\"foo\"}" } }
+        ] } }] }));
+
+        // Finish + usage-only chunk.
+        acc.feed(&json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }));
+        acc.feed(&json!({ "choices": [], "usage": { "prompt_tokens": 7, "completion_tokens": 3 } }));
+
+        let resp = acc.finish();
+        assert_eq!(resp.content, "Hello");
+        assert_eq!(resp.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "call_1");
+        assert_eq!(resp.tool_calls[0].name, "Grep");
+        assert_eq!(resp.tool_calls[0].arguments, json!({ "q": "foo" }));
+        assert_eq!(resp.usage.input_tokens, 7);
+        assert_eq!(resp.usage.output_tokens, 3);
+        assert_eq!(resp.usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn stream_accumulator_parallel_tool_calls_by_index() {
+        let mut acc = StreamAccumulator::new();
+        acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "id": "a", "function": { "name": "Read", "arguments": "{}" } },
+            { "index": 1, "id": "b", "function": { "name": "Glob", "arguments": "{}" } }
+        ] } }] }));
+        let resp = acc.finish();
+        assert_eq!(resp.tool_calls.len(), 2);
+        assert_eq!(resp.tool_calls[0].name, "Read");
+        assert_eq!(resp.tool_calls[1].name, "Glob");
     }
 }
