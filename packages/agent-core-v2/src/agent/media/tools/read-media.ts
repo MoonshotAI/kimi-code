@@ -52,6 +52,7 @@ import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -306,7 +307,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
     if (!args.path) {
-      return { isError: true, output: 'File path cannot be empty.' };
+      return { isError: true, output: t('toolsV2.readMedia.pathEmpty') };
     }
     const path = resolvePathAccessPath(args.path, {
       env: this.env,
@@ -333,7 +334,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     safePath: string,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
-      return { isError: true, output: 'File path cannot be empty.' };
+      return { isError: true, output: t('toolsV2.readMedia.pathEmpty') };
     }
 
     try {
@@ -452,7 +453,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
-            return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
+            return { isError: true, output: t('toolsV2.readMedia.cannotReadRegion', { path: args.path, error: outcome.error }) };
           }
           const base64 = Buffer.from(outcome.data).toString('base64');
           mediaPart = {

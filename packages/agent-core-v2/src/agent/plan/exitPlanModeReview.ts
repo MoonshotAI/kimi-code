@@ -13,6 +13,8 @@
  * stays in the listener.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
@@ -83,14 +85,14 @@ export class ExitPlanModeReview {
     const optionPrefix =
       selected === undefined
         ? ''
-        : `Selected approach: ${selected.label}\nExecute ONLY the selected approach. Do not execute any unselected alternatives.\n\n`;
-    const savedTo = display.path !== undefined ? `Plan saved to: ${display.path}\n\n` : '';
-    const formattedPlan = `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${display.plan}`;
+        : `${t('toolsV2.planMode.selectedApproach', { label: selected.label })}\n\n`;
+    const savedTo = display.path !== undefined ? t('toolsV2.planMode.planSaved', { path: display.path }) : '';
+    const formattedPlan = t('toolsV2.planMode.planApproved', { savedTo, plan: display.plan });
     return {
       kind: 'result',
       result: {
         isError: false,
-        output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
+        output: t('toolsV2.planMode.exitedPlanMode', { prefix: optionPrefix, plan: formattedPlan }),
       },
     };
   }
@@ -103,7 +105,7 @@ export class ExitPlanModeReview {
         kind: 'result',
         result: {
           isError: false,
-          output: 'Plan approval dismissed. Plan mode remains active.',
+          output: t('toolsV2.planMode.approvalDismissed'),
         },
       };
     }
@@ -115,7 +117,7 @@ export class ExitPlanModeReview {
         result: {
           isError: true,
           stopTurn: true,
-          output: 'Plan rejected by user. Plan mode deactivated.',
+          output: t('toolsV2.planMode.rejected'),
         },
       };
     }
@@ -128,8 +130,8 @@ export class ExitPlanModeReview {
           isError: false,
           output:
             feedback.length > 0
-              ? `User rejected the plan. Feedback:\n\n${feedback}`
-              : 'User requested revisions. Plan mode remains active.',
+              ? t('toolsV2.planMode.rejectedWithFeedback', { feedback })
+              : t('toolsV2.planMode.revisionsRequested'),
         },
       };
     }
@@ -139,7 +141,7 @@ export class ExitPlanModeReview {
       result: {
         isError: true,
         stopTurn: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
+        output: t('toolsV2.planMode.rejectedStaysActive'),
       },
     };
   }

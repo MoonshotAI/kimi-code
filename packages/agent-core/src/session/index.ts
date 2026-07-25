@@ -1110,7 +1110,7 @@ export class Session {
   private requireMainAgent(): Agent {
     const agent = this.getReadyAgent('main');
     if (agent === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, t('v2Errors.mainAgentNotFound'));
     }
     return agent;
   }

@@ -1760,6 +1760,63 @@ fn get_i64(v: &serde_json::Value, key: &str) -> Result<i64, String> {
 }
 
 // ============================================================================
+// Workspace Index — file metadata index for tool predictions
+// ============================================================================
+
+use std::sync::Mutex;
+
+use crate::workspace_index;
+
+/// Global workspace index, built once at workspace load time.
+static WORKSPACE_INDEX: Mutex<Option<workspace_index::WorkspaceIndex>> = Mutex::new(None);
+
+/// Result of a prediction.
+#[napi(object)]
+pub struct NativeReadPrediction {
+    pub line_count: i32,
+    pub size: i64,
+    pub preview: String,
+    pub estimated_read_ms: i32,
+}
+
+/// Build the workspace index by scanning `root` recursively.
+///
+/// This is a blocking operation. For large workspaces, it may take
+/// 100ms–2s. Call once at workspace load time.
+///
+/// @param root - Absolute path to the workspace root directory.
+/// @returns Number of files indexed.
+#[napi]
+pub fn native_build_workspace_index(root: String) -> u32 {
+    let index = workspace_index::WorkspaceIndex::build(&root);
+    let count = index.file_count();
+    let mut guard = WORKSPACE_INDEX.lock().unwrap();
+    *guard = Some(index);
+    count as u32
+}
+
+/// Get a Read prediction from the workspace index.
+///
+/// Returns `null` if:
+///   - No index has been built (call `nativeBuildWorkspaceIndex` first)
+///   - The file is not in the index
+///
+/// @param path - Absolute path to the file.
+/// @returns Prediction or null.
+#[napi]
+pub fn native_workspace_index_predict_read(path: String) -> Option<NativeReadPrediction> {
+    let guard = WORKSPACE_INDEX.lock().ok()?;
+    let index = guard.as_ref()?;
+    let prediction = index.predict_read(&path)?;
+    Some(NativeReadPrediction {
+        line_count: prediction.line_count as i32,
+        size: prediction.size as i64,
+        preview: prediction.preview,
+        estimated_read_ms: prediction.estimated_read_ms as i32,
+    })
+}
+
+// ============================================================================
 // Path access — canonicalization and containment
 // ============================================================================
 
@@ -1885,5 +1942,265 @@ pub fn native_path_canonicalize_for_glob(path: String, cwd: String, path_class: 
     match path_access::canonicalize_path_for_glob(&path, &cwd, class) {
         Ok(p) => p,
         Err(e) => format!("ERROR: {e}"),
+    }
+}
+
+// ============================================================================
+// FetchUrl — HTTP fetch with SSRF protection and HTML extraction
+// ============================================================================
+
+use crate::fetch_url;
+
+/// Result of `native_fetch_url`.
+#[napi(object)]
+pub struct NativeFetchUrlResult {
+    pub content: String,
+    pub kind: String,
+    pub status: u16,
+    pub error: Option<String>,
+}
+
+/// Fetch a URL with SSRF protection, redirect handling, and HTML extraction.
+///
+/// Runs entirely on a blocking thread — the Node event loop stays responsive.
+///
+/// @param url - The URL to fetch.
+/// @param user_agent - Custom User-Agent header.
+/// @param max_bytes - Maximum response body size in bytes.
+/// @param allow_private - Allow fetching private/loopback addresses.
+/// @param timeout_ms - Request timeout in milliseconds.
+#[napi]
+pub async fn native_fetch_url(
+    url: String,
+    user_agent: Option<String>,
+    max_bytes: Option<u32>,
+    allow_private: Option<bool>,
+    timeout_ms: Option<u32>,
+) -> NativeFetchUrlResult {
+    let config = fetch_url::FetchUrlConfig {
+        url,
+        user_agent: user_agent.unwrap_or_else(|| fetch_url::FetchUrlConfig::default().user_agent),
+        max_bytes: max_bytes.map(|v| v as usize).unwrap_or(fetch_url::FetchUrlConfig::default().max_bytes),
+        allow_private: allow_private.unwrap_or(false),
+        max_redirects: fetch_url::FetchUrlConfig::default().max_redirects,
+        timeout_ms: timeout_ms.map(|v| v as u64).unwrap_or(fetch_url::FetchUrlConfig::default().timeout_ms),
+    };
+
+    let result = tokio::task::spawn_blocking(move || fetch_url::fetch_url(&config))
+        .await
+        .unwrap_or_else(|e| fetch_url::FetchUrlResult {
+            content: String::new(),
+            kind: String::new(),
+            status: 0,
+            error: Some(format!("fetch_url panicked: {e}")),
+        });
+
+    NativeFetchUrlResult {
+        content: result.content,
+        kind: result.kind,
+        status: result.status,
+        error: result.error,
+    }
+}
+
+// ============================================================================
+// LLM Stream — HTTP SSE streaming with provider-specific event decoding
+// ============================================================================
+
+/// Configuration for `native_llm_stream`.
+#[napi(object)]
+pub struct NativeLlmStreamConfig {
+    pub provider: String,
+    pub url: String,
+    pub api_key: String,
+    pub model: String,
+    pub request_body: String,
+    pub timeout_ms: Option<u32>,
+    pub extra_headers: Option<Vec<NativeLlmStreamHeader>>,
+}
+
+#[napi(object)]
+pub struct NativeLlmStreamHeader {
+    pub key: String,
+    pub value: String,
+}
+
+/// A single streamed part from the LLM.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeLlmStreamPart {
+    pub part_type: String,
+    pub text: Option<String>,
+    pub think: Option<String>,
+    pub encrypted: Option<String>,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+    pub arguments_part: Option<String>,
+    pub stream_index: Option<u32>,
+}
+
+/// Metadata returned when the stream completes.
+#[napi(object)]
+pub struct NativeLlmStreamMetadata {
+    pub response_id: Option<String>,
+    pub finish_reason: Option<String>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cached_tokens: u32,
+    pub trace_id: Option<String>,
+}
+
+/// Result of `native_llm_stream` — all parts + metadata in one response.
+/// For the initial implementation, we collect all events and return them
+/// at once. A future iteration will use TSFN for true streaming callbacks.
+#[napi(object)]
+pub struct NativeLlmStreamResult {
+    pub parts: Vec<NativeLlmStreamPart>,
+    pub metadata: NativeLlmStreamMetadata,
+    pub error: Option<String>,
+}
+
+/// Execute an LLM streaming request and return all decoded parts.
+///
+/// The Rust side handles: HTTP POST, SSE parsing, provider-specific event
+/// decoding. Returns all parts collected from the stream plus metadata.
+///
+/// @param config - Stream configuration (provider, url, api_key, request_body, etc.)
+#[napi]
+pub async fn native_llm_stream(
+    config: NativeLlmStreamConfig,
+) -> NativeLlmStreamResult {
+    let stream_config = llm_stream::LlmStreamConfig {
+        provider: config.provider,
+        url: config.url,
+        api_key: config.api_key,
+        model: config.model,
+        request_body: config.request_body,
+        timeout_ms: config.timeout_ms.unwrap_or(120_000) as u64,
+        extra_headers: config.extra_headers
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| (h.key, h.value))
+            .collect(),
+    };
+
+    let result = llm_stream::run_llm_stream(&stream_config).await;
+
+    match result {
+        Ok(events) => {
+            let mut parts = Vec::new();
+            let mut metadata = llm_stream::StreamMetadata::default();
+            let mut error = None;
+
+            for event in events {
+                match event {
+                    llm_stream::StreamEvent::Part(p) => {
+                        parts.push(NativeLlmStreamPart {
+                            part_type: p.part_type,
+                            text: p.text,
+                            think: p.think,
+                            encrypted: p.encrypted,
+                            id: p.id,
+                            name: p.name,
+                            arguments: p.arguments,
+                            arguments_part: p.arguments_part,
+                            stream_index: p.stream_index,
+                        });
+                    }
+                    llm_stream::StreamEvent::Done(m) => {
+                        metadata = m;
+                    }
+                    llm_stream::StreamEvent::Error(e) => {
+                        error = Some(e);
+                    }
+                }
+            }
+
+            NativeLlmStreamResult {
+                parts,
+                metadata: NativeLlmStreamMetadata {
+                    response_id: metadata.response_id,
+                    finish_reason: metadata.finish_reason,
+                    input_tokens: metadata.input_tokens,
+                    output_tokens: metadata.output_tokens,
+                    cached_tokens: metadata.cached_tokens,
+                    trace_id: metadata.trace_id,
+                },
+                error,
+            }
+        }
+        Err(e) => NativeLlmStreamResult {
+            parts: Vec::new(),
+            metadata: NativeLlmStreamMetadata {
+                response_id: None,
+                finish_reason: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cached_tokens: 0,
+                trace_id: None,
+            },
+            error: Some(e),
+        },
+    }
+}
+
+// ============================================================================
+// WebSearch — DuckDuckGo HTML scraping
+// ============================================================================
+
+use crate::web_search;
+use crate::llm_stream;
+
+/// A single search result entry.
+#[napi(object)]
+pub struct NativeWebSearchEntry {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub site_name: Option<String>,
+}
+
+/// Result of `native_web_search`.
+#[napi(object)]
+pub struct NativeWebSearchResult {
+    pub results: Vec<NativeWebSearchEntry>,
+    pub error: Option<String>,
+}
+
+/// Search DuckDuckGo and return structured results.
+///
+/// Runs entirely on a blocking thread — the Node event loop stays responsive.
+///
+/// @param query - The search query.
+/// @param timeout_ms - Request timeout in milliseconds.
+/// @param max_results - Maximum number of results to return.
+#[napi]
+pub async fn native_web_search(
+    query: String,
+    timeout_ms: Option<u32>,
+    max_results: Option<u32>,
+) -> NativeWebSearchResult {
+    let config = web_search::WebSearchConfig {
+        query,
+        timeout_ms: timeout_ms.map(|v| v as u64).unwrap_or(web_search::WebSearchConfig::default().timeout_ms),
+        max_results: max_results.map(|v| v as usize).unwrap_or(web_search::WebSearchConfig::default().max_results),
+    };
+
+    let result = tokio::task::spawn_blocking(move || web_search::web_search(&config))
+        .await
+        .unwrap_or_else(|e| web_search::WebSearchResult {
+            results: Vec::new(),
+            error: Some(format!("web_search panicked: {e}")),
+        });
+
+    NativeWebSearchResult {
+        results: result.results.into_iter().map(|r| NativeWebSearchEntry {
+            title: r.title,
+            url: r.url,
+            snippet: r.snippet,
+            site_name: r.site_name,
+        }).collect(),
+        error: result.error,
     }
 }

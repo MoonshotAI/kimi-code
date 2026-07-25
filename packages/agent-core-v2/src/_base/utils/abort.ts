@@ -3,6 +3,8 @@
  * linking, and deadline abort signals.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 export function abortError(message = 'Aborted'): Error {
   const error = new Error(message);
   error.name = 'AbortError';
@@ -17,7 +19,7 @@ export class UserCancellationError extends Error {
   readonly userCancelled = true;
 
   constructor() {
-    super('Aborted by the user');
+    super(t('toolsV2.abort.abortedByUser'));
     this.name = 'AbortError';
   }
 }

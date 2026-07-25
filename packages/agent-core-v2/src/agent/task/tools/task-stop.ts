@@ -2,6 +2,8 @@
  * TaskStopTool — stop a running task.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -18,7 +20,6 @@ export const TaskStopInputSchema = z.object({
   task_id: z.string().describe('The background task ID to stop.'),
   reason: z
     .string()
-    .default('Stopped by TaskStop')
     .describe('Short reason recorded when the task is stopped.')
     .optional(),
 });
@@ -41,13 +42,13 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
       execute: async () => {
         const info = this.tasks.getTask(args.task_id);
         if (!info) {
-          return { isError: true, output: `Task not found: ${args.task_id}` };
+          return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
         }
 
         const trimmedReason = args.reason?.trim();
         const reason =
           trimmedReason === undefined || trimmedReason.length === 0
-            ? 'Stopped by TaskStop'
+            ? t('toolsV2.task.stoppedByUser')
             : trimmedReason;
 
         if (TERMINAL_STATUSES.has(info.status)) {
@@ -63,7 +64,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
         await this.tasks.suppressTerminalNotification(args.task_id);
         const result = await this.tasks.stop(args.task_id, reason);
         if (!result) {
-          return { isError: true, output: `Failed to stop task: ${args.task_id}` };
+          return { isError: true, output: t('toolsV2.task.stopFailed', { taskId: args.task_id }) };
         }
 
         return {
@@ -82,5 +83,5 @@ registerTool(TaskStopTool);
 
 function terminalStopReason(reason: string | undefined): string {
   const trimmed = reason?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? 'Task already in terminal state' : trimmed;
+  return trimmed === undefined || trimmed.length === 0 ? t('toolsV2.task.alreadyTerminal') : trimmed;
 }

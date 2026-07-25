@@ -18,6 +18,7 @@ import { BlockList, isIP, type LookupFunction } from 'node:net';
 
 import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { Agent, type Dispatcher } from 'undici';
 
 import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '#/_base/utils/proxy';
@@ -202,7 +203,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
 
     if (fallbackText.length === 0) {
       throw new Error(
-        'Failed to extract meaningful content from the page. The page may require JavaScript to render.',
+        t('toolsV2.fetchUrl.contentExtractionFailed'),
       );
     }
 

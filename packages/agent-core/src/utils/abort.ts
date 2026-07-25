@@ -1,5 +1,7 @@
-export function abortError(message = 'Aborted'): Error {
-  const error = new Error(message);
+import { t } from '#/i18n';
+
+export function abortError(message?: string): Error {
+  const error = new Error(message ?? t('toolsV2.abort.aborted'));
   error.name = 'AbortError';
   return error;
 }
@@ -19,7 +21,7 @@ export class UserCancellationError extends Error {
   readonly userCancelled = true;
 
   constructor() {
-    super('Aborted by the user');
+    super(t('toolsV2.abort.abortedByUser'));
     this.name = 'AbortError';
   }
 }
@@ -67,7 +69,11 @@ export function abortReason(signal: AbortSignal): Error {
 }
 
 function isDefaultAbortReason(reason: Error): boolean {
-  return reason.name === 'AbortError' && reason.message === 'This operation was aborted';
+  // DOMException with name 'AbortError' is always the default browser/node
+  // abort reason — its message is fixed to "This operation was aborted"
+  // regardless of locale. Check by constructor name rather than the localized
+  // message for cross-locale correctness.
+  return reason.name === 'AbortError' && reason.constructor.name === 'DOMException';
 }
 
 export interface DeadlineAbortSignal {

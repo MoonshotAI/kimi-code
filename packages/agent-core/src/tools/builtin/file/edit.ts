@@ -9,6 +9,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -97,7 +98,7 @@ export class EditTool implements BuiltinTool<EditInput> {
     if (args.old_string === args.new_string) {
       return {
         isError: true,
-        output: 'No changes to make: old_string and new_string are exactly the same.',
+        output: t('toolsV2.editNoChanges'),
       };
     }
 
@@ -122,15 +123,12 @@ export class EditTool implements BuiltinTool<EditInput> {
         }
 
         if (count === 0) {
-          return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
-` };
+          return { isError: true, output: t('toolsV2.oldStringNotFound', { path: args.path }) };
         }
         if (count > 1) {
           return {
             isError: true,
-            output:
-              `old_string is not unique in ${args.path} (found ${String(count)} occurrences). ` +
-              'To replace every occurrence, set replace_all=true. To replace only one occurrence, include more surrounding context in old_string.',
+            output: t('toolsV2.oldStringNotUnique', { path: args.path, count: String(count) }),
           };
         }
 
@@ -139,14 +137,13 @@ export class EditTool implements BuiltinTool<EditInput> {
           safePath,
           materializeModelText(newContent, modelView.lineEndingStyle),
         );
-        return { output: `Replaced 1 occurrence in ${args.path}` };
+        return { output: t('toolsV2.editReplacedOne', { path: args.path }) };
       }
 
       const parts = content.split(args.old_string);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
-` };
+        return { isError: true, output: t('toolsV2.oldStringNotFound', { path: args.path }) };
       }
 
       const newContent = parts.join(args.new_string);
@@ -154,11 +151,11 @@ export class EditTool implements BuiltinTool<EditInput> {
         safePath,
         materializeModelText(newContent, modelView.lineEndingStyle),
       );
-      return { output: `Replaced ${String(replacementCount)} occurrences in ${args.path}` };
+      return { output: t('toolsV2.editReplaced', { count: String(replacementCount), occurrences: t('toolsV2.occurrences'), path: args.path }) };
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if (code === 'EISDIR') {
-        return { isError: true, output: `${args.path} is not a file.` };
+        return { isError: true, output: t('toolsV2.pathNotFile', { path: args.path }) };
       }
       return {
         isError: true,

@@ -189,47 +189,29 @@ async function listSessionsWithRouteFilter(
   predicate: (session: SessionListItem) => boolean,
 ): Promise<SessionListPage> {
   const targetSize = normalizeSessionListPageSize(cursor);
+
+  // ISessionService.list() returns ALL sessions matching workDir / sessionId /
+  // includeArchive — it does not implement server-side cursor pagination in
+  // the underlying SessionStore. Fetch once and apply both the client-side
+  // predicate and cursor-based pagination in a single pass.
+  const all = await fetchPage(baseQuery);
+  const filtered = all.items.filter(predicate);
+
   const forward = cursor.after_id !== undefined && cursor.before_id === undefined;
+  const pivotId = forward ? cursor.after_id : cursor.before_id;
 
-  const matches: SessionListItem[] = [];
-  // Forward starts from the after_id pivot (the newest page above it); backward
-  // starts from before_id (or the newest when there is no cursor). After the first
-  // page both drain toward older sessions via before_id. In forward mode we stop
-  // the moment we reach the pivot session itself, so paging stays within the
-  // after_id bound and never reintroduces the pivot or anything older.
-  let beforeId = forward ? undefined : cursor.before_id;
-  let afterId = forward ? cursor.after_id : undefined;
-  let coreHasMore = true;
-
-  while (matches.length <= targetSize && coreHasMore) {
-    const page = await fetchPage({
-      ...baseQuery,
-      before_id: beforeId,
-      after_id: afterId,
-      page_size: MAX_SESSION_LIST_PAGE_SIZE,
-    });
-    if (page.items.length === 0) break;
-
-    let hitPivot = false;
-    for (const session of page.items) {
-      if (forward && session.id === afterId) {
-        hitPivot = true;
-        break;
-      }
-      if (predicate(session)) matches.push(session);
+  let startIdx = 0;
+  if (pivotId !== undefined) {
+    const pivotIdx = filtered.findIndex((s) => s.id === pivotId);
+    if (pivotIdx >= 0) {
+      startIdx = forward ? pivotIdx + 1 : Math.max(0, pivotIdx - targetSize);
     }
-    coreHasMore = page.has_more && !hitPivot;
-    if (!coreHasMore) break;
-
-    const nextBeforeId = page.items[page.items.length - 1]?.id;
-    if (nextBeforeId === undefined || nextBeforeId === beforeId) break;
-    beforeId = nextBeforeId;
-    afterId = undefined;
   }
 
+  const page = filtered.slice(startIdx, startIdx + targetSize + 1);
   return {
-    items: matches.slice(0, targetSize),
-    has_more: matches.length > targetSize,
+    items: page.slice(0, targetSize),
+    has_more: page.length > targetSize,
   };
 }
 

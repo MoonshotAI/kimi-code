@@ -596,7 +596,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
     this.assertSupportedAgent();
-    return this.accountTokenUsage(tokenDelta);
+    // Normalize number to TokenUsage shape (backwards compat for tests)
+    const usage: TokenUsage = {
+      inputOther: 0,
+      output: tokenDelta,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    };
+    return this.accountTokenUsage(usage);
   }
 
   /**

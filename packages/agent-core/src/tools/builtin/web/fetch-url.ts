@@ -11,6 +11,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { t } from '../../../i18n';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -93,7 +94,7 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
 
       if (!content) {
         return {
-          output: 'The response body is empty.',
+          output: t('toolsV2.fetchUrl.emptyBody'),
           isError: false,
         };
       }
@@ -107,10 +108,9 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       // so they survive any downstream truncation of the body.
       const note =
         kind === 'passthrough'
-          ? 'The returned content is the full response body, returned verbatim.'
-          : 'The returned content is the main text extracted from the page.';
-      const citeReminder =
-        'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).';
+          ? t('toolsV2.fetchUrl.passthroughNote')
+          : t('toolsV2.fetchUrl.extractedNote');
+      const citeReminder = t('toolsV2.fetchUrl.citeReminder');
       builder.write(`${note} ${citeReminder}\n\n${content}`);
       return builder.ok();
     } catch (error) {
@@ -118,12 +118,12 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       if (error instanceof HttpFetchError) {
         return {
           isError: true,
-          output: `Failed to fetch URL. Status: ${String(error.status)}. ${msg}`,
+          output: t('toolsV2.fetchUrl.failedHttp', { status: String(error.status), message: msg }),
         };
       }
       return {
         isError: true,
-        output: `Failed to fetch URL due to network error: ${args.url}. ${msg}`,
+        output: t('toolsV2.fetchUrl.networkError', { url: args.url, message: msg }),
       };
     }
   }

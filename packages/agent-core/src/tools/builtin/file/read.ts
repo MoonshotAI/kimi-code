@@ -1,4 +1,5 @@
 import type { Kaos, StatResult } from '@moonshot-ai/kaos';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -268,12 +269,12 @@ export class ReadTool implements BuiltinTool<ReadInput> {
         stat = await this.kaos.stat(safePath);
       } catch (error) {
         if (isFileNotFoundError(error)) {
-          return { isError: true, output: `"${args.path}" does not exist.` };
+          return { isError: true, output: t('toolsV2.read.notExist', { path: args.path }) };
         }
         throw error;
       }
       if (!isRegularFileMode(stat.stMode)) {
-        return { isError: true, output: `"${args.path}" is not a file.` };
+        return { isError: true, output: t('toolsV2.read.notFile', { path: args.path }) };
       }
 
       const header = await readTextHeader(this.kaos, safePath, MEDIA_SNIFF_BYTES);

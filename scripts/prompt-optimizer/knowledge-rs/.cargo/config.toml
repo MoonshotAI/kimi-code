@@ -1,0 +1,5 @@
+[http]
+check-revoke = false
+
+[net]
+retry = 5

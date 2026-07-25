@@ -127,6 +127,7 @@ import {
 import { workspaceIdSchema } from '../protocol/workspace';
 import { z } from 'zod';
 
+import { t } from '../i18n';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -184,7 +185,7 @@ const sessionsListQueryCoercion = z
     if (value.before_id !== undefined && value.after_id !== undefined) {
       ctx.addIssue({
         code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
+        message: t('serverErrors.paginationMutuallyExclusive'),
         path: ['before_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
@@ -218,7 +219,7 @@ const sessionChildrenListQueryCoercion = z
     if (value.before_id !== undefined && value.after_id !== undefined) {
       ctx.addIssue({
         code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
+        message: t('serverErrors.paginationMutuallyExclusive'),
         path: ['before_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });

@@ -8,6 +8,6 @@ export default defineConfig({
   clean: true,
   deps: {
     alwaysBundle: [/^@moonshot-ai\//],
-    neverBundle: [],
+    neverBundle: ['@moonshot-ai/kimi-i18n'],
   },
 });

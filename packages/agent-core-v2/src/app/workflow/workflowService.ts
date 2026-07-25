@@ -12,6 +12,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { createDecorator } from '#/_base/di/instantiation';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ISessionSubagentService } from '#/session/subagent/subagent';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -48,6 +49,7 @@ export class WorkflowService extends Disposable implements IWorkflowService {
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
+    @IWebSearchProviderService private readonly webSearchProvider: IWebSearchProviderService,
   ) {
     super();
     this._register(toDisposable(() => {
@@ -93,6 +95,7 @@ export class WorkflowService extends Disposable implements IWorkflowService {
       log: this.log,
       callerAgentId: input.callerAgentId,
       workspaceRoot: input.sessionContext.cwd,
+      webSearchProvider: this.webSearchProvider.getWebSearchProvider(),
     };
 
     try {

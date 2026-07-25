@@ -1,0 +1,13 @@
+[package]
+name = "kimi-knowledge"
+version = "0.1.0"
+edition = "2021"
+description = "Local AI knowledge base CLI for kimi-code coding standards"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ulid = "1"
+chrono = { version = "0.4", features = ["serde"] }

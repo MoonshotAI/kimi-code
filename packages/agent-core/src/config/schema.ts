@@ -187,6 +187,20 @@ export const AgentConfigSchema = z.object({
    * - `"rust"`: the Rust agent engine (kimi-agent binary via stdio JSON-RPC)
    */
   engine: z.enum(['js', 'rust']).default('js'),
+  /**
+   * MultiLLM: list of provider names to use for concurrent execution.
+   * When set and `engine === "rust"`, the Rust engine sends the same prompt
+   * to all listed providers concurrently and returns the first response
+   * ("first past the post").
+   *
+   * Example:
+   * ```toml
+   * [agent]
+   * engine = "rust"
+   * multiLlm = ["my-kimi", "my-anthropic"]
+   * ```
+   */
+  multiLlm: z.array(z.string()).optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

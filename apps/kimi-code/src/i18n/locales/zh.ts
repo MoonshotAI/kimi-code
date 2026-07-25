@@ -196,6 +196,10 @@ export default {
         statusInProgress: '进行中',
         statusPending: '待处理',
       },
+      workflowPanel: {
+        header: '工作流',
+        running: '运行中',
+      },
       activityPane: {
         tipPrefix: ' · 提示：{{tip}}',
       },

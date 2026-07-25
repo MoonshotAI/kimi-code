@@ -5,6 +5,8 @@
  * does not require approval in any permission mode.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
@@ -37,15 +39,15 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
         if (before !== null) {
           return {
             isError: true,
-            output: 'Plan mode is already active. Use ExitPlanMode when the plan is ready.',
+            output: t('toolsV2.planMode.alreadyActive'),
           };
         }
 
         try {
           await this.planMode.enter();
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to enter plan mode.';
-          return { isError: true, output: `Failed to enter plan mode: ${message}` };
+          const message = error instanceof Error ? error.message : t('toolsV2.planMode.enterFailed');
+          return { isError: true, output: t('toolsV2.planMode.enterFailedDetail', { message }) };
         }
 
         this.telemetry.track2('plan_enter_resolved', {

@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { BuiltinTool } from '../../agent/tool';
 import {
@@ -44,7 +45,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
       execute: async () => {
         const info = this.manager.getTask(args.task_id);
         if (!info) {
-          return { isError: true, output: `Task not found: ${args.task_id}` };
+          return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
         }
 
         // A blank or whitespace-only reason falls back to the default. `?? default`
@@ -52,7 +53,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
         const trimmedReason = args.reason?.trim();
         const reason =
           trimmedReason === undefined || trimmedReason.length === 0
-            ? 'Stopped by TaskStop'
+            ? t('toolsV2.task.stoppedByUser')
             : trimmedReason;
 
         if (isBackgroundTaskTerminal(info.status)) {
@@ -72,7 +73,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
         await this.manager.suppressTerminalNotification(args.task_id);
         const result = await this.manager.stop(args.task_id, reason);
         if (!result) {
-          return { isError: true, output: `Failed to stop task: ${args.task_id}` };
+          return { isError: true, output: t('toolsV2.task.stopFailed', { taskId: args.task_id }) };
         }
 
         return {
@@ -89,5 +90,5 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
 
 function terminalStopReason(reason: string | undefined): string {
   const trimmed = reason?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? 'Task already in terminal state' : trimmed;
+  return trimmed === undefined || trimmed.length === 0 ? t('toolsV2.task.alreadyTerminal') : trimmed;
 }

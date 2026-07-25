@@ -13,6 +13,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { BuiltinTool } from '../../agent/tool';
 import {
@@ -81,19 +82,9 @@ function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | 'fa
 function fullOutputHint(output: BackgroundTaskOutputSnapshot): string | undefined {
   if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
   if (output.truncated) {
-    return (
-      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
-      'Use the Read tool with the output_path to page through the full log ' +
-      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-      'lines per page).'
-    );
+    return t('toolsV2.task.outputTruncatedHint', { bytes: String(OUTPUT_PREVIEW_BYTES) });
   }
-  return (
-    'The preview above is the complete output. Use the Read tool with the output_path ' +
-    'if you need to re-read the full log later ' +
-    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-    'lines per page).'
-  );
+  return t('toolsV2.task.outputCompleteHint');
 }
 
 export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
@@ -115,7 +106,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
     const info = this.manager.getTask(args.task_id);
     if (!info) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
     }
 
     if (args.block && !isBackgroundTaskTerminal(info.status)) {
@@ -125,7 +116,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     // Re-fetch after potential wait.
     const current = this.manager.getTask(args.task_id);
     if (!current) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
     }
 
     // A single manager-owned snapshot drives the tail window and every
@@ -149,7 +140,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         // Nudge at the exact point of misuse: a blocking wait that timed out.
         nextStep:
           args.block === true && !isBackgroundTaskTerminal(current.status)
-            ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
+            ? t('toolsV2.task.stillRunningHint')
             : undefined,
       }),
       '',
@@ -161,11 +152,11 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     if (output.truncated) {
       lines.push(
         output.fullOutputAvailable && output.outputPath !== undefined
-          ? `[Truncated. Full output: ${output.outputPath}]`
-          : '[Truncated. No persisted full log is available for this task.]',
+          ? t('toolsV2.task.truncatedFull', { path: output.outputPath })
+          : t('toolsV2.task.truncatedNoLog'),
       );
     }
-    lines.push('[output]', output.preview || '[no output available]');
+    lines.push('[output]', output.preview || t('toolsV2.task.noOutput'));
 
     // Side-channel brief for the host UI / log readers. Distinct from
     // the `output` body which is parsed by the LLM. Kept short so log
@@ -173,7 +164,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     return {
       output: lines.join('\n'),
       isError: false,
-      message: 'Task snapshot retrieved.',
+      message: t('toolsV2.task.snapshotRetrieved'),
     };
   }
 

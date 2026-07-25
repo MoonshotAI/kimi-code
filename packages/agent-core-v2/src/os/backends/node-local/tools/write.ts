@@ -41,6 +41,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { t } from '@moonshot-ai/kimi-i18n';
 import WRITE_DESCRIPTION from './write.md?raw';
+import { tryNativeWrite } from '#/_base/native-tools';
 
 export const WriteInputSchema = z.object({
   path: z
@@ -113,6 +114,20 @@ export class WriteTool implements BuiltinTool<WriteInput> {
   }
 
   private async execution(args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
+    // ── Native fast-path ─────────────────────────────────────────────────
+    // nativeWrite creates parent dirs and writes atomically in Rust.
+    const nativeResult = await tryNativeWrite(safePath, args.content, args.mode);
+    if (nativeResult) {
+      if (nativeResult.error) {
+        return { isError: true, output: nativeResult.error };
+      }
+      const verb = args.mode === 'append' ? 'writeAppended' : 'writeWrote';
+      return {
+        output: t(`toolsV2.${verb}` as any, { bytes: String(nativeResult.bytesWritten), path: args.path }),
+      };
+    }
+    // Native unavailable — fall through to TS path.
+
     const parentError = await this.ensureParentDirectory(safePath);
     if (parentError !== undefined) {
       return { isError: true, output: parentError };

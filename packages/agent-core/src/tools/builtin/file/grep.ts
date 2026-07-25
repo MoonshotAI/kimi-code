@@ -205,7 +205,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     searchPaths: string[],
   ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
-      return { isError: true, output: 'Aborted before search started' };
+      return { isError: true, output: t('toolsV2.abort.beforeSearch') };
     }
 
     const pathClass = this.kaos.pathClass();

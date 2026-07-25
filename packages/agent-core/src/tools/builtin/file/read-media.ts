@@ -25,6 +25,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
+import { t } from '@moonshot-ai/kimi-i18n';
 import type {
   ContentPart,
   ModelCapability,
@@ -323,7 +324,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     safePath: string,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
-      return { isError: true, output: 'File path cannot be empty.' };
+      return { isError: true, output: t('toolsV2.readMedia.pathEmpty') };
     }
 
     try {
@@ -335,24 +336,20 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       if (fileType.kind === 'text') {
         return {
           isError: true,
-          output: `"${args.path}" is a text file. Use Read to read text files.`,
+          output: t('toolsV2.readMedia.isTextFile', { path: args.path }),
         };
       }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output:
-            `"${args.path}" is not a supported image or video file. ` +
-            'Use Read for text files, or Bash or an MCP tool for other binary formats.',
+          output: t('toolsV2.readMedia.notSupported', { path: args.path }),
         };
       }
 
       if (fileType.kind === 'image' && !this.capabilities.image_in) {
         return {
           isError: true,
-          output:
-            'The current model does not support image input. ' +
-            'Tell the user to use a model with image input capability.',
+          output: t('toolsV2.readMedia.noImageSupport'),
         };
       }
       // Formats outside the provider-accepted set (AVIF, HEIC, BMP, TIFF,
@@ -376,29 +373,25 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
         return {
           isError: true,
-          output:
-            'The current model does not support video input. ' +
-            'Tell the user to use a model with video input capability.',
+          output: t('toolsV2.readMedia.noVideoSupport'),
         };
       }
 
       const stat = await this.kaos.stat(safePath);
       if (stat.stSize === 0) {
-        return { isError: true, output: `"${args.path}" is empty.` };
+        return { isError: true, output: t('toolsV2.readMedia.fileEmpty', { path: args.path }) };
       }
       if (stat.stSize > MAX_MEDIA_BYTES) {
         return {
           isError: true,
-          output:
-            `"${args.path}" is ${String(stat.stSize)} bytes, which exceeds the ` +
-            `maximum ${String(MAX_MEDIA_MEGABYTES)}MB for media files.`,
+          output: t('toolsV2.readMedia.fileTooLarge', { path: args.path, size: String(stat.stSize), max: String(MAX_MEDIA_MEGABYTES) }),
         };
       }
 
       if (fileType.kind === 'video' && (args.region !== undefined || args.full_resolution === true)) {
         return {
           isError: true,
-          output: 'region and full_resolution apply only to image files.',
+          output: t('toolsV2.readMedia.regionOnlyForImages'),
         };
       }
 
@@ -465,7 +458,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
-            return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
+            return { isError: true, output: t('toolsV2.readMedia.cannotReadRegion', { path: args.path, error: outcome.error }) };
           }
           const base64 = Buffer.from(outcome.data).toString('base64');
           mediaPart = {

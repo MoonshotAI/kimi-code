@@ -50,6 +50,9 @@ import { renderPrompt } from '#/_base/utils/render-prompt';
 import { t } from '@moonshot-ai/kimi-i18n';
 import readDescriptionTemplate from './read.md?raw';
 
+// Native fast-path — bypasses IHostFileSystem async iteration when available.
+import { tryNativeRead } from '#/_base/native-tools';
+
 export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
@@ -310,6 +313,27 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       const lineOffset = args.line_offset ?? 1;
       const requestedLines = args.n_lines ?? MAX_LINES;
       const effectiveLimit = Math.min(requestedLines, MAX_LINES);
+
+      // ── Native fast-path ─────────────────────────────────────────────
+      // nativeRead handles line counting, offset, limits, CRLF, and
+      // truncation in Rust — ~5x faster than the async line iterator.
+      const nativeResult = await tryNativeRead(safePath, {
+        lineOffset: lineOffset,
+        nLines: effectiveLimit,
+      });
+      if (nativeResult && !nativeResult.error) {
+        // Split the native output: content before <system> is output,
+        // the <system>...</system> block is the note.
+        const systemIdx = nativeResult.content.lastIndexOf('\n<system>');
+        if (systemIdx >= 0) {
+          const output = nativeResult.content.slice(0, systemIdx);
+          const note = nativeResult.content.slice(systemIdx + 1); // includes <system>...</system>
+          return { output, note };
+        }
+        // If no <system> tag (e.g. empty file), use content as-is
+        return { output: nativeResult.content };
+      }
+      // Native unavailable or returned error — fall through to TS path.
 
       if (lineOffset < 0) {
         return await this.readTail(

@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { z } from 'zod';
 
+import { t } from '../../i18n';
 import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionIndexEntry } from '#/session/store/session-index';
 import {
@@ -196,7 +197,7 @@ export class SessionStore {
   async rename(id: string, title: string): Promise<void> {
     const normalized = title.trim();
     if (normalized.length === 0) {
-      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
+      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, t('errors.sessionTitleEmpty'));
     }
     const entry = await this.findExistingSessionEntry(id);
     const statePath = join(entry.sessionDir, 'state.json');
@@ -957,7 +958,7 @@ function normalizeForkTitle(title: string | undefined, fallback: unknown): strin
   if (title !== undefined) {
     const normalized = title.trim();
     if (normalized.length === 0) {
-      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
+      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, t('errors.sessionTitleEmpty'));
     }
     return normalized;
   }

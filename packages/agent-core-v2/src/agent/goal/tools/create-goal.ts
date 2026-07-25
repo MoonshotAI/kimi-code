@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -50,7 +51,7 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
     const goalAtResolution = this.goal.getGoal().goal;
     return {
-      description: 'Creating a goal',
+      description: t('toolsV2.goal.creating'),
       display: this.resolveGoalStartDisplay(args),
       approvalRule: this.name,
       execute: async ({ turnId }) => {
@@ -59,7 +60,7 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
           currentGoal?.goalId !== goalAtResolution?.goalId &&
           (currentGoal === null || !this.goal.isGoalToolTarget(turnId, currentGoal.goalId))
         ) {
-          return { output: 'Goal not created: the current goal changed.' };
+          return { output: t('toolsV2.goal.notCreatedStale') };
         }
         // Reject missing or placeholder completion criteria at the tool boundary
         // so the model is forced to provide a concrete, verifiable check.

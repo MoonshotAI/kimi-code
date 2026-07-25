@@ -1,2 +1,5 @@
+pub mod anthropic;
+pub mod multi;
+pub mod openai;
 pub mod proxy;
-pub mod r#trait;
+pub mod wire;

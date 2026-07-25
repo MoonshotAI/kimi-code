@@ -38,6 +38,10 @@ export type {
   FetchCatalogOptions,
 } from '#/catalog';
 
+// Locale — forwarded from agent-core so hosts never import @moonshot-ai/agent-core/i18n directly.
+export { setLocale, getLocale } from '@moonshot-ai/agent-core/i18n';
+export type { Locale } from '@moonshot-ai/agent-core/i18n';
+
 export {
   ErrorCodes,
   KimiError,
@@ -69,6 +73,9 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // config without spinning up a full KimiCore.
 export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
 export { limitAgentReplayByTurns } from '@moonshot-ai/agent-core';
+
+// Rust engine override — hosts wire the Rust agent engine via this hook.
+export type { RunTurnOverride } from '@moonshot-ai/agent-core';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.

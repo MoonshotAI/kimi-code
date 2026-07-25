@@ -71,6 +71,8 @@
       "outputFormat": "Output format for prompt mode. Defaults to text.",
       "skillsDir": "Load skills from this directory instead of auto-discovered user and project directories. Can be repeated.",
       "addDir": "Add an additional workspace directory for this session. Can be repeated.",
+      "agent": "Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.",
+      "agentFile": "Load an agent definition from a Markdown file and select it (v2 engine only).",
       "yes": "Automatically confirm prompts.",
       "autoApprove": "Automatically approve all actions.",
       "exportOutput": "Output ZIP path.",

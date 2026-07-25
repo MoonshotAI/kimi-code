@@ -9,5 +9,8 @@
       "types": "./rust-loop.ts",
       "default": "./rust-loop.ts"
     }
+  },
+  "devDependencies": {
+    "@moonshot-ai/agent-core": "workspace:*"
   }
 }

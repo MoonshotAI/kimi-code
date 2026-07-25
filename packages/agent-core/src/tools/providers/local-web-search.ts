@@ -7,6 +7,7 @@
  */
 
 import type { WebSearchProvider, WebSearchResult } from '../builtin';
+import { tryNativeWebSearch } from '../builtin/native-tools';
 
 const DDG_HTML_URL = 'https://html.duckduckgo.com/html/';
 const DDG_USER_AGENT =
@@ -47,6 +48,22 @@ export class LocalWebSearchProvider implements WebSearchProvider {
     options?: { toolCallId?: string },
   ): Promise<WebSearchResult[]> {
     void options;
+
+    // Try Rust native path first — faster, no libuv involvement.
+    const nativeResult = await tryNativeWebSearch(query);
+    if (nativeResult) {
+      if (nativeResult.error) {
+        throw new Error(nativeResult.error);
+      }
+      return nativeResult.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet,
+        ...(r.siteName !== undefined ? { siteName: r.siteName } : {}),
+      }));
+    }
+    // Native unavailable — fall through to TS implementation.
+
     const parseHTML = await this.ensureParser();
 
     const response = await fetch(DDG_HTML_URL, {

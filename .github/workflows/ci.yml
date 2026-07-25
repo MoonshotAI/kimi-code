@@ -102,6 +102,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run sherif
+      - name: Check locale JSON freshness
+        run: |
+          node scripts/generate-locale-json.cjs 2>/dev/null || true
+          if ! git diff --exit-code -- '*.json' -- ':(exclude)node_modules/'; then
+            echo "::error::Locale JSON files are out of date. Run 'node scripts/generate-locale-json.cjs' and commit the changes."
+            exit 1
+          fi
+      - name: Check locale placeholder validity
+        run: node scripts/check-locale-placeholders.cjs
+      - name: Scan for hardcoded locale strings
+        run: |
+          # Report hardcoded strings but don't fail the build (informational for now)
+          node scripts/scan-hardcoded-v2.mjs || true
 
   typecheck:
     runs-on: ubuntu-latest

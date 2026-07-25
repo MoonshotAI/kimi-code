@@ -16,6 +16,7 @@ import { PlanModeGuardDenyPermissionPolicy } from './plan-mode-guard-deny';
 import { PlanModeToolApprovePermissionPolicy } from './plan-mode-tool-approve';
 import { PreToolCallHookPermissionPolicy } from './pre-tool-call-hook';
 import { SessionApprovalHistoryPermissionPolicy } from './session-approval-history';
+import { SwarmModeAgentDenyPermissionPolicy } from './swarm-mode-agent-deny';
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from './swarm-mode-agent-swarm-approve';
 import {
   UserConfiguredAllowPermissionPolicy,
@@ -35,6 +36,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new AutoModeAskUserQuestionDenyPermissionPolicy(agent),
     // plan mode: Write/Edit outside the plan file, or TaskStop → deny.
     new PlanModeGuardDenyPermissionPolicy(agent),
+    // swarm mode: Agent tool is not available — all subagent work must use AgentSwarm.
+    new SwarmModeAgentDenyPermissionPolicy(agent),
     // User-configured deny rule matches → deny.
     new UserConfiguredDenyPermissionPolicy(agent),
     // auto mode → approve (any auto-mode block must be a deny rule above this).

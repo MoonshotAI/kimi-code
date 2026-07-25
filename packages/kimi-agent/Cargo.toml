@@ -2,15 +2,35 @@
 name = "kimi-agent"
 version = "0.1.0"
 edition = "2024"
-description = "Kimi Agent engine (Rust) — stateless turn loop with stdio JSON-RPC bridge"
+description = "Kimi Agent engine (Rust) — stateless turn loop, napi-rs native addon"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "kimi_agent"
 
 [[bin]]
-name = "kimi-agent"
+name = "kimi-agent-cli"
 path = "src/main.rs"
 
 [dependencies]
+napi = { version = "2", features = ["async", "tokio_rt", "napi8", "serde"] }
+napi-derive = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 fastrand = "2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "io-std", "process", "time"] }
+futures-util = "0.3"
+
+[build-dependencies]
+napi-build = "2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

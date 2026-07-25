@@ -8,6 +8,7 @@ import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
+import { WorkflowPanelComponent } from './components/chrome/workflow-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_TUI_CONFIG } from './config';
@@ -32,6 +33,8 @@ export interface TUIState {
   activityContainer: Container;
   todoPanelContainer: Container;
   todoPanel: TodoPanelComponent;
+  workflowPanelContainer: Container;
+  workflowPanel: WorkflowPanelComponent;
   queueContainer: Container;
   btwPanelContainer: Container;
   editorContainer: Container;
@@ -73,6 +76,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const todoPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const todoPanel = new TodoPanelComponent();
+  const workflowPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const workflowPanel = new WorkflowPanelComponent();
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
@@ -90,6 +95,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     activityContainer,
     todoPanelContainer,
     todoPanel,
+    workflowPanelContainer,
+    workflowPanel,
     queueContainer,
     btwPanelContainer,
     editorContainer,

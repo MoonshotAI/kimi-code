@@ -75,6 +75,69 @@ describe('i18n fallback (KIMI_I18N_FORCE_JS=1)', () => {
     });
   });
 
+  describe('toolsV2 interpolation', () => {
+    it('interpolates planMode keys with params', () => {
+      expect(t('toolsV2.planMode.exitFailedDetail', { message: 'timeout' })).toContain('timeout');
+      expect(t('toolsV2.planMode.noPlanFileDetail', { path: '/tmp/plan.md' })).toContain('/tmp/plan.md');
+      expect(t('toolsV2.planMode.planSaved', { path: '/tmp/plan.md' })).toContain('/tmp/plan.md');
+    });
+
+    it('interpolates task keys with params', () => {
+      expect(t('toolsV2.task.notFound', { taskId: 'bash-abc123' })).toContain('bash-abc123');
+      expect(t('toolsV2.task.stopFailed', { taskId: 'bash-abc123' })).toContain('bash-abc123');
+      expect(t('toolsV2.task.outputTruncatedHint', { bytes: '1024' })).toContain('1024');
+    });
+
+    it('interpolates agent keys with params', () => {
+      expect(t('toolsV2.agent.resumeHint', { agentId: 'agent-xyz' })).toContain('agent-xyz');
+    });
+
+    it('interpolates readMedia keys with params', () => {
+      expect(t('toolsV2.readMedia.fileTooLarge', { path: 'big.jpg', size: '999999', max: '50' })).toContain('big.jpg');
+      expect(t('toolsV2.readMedia.fileTooLarge', { path: 'big.jpg', size: '999999', max: '50' })).toContain('50');
+    });
+
+    it('interpolates abort keys (no params)', () => {
+      expect(t('toolsV2.abort.abortedByUser')).toBe('Aborted by the user');
+    });
+
+    it('interpolates selectTools keys with params', () => {
+      expect(t('toolsV2.selectTools.loaded', { tools: 'Read, Write' })).toContain('Read, Write');
+    });
+
+    it('interpolates goal keys (no params)', () => {
+      expect(t('toolsV2.goal.creating')).toBe('Creating a goal');
+    });
+  });
+
+  describe('no single-brace placeholders', () => {
+    it('all toolsV2 value strings use {{param}} not {param}', () => {
+      const raw = (en as unknown as Record<string, unknown>).toolsV2 as Record<string, unknown>;
+      const visited = new Set<string>();
+
+      function walk(obj: unknown, path: string): void {
+        if (obj === null || typeof obj !== 'object') return;
+        for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+          const fullKey = path ? `${path}.${key}` : key;
+          if (typeof value === 'string') {
+            visited.add(fullKey);
+            const singleBrace = value.match(/(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})/);
+            if (singleBrace) {
+              const prefix = value.substring(0, Math.max(0, singleBrace.index! - 1));
+              if (!prefix.endsWith('\\')) {
+                expect.unreachable(`toolsV2.${fullKey} has single-brace placeholder "${singleBrace[0]}" in "${value}"`);
+              }
+            }
+          } else {
+            walk(value, fullKey);
+          }
+        }
+      }
+
+      walk(en, '');
+    });
+  });
+
   describe('locale key consistency', () => {
     type MessageValue = string | { [key: string]: MessageValue };
 

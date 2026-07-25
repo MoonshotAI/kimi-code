@@ -33,6 +33,10 @@
     "version": "changeset version",
     "version:release": "changeset version",
     "publish": "pnpm run typecheck && pnpm run lint && pnpm run sherif && pnpm run test && pnpm run build && pnpm run lint:pkg && changeset publish",
+    "bench:prompt": "tsx scripts/prompt-optimizer/src/cli.ts bench",
+    "bench:prompt:compare": "tsx scripts/prompt-optimizer/src/cli.ts bench --compare",
+    "bench:prompt:prune": "tsx scripts/prompt-optimizer/src/cli.ts prune",
+    "bench:prompt:probe": "tsx scripts/prompt-optimizer/src/cli.ts probe",
     "prepare": "simple-git-hooks"
   },
   "devDependencies": {

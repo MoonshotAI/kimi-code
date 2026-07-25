@@ -54,6 +54,7 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { tryNativeLlmStream } from './native-stream';
 
 // Inbound: scan the known reasoning field names in priority order; first
 // string value wins. Outbound: echo the dialect the endpoint actually spoke
@@ -682,6 +683,38 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     }
 
     try {
+      // ── Native stream fast-path ──────────────────────────────────────
+      // Attempt the Rust native SSE pipeline before falling back to the SDK.
+      if (this._stream && this._apiKey !== undefined) {
+        const nativeExtraHeaders: Array<{ key: string; value: string }> = [];
+        if (this._defaultHeaders) {
+          for (const [k, v] of Object.entries(this._defaultHeaders)) {
+            nativeExtraHeaders.push({ key: k, value: v });
+          }
+        }
+        try {
+          options?.onRequestSent?.();
+          const nativeResult = await tryNativeLlmStream({
+            provider: 'openai-legacy',
+            url: `${this._baseUrl ?? 'https://api.openai.com/v1'}/chat/completions`,
+            apiKey: this._apiKey,
+            model: this._model,
+            requestBody: JSON.stringify(createParams),
+            timeoutMs: 120_000,
+            extraHeaders: nativeExtraHeaders,
+          });
+          if (nativeResult !== undefined) {
+            if (nativeResult.traceId && options?.onTraceId) {
+              options.onTraceId(nativeResult.traceId);
+            }
+            return nativeResult;
+          }
+        } catch {
+          // Native stream failed — fall through to SDK.
+        }
+      }
+      // ── End native fast-path ────────────────────────────────────────
+
       const client = this._createClient(options?.auth);
       options?.onRequestSent?.();
       const response = (await client.chat.completions.create(

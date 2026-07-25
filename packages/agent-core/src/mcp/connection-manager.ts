@@ -483,9 +483,11 @@ export class McpConnectionManager {
   private async closeRuntimeClient(client: RuntimeMcpClient): Promise<void> {
     try {
       await client.close();
-    } catch {
+    } catch (err) {
       // Suppress close errors — the server is going away regardless and we
-      // don't want them masking the original startup failure.
+      // don't want them masking the original startup failure. Log at debug
+      // level for diagnostics without polluting normal output.
+      this.log.debug('mcp client close error suppressed', { error: err });
     }
   }
 
@@ -506,8 +508,10 @@ export class McpConnectionManager {
     for (const listener of this.listeners) {
       try {
         listener(view);
-      } catch {
-        // Listener faults must not break the connection manager.
+      } catch (err) {
+        // Listener faults must not break the connection manager, but log them
+        // so external plugin authors can diagnose issues.
+        this.log.warn('mcp listener fault suppressed', { error: err });
       }
     }
   }

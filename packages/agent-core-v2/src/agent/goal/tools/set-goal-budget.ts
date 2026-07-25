@@ -6,6 +6,8 @@
  * gate.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -55,13 +57,13 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       execute: async ({ turnId }) => {
         const currentGoal = this.goal.getGoal().goal;
         if (currentGoal === null) {
-          return { output: 'Goal budget not set: no current goal.' };
+          return { output: t('toolsV2.goal.budgetNotSet') };
         }
         if (
           currentGoal.goalId !== goalAtResolution?.goalId &&
           !this.goal.isGoalToolTarget(turnId, currentGoal.goalId)
         ) {
-          return { output: 'Goal budget not set: the current goal changed.' };
+          return { output: t('toolsV2.goal.budgetStale') };
         }
         if (budget === null) {
           return {

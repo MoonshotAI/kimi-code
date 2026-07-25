@@ -57,6 +57,7 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { tryNativeLlmStream } from './native-stream';
 
 /**
  * Normalize an Anthropic `stop_reason` string to the unified
@@ -1086,6 +1087,33 @@ export class AnthropicChatProvider implements ChatProvider {
     const finalRequestOptions = Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
     const client = this._createClient(options?.auth);
     options?.onRequestSent?.();
+
+    // ── Native stream fast-path ────────────────────────────────────────
+    // Attempt the Rust native SSE pipeline before falling back to the SDK.
+    if (this._stream && this._apiKey !== undefined) {
+      const nativeHeaders: Array<{ key: string; value: string }> = [];
+      for (const [k, v] of Object.entries(extraHeaders)) {
+        nativeHeaders.push({ key: k, value: v });
+      }
+      try {
+        options?.onRequestSent?.();
+        const nativeResult = await tryNativeLlmStream({
+          provider: 'anthropic',
+          url: `${this._baseUrl ?? 'https://api.anthropic.com'}/v1/messages`,
+          apiKey: this._apiKey,
+          model: this._model,
+          requestBody: JSON.stringify({ ...createParams, stream: true }),
+          timeoutMs: 120_000,
+          extraHeaders: nativeHeaders,
+        });
+        if (nativeResult !== undefined) {
+          return nativeResult;
+        }
+      } catch {
+        // Native stream failed — fall through to SDK.
+      }
+    }
+    // ── End native fast-path ──────────────────────────────────────────
 
     if (this._stream) {
       // Use the raw Messages stream instead of the SDK MessageStream helper.

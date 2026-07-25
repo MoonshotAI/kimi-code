@@ -1039,3 +1039,74 @@ export async function tryNativeGithubRequest(
     options?.accept ?? null,
   );
 }
+
+// ============================================================================
+// FetchUrl — HTTP fetch with SSRF protection and HTML extraction
+// ============================================================================
+
+export interface NativeFetchUrlResult {
+  readonly content: string;
+  readonly kind: 'passthrough' | 'extracted';
+  readonly status: number;
+  readonly error?: string;
+}
+
+export interface NativeFetchUrlOptions {
+  userAgent?: string;
+  maxBytes?: number;
+  allowPrivate?: boolean;
+  timeoutMs?: number;
+}
+
+/**
+ * Fetch a URL via the Rust native HTTP client with SSRF protection and
+ * HTML content extraction. Returns undefined when the native module is
+ * unavailable, letting callers fall back to the TS LocalFetchURLProvider.
+ */
+export async function tryNativeFetchUrl(
+  url: string,
+  options?: NativeFetchUrlOptions,
+): Promise<NativeFetchUrlResult | undefined> {
+  return callNative<NativeFetchUrlResult>(
+    'nativeFetchUrl',
+    url,
+    options ?? {},
+  );
+}
+
+// ============================================================================
+// WebSearch — DuckDuckGo HTML scraping
+// ============================================================================
+
+export interface NativeWebSearchEntry {
+  readonly title: string;
+  readonly url: string;
+  readonly snippet: string;
+  readonly siteName?: string;
+}
+
+export interface NativeWebSearchResult {
+  readonly results: NativeWebSearchEntry[];
+  readonly error?: string;
+}
+
+export interface NativeWebSearchOptions {
+  timeoutMs?: number;
+  maxResults?: number;
+}
+
+/**
+ * Search DuckDuckGo via the Rust native HTTP + HTML scraping pipeline.
+ * Returns undefined when the native module is unavailable, letting callers
+ * fall back to the TS LocalWebSearchProvider.
+ */
+export async function tryNativeWebSearch(
+  query: string,
+  options?: NativeWebSearchOptions,
+): Promise<NativeWebSearchResult | undefined> {
+  return callNative<NativeWebSearchResult>(
+    'nativeWebSearch',
+    query,
+    options ?? {},
+  );
+}

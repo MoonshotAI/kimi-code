@@ -1,15 +1,16 @@
 export const meta = {
   name: 'deep-research',
-  description: 'Deep research orchestrator — runs parallel web searches, reads the strongest sources, cross-checks each fact with an adversarial jury, and writes a cited report.',
-  whenToUse: 'Use when the user wants a thorough, multi-source, fact-checked answer to a research question.',
-  phases: ['Plan', 'Search', 'Extract', 'Group', 'Crosscheck', 'Report'],
+  description: 'Deep research orchestrator — runs parallel web searches via search(), reads actual pages via fetch(), cross-checks each fact with an adversarial jury, and writes a cited report.',
+  whenToUse: 'Use when the user wants a thorough, multi-source, fact-checked answer to a research question backed by real web sources.',
+  phases: ['Plan', 'Search', 'Read', 'Group', 'Crosscheck', 'Report'],
 };
 
 // ── Tunables ──────────────────────────────────────────────────────
 const JURY_SIZE = 3;
 const REJECT_QUORUM = 2;
-const SOURCE_BUDGET = 15;
+const SOURCE_BUDGET = 12;
 const FACT_CAP = 25;
+const MAX_FETCH_SIZE = 50_000;
 
 // ── Structured output shapes ──────────────────────────────────────
 const PLAN_SHAPE = {
@@ -27,28 +28,7 @@ const PLAN_SHAPE = {
   required: ['question', 'lines'],
 };
 
-const HITS_SHAPE = {
-  type: 'object',
-  properties: {
-    results: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          url: { type: 'string' },
-          title: { type: 'string' },
-          fit: { type: 'string', enum: ['high', 'medium', 'low'] },
-        },
-        required: ['url', 'title', 'fit'],
-      },
-      minItems: 4,
-      maxItems: 6,
-    },
-  },
-  required: ['results'],
-};
-
-const READ_SHAPE = {
+const EXTRACT_SHAPE = {
   type: 'object',
   properties: {
     facts: {
@@ -62,7 +42,7 @@ const READ_SHAPE = {
         },
         required: ['statement', 'excerpt', 'weight'],
       },
-      minItems: 2,
+      minItems: 1,
       maxItems: 5,
     },
     source_tier: { type: 'string', enum: ['primary', 'secondary', 'weak'] },
@@ -76,7 +56,6 @@ const RULING_SHAPE = {
     reject: { type: 'boolean', description: 'True if the fact should be rejected.' },
     reason: { type: 'string', description: 'Why you reject or uphold the fact.' },
     certainty: { type: 'string', enum: ['high', 'medium', 'low'] },
-    counter: { type: 'string', description: 'A counter-argument if rejecting.' },
   },
   required: ['reject', 'reason', 'certainty'],
 };
@@ -118,12 +97,7 @@ const REPORT_SHAPE = {
       },
     },
     limitations: { type: 'string', description: 'What this research could not cover.' },
-    followups: {
-      type: 'array',
-      items: { type: 'string' },
-      minItems: 2,
-      maxItems: 4,
-    },
+    followups: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 4 },
   },
   required: ['answer', 'findings', 'limitations', 'followups'],
 };
@@ -133,12 +107,25 @@ const REPORT_SHAPE = {
 function canonURL(url) {
   try {
     const u = new URL(url);
-    let host = u.hostname.replace(/^www\./, '');
-    let path = u.pathname.replace(/\/$/, '');
-    return host + path;
+    return u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/$/, '');
   } catch {
     return url;
   }
+}
+
+function extractText(html) {
+  // Crude HTML-to-text: strip tags, decode entities, collapse whitespace.
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // ── Main ──────────────────────────────────────────────────────────
@@ -149,10 +136,10 @@ if (!question) {
   return { error: 'No question provided. Pass a research question as args.' };
 }
 
-// Phase 1: Plan
+// Phase 1: Plan — use LLM to break the question into search lines.
 phase('Plan');
 const plan = await agent(
-  `You are a research planner. Break this question into 3-6 complementary search lines that cover different facets.\n\nQuestion: ${question}\n\nReturn JSON with "question" (rephrased) and "lines" (array of 3-6 search queries).`,
+  `You are a research planner. Break this question into 3-6 complementary search queries that cover different facets.\n\nQuestion: ${question}\n\nReturn JSON with "question" (rephrased) and "lines" (array of 3-6 search queries).`,
   { schema: PLAN_SHAPE, label: 'planner', phase: 'Plan' }
 );
 
@@ -162,74 +149,84 @@ if (!plan || !plan.lines || plan.lines.length === 0) {
 
 log(`Plan: ${plan.lines.length} search lines`);
 
-// Phase 2-3: Search → Extract (streamed via pipeline)
+// Phase 2: Search — use native search() for all lines in parallel.
 phase('Search');
 const seenUrls = new Set();
-let sourcesRead = 0;
-const allFacts = [];
+const allTexts = [];
 
-const searchReadResults = await pipeline(
-  plan.lines,
-  // Stage 1: Search
-  async (line) => {
-    const hits = await agent(
-      `Search the web for: "${line}"\n\nReturn 4-6 results with url, title, and fit (high/medium/low). Choose diverse, authoritative sources.`,
-      { schema: HITS_SHAPE, label: 'search:' + line.slice(0, 30), phase: 'Search' }
-    );
-    return hits || { results: [] };
-  },
-  // Stage 2: Read
-  async (hits) => {
-    const fresh = (hits.results || []).filter((h) => {
-      const canon = canonURL(h.url);
+const searchResults = await parallel(
+  plan.lines.map((line) => async () => {
+    const results = await search(line);
+    const fresh = results.filter((r) => {
+      const canon = canonURL(r.url);
       if (seenUrls.has(canon)) return false;
       seenUrls.add(canon);
       return true;
-    });
-
-    // Enforce source budget.
-    let toRead = fresh;
-    if (sourcesRead + fresh.length > SOURCE_BUDGET) {
-      const remaining = SOURCE_BUDGET - sourcesRead;
-      toRead = fresh
-        .sort((a, b) => (a.fit === 'high' ? -1 : 1) - (b.fit === 'high' ? -1 : 1))
-        .slice(0, Math.max(0, remaining));
-    }
-
-    sourcesRead += toRead.length;
-
-    const reads = await parallel(
-      toRead.map((source) => () =>
-        agent(
-          `Read this page and extract 2-5 falsifiable facts.\n\nURL: ${source.url}\nTitle: ${source.title}\n\nFor each fact, provide a statement, a supporting excerpt, and a weight (high/medium/low). Also rate the source tier (primary/secondary/weak).`,
-          { schema: READ_SHAPE, label: 'read:' + canonURL(source.url).slice(0, 20), phase: 'Extract' }
-        ).catch(() => ({ facts: [], source_tier: 'weak' }))
-      )
-    );
-
-    for (const read of reads) {
-      if (read && read.facts) {
-        for (const fact of read.facts) {
-          allFacts.push(fact);
-        }
-      }
-    }
-
-    return reads;
-  }
+    }).slice(0, 5); // top 5 per line
+    return { line, results: fresh };
+  })
 );
 
-log(`Extracted ${allFacts.length} facts from ${sourcesRead} sources`);
+// Collect unique sources, enforce budget.
+let candidates = [];
+for (const sr of searchResults) {
+  for (const r of sr.results) {
+    candidates.push(r);
+  }
+}
+
+if (candidates.length > SOURCE_BUDGET) {
+  candidates = candidates.slice(0, SOURCE_BUDGET);
+}
+
+log(`Search returned ${candidates.length} unique sources`);
+
+if (candidates.length === 0) {
+  return { question, error: 'No search results found.', stats: { lines: plan.lines.length, sourcesRead: 0, factsFound: 0 } };
+}
+
+// Phase 3: Read — fetch actual pages and extract facts.
+phase('Read');
+const allFacts = [];
+
+await parallel(
+  candidates.map((source) => async () => {
+    try {
+      const { ok, status, body } = await fetch(source.url);
+      if (!ok || status !== 200 || body.length === 0) {
+        log(`Fetch failed: ${source.url} (${status})`);
+        return;
+      }
+      const text = extractText(body).slice(0, MAX_FETCH_SIZE);
+      if (text.length < 50) return;
+
+      const extraction = await agent(
+        `Extract 1-5 falsifiable facts from this page content.\n\nURL: ${source.url}\nTitle: ${source.title}\n\nContent:\n${text}\n\nFor each fact, provide a statement, a supporting excerpt, and a weight (high/medium/low). Also rate the source tier (primary/secondary/weak).`,
+        { schema: EXTRACT_SHAPE, label: 'read:' + canonURL(source.url).slice(0, 20), phase: 'Read' }
+      ).catch(() => null);
+
+      if (extraction && extraction.facts) {
+        for (const fact of extraction.facts) {
+          allFacts.push({ ...fact, url: source.url, title: source.title });
+        }
+      }
+    } catch (e) {
+      log(`Error reading ${source.url}: ${e}`);
+    }
+  })
+);
+
+log(`Extracted ${allFacts.length} facts from ${candidates.length} sources`);
 
 if (allFacts.length === 0) {
   return {
     question,
     error: 'No facts extracted from any source.',
-    stats: { lines: plan.lines.length, sourcesRead, factsFound: 0 },
+    stats: { lines: plan.lines.length, sourcesRead: candidates.length, factsFound: 0 },
   };
 }
 
-// Phase 4: Group
+// Phase 4: Group — cluster similar facts.
 phase('Group');
 const topFacts = allFacts.slice(0, FACT_CAP);
 const grouped = await agent(
@@ -240,19 +237,19 @@ const grouped = await agent(
 let groups = (grouped && grouped.groups) || topFacts.map((f, i) => ({
   canonical: f.statement,
   members: [String(i)],
-  urls: [],
+  urls: [f.url],
 }));
 
 log(`Grouped into ${groups.length} clusters`);
 
-// Phase 5: Crosscheck (adversarial jury)
+// Phase 5: Crosscheck (adversarial jury).
 phase('Crosscheck');
 const checked = await parallel(
-  groups.map((fact, fi) => () =>
+  groups.map((fact) => () =>
     parallel(
       Array(JURY_SIZE).fill(0).map((_, n) =>
         agent(
-          `You are juror ${n + 1} of ${JURY_SIZE}. Your job is to TRY TO REJECT this fact.\n\nFact: ${fact.canonical}\n\nExamine it critically. If you can find a reason to reject it (unsupported, contradicted, vague, misleading), do so. Only uphold it if the evidence is solid.\n\nReturn your ruling: reject (true/false), reason, certainty, and a counter-argument if rejecting.`,
+          `You are juror ${n + 1} of ${JURY_SIZE}. Your job is to TRY TO REJECT this fact.\n\nFact: ${fact.canonical}\n\nExamine it critically. If you can find a reason to reject it (unsupported, contradicted, vague, misleading), do so. Only uphold it if the evidence is solid.\n\nReturn your ruling: reject (true/false), reason, certainty.`,
           { schema: RULING_SHAPE, label: `j${n}:${fact.canonical.slice(0, 20)}`, phase: 'Crosscheck' }
         ).catch(() => null)
       )
@@ -277,7 +274,7 @@ for (const { fact, rulings } of checked) {
 
 log(`Crosscheck: ${upheld.length} upheld, ${dropped.length} dropped`);
 
-// Phase 6: Report
+// Phase 6: Report.
 phase('Report');
 const report = await agent(
   `Write a research report based on these upheld facts.\n\nQuestion: ${question}\n\nUpheld facts:\n${JSON.stringify(upheld, null, 2)}\n\nWrite a 3-5 sentence direct answer, then list findings with evidence, sources, and certainty. Note limitations and suggest 2-4 follow-up questions.`,
@@ -293,14 +290,7 @@ if (!report) {
     followups: [],
     rejected: dropped,
     sources: Array.from(seenUrls),
-    stats: {
-      lines: plan.lines.length,
-      sourcesRead,
-      factsFound: allFacts.length,
-      factsChecked: groups.length,
-      upheld: upheld.length,
-      dropped: dropped.length,
-    },
+    stats: { lines: plan.lines.length, sourcesRead: candidates.length, factsFound: allFacts.length, factsChecked: groups.length, upheld: upheld.length, dropped: dropped.length },
   };
 }
 
@@ -309,12 +299,5 @@ return {
   ...report,
   rejected: dropped,
   sources: Array.from(seenUrls),
-  stats: {
-    lines: plan.lines.length,
-    sourcesRead,
-    factsFound: allFacts.length,
-    factsChecked: groups.length,
-    upheld: upheld.length,
-    dropped: dropped.length,
-  },
+  stats: { lines: plan.lines.length, sourcesRead: candidates.length, factsFound: allFacts.length, factsChecked: groups.length, upheld: upheld.length, dropped: dropped.length },
 };

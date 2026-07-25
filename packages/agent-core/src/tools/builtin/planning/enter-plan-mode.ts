@@ -8,6 +8,7 @@
 
 import type { Agent } from '#/agent';
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
@@ -35,15 +36,15 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
         if (this.agent.planMode.isActive) {
           return {
             isError: true,
-            output: 'Plan mode is already active. Use ExitPlanMode when the plan is ready.',
+            output: t('toolsV2.planMode.alreadyActive'),
           };
         }
 
         try {
           await this.agent.planMode.enter();
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to enter plan mode.';
-          return { isError: true, output: `Failed to enter plan mode: ${message}` };
+          const message = error instanceof Error ? error.message : t('toolsV2.planMode.enterFailed');
+          return { isError: true, output: t('toolsV2.planMode.enterFailedDetail', { message }) };
         }
 
         this.agent.telemetry.track('plan_enter_resolved', { outcome: 'auto_approved' });

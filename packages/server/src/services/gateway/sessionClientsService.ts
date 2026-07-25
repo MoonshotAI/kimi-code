@@ -9,6 +9,8 @@ export class SessionClientsService extends Disposable implements ISessionClients
   readonly _serviceBrand: undefined;
 
   private readonly _bySession = new Map<string, Set<WsConnection>>();
+  /** Reverse index: connectionId → subscribed sessionIds. Enables O(m) cleanup on disconnect. */
+  private readonly _byConnection = new Map<string, Set<string>>();
 
   constructor(@ILogService private readonly _logger: ILogService) {
     super();
@@ -22,6 +24,13 @@ export class SessionClientsService extends Disposable implements ISessionClients
       this._bySession.set(sessionId, set);
     }
     set.add(connection);
+    // Maintain reverse index for fast O(m) disconnect cleanup.
+    let connSessions = this._byConnection.get(connection.id);
+    if (!connSessions) {
+      connSessions = new Set();
+      this._byConnection.set(connection.id, connSessions);
+    }
+    connSessions.add(sessionId);
     this._logger.debug(
       {
         sessionId,
@@ -35,8 +44,13 @@ export class SessionClientsService extends Disposable implements ISessionClients
     const set = this._bySession.get(sessionId);
     if (!set) return;
     set.delete(connection);
-
     if (set.size === 0) this._bySession.delete(sessionId);
+    // Clean up reverse index
+    const connSessions = this._byConnection.get(connection.id);
+    if (connSessions) {
+      connSessions.delete(sessionId);
+      if (connSessions.size === 0) this._byConnection.delete(connection.id);
+    }
   }
 
   getConnections(sessionId: string): Iterable<WsConnection> {
@@ -53,12 +67,16 @@ export class SessionClientsService extends Disposable implements ISessionClients
   }
 
   forgetConnection(connection: WsConnection): void {
-
-    for (const [sid, set] of this._bySession) {
-      if (set.delete(connection) && set.size === 0) {
-        this._bySession.delete(sid);
+    const connSessions = this._byConnection.get(connection.id);
+    if (!connSessions) return;
+    for (const sid of connSessions) {
+      const set = this._bySession.get(sid);
+      if (set) {
+        set.delete(connection);
+        if (set.size === 0) this._bySession.delete(sid);
       }
     }
+    this._byConnection.delete(connection.id);
   }
 
   subscriberCount(sessionId: string): number {
@@ -68,6 +86,7 @@ export class SessionClientsService extends Disposable implements ISessionClients
   override dispose(): void {
     if (this._store.isDisposed) return;
     this._bySession.clear();
+    this._byConnection.clear();
     super.dispose();
   }
 }

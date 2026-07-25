@@ -84,6 +84,22 @@ export interface RunTurnInput {
     | ((usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>)
     | undefined;
   readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
+  /**
+   * Optional callback to replace an existing tool result message in the
+   * transcript by toolCallId. Used by the Rust engine's prediction
+   * fast-path: a prediction is emitted as tool.result first, then the
+   * background precise execution replaces it in-place.
+   *
+   * Returns true if a tool result was found and replaced, false otherwise.
+   * When undefined, the host does not support transcript replacement and
+   * the Rust engine should not enable the prediction fast-path.
+   */
+  readonly replaceToolResult?:
+    | ((
+        toolCallId: string,
+        result: { output: unknown; isError?: boolean | undefined; note?: string | undefined },
+      ) => boolean)
+    | undefined;
 }
 
 export async function runTurn(input: RunTurnInput): Promise<TurnResult> {

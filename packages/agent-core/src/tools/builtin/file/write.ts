@@ -7,6 +7,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { dirname } from 'pathe';
 import { z } from 'zod';
 
@@ -110,14 +111,16 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       // is not used here.
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
-        output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        output: mode === 'append'
+          ? t('toolsV2.writeAppended', { bytes: String(bytesWritten), path: args.path })
+          : t('toolsV2.writeWrote', { bytes: String(bytesWritten), path: args.path }),
       };
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {
         return {
           isError: true,
-          output: `Failed to write ${args.path}: parent directory does not exist.`,
+          output: t('toolsV2.writeFailedParentNotFound', { path: args.path }),
         };
       }
       return {
@@ -160,7 +163,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       return undefined;
     }
     if ((stat.stMode & S_IFMT) !== S_IFDIR) {
-      return `Parent path is not a directory: ${parent}.`;
+      return t('toolsV2.parentNotDirectory', { parent });
     }
     return undefined;
   }

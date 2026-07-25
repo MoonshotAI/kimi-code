@@ -314,7 +314,7 @@ describe('goal tools', () => {
 
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_outcome', signal });
 
-    expect(result.output).toBe('Goal not completed: the current goal changed.');
+    expect(result.output).toBe('Goal not updated: the current goal changed.');
     expect(result.stopTurn).toBeFalsy();
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
@@ -333,7 +333,7 @@ describe('goal tools', () => {
       signal,
     });
 
-    expect(result.output).toBe('Goal not completed: the current goal changed.');
+    expect(result.output).toBe('Goal not updated: the current goal changed.');
     expect(result.stopTurn).toBeFalsy();
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,

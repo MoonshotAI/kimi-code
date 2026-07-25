@@ -43,7 +43,7 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
+const userInterruptReason = () => t('toolsV2.abort.abortedByUser');
 const DANGEROUS_COMMAND_MARKER = '__dangerous__';
 
 export const BashInputSchema = z
@@ -492,8 +492,8 @@ export class BashTool implements BuiltinTool<BashInput> {
       result = builder.error(t('shell.killedByTimeout', { label: timeoutLabel }), {
         brief: t('shell.killedByTimeoutBrief', { label: timeoutLabel }),
       });
-    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (current?.status === 'killed' && current.stopReason === userInterruptReason()) {
+      result = builder.error(userInterruptReason(), { brief: userInterruptReason() });
     } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined

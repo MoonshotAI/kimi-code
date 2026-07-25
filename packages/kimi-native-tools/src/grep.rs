@@ -673,6 +673,15 @@ pub fn grep_search_structured(config: &GrepStructuredConfig) -> GrepStructuredRe
                 }
                 // Find first match only (mirrors TS re.exec(line)).
                 if let Some(m) = regex.find(line) {
+                    // Atomically claim a slot to prevent over-counting
+                    // when multiple threads find matches simultaneously.
+                    let prev = total_matches.fetch_add(1, Ordering::Relaxed);
+                    if prev >= max_total_matches {
+                        // Over the limit — undo the increment and stop.
+                        total_matches.fetch_sub(1, Ordering::Relaxed);
+                        truncated.store(true, Ordering::Relaxed);
+                        break;
+                    }
                     let before_start = i.saturating_sub(context_lines);
                     let before: Vec<String> = lines[before_start..i]
                         .iter()
@@ -690,7 +699,6 @@ pub fn grep_search_structured(config: &GrepStructuredConfig) -> GrepStructuredRe
                         before,
                         after,
                     });
-                    total_matches.fetch_add(1, Ordering::Relaxed);
                 }
             }
 

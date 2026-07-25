@@ -17,6 +17,8 @@
 import { createHash } from 'node:crypto';
 import { join, resolve, isAbsolute } from 'pathe';
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
+import { exec as execCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -25,6 +27,7 @@ import type { ISessionSubagentService } from '#/session/subagent/subagent';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ILogService } from '#/_base/log/log';
 import type { WorkflowRunEntry, AgentOpts } from './workflowTypes';
+import type { WebSearchProvider } from '#/app/auth/webSearch/tools/web-search';
 
 const MAX_CONCURRENT = Math.min(16, 2 * (navigator?.hardwareConcurrency ?? 4));
 
@@ -65,6 +68,7 @@ export interface WorkflowRuntimeDeps {
   readonly log: ILogService;
   readonly callerAgentId: string;
   readonly workspaceRoot: string;
+  readonly webSearchProvider?: WebSearchProvider;
 }
 
 export interface WorkflowRunOptions {
@@ -145,6 +149,72 @@ export async function executeWorkflow(opts: WorkflowRunOptions): Promise<unknown
     }
   };
 
+  // ── Network hooks ───────────────────────────────────────────────
+
+  const execAsync = promisify(execCallback);
+
+  const execHook = async (
+    command: string,
+    opts?: { readonly timeoutMs?: number; readonly cwd?: string },
+  ): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> => {
+    const cwd = opts?.cwd ? resolveInWorkspace(workspaceRoot, opts.cwd) : workspaceRoot;
+    try {
+      const result = await execAsync(command, {
+        cwd,
+        timeout: opts?.timeoutMs ?? 30_000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      });
+      return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: 0 };
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err && 'stdout' in err && 'stderr' in err) {
+        const cmdErr = err as { code: number | string; stdout: string; stderr: string };
+        return { stdout: cmdErr.stdout ?? '', stderr: cmdErr.stderr ?? '', exitCode: typeof cmdErr.code === 'number' ? cmdErr.code : 1 };
+      }
+      return { stdout: '', stderr: String(err), exitCode: 1 };
+    }
+  };
+
+  const fetchHook = async (
+    url: string,
+    opts?: { readonly method?: string; readonly headers?: Record<string, string>; readonly body?: string },
+  ): Promise<{ readonly ok: boolean; readonly status: number; readonly body: string }> => {
+    try {
+      const response = await globalThis.fetch(url, {
+        method: opts?.method ?? 'GET',
+        headers: opts?.headers,
+        body: opts?.body,
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = await response.text();
+      return { ok: response.ok, status: response.status, body };
+    } catch (err) {
+      return { ok: false, status: 0, body: String(err) };
+    }
+  };
+
+  const searchHook = async (query: string): Promise<readonly { readonly title: string; readonly url: string; readonly snippet: string }[]> => {
+    const provider = deps.webSearchProvider;
+    if (provider === undefined) {
+      deps.log.warn('workflow.search.unavailable', { runId: entry.runId });
+      return [];
+    }
+    try {
+      const results = await provider(query, { count: 8 });
+      return results.map((r) => ({
+        title: r.title ?? '',
+        url: r.url ?? '',
+        snippet: r.content ?? '',
+      }));
+    } catch (err) {
+      deps.log.warn('workflow.search.failed', {
+        runId: entry.runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  };
+
   // ── Sandbox setup ────────────────────────────────────────────
 
   const vm = await import('node:vm');
@@ -157,6 +227,9 @@ export async function executeWorkflow(opts: WorkflowRunOptions): Promise<unknown
     writeFile: writeFileHook,
     glob: globHook,
     exists: existsHook,
+    fetch: fetchHook,
+    search: searchHook,
+    exec: execHook,
     args,
     parallel: (thunks: (() => Promise<unknown>)[]) =>
       Promise.all(thunks.map((t) => Promise.resolve().then(() => t()))),

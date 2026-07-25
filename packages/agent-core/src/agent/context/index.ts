@@ -761,6 +761,47 @@ export class ContextMemory {
     }
   }
 
+  /**
+   * Replace an existing tool result message in history by toolCallId.
+   *
+   * Used by the Rust engine's prediction fast-path: a prediction is emitted
+   * as a tool.result first (so the LLM can continue immediately), then the
+   * background precise execution replaces it in-place once it completes.
+   * The toolCallId must already have a tool result in history; otherwise
+   * this is a no-op (the prediction was never recorded, or it was already
+   * replaced).
+   *
+   * Token counts are NOT re-derived: the replacement should have a similar
+   * token count to the prediction (same file, slightly different content).
+   * A full re-count would be expensive and unnecessary for predictions.
+   */
+  replaceToolResult(
+    toolCallId: string,
+    result: { output: unknown; isError?: boolean | undefined; note?: string | undefined },
+  ): boolean {
+    const message = createToolMessage(toolCallId, result.output);
+    const replacement = {
+      ...message,
+      role: 'tool' as const,
+      isError: result.isError,
+      note: result.note,
+    };
+
+    // Find the existing tool result message by toolCallId and replace it.
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const msg = this._history[i];
+      if (msg.role === 'tool' && msg.toolCallId === toolCallId) {
+        this._history[i] = replacement;
+        this.agent.records.logRecord({
+          type: 'context.replace_tool_result',
+          toolCallId,
+        });
+        return true;
+      }
+    }
+    return false;
+  }
+
   appendMessage(message: ContextMessage): void {
     this.agent.records.logRecord({
       type: 'context.append_message',

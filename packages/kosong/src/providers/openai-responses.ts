@@ -37,6 +37,7 @@ import {
   sanitizeOpenAIResponsesCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { tryNativeLlmStream } from './native-stream';
 
 /**
  * Normalize the Responses API status / incomplete_details into the unified
@@ -1119,25 +1120,58 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       }
     }
 
+    const createParams: Record<string, unknown> = {
+      model: this._model,
+      input,
+      tools: tools.map((t) => convertTool(t)),
+      store: false,
+      stream: this._stream,
+      ...kwargs,
+    };
+    if (systemPrompt) {
+      createParams['instructions'] = systemPrompt;
+    }
+    if (options?.responseFormat !== undefined) {
+      createParams['text'] = {
+        ...asRawObject(createParams['text']),
+        ...responseFormatToResponsesText(options.responseFormat),
+      };
+    }
+
+    // ── Native stream fast-path ────────────────────────────────────────
+    // Attempt the Rust native SSE pipeline before falling back to the SDK.
+    if (this._apiKey !== undefined && this._stream) {
+      const extraHeaders: Array<{ key: string; value: string }> = [];
+      if (this._defaultHeaders) {
+        for (const [k, v] of Object.entries(this._defaultHeaders)) {
+          extraHeaders.push({ key: k, value: v });
+        }
+      }
+      try {
+        options?.onRequestSent?.();
+        const nativeResult = await tryNativeLlmStream({
+          provider: 'openai-responses',
+          url: `${this._baseUrl ?? 'https://api.openai.com/v1'}/responses`,
+          apiKey: this._apiKey,
+          model: this._model,
+          requestBody: JSON.stringify(createParams),
+          timeoutMs: 120_000,
+          extraHeaders,
+        });
+        if (nativeResult !== undefined) {
+          if (nativeResult.traceId && options?.onTraceId) {
+            options.onTraceId(nativeResult.traceId);
+          }
+          return nativeResult;
+        }
+      } catch {
+        // Native stream failed (TLS/connection/Rust error) — fall through to SDK.
+      }
+    }
+    // ── End native fast-path ──────────────────────────────────────────
+
     try {
       const client = this._createClient(options?.auth);
-      const createParams: Record<string, unknown> = {
-        model: this._model,
-        input,
-        tools: tools.map((t) => convertTool(t)),
-        store: false,
-        stream: this._stream,
-        ...kwargs,
-      };
-      if (systemPrompt) {
-        createParams['instructions'] = systemPrompt;
-      }
-      if (options?.responseFormat !== undefined) {
-        createParams['text'] = {
-          ...asRawObject(createParams['text']),
-          ...responseFormatToResponsesText(options.responseFormat),
-        };
-      }
 
       if (
         !('responses' in client) ||

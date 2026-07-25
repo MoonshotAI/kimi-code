@@ -21,6 +21,8 @@
  */
 
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -142,7 +144,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       return {
         isError: true,
         output:
-          'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+          t('toolsV2.planMode.exitOnlyInPlanMode'),
       };
     }
 
@@ -162,7 +164,10 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       });
       return {
         isError: false,
-        output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+        output: t('toolsV2.planMode.exitedPlanMode', {
+          prefix: '',
+          plan: formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path),
+        }),
       };
     }
 
@@ -171,7 +176,10 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     });
     return {
       isError: false,
-      output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      output: t('toolsV2.planMode.exitedPlanMode', {
+        prefix: '',
+        plan: formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path),
+      }),
     };
   }
 
@@ -179,10 +187,10 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     try {
       this.planMode.exit();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
+      const message = error instanceof Error ? error.message : t('toolsV2.planMode.exitFailed');
       return {
         isError: true,
-        output: `Failed to exit plan mode: ${message}`,
+        output: t('toolsV2.planMode.exitFailedDetail', { message }),
       };
     }
   }
@@ -193,10 +201,10 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       const data = await this.planMode.status();
       source = data === null ? null : { plan: data.content, path: data.path };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to read plan file.';
+      const message = error instanceof Error ? error.message : t('toolsV2.planMode.readFailed');
       return {
         ok: false,
-        error: { isError: true, output: `Failed to read plan file: ${message}` },
+        error: { isError: true, output: t('toolsV2.planMode.readFailedDetail', { message }) },
       };
     }
 
@@ -216,8 +224,8 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
         isError: true,
         output:
           path === null
-            ? 'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.'
-            : `No plan file found. Write your plan to ${path} first, then call ExitPlanMode.`,
+            ? t('toolsV2.planMode.noPlanFile')
+            : t('toolsV2.planMode.noPlanFileDetail', { path }),
       },
     };
   }
@@ -244,11 +252,11 @@ function normalizeOptionLabel(label: string): string {
 }
 
 function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
-  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
-  return `Plan mode deactivated. All tools are now available.\nNote: this plan was auto-approved without user review — the user has NOT explicitly approved it. Follow the user's original instructions on whether to proceed with execution; if they asked you to stop, wait, or only summarize after planning, do not start executing.\n${savedTo}## Plan (auto-approved, not user-reviewed):\n${plan}`;
+  const savedTo = path !== undefined ? t('toolsV2.planMode.planSaved', { path }) : '';
+  return t('toolsV2.planMode.planAutoApproved', { savedTo, plan });
 }
 
 function formatPlanForOutput(plan: string, path: string | undefined): string {
-  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
-  return `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${plan}`;
+  const savedTo = path !== undefined ? t('toolsV2.planMode.planSaved', { path }) : '';
+  return t('toolsV2.planMode.planApproved', { savedTo, plan });
 }

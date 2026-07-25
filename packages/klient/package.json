@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-i18n": "workspace:^",
     "zod": "catalog:"
   },
   "devDependencies": {

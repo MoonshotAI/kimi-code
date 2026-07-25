@@ -9,7 +9,10 @@
  * ensures that all apps produce identical translations regardless of engine.
  */
 
-import type { Locale, MessageValue } from './types.js';
+import type { MessageValue } from './types.js';
+
+// Module-level regex constant — avoids recreating RegExp on every interpolate() call.
+const INTERPOLATION_RE = /\{\{(\w+)\}\}/g;
 
 // ── resolve ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +48,8 @@ export function interpolate(
   template: string,
   params: Record<string, string | number>,
 ): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_match: string, name: string) => {
+  INTERPOLATION_RE.lastIndex = 0;
+  return template.replace(INTERPOLATION_RE, (_match: string, name: string) => {
     const value = params[name];
     return value !== undefined ? String(value) : `{{${name}}}`;
   });

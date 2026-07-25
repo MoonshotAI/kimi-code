@@ -12,6 +12,8 @@
  * timeout vs. explicit stop vs. failure for callers that need stable labels.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -73,19 +75,9 @@ function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed'
 function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
   if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
   if (output.truncated) {
-    return (
-      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
-      'Use the Read tool with the output_path to page through the full log ' +
-      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-      'lines per page).'
-    );
+    return t('toolsV2.task.outputTruncatedHint', { bytes: String(OUTPUT_PREVIEW_BYTES) });
   }
-  return (
-    'The preview above is the complete output. Use the Read tool with the output_path ' +
-    'if you need to re-read the full log later ' +
-    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-    'lines per page).'
-  );
+  return t('toolsV2.task.outputCompleteHint');
 }
 
 export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
@@ -110,7 +102,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(args.task_id);
     if (!info) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
     }
 
     if (args.block && !TERMINAL_STATUSES.has(info.status)) {
@@ -119,7 +111,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
 
     const current = this.tasks.getTask(args.task_id);
     if (!current) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: t('toolsV2.task.notFound', { taskId: args.task_id }) };
     }
 
     const output = await this.tasks.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
@@ -139,7 +131,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         fullOutputHint: fullOutputHint(output),
         nextStep:
           args.block === true && !TERMINAL_STATUSES.has(current.status)
-            ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
+            ? t('toolsV2.task.stillRunningHint')
             : undefined,
       }),
       '',
@@ -148,11 +140,11 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     if (output.truncated) {
       lines.push(
         output.fullOutputAvailable && output.outputPath !== undefined
-          ? `[Truncated. Full output: ${output.outputPath}]`
-          : '[Truncated. No persisted full log is available for this task.]',
+          ? t('toolsV2.task.truncatedFull', { path: output.outputPath })
+          : t('toolsV2.task.truncatedNoLog'),
       );
     }
-    lines.push('[output]', output.preview || '[no output available]');
+    lines.push('[output]', output.preview || t('toolsV2.task.noOutput'));
 
     return {
       output: lines.join('\n'),

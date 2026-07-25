@@ -188,7 +188,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       }
     } catch (error) {
       if (isAbortError(error)) {
-        return { isError: true, output: 'Glob aborted' };
+        return { isError: true, output: t('toolsV2.globAborted') };
       }
       this.telemetry.track('glob_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
@@ -205,7 +205,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       execKaos,
       buildRgArgs(rgPath, args),
       signal,
-      { abortedMessage: 'Glob aborted' },
+      { abortedMessage: t('toolsV2.globAborted') },
     );
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
@@ -213,7 +213,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         execKaos,
         buildRgArgs(rgPath, args, true),
         signal,
-        { abortedMessage: 'Glob aborted' },
+        { abortedMessage: t('toolsV2.globAborted') },
       );
       if (runResult.kind === 'tool-error') return runResult.result;
     }
@@ -235,7 +235,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       traversalWarning = formatGlobWarning(stderrText);
     }
     if (signal.aborted) {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: t('toolsV2.globAborted') };
     }
 
     // One path per line from `rg --files`. When stdout is capped or the run
@@ -272,7 +272,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     if (limited.length === 0 && !timedOut) {
       if (filteredSensitive > 0) {
         return {
-          output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+          output: t('toolsV2.globNoSensitiveMatches', { count: String(filteredSensitive) }),
         };
       }
       return { output: t('tools.noMatchesFound') };
@@ -290,12 +290,12 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     const lines: string[] = [];
     if (timedOut) {
       lines.push(
-        `Glob timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned.`,
+        t('toolsV2.globTimedOut', { seconds: String(DEFAULT_TIMEOUT_MS / 1000) }),
       );
     }
     if (bufferTruncated) {
       lines.push(
-        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
+        t('toolsV2.bufferTruncated', { bytes: String(MAX_OUTPUT_BYTES) }),
       );
     }
     if (traversalWarning !== undefined) {
@@ -303,14 +303,14 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     }
     if (truncated) {
       lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
-      lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
+      lines.push(t('toolsV2.globTruncated', { count: String(MAX_MATCHES) }));
     }
     lines.push(...displayLines);
     if (filteredSensitive > 0) {
-      lines.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
+      lines.push(t('toolsV2.sensitiveFilesFiltered', { count: String(filteredSensitive) }));
     }
     if (!truncated && limited.length === MAX_MATCHES) {
-      lines.push(`Found ${String(limited.length)} matches`);
+      lines.push(t('toolsV2.foundMatches', { count: String(limited.length) }));
     }
     return { output: lines.join('\n') };
   }

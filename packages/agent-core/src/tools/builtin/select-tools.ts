@@ -18,6 +18,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { Agent } from '#/agent';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT } from '../../agent/context/dynamic-tools';
@@ -66,7 +67,7 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
         // closed between table build and execution.
         if (!this.agent.toolSelectEnabled) {
           return {
-            output: 'select_tools is not available for the current model.',
+            output: t('toolsV2.selectTools.notAvailable'),
             isError: true,
           };
         }
@@ -115,12 +116,12 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
         }
 
         const lines: string[] = [];
-        if (toLoad.length > 0) lines.push(`Loaded: ${toLoad.join(', ')}`);
+        if (toLoad.length > 0) lines.push(t('toolsV2.selectTools.loaded', { tools: toLoad.join(', ') }));
         if (alreadyAvailable.length > 0) {
-          lines.push(`Already available: ${alreadyAvailable.join(', ')}`);
+          lines.push(t('toolsV2.selectTools.alreadyAvailable', { tools: alreadyAvailable.join(', ') }));
         }
         for (const name of unknown) {
-          lines.push(`Unknown tool: ${name}. Pick from the latest announced tools list.`);
+          lines.push(t('toolsV2.selectTools.unknown', { name }));
         }
         const isError = toLoad.length === 0 && alreadyAvailable.length === 0;
         return isError ? { output: lines.join('\n'), isError } : { output: lines.join('\n') };

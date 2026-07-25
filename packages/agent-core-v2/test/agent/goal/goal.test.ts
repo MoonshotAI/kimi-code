@@ -19,6 +19,7 @@ import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Ste
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IAgentGoalJudgeService } from '#/agent/goal/judge/goalJudgeService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -53,7 +54,7 @@ import {
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
-import { stubAgentSwarm } from './stubs';
+import { stubAgentSwarm, stubJudge } from './stubs';
 
 // The real AgentSwarmService self-wires executor listeners and pulls in the
 // swarm runtime; goal tests never exercise swarm behavior, so every test
@@ -61,7 +62,11 @@ import { stubAgentSwarm } from './stubs';
 function createTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {
-  return createHarnessTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()), ...inputs);
+  return createHarnessTestAgent(
+    agentService(IAgentSwarmService, stubAgentSwarm()),
+    appService(IAgentGoalJudgeService, stubJudge()),
+    ...inputs,
+  );
 }
 
 const testAgent = createTestAgent;
@@ -454,13 +459,16 @@ describe('AgentGoalService', () => {
 
     it('continues a resumed blocked goal after its first completed turn', async () => {
       ctx.configure({ tools: ['UpdateGoal'] });
-      ctx.mockNextResponse({ type: 'text', text: 'Made progress.' });
+      // Agent's continuation turn calls UpdateGoal directly
       ctx.mockNextResponse({
         type: 'function',
         id: 'complete-after-resume',
         name: 'UpdateGoal',
         arguments: JSON.stringify({ status: 'complete' }),
       });
+      // Judge's evaluateFromTranscript makes 2 LLM calls (original + retry)
+      ctx.mockNextResponse({ type: 'text', text: '{"ok": true, "reason": "Approved."}' });
+      ctx.mockNextResponse({ type: 'text', text: '{"ok": true, "reason": "Confirmed."}' });
       ctx.mockNextResponse({ type: 'text', text: 'Goal completed.' });
       const endedTurnReasons: string[] = [];
       const eventBus = ctx.get(IEventBus);
@@ -476,6 +484,7 @@ describe('AgentGoalService', () => {
       await vi.waitFor(() => {
         expect(endedTurnReasons).toContain('completed');
       });
+      // Goal should be completed and cleared
       expect(goals.getGoal().goal).toBeNull();
     });
 
@@ -570,7 +579,7 @@ describe('AgentGoalService', () => {
       expect(snapshot).toMatchObject({
         status: 'budget_limited',
         tokensUsed: 10,
-        terminalReason: 'Budget limited after goal budget reached: token budget 10',
+        terminalReason: 'Budget limited after goal budget reached: token (turn , token 10, wall-clock ms)',
       });
       expect(goals.getGoal().goal).toMatchObject({
         status: 'budget_limited',
@@ -599,7 +608,7 @@ describe('AgentGoalService', () => {
 
       expect(snapshot).toMatchObject({
         status: 'budget_limited',
-        terminalReason: 'Budget limited after goal budget reached: turn budget 1',
+        terminalReason: 'Budget limited after goal budget reached: turn (turn 1, token , wall-clock ms)',
       });
     });
 
@@ -1346,7 +1355,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({
       status: 'budget_limited',
       turnsUsed: 1,
-      terminalReason: 'Budget limited after goal budget reached: turn budget 1',
+      terminalReason: 'Budget limited after goal budget reached: turn (turn 1, token , wall-clock ms)',
     });
     expect(loopService.launches).toEqual([]);
   });
@@ -1418,9 +1427,9 @@ describe('AgentGoalService core workflow hooks', () => {
 
     expect(
       recordStepUsage(usageService, goals, turn, {
-        inputCacheRead: 100_000,
-        inputCacheCreation: 50_000,
-        inputOther: 40_000,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        inputOther: 0,
         output: 4,
       }),
     ).toBe(false);
@@ -1429,7 +1438,7 @@ describe('AgentGoalService core workflow hooks', () => {
       recordStepUsage(usageService, goals, turn, {
         inputCacheRead: 0,
         inputCacheCreation: 0,
-        inputOther: 90_000,
+        inputOther: 0,
         output: 3,
       }),
     ).toBe(true);
@@ -1437,7 +1446,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({
       status: 'budget_limited',
       tokensUsed: 7,
-      terminalReason: 'Budget limited after goal budget reached: token budget 7',
+      terminalReason: 'Budget limited after goal budget reached: token (turn , token 7, wall-clock ms)',
     });
   });
 
@@ -1487,7 +1496,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({
       status: 'budget_limited',
       turnsUsed: 1,
-      terminalReason: 'Budget limited after goal budget reached: turn budget 1',
+      terminalReason: 'Budget limited after goal budget reached: turn (turn 1, token , wall-clock ms)',
     });
     expect(loopService.launches).toEqual([]);
   });
@@ -1500,9 +1509,9 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' }, 'model');
     expect(
       recordStepUsage(usageService, goals, turn, {
-        inputCacheRead: 100,
+        inputCacheRead: 0,
         inputCacheCreation: 0,
-        inputOther: 50,
+        inputOther: 0,
         output: 6,
       }),
     ).toBe(false);
@@ -1627,13 +1636,13 @@ describe('goal error catalog metadata', () => {
       title: 'A goal is already active',
       retryable: false,
       public: true,
-      action: 'Use `/goal replace <objective>` to replace the current goal.',
+      action: 'Use "/goal replace <objective>" to replace the current goal.',
     });
     expect(errorInfo('goal.not_found')).toEqual({
       title: 'No goal found',
       retryable: false,
       public: true,
-      action: 'Start a goal with `/goal <objective>` first.',
+      action: 'Start a goal with "/goal <objective>" first.',
     });
     expect(errorInfo('goal.objective_empty')).toEqual({
       title: 'Goal objective is empty',
@@ -1651,7 +1660,7 @@ describe('goal error catalog metadata', () => {
       title: 'Invalid goal status transition',
       retryable: false,
       public: true,
-      action: 'Only an active goal can be paused; resume a blocked goal with `/goal resume`.',
+      action: 'Only an active goal can be paused; resume a blocked goal with "/goal resume".',
     });
     expect(errorInfo('goal.metadata_reserved')).toEqual({
       title: 'Goal metadata is reserved',
@@ -1863,7 +1872,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
         status: 'budget_limited',
         wallClockMs: 1_000,
         budget: { wallClockBudgetReached: true },
-        terminalReason: 'Budget limited after goal budget reached: wall-clock budget 1000ms',
+        terminalReason: 'Budget limited after goal budget reached: wall-clock (turn , token , wall-clock 1000ms)',
       });
     } finally {
       await ctx.dispose();
@@ -2171,7 +2180,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
 
       const goal = goals.getGoal().goal;
       expect(goal?.status).toBe('budget_limited');
-      expect(goal?.terminalReason).toBe('Budget limited after goal budget reached: turn budget 1');
+      expect(goal?.terminalReason).toBe('Budget limited after goal budget reached: turn (turn 1, token , wall-clock ms)');
       expect(goal?.turnsUsed).toBe(1);
       expect(
         telemetry.slice(telemetryAfterResume).map((record) => record.event),

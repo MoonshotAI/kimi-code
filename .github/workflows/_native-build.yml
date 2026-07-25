@@ -70,6 +70,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Rust toolchain (napi native-tools)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build kimi-native-tools (.node for SEA blob)
+        run: pnpm --filter @moonshot-ai/kimi-native-tools run build
+
       - name: Setup macOS keychain (release only)
         if: runner.os == 'macOS' && inputs.sign-macos
         uses: ./.github/actions/macos-keychain-setup

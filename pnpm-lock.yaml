@@ -849,6 +849,9 @@ importers:
 
   packages/i18n:
     dependencies:
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../i18n-shared
       '@moonshot-ai/kimi-native-tools':
         specifier: workspace:^
         version: link:../kimi-native-tools

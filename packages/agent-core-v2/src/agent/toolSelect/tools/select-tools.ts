@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
@@ -50,7 +51,7 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
       execute: async () => {
         if (!this.toolSelect.enabled()) {
           return {
-            output: 'select_tools is not available for the current model.',
+            output: t('toolsV2.selectTools.notAvailable'),
             isError: true,
           };
         }

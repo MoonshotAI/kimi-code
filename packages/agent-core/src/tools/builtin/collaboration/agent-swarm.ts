@@ -9,6 +9,7 @@ import {
 } from '../../../session/subagent-host';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { t } from '../../../i18n';
 import { toInputJsonSchema } from '../../support/input-schema';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
@@ -187,7 +188,7 @@ function createAgentSwarmSpecs(
   }
   const promptTemplate = normalizeOptionalString(args.prompt_template);
   if (items.length > 0 && promptTemplate === undefined) {
-    throw new Error('prompt_template is required when items are provided.');
+    throw new Error(t('v2Errors.swarmPromptRequired'));
   }
   if (promptTemplate !== undefined && !promptTemplate.includes(PROMPT_TEMPLATE_PLACEHOLDER)) {
     throw new Error(
@@ -259,7 +260,7 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
     const item = result.spec.item === undefined ? '' : ` item="${escapeXmlAttribute(result.spec.item)}"`;
     const state = result.state === undefined ? '' : ` state="${result.state}"`;
-    const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
+    const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? t('toolsV2.agent.unknownError'));
     lines.push(
       `<subagent${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
     );

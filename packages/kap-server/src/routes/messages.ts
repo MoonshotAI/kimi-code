@@ -20,6 +20,7 @@
 import { IMessageLegacyService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
 import { messageRoleSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import { ErrorCode } from '../protocol/error-codes';
+import { t } from '../i18n';
 import { getMessageResponseSchema, listMessagesResponseSchema } from '../protocol/rest-message';
 import { z } from 'zod';
 
@@ -56,7 +57,7 @@ const messagesListQueryCoercion = z
     if (value.before_id !== undefined && value.after_id !== undefined) {
       ctx.addIssue({
         code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
+        message: t('serverErrors.paginationMutuallyExclusive'),
         path: ['before_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });

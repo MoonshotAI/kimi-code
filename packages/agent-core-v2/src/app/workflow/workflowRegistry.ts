@@ -15,9 +15,25 @@ import type { WorkflowEntry, WorkflowMeta } from './workflowTypes';
 
 // ── Built-in scripts ──────────────────────────────────────────────
 import DEEP_RESEARCH_SCRIPT from './builtin/deep-research.js?raw';
+import CODE_REVIEW_SCRIPT from './builtin/code-review.js?raw';
+import TEST_GENERATOR_SCRIPT from './builtin/test-generator.js?raw';
+import REFACTOR_PLANNER_SCRIPT from './builtin/refactor-planner.js?raw';
+import BUG_TRIAGE_SCRIPT from './builtin/bug-triage.js?raw';
+import PR_DESCRIPTION_SCRIPT from './builtin/pr-description.js?raw';
+import ARCHITECTURE_REVIEW_SCRIPT from './builtin/architecture-review.js?raw';
+import SECURITY_AUDIT_SCRIPT from './builtin/security-audit.js?raw';
+import MIGRATION_PLANNER_SCRIPT from './builtin/migration-planner.js?raw';
 
 const BUILTIN_SCRIPTS: readonly { file: string; script: string }[] = [
   { file: 'deep-research.js', script: DEEP_RESEARCH_SCRIPT },
+  { file: 'code-review.js', script: CODE_REVIEW_SCRIPT },
+  { file: 'test-generator.js', script: TEST_GENERATOR_SCRIPT },
+  { file: 'refactor-planner.js', script: REFACTOR_PLANNER_SCRIPT },
+  { file: 'bug-triage.js', script: BUG_TRIAGE_SCRIPT },
+  { file: 'pr-description.js', script: PR_DESCRIPTION_SCRIPT },
+  { file: 'architecture-review.js', script: ARCHITECTURE_REVIEW_SCRIPT },
+  { file: 'security-audit.js', script: SECURITY_AUDIT_SCRIPT },
+  { file: 'migration-planner.js', script: MIGRATION_PLANNER_SCRIPT },
 ];
 
 const REGISTRY: Record<string, WorkflowEntry> = Object.create(null);

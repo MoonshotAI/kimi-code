@@ -21,6 +21,8 @@
 import { normalize } from 'pathe';
 import { z } from 'zod';
 
+import { tryNativeGrepStructured } from '#/_base/native-tools';
+
 import { ToolResultBuilder } from '#/tool/result-builder';
 import {
   ToolAccesses,
@@ -235,7 +237,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     searchPaths: string[],
   ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
-      return { isError: true, output: 'Aborted before search started' };
+      return { isError: true, output: t('toolsV2.abort.beforeSearch') };
     }
 
     const pathClass = this.env.pathClass;
@@ -255,6 +257,12 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     } catch (error) {
       if (signal.aborted) {
         return { isError: true, output: t('toolsV2.grepAborted') };
+      }
+      // rg unavailable — try Rust native grep as fallback before failing.
+      const nativeResult = await this.tryNativeGrepFallback(args, searchPaths, signal);
+      if (nativeResult !== undefined) {
+        this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'native_rust' });
+        return nativeResult;
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
@@ -443,6 +451,49 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     );
     entries.sort((a, b) => b.mtime - a.mtime || a.index - b.index);
     return entries.map((entry) => entry.line);
+  }
+
+  /**
+   * Native Rust grep fallback when ripgrep is not available on PATH.
+   * Uses `nativeGrepStructured` which walks the directory tree and regex-matches
+   * directly in Rust, without spawning a subprocess.
+   */
+  private async tryNativeGrepFallback(
+    args: GrepInput,
+    searchPaths: string[],
+    _signal: AbortSignal,
+  ): Promise<ExecutableToolResult | undefined> {
+    const searchPath = searchPaths[0];
+    if (searchPath === undefined) return undefined;
+
+    const result = await tryNativeGrepStructured(args.pattern, searchPath, {
+      literal: false,
+      caseInsensitive: args['-i'] ?? false,
+      includeGlobs: args.glob ? [args.glob] : [],
+      excludeGlobs: [],
+      contextLines: args['-C'] ?? Math.max(args['-A'] ?? 0, args['-B'] ?? 0),
+      maxFiles: 5000,
+      maxMatchesPerFile: 100,
+      maxTotalMatches: args.head_limit ?? 250,
+      timeoutMs: 20000,
+      followGitignore: true,
+    });
+
+    if (result === undefined) return undefined;
+    if (result.error) return { isError: true, output: result.error };
+
+    if (result.files.length === 0) {
+      return { output: t('toolsV2.grepNoResults') };
+    }
+
+    // Format output similar to rg
+    const builder = new ToolResultBuilder();
+    for (const file of result.files) {
+      for (const match of file.matches) {
+        builder.write(`${file.path}:${String(match.line)}:${match.text}\n`);
+      }
+    }
+    return builder.ok();
   }
 }
 

@@ -81,6 +81,44 @@ export function tryNativeEscapeXmlTags(input: string): string | undefined {
 export function tryNativeEstimateTokens(text: string): number | undefined {
   return callNativeSync<number>('nativeEstimateTokens', text);
 }
+
+// ── File Read (native fast-path) ─────────────────────────────────────
+
+export interface NativeReadResult {
+  readonly content: string;
+  readonly lineCount: number;
+  readonly error?: string;
+}
+
+/**
+ * Try the Rust native file read. Returns `undefined` when the native
+ * module is unavailable, letting the caller fall through to the TS path.
+ */
+export async function tryNativeRead(
+  path: string,
+  options?: { lineOffset?: number; nLines?: number },
+): Promise<NativeReadResult | undefined> {
+  return callNativeAsync<NativeReadResult>('nativeRead', path, options ?? {});
+}
+
+// ── File Write (native fast-path) ────────────────────────────────────
+
+export interface NativeWriteResult {
+  readonly bytesWritten: number;
+  readonly error?: string;
+}
+
+/**
+ * Try the Rust native file write. Creates parent dirs automatically.
+ * Returns `undefined` when the native module is unavailable.
+ */
+export async function tryNativeWrite(
+  path: string,
+  content: string,
+  mode?: 'overwrite' | 'append',
+): Promise<NativeWriteResult | undefined> {
+  return callNativeAsync<NativeWriteResult>('nativeWrite', path, content, { mode: mode ?? null });
+}
 export function tryNativeEstimateTokensBatch(texts: readonly string[]): number | undefined {
   return callNativeSync<number>('nativeEstimateTokensBatch', [...texts]);
 }
@@ -369,4 +407,116 @@ export function tryNativeGoalRenderObjectiveUpdated(
   objective: string, tokensUsed: number, tokenBudget: number | null,
 ): string | undefined {
   return callNativeSync<string>('nativeGoalRenderObjectiveUpdated', objective, tokensUsed, tokenBudget);
+}
+
+// ============================================================================
+// FetchUrl — HTTP fetch with SSRF protection and HTML extraction
+// ============================================================================
+
+export interface NativeFetchUrlResult {
+  readonly content: string;
+  readonly kind: 'passthrough' | 'extracted';
+  readonly status: number;
+  readonly error?: string;
+}
+
+/**
+ * Fetch a URL via Rust native HTTP client with SSRF protection and HTML
+ * extraction. Returns `undefined` when the native module is unavailable.
+ */
+export async function tryNativeFetchUrl(
+  url: string,
+  options?: { userAgent?: string; maxBytes?: number; allowPrivate?: boolean; timeoutMs?: number },
+): Promise<NativeFetchUrlResult | undefined> {
+  return callNativeAsync<NativeFetchUrlResult>('nativeFetchUrl', url, options ?? {});
+}
+
+// ============================================================================
+// WebSearch — DuckDuckGo HTML scraping
+// ============================================================================
+
+export interface NativeWebSearchEntry {
+  readonly title: string;
+  readonly url: string;
+  readonly snippet: string;
+  readonly siteName?: string;
+}
+
+export interface NativeWebSearchResult {
+  readonly results: NativeWebSearchEntry[];
+  readonly error?: string;
+}
+
+/**
+ * Search DuckDuckGo via Rust native HTTP + HTML scraping.
+ * Returns `undefined` when the native module is unavailable.
+ */
+export async function tryNativeWebSearch(
+  query: string,
+  options?: { timeoutMs?: number; maxResults?: number },
+): Promise<NativeWebSearchResult | undefined> {
+  return callNativeAsync<NativeWebSearchResult>('nativeWebSearch', query, options ?? {});
+}
+
+// ============================================================================
+// Structured Grep — native fallback when ripgrep is not on PATH
+// ============================================================================
+
+export interface NativeGrepStructuredMatch {
+  readonly line: number;
+  readonly col: number;
+  readonly text: string;
+  readonly before: string[];
+  readonly after: string[];
+}
+
+export interface NativeGrepStructuredFile {
+  readonly path: string;
+  readonly matches: NativeGrepStructuredMatch[];
+}
+
+export interface NativeGrepStructuredResult {
+  readonly files: NativeGrepStructuredFile[];
+  readonly filesScanned: number;
+  readonly truncated: boolean;
+  readonly error?: string;
+}
+
+/**
+ * Structured grep via Rust native directory walker + regex engine.
+ * Use as a fallback when ripgrep is not available on PATH.
+ * Returns `undefined` when the native module is unavailable.
+ */
+export async function tryNativeGrepStructured(
+  pattern: string,
+  path: string,
+  options?: {
+    literal?: boolean;
+    caseInsensitive?: boolean;
+    includeGlobs?: string[];
+    excludeGlobs?: string[];
+    contextLines?: number;
+    maxFiles?: number;
+    maxMatchesPerFile?: number;
+    maxTotalMatches?: number;
+    timeoutMs?: number;
+    followGitignore?: boolean;
+  },
+): Promise<NativeGrepStructuredResult | undefined> {
+  const opts = options ?? {};
+  return callNativeAsync<NativeGrepStructuredResult>(
+    'nativeGrepStructured',
+    pattern,
+    path,
+    opts.literal ?? false,
+    opts.caseInsensitive ?? false,
+    opts.includeGlobs ?? [],
+    opts.excludeGlobs ?? [],
+    opts.contextLines ?? 0,
+    opts.maxFiles ?? 5000,
+    opts.maxMatchesPerFile ?? 100,
+    opts.maxTotalMatches ?? 500,
+    opts.timeoutMs ?? 20000,
+    opts.followGitignore ?? true,
+  );
 }

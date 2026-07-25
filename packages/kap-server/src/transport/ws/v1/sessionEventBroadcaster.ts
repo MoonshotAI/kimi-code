@@ -522,24 +522,7 @@ export class SessionEventBroadcaster {
     state.transcriptStream = stream;
 
     const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }, seq) => {
-      for (const [target, sub] of state.targets) {
-        // No ops before the baseline reset (see subscribe).
-        if (!state.transcriptSeeded.has(target)) continue;
-        const grade = gradeFor(sub.transcriptGrades, agentId);
-        const filtered = filterOpsForGrade(grade, ops);
-        if (filtered.length === 0) continue;
-        try {
-          target.send(
-            this.buildTranscriptEnvelope(state, 'transcript.ops', {
-              agent_id: agentId,
-              ops: filtered,
-              seq,
-            }),
-          );
-        } catch {
-          // best-effort fan-out; a broken target is dropped, not fatal
-        }
-      }
+      this.fanOutTranscriptOps(state, agentId, ops, seq);
     });
     if (opsDisposable !== undefined) state.lifecycleDisposables.push(opsDisposable);
 
@@ -550,16 +533,7 @@ export class SessionEventBroadcaster {
           stream.knownAgents.add(descriptor.agentId);
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
-          for (const [target, sub] of state.targets) {
-            if (!state.transcriptSeeded.has(target)) continue;
-            const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
-            if (grade === 'off') continue;
-            try {
-              this.sendTranscriptReset(state, target, transcript, grade);
-            } catch {
-              // best-effort fan-out; a broken target is dropped, not fatal
-            }
-          }
+          this.fanOutTranscriptReset(state, transcript, descriptor.agentId);
         }
       }),
     );
@@ -589,6 +563,54 @@ export class SessionEventBroadcaster {
         seq: this.opts.transcriptService?.getSeqWatermark(state.sessionId, transcript.agentId),
       }),
     );
+  }
+
+  /**
+   * Fan out filtered transcript ops for one agent to all seeded targets.
+   */
+  private fanOutTranscriptOps(
+    state: SessionState,
+    agentId: string,
+    ops: readonly TranscriptOperation[],
+    seq: number,
+  ): void {
+    for (const [target, sub] of state.targets) {
+      if (!state.transcriptSeeded.has(target)) continue;
+      const grade = gradeFor(sub.transcriptGrades, agentId);
+      const filtered = filterOpsForGrade(grade, ops);
+      if (filtered.length === 0) continue;
+      try {
+        target.send(
+          this.buildTranscriptEnvelope(state, 'transcript.ops', {
+            agent_id: agentId,
+            ops: filtered,
+            seq,
+          }),
+        );
+      } catch {
+        // best-effort fan-out; a broken target is dropped, not fatal
+      }
+    }
+  }
+
+  /**
+   * Fan out a transcript reset for one agent to all seeded targets whose grade admits it.
+   */
+  private fanOutTranscriptReset(
+    state: SessionState,
+    transcript: AgentTranscript,
+    agentId: string,
+  ): void {
+    for (const [target, sub] of state.targets) {
+      if (!state.transcriptSeeded.has(target)) continue;
+      const grade = gradeFor(sub.transcriptGrades, agentId);
+      if (grade === 'off') continue;
+      try {
+        this.sendTranscriptReset(state, target, transcript, grade);
+      } catch {
+        // best-effort fan-out; a broken target is dropped, not fatal
+      }
+    }
   }
 
   /**

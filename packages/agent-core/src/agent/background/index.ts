@@ -158,7 +158,9 @@ function outputLimitReason(): string {
 }
 
 const SIGTERM_GRACE_MS = 5_000;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
+function userInterruptReason(): string {
+  return t('toolsV2.abort.abortedByUser');
+}
 
 const _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
@@ -926,7 +928,7 @@ export class BackgroundManager {
     if (signal === undefined) return new Promise<never>(() => {});
     const outcome = (): TerminalOutcome => ({
       kind: 'stop',
-      request: { reason: USER_INTERRUPT_REASON, abortReason: signal.reason },
+      request: { reason: userInterruptReason(), abortReason: signal.reason },
     });
     if (signal.aborted) return Promise.resolve(outcome());
     return new Promise((resolve) => {

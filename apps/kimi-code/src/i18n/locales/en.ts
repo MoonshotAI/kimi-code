@@ -194,6 +194,10 @@ export default {
         statusInProgress: 'in progress',
         statusPending: 'pending',
       },
+      workflowPanel: {
+        header: 'Workflows',
+        running: 'running',
+      },
       activityPane: {
         tipPrefix: ' · Tip: {{tip}}',
       },

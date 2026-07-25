@@ -109,6 +109,7 @@ import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { WorkflowPanelController } from './controllers/workflow-panel';
 import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -339,6 +340,7 @@ export class KimiTUI {
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly workflowPanelController: WorkflowPanelController;
   readonly editorKeyboard: EditorKeyboardController;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
@@ -419,6 +421,12 @@ export class KimiTUI {
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
+    this.workflowPanelController = new WorkflowPanelController({
+      workflowPanel: this.state.workflowPanel,
+      session: this.session,
+      requestRender: () => { this.state.ui.requestRender(); },
+      showError: (msg: string) => { this.showError(msg); },
+    });
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
     this.buildLayout();
@@ -838,6 +846,7 @@ export class KimiTUI {
     // stop() returns (or leak when stop() runs without process.exit).
     this.tasksBrowserController.close();
     this.btwPanelController.clear();
+    this.workflowPanelController.clear();
     this.stopActivitySpinner();
     this.streamingUI.disposeActiveCompactionBlock();
     this.streamingUI.resetToolUi();
@@ -953,6 +962,7 @@ export class KimiTUI {
     ui.addChild(this.state.transcriptContainer);
     ui.addChild(this.state.activityContainer);
     ui.addChild(this.state.todoPanelContainer);
+    ui.addChild(this.state.workflowPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.btwPanelContainer);
     ui.addChild(this.state.editorContainer);
@@ -1564,6 +1574,7 @@ export class KimiTUI {
     this.session = session;
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
+    this.workflowPanelController.subscribe(session);
     this.syncAdditionalDirs(session);
   }
 
@@ -1635,6 +1646,7 @@ export class KimiTUI {
     const previous = this.session;
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
+    this.workflowPanelController.unsubscribe();
     this.clearReverseRpcPanels();
     previous?.setApprovalHandler(undefined);
     previous?.setQuestionHandler(undefined);

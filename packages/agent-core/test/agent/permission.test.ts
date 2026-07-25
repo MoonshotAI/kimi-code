@@ -1,5 +1,6 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
+import { t, setLocale } from '@moonshot-ai/kimi-i18n';
 import * as posixPath from 'node:path/posix';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -22,6 +23,7 @@ import { AutoModeApprovePermissionPolicy } from '../../src/agent/permission/poli
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from '../../src/agent/permission/policies/auto-mode-ask-user-question-deny';
 import { FallbackAskPermissionPolicy } from '../../src/agent/permission/policies/fallback-ask';
 import { createPermissionDecisionPolicies } from '../../src/agent/permission/policies';
+import { SwarmModeAgentDenyPermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-deny';
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-swarm-approve';
 import { YoloModeApprovePermissionPolicy } from '../../src/agent/permission/policies/yolo-mode-approve';
 import { ToolAccesses } from '../../src/loop';
@@ -753,6 +755,7 @@ describe('Permission policy chain', () => {
       'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
+      'swarm-mode-agent-deny',
       'user-configured-deny',
       'auto-mode-approve',
       'session-approval-history',
@@ -879,7 +882,82 @@ describe('Simple permission policy direct behavior', () => {
     ).toBeUndefined();
   });
 
+  it('returns undefined (no decision) when swarm mode is inactive', () => {
+    const swarmMode = { isActive: false };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentDenyPermissionPolicy(agent);
+
+    // Agent should pass through when swarm is off
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_inactive', toolName: 'Agent' })),
+    ).toBeUndefined();
+  });
+
+  it('denies the Agent tool with exact message when swarm mode is active', () => {
+    setLocale('en');
+    const swarmMode = { isActive: true };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentDenyPermissionPolicy(agent);
+
+    const result = policy.evaluate(hookContext({ id: 'call_agent_active', toolName: 'Agent' }));
+
+    expect(result).toMatchObject({
+      kind: 'deny',
+      message: t('toolsV2.swarm.agentDeniedInSwarmMode'),
+    });
+    // Verify the deny message also mentions the correct alternative (AgentSwarm)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _denyResult = result as { kind: 'deny'; message?: string };
+    expect(_denyResult.message).toContain('AgentSwarm');
+  });
+
+  it('does not deny non-Agent tools even when swarm mode is active', () => {
+    const swarmMode = { isActive: true };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentDenyPermissionPolicy(agent);
+
+    // Bash — a common tool, must not be affected
+    expect(
+      policy.evaluate(hookContext({ id: 'call_bash_active', toolName: 'Bash' })),
+    ).toBeUndefined();
+    // Read — another common tool
+    expect(
+      policy.evaluate(hookContext({ id: 'call_read_active', toolName: 'Read' })),
+    ).toBeUndefined();
+    // AgentSwarm — the correct subagent dispatch tool, explicitly allowed
+    expect(
+      policy.evaluate(hookContext({ id: 'call_swarm_active', toolName: 'AgentSwarm' })),
+    ).toBeUndefined();
+  });
+
+  it('transitions from allow to deny when swarm mode activates mid-session', () => {
+    const swarmMode = { isActive: false };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentDenyPermissionPolicy(agent);
+
+    // Initially: swarm off → Agent allowed
+    expect(
+      policy.evaluate(hookContext({ id: 'call_before_activate', toolName: 'Agent' })),
+    ).toBeUndefined();
+
+    // Activate swarm mode
+    Object.assign(swarmMode, { isActive: true });
+
+    // Now: swarm on → Agent denied
+    expect(
+      policy.evaluate(hookContext({ id: 'call_after_activate', toolName: 'Agent' })),
+    ).toMatchObject({ kind: 'deny' });
+  });
+
+  it('has the expected policy name for chain identification', () => {
+    const agent = { swarmMode: { isActive: false } } as unknown as Agent;
+    const policy = new SwarmModeAgentDenyPermissionPolicy(agent);
+
+    expect(policy.name).toBe('swarm-mode-agent-deny');
+  });
+
   it('denies AgentSwarm mixed with other tool calls in the same response', () => {
+    setLocale('en');
     const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
     const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
       description: 'Review files',
@@ -898,7 +976,7 @@ describe('Simple permission policy direct behavior', () => {
       ),
     ).toMatchObject({
       kind: 'deny',
-      message: expect.stringContaining('must be the only tool call'),
+      message: t('toolsV2.swarm.solitaryMixedDenied'),
       reason: {
         solitary_tool_calls: 1,
         tool_calls: 2,
@@ -917,6 +995,7 @@ describe('Simple permission policy direct behavior', () => {
   });
 
   it('denies multiple AgentSwarm calls with one-at-a-time guidance', () => {
+    setLocale('en');
     const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
     const first = toolCall('call_agent_swarm_1', 'AgentSwarm', {
       description: 'Review files',
@@ -937,19 +1016,48 @@ describe('Simple permission policy direct behavior', () => {
       }),
     );
 
+    // Two solitary calls, no other tools → solitaryMultipleDenied (without mixed suffix)
     expect(result).toMatchObject({
       kind: 'deny',
-      message: expect.stringContaining('AgentSwarm/SwarmDiscussion must be called one at a time'),
+      message: t('toolsV2.swarm.solitaryMultipleDenied'),
       reason: {
         solitary_tool_calls: 2,
         tool_calls: 2,
       },
     });
-    expect(result).toMatchObject({
-      message: expect.stringContaining('call one, wait for its result'),
+  });
+
+  it('denies multiple AgentSwarm calls mixed with other tools', () => {
+    setLocale('en');
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const first = toolCall('call_agent_swarm_1', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
     });
+    const second = toolCall('call_agent_swarm_2', 'AgentSwarm', {
+      description: 'Review tests',
+      prompt_template: 'Review {{item}}',
+      items: ['test/a.ts', 'test/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    const result = policy.evaluate(
+      hookContext({
+        id: 'call_agent_swarm_1',
+        toolName: 'AgentSwarm',
+        toolCalls: [first, second, readCall],
+      }),
+    );
+
+    // Two solitary calls + one other tool → solitaryMultipleDeniedMixed (with mixed suffix)
     expect(result).toMatchObject({
-      message: expect.stringContaining('merge the work into a single call'),
+      kind: 'deny',
+      message: t('toolsV2.swarm.solitaryMultipleDeniedMixed'),
+      reason: {
+        solitary_tool_calls: 2,
+        tool_calls: 3,
+      },
     });
   });
 

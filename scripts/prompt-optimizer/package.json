@@ -1,0 +1,16 @@
+{
+  "name": "@moonshot-ai/prompt-optimizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Data-driven prompt optimization toolchain for kimi-code system prompts",
+  "scripts": {
+    "bench": "tsx src/cli.ts bench",
+    "prune": "tsx src/cli.ts prune",
+    "ab": "tsx src/cli.ts ab",
+    "probe": "tsx src/cli.ts probe"
+  },
+  "dependencies": {
+    "tsx": "^4.21.0"
+  }
+}

@@ -1,18 +1,22 @@
 /**
- * UpdateGoalTool — the model's single lever over the goal lifecycle. It updates
- * the goal's status directly; the turn driver reads the status at each turn
- * boundary and stops (`complete` / `blocked`) or keeps going.
+ * UpdateGoalTool — the model's lever over the goal lifecycle. It can set the
+ * goal to `complete` (request) or `blocked`.
  *
- * The model can only set `complete` or `blocked`. Pause/resume/budget changes
- * are controlled by the user or system through dedicated commands/tools.
+ * The agent is NOT permitted to directly close a goal. When the agent calls
+ * `complete`, an independent verifier evaluates the goal. Only the verifier can
+ * approve completion — if it rejects, the agent MUST continue working.
+ * There is no override mechanism; the verifier's decision is final.
  *
- * The argument is intentionally just a status enum — no reason or evidence. The
- * model explains itself in its own reply; the status is the machine-readable
- * signal.
+ * Pause/resume/budget changes are controlled by the user or system through
+ * dedicated commands/tools.
+ *
+ * @deprecated This v1 engine is no longer the primary runtime. The active goal
+ * path is `@moonshot-ai/agent-core-v2`.
  */
 
 import type { Agent } from '#/agent';
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import {
   buildGoalBlockedReasonPrompt,
@@ -26,15 +30,12 @@ import { toInputJsonSchema } from '../../support/input-schema';
 import { tryNativeGoalEngineDecideBlockedAudit } from '../native-tools';
 import DESCRIPTION from './update-goal.md?raw';
 
-/** Consecutive verifier-rejected completions before the goal is marked blocked. */
-const MAX_COMPLETION_REJECTIONS = 2;
-
 export const UpdateGoalToolInputSchema = z
   .object({
     status: z
       .enum(['complete', 'blocked'])
       .describe(
-        'The lifecycle status to set for the current goal. Use `complete` only when the objective has actually been achieved and no required work remains, verified against the actual current state — note that an independent verifier will check the work before completion is granted, and will reject it if the objective or completion criterion is not verifiably satisfied. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same blocking condition repeats for at least 3 consecutive goal turns and you cannot make meaningful progress without user input or an external-state change.',
+        'The lifecycle status to set for the current goal. Use `complete` to REQUEST completion — an independent verifier will check the work; if it rejects, you MUST continue working (there is no override). Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same blocking condition repeats for at least 3 consecutive goal turns and you cannot make meaningful progress without user input or an external-state change.',
       ),
   })
   .strict();
@@ -52,7 +53,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
     if (!isUpdateGoalStatus(args.status)) {
       return {
         isError: true,
-        output: 'Invalid goal status. Use `complete` or `blocked`.',
+        output: t('toolsV2.goal.invalidStatus'),
       };
     }
 
@@ -68,47 +69,37 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       execute: async (ctx) => {
         if (status === 'complete') {
           if (!goalIsActive || currentGoal === undefined) {
-            return { output: 'Goal not completed: no active goal.' };
+            return { output: t('toolsV2.goal.notCompleted') };
           }
-          // Completion is not granted on the worker's own say-so: an isolated
-          // verifier independently checks the work against the objective and
-          // completion criterion first (gated by an experimental flag).
+          // The agent cannot complete a goal on its own. An independent
+          // verifier checks the work. Only the verifier can approve completion.
+          // There is NO override — the verifier's decision is final.
           const verifierEnabled =
             this.agent.experimentalFlags?.enabled('goal_completion_verifier') === true;
           const verification = verifierEnabled
             ? await runGoalCompletionVerifier(this.agent, currentGoal, '', ctx.signal)
             : { passed: true, feedback: '' };
           if (!verification.passed) {
-            const rejections = await goal.recordCompletionRejection();
-            if (rejections >= MAX_COMPLETION_REJECTIONS) {
-              const blocked = await goal.markBlocked(
-                { reason: `Completion verifier rejected the goal: ${verification.feedback}` },
-                'model',
-              );
-              if (blocked === null) {
-                return { output: 'Goal not blocked: no active goal.' };
-              }
-              return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
-            }
+            // Verifier rejects — no override, agent must fix issues.
             return {
               output: buildGoalVerificationFailedPrompt(
                 verification.feedback,
-                rejections,
-                MAX_COMPLETION_REJECTIONS,
-              ),
+                1,
+                Infinity, // No override threshold — verifier's decision is final
+              ) + '\n\nThe verifier\'s decision is final. There is no override. Fix the issues and try again.',
             };
           }
+          // Verifier approved — only the verifier can grant completion.
           const completed = await goal.markComplete({}, 'model');
           if (completed === null) {
-            return { output: 'Goal not completed: no active goal.' };
+            return { output: t('toolsV2.goal.notCompleted') };
           }
-          const output =
-            buildGoalCompletionSummaryPrompt(completed);
+          const output = buildGoalCompletionSummaryPrompt(completed);
           return { output, stopTurn: true };
         }
         if (status === 'blocked') {
           if (!goalIsActive) {
-            return { output: 'Goal not blocked: no active goal.' };
+            return { output: t('toolsV2.goal.notBlocked') };
           }
           // Engine owns the 3-turn blocked audit (native-first, TS fallback).
           const auditResult = tryNativeGoalEngineDecideBlockedAudit(
@@ -136,14 +127,14 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           }
           const blocked = await goal.markBlocked({}, 'model');
           if (blocked === null) {
-            return { output: 'Goal not blocked: no active goal.' };
+            return { output: t('toolsV2.goal.notBlocked') };
           }
           const output = buildGoalBlockedReasonPrompt(blocked);
           return { output, stopTurn: true };
         }
         return {
           isError: true,
-          output: 'Invalid goal status. Use `complete` or `blocked`.',
+          output: t('toolsV2.goal.invalidStatus'),
         };
       },
     };

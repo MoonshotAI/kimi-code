@@ -63,7 +63,7 @@ export const AgentToolInputSchema = z.preprocess(
       .string()
       .min(1)
       .refine((value) => value.trim().length > 0, {
-        message: 'prompt must not be empty or whitespace-only',
+        message: t('toolsV2.agent.promptEmpty'),
       })
       .describe('Full task prompt for the subagent'),
     description: z.string().describe('Short task description (3-5 words) for UI display'),
@@ -185,7 +185,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         requestedProfileName !== undefined
       ) {
         return {
-          output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
+          output: t('toolsV2.agent.cannotSetSubagentTypeOnResume'),
           isError: true,
         };
       }
@@ -310,11 +310,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     const message =
       timedOut
         ? t('tools.agentResumeTimedOut', { timeout: formatSubagentTimeoutDescription(this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS) })
-        : info?.stopReason === 'Interrupted by user'
+        : info?.stopReason === 'Interrupted by user' || info?.stopReason === t('toolsV2.abort.abortedByUser')
           ? USER_INTERRUPTED_SUBAGENT_MESSAGE
           : info?.stopReason !== undefined
             ? info.stopReason
-            : 'The subagent was stopped before it finished.';
+            : t('toolsV2.agent.stoppedBeforeFinish');
     return {
       output: formatForegroundAgentFailure(handle, message, timedOut),
       isError: true,
@@ -333,10 +333,10 @@ function formatBackgroundAgentResult(
 ): string {
   return [
     `task_id: ${taskId}`,
-    'status: running',
+    t('toolsV2.agent.statusRunning'),
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
-    'automatic_notification: true',
+    t('toolsV2.agent.autoNotification'),
     '',
     `description: ${description}`,
     '',
@@ -351,7 +351,7 @@ function formatForegroundAgentSuccess(handle: SubagentHandle, result: string): s
   return [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
-    'status: completed',
+    t('toolsV2.agent.statusCompleted'),
     '',
     '[summary]',
     result,
@@ -366,7 +366,7 @@ function formatForegroundAgentFailure(
   const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
-    'status: failed',
+    t('toolsV2.agent.statusFailed'),
     '',
     `subagent error: ${message}`,
   ];

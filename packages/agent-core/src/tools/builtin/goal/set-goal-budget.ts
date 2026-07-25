@@ -6,6 +6,7 @@
 
 import type { Agent } from '#/agent';
 import { z } from 'zod';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import type { GoalBudgetLimits } from '../../../agent/goal';
@@ -70,7 +71,7 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       approvalRule: this.name,
       execute: async () => {
         if (goal.getGoal().goal === null) {
-          return { output: 'Goal budget not set: no current goal.' };
+          return { output: t('toolsV2.goal.budgetNotSet') };
         }
         if (budget === null) {
           return {

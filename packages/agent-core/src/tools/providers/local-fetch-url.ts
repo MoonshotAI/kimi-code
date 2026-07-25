@@ -25,8 +25,10 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
 import { Agent, type Dispatcher } from 'undici';
 
+import { t } from '../../i18n';
 import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '../../utils/proxy';
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../builtin';
+import { tryNativeFetchUrl } from '../builtin/native-tools';
 
 // Readability's .d.ts references the global `Document` type, but this
 // package compiles with `lib: ES2023` (no DOM). Extracting the
@@ -207,6 +209,25 @@ export class LocalFetchURLProvider implements UrlFetcher {
   }
 
   async fetch(url: string, _options?: { toolCallId?: string }): Promise<UrlFetchResult> {
+    // Try Rust native path first — faster, no libuv involvement.
+    // Skip when a proxy is configured (native path doesn't support proxies yet).
+    if (!isProxyConfigured(process.env)) {
+      const nativeResult = await tryNativeFetchUrl(url, {
+        maxBytes: this.maxBytes,
+        allowPrivate: this.allowPrivateAddresses,
+      });
+      if (nativeResult) {
+        if (nativeResult.error) {
+          if (nativeResult.status >= 400) {
+            throw new HttpFetchError(nativeResult.status, nativeResult.error);
+          }
+          throw new Error(nativeResult.error);
+        }
+        return { content: nativeResult.content, kind: nativeResult.kind };
+      }
+      // Native unavailable — fall through to TS implementation.
+    }
+
     // Pinned Agents are created per redirect hop and closed once the final
     // body is consumed, so keep-alive sockets never linger.
     const dispatchers: Dispatcher[] = [];
@@ -371,9 +392,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
     const fallbackText = (container?.textContent ?? '').trim();
 
     if (fallbackText.length === 0) {
-      throw new Error(
-        'Failed to extract meaningful content from the page. The page may require JavaScript to render.',
-      );
+      throw new Error(t('toolsV2.fetchUrl.contentExtractionFailed'));
     }
 
     return titleText.length > 0 ? `# ${titleText}\n\n${fallbackText}` : fallbackText;

@@ -6,6 +6,7 @@ import {
   createKimiHarness,
   flushDiagnosticLogsSync,
   log,
+  setLocale as setAgentCoreLocale,
   type KimiHarness,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -19,7 +20,6 @@ import {
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { getLocale, setLocale, t } from '#/i18n';
-import { setLocale as setAgentCoreLocale } from '@moonshot-ai/agent-core/i18n';
 import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';

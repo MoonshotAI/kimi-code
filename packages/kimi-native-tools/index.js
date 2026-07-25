@@ -18,6 +18,13 @@ function loadBinding() {
     // Fall through to legacy naming.
   }
 
+  // Try the GNU suffix (Linux artifacts: x86_64-unknown-linux-gnu, ...).
+  try {
+    return require(`./${BINDING_NAME}.${process.platform}-${process.arch}-gnu.node`);
+  } catch {
+    // Fall through.
+  }
+
   // Try the standard napi-rs loading (platform-specific naming).
   try {
     return require(`./${BINDING_NAME}.${process.platform}-${process.arch}.node`);
@@ -82,6 +89,88 @@ const nativeTranslateBatchCached = binding.nativeTranslateBatchCached;
 
 // GitHub REST transport — authenticated request core (auth/headers/pagination in Rust).
 const nativeGithubRequest = binding.nativeGithubRequest;
+
+// ============================================================================
+// FetchUrl — HTTP fetch with SSRF protection and HTML extraction
+// ============================================================================
+
+/**
+ * Fetch a URL with SSRF protection, redirect handling, and HTML content extraction.
+ *
+ * Runs entirely on a Rust blocking thread — the Node event loop stays responsive.
+ *
+ * @param {string} url - The URL to fetch.
+ * @param {object} [options] - Fetch options.
+ * @param {string} [options.userAgent] - Custom User-Agent header.
+ * @param {number} [options.maxBytes] - Maximum response body size in bytes.
+ * @param {boolean} [options.allowPrivate] - Allow fetching private/loopback addresses.
+ * @param {number} [options.timeoutMs] - Request timeout in milliseconds.
+ * @returns {Promise<{content: string, kind: string, status: number, error?: string}>}
+ */
+async function nativeFetchUrl(url, options = {}) {
+  return binding.nativeFetchUrl(
+    url,
+    options.userAgent ?? null,
+    options.maxBytes ?? null,
+    options.allowPrivate ?? null,
+    options.timeoutMs ?? null,
+  );
+}
+
+// ============================================================================
+// WebSearch — DuckDuckGo HTML scraping
+// ============================================================================
+
+/**
+ * Search DuckDuckGo and return structured results.
+ *
+ * Runs entirely on a Rust blocking thread — the Node event loop stays responsive.
+ *
+ * @param {string} query - The search query.
+ * @param {object} [options] - Search options.
+ * @param {number} [options.timeoutMs] - Request timeout in milliseconds.
+ * @param {number} [options.maxResults] - Maximum number of results.
+ * @returns {Promise<{results: Array<{title: string, url: string, snippet: string, siteName?: string}>, error?: string}>}
+ */
+async function nativeWebSearch(query, options = {}) {
+  return binding.nativeWebSearch(
+    query,
+    options.timeoutMs ?? null,
+    options.maxResults ?? null,
+  );
+}
+
+// ============================================================================
+// LLM Stream — HTTP SSE streaming with provider-specific event decoding
+// ============================================================================
+
+/**
+ * Execute an LLM streaming request via Rust.
+ *
+ * Handles HTTP POST, SSE parsing, and provider-specific event decoding entirely
+ * in Rust. Returns all decoded parts + metadata after the stream completes.
+ *
+ * @param {object} config - Stream configuration.
+ * @param {string} config.provider - Provider name ("openai-responses" | "openai-legacy" | "anthropic").
+ * @param {string} config.url - API endpoint URL.
+ * @param {string} config.apiKey - API key / bearer token.
+ * @param {string} config.model - Model name.
+ * @param {string} config.requestBody - JSON request body string.
+ * @param {number} [config.timeoutMs] - Request timeout in milliseconds.
+ * @param {Array<{key: string, value: string}>} [config.extraHeaders] - Additional headers.
+ * @returns {Promise<{parts: Array, metadata: object, error?: string}>}
+ */
+async function nativeLlmStream(config) {
+  return binding.nativeLlmStream({
+    provider: config.provider,
+    url: config.url,
+    apiKey: config.apiKey,
+    model: config.model,
+    requestBody: config.requestBody,
+    timeoutMs: config.timeoutMs ?? null,
+    extraHeaders: config.extraHeaders ?? null,
+  });
+}
 
 // ============================================================================
 // Read tool
@@ -1057,4 +1146,13 @@ module.exports = {
 
   // GitHub
   nativeGithubRequest,
+
+  // FetchUrl
+  nativeFetchUrl,
+
+  // WebSearch
+  nativeWebSearch,
+
+  // LLM Stream
+  nativeLlmStream,
 };

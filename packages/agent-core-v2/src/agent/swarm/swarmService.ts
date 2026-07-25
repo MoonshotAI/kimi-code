@@ -16,9 +16,12 @@
  * AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
  * listener: an AgentSwarm call must be the only tool call in its batch,
  * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
- * reason.
+ * reason. A second veto listener denies the `Agent` tool while swarm mode is
+ * active — the enter-reminder is a soft constraint; this veto is the hard
+ * enforcement that prevents a single-shot Agent call from slipping through.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -68,6 +71,17 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
                 ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
                 : mixedAgentSwarmDeniedMessage(),
             ),
+          ),
+        );
+      }),
+    );
+    this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (!this.isActive) return;
+        if (event.toolCall.name !== 'Agent') return;
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(agentDeniedInSwarmModeMessage()),
           ),
         );
       }),
@@ -128,19 +142,15 @@ registerScopedService(
 );
 
 function multipleAgentSwarmDeniedMessage(hasOtherToolCalls: boolean): string {
-  const suffix = hasOtherToolCalls
-    ? ' AgentSwarm also must not be combined with other tools in the same response.'
-    : '';
-  return (
-    'AgentSwarm must be called one swarm at a time. Multiple AgentSwarm calls are not forbidden, ' +
-    'but issue them sequentially: call one AgentSwarm, wait for its result, then call the next; ' +
-    `or merge the work into a single AgentSwarm when one swarm can cover it.${suffix}`
-  );
+  return hasOtherToolCalls
+    ? t('toolsV2.swarm.multipleDeniedMixed')
+    : t('toolsV2.swarm.multipleDenied');
 }
 
 function mixedAgentSwarmDeniedMessage(): string {
-  return (
-    'AgentSwarm must be the only tool call in a model response. Retry with a single AgentSwarm ' +
-    'call by itself, then call any other tools after it returns.'
-  );
+  return t('toolsV2.swarm.mixedDenied');
+}
+
+function agentDeniedInSwarmModeMessage(): string {
+  return t('toolsV2.swarm.agentDeniedInSwarmMode');
 }

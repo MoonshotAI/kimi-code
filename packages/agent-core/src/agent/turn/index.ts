@@ -860,6 +860,8 @@ export class TurnFlow {
             this.activeRequestTrace = trace;
             deduper.beginStep(trace);
           },
+          replaceToolResult: (toolCallId, result) =>
+            this.agent.context.replaceToolResult(toolCallId, result),
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
               this.agent.microCompaction.detect();

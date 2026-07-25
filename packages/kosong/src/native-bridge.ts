@@ -319,10 +319,17 @@ function getOpenAIApiKey(): string {
 
 /**
  * Create a native Anthropic provider if the native module is loaded.
+ *
+ * When `thinkingEffort` is set and the Rust side does not expose a thinking
+ * parameter slot in `anthropicChat`, the effort is recorded on the provider
+ * instance so callers can inspect it, but the native call proceeds without
+ * thinking.  A future Rust update can add the parameter without any JS-side
+ * changes.
  */
-export function createNativeAnthropicProvider(
+function createNativeAnthropicProviderBase(
   model: string,
-  baseUrl?: string,
+  baseUrl: string | undefined,
+  thinkingEffort: ThinkingEffort | null,
 ): ChatProvider | undefined {
   if (!nativeAvailable) return undefined;
 
@@ -330,12 +337,11 @@ export function createNativeAnthropicProvider(
     name: 'anthropic',
     modelName: model,
     maxCompletionTokens: undefined,
-    thinkingEffort: null,
+    thinkingEffort,
     modelParameters: {},
 
-    withThinking(_effort: ThinkingEffort): ChatProvider {
-      // TODO: support thinking effort in native provider
-      return this;
+    withThinking(effort: ThinkingEffort): ChatProvider {
+      return createNativeAnthropicProviderBase(model, baseUrl, effort)!;
     },
 
     async generate(
@@ -345,6 +351,10 @@ export function createNativeAnthropicProvider(
       _options?: GenerateOptions,
     ): Promise<StreamedMessage> {
       try {
+        // NOTE: The Rust `anthropicChat` binding currently does not accept a
+        // thinking_effort parameter (unlike `openaiChat`).  Once the Rust
+        // side adds support, pass `thinkingEffort` through here — same
+        // pattern as `openaiChat`'s 8th argument.
         const result = await native.anthropicChat(
           getApiKey(),
           model,
@@ -360,6 +370,13 @@ export function createNativeAnthropicProvider(
       }
     },
   } as ChatProvider;
+}
+
+export function createNativeAnthropicProvider(
+  model: string,
+  baseUrl?: string,
+): ChatProvider | undefined {
+  return createNativeAnthropicProviderBase(model, baseUrl, null);
 }
 
 /**
@@ -433,10 +450,16 @@ export function createNativeKimiProvider(
 
 /**
  * Create a native Google GenAI (Gemini) provider if the native module is loaded.
+ *
+ * Follows the same factory pattern as `createNativeAnthropicProviderBase` —
+ * records `thinkingEffort` on the instance for callers to inspect.  The Rust
+ * `googleGenaiChat` binding does not yet expose a thinking-effort slot; once
+ * it does, pass the parameter through in `generate()`.
  */
-export function createNativeGoogleGenAIProvider(
+function createNativeGoogleGenAIProviderBase(
   model: string,
-  baseUrl?: string,
+  baseUrl: string | undefined,
+  thinkingEffort: ThinkingEffort | null,
 ): ChatProvider | undefined {
   if (!nativeAvailable) return undefined;
 
@@ -444,11 +467,11 @@ export function createNativeGoogleGenAIProvider(
     name: 'google-genai',
     modelName: model,
     maxCompletionTokens: undefined,
-    thinkingEffort: null,
+    thinkingEffort,
     modelParameters: {},
 
-    withThinking(_effort: ThinkingEffort): ChatProvider {
-      return this;
+    withThinking(effort: ThinkingEffort): ChatProvider {
+      return createNativeGoogleGenAIProviderBase(model, baseUrl, effort)!;
     },
 
     async generate(
@@ -458,6 +481,9 @@ export function createNativeGoogleGenAIProvider(
       _options?: GenerateOptions,
     ): Promise<StreamedMessage> {
       try {
+        // NOTE: The Rust `googleGenaiChat` binding currently does not accept a
+        // thinking_effort parameter.  Once the Rust side adds support, pass
+        // `thinkingEffort` through here.
         const result = await native.googleGenaiChat(
           getApiKey(),
           model,
@@ -473,4 +499,11 @@ export function createNativeGoogleGenAIProvider(
       }
     },
   } as ChatProvider;
+}
+
+export function createNativeGoogleGenAIProvider(
+  model: string,
+  baseUrl?: string,
+): ChatProvider | undefined {
+  return createNativeGoogleGenAIProviderBase(model, baseUrl, null);
 }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { t, setLocale } from '@moonshot-ai/kimi-i18n';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -153,6 +154,7 @@ describe('AgentSwarmService', () => {
   let formatDenyMessage: Mock<(message: string) => string>;
 
   beforeEach(() => {
+    setLocale('en');
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentContextMemoryService, stubContextMemory());
@@ -251,7 +253,7 @@ describe('AgentSwarmService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('one swarm at a time'),
+        output: t('toolsV2.swarm.multipleDenied'),
         isError: true,
       },
     });
@@ -267,7 +269,7 @@ describe('AgentSwarmService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('must be the only tool call'),
+        output: t('toolsV2.swarm.mixedDenied'),
         isError: true,
       },
     });
@@ -493,6 +495,7 @@ describe('AgentSwarmTool', () => {
   });
 
   it('rejects invalid launch shapes at execution time', async () => {
+    setLocale('en');
     const cases = [
       {
         input: {
@@ -500,7 +503,7 @@ describe('AgentSwarmTool', () => {
           prompt_template: 'Review {{item}}',
           items: Array.from({ length: 129 }, (_, index) => `src/${String(index + 1)}.ts`),
         },
-        output: 'AgentSwarm supports at most 128 subagents.',
+        output: t('v2Errors.swarmMaxSubagents', { count: 128 }),
       },
       {
         input: {
@@ -508,14 +511,14 @@ describe('AgentSwarmTool', () => {
           prompt_template: 'Review {{item}}',
           items: ['src/only.ts'],
         },
-        output: 'AgentSwarm requires at least 2 items unless resume_agent_ids is provided.',
+        output: t('v2Errors.swarmMinInputs'),
       },
       {
         input: {
           description: 'Review files',
           items: ['src/a.ts', 'src/b.ts'],
         },
-        output: 'prompt_template is required when items are provided.',
+        output: t('v2Errors.swarmPromptRequired'),
       },
       {
         input: {
@@ -523,7 +526,7 @@ describe('AgentSwarmTool', () => {
           prompt_template: 'Review files',
           items: ['src/a.ts', 'src/b.ts'],
         },
-        output: 'prompt_template must include the {{item}} placeholder.',
+        output: t('v2Errors.swarmPromptPlaceholder', { placeholder: '{{item}}' }),
       },
       {
         input: {
@@ -531,8 +534,7 @@ describe('AgentSwarmTool', () => {
           prompt_template: 'Review {{item}}',
           items: ['same', 'same'],
         },
-        output:
-          'Duplicate subagent prompts from items 1 and 2. AgentSwarm requires distinct subagents.',
+        output: t('v2Errors.swarmDuplicatePrompts', { indexA: 1, indexB: 2 }),
       },
     ];
 

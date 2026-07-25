@@ -6,6 +6,11 @@
 /// - Uses stderr for logging/diagnostics
 
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use std::future::Future;
+
+/// A boxed future type alias for async handlers.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 // ── JSON-RPC 2.0 base types ────────────────────────────────────────────────
 
@@ -17,7 +22,8 @@ pub type RequestId = serde_json::Value;
 #[allow(dead_code)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: RequestId,
+    #[serde(default)]
+    pub id: serde_json::Value,
     pub method: String,
     #[serde(default)]
     pub params: serde_json::Value,
@@ -49,6 +55,14 @@ pub struct JsonRpcError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
 }
+
+impl std::fmt::Display for JsonRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for JsonRpcError {}
 
 /// A JSON-RPC 2.0 notification (no response expected).
 #[derive(Debug, Deserialize)]
@@ -96,6 +110,31 @@ pub struct RunTurnParams {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDef>,
     pub max_steps: Option<u32>,
+    /// Multiple LLM providers for concurrent execution (MultiLLM).
+    /// When present, overrides `system_prompt` + `model_name`.
+    #[serde(default)]
+    pub providers: Vec<LlmProviderDef>,
+    /// Optional goal context for budget-aware execution.
+    /// When present, the loop checks budgets before each step and
+    /// injects steering text into the system prompt.
+    #[serde(default)]
+    pub goal: Option<crate::turn_loop::types::GoalContext>,
+}
+
+/// LLM provider definition for MultiLLM.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct LlmProviderDef {
+    pub name: String,
+    pub model: String,
+    pub system_prompt: String,
+}
+
+/// Input for a cancel_turn RPC call.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct CancelTurnParams {
+    pub turn_id: String,
 }
 
 /// A message in the conversation history.
@@ -165,6 +204,10 @@ pub struct ToolExecuteRequest {
     pub tool_call_id: String,
     pub tool_name: String,
     pub arguments: serde_json::Value,
+    /// When true, JS side should skip workspace index predictions and
+    /// execute the tool precisely. Used by background prediction replacement.
+    #[serde(default)]
+    pub force_precise: bool,
 }
 
 /// Response from the host/execute_tool RPC call.
@@ -173,6 +216,11 @@ pub struct ToolExecuteRequest {
 pub struct ToolExecuteResponse {
     pub content: String,
     pub is_error: bool,
+    /// When true, the result is a fast prediction from the workspace index
+    /// rather than the precise execution output. The caller should use this
+    /// immediately and spawn background precise execution to replace it later.
+    #[serde(default)]
+    pub is_prediction: bool,
 }
 
 /// Token usage tracking.
@@ -250,5 +298,391 @@ impl JsonRpcError {
             message: msg,
             data: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_turn_params_serialization() {
+        let json = serde_json::json!({
+            "turn_id": "turn-1",
+            "system_prompt": "You are a helpful assistant.",
+            "model_name": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "tools": [
+                {"name": "read", "description": "Read a file", "input_schema": {"type": "object"}}
+            ],
+            "max_steps": 10
+        });
+        let params: RunTurnParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.turn_id, "turn-1");
+        assert_eq!(params.model_name, "gpt-4");
+        assert_eq!(params.messages.len(), 1);
+        assert_eq!(params.tools.len(), 1);
+        assert_eq!(params.max_steps, Some(10));
+        assert!(params.providers.is_empty());
+    }
+
+    #[test]
+    fn test_run_turn_params_with_providers() {
+        let json = serde_json::json!({
+            "turn_id": "turn-1",
+            "system_prompt": "",
+            "model_name": "",
+            "messages": [],
+            "tools": [],
+            "providers": [
+                {"name": "fast", "model": "gpt-4o-mini", "system_prompt": "You are fast."},
+                {"name": "smart", "model": "claude-opus-4", "system_prompt": "You are smart."}
+            ]
+        });
+        let params: RunTurnParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.providers.len(), 2);
+        assert_eq!(params.providers[0].name, "fast");
+        assert_eq!(params.providers[0].model, "gpt-4o-mini");
+        assert_eq!(params.providers[1].name, "smart");
+    }
+
+    #[test]
+    fn test_run_turn_result_roundtrip() {
+        let result = RunTurnResult {
+            stop_reason: "EndTurn".to_string(),
+            steps: 3,
+            usage: TokenUsage { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["stop_reason"], "EndTurn");
+        assert_eq!(json["steps"], 3);
+        assert_eq!(json["usage"]["input_tokens"], 100);
+
+        let deserialized: RunTurnResult = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.stop_reason, "EndTurn");
+        assert_eq!(deserialized.steps, 3);
+    }
+
+    #[test]
+    fn test_llm_chat_request_roundtrip() {
+        let req = LlmChatRequest {
+            system_prompt: "You are helpful.".to_string(),
+            model_name: "gpt-4".to_string(),
+            messages: vec![
+                LlmChatMessage { role: "user".to_string(), content: "Hi".to_string() },
+            ],
+            tools: vec![
+                ToolDef {
+                    name: "read".to_string(),
+                    description: "Read file".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                },
+            ],
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["system_prompt"], "You are helpful.");
+        assert_eq!(json["messages"][0]["role"], "user");
+
+        let deserialized: LlmChatRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.system_prompt, req.system_prompt);
+        assert_eq!(deserialized.messages.len(), 1);
+        assert_eq!(deserialized.tools.len(), 1);
+    }
+
+    #[test]
+    fn test_llm_chat_response_roundtrip() {
+        let resp = LlmChatResponse {
+            tool_calls: vec![
+                LlmToolCall {
+                    id: "call_1".to_string(),
+                    name: "read".to_string(),
+                    arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+                },
+            ],
+            finish_reason: Some("stop".to_string()),
+            usage: TokenUsage { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["tool_calls"][0]["name"], "read");
+        assert_eq!(json["finish_reason"], "stop");
+
+        let deserialized: LlmChatResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.tool_calls.len(), 1);
+        assert_eq!(deserialized.tool_calls[0].id, "call_1");
+        assert_eq!(deserialized.finish_reason, Some("stop".to_string()));
+    }
+
+    #[test]
+    fn test_tool_execute_request_roundtrip() {
+        let req = ToolExecuteRequest {
+            turn_id: "turn-1".to_string(),
+            tool_call_id: "call_1".to_string(),
+            tool_name: "read".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/test.txt", "line_offset": 1}),
+            force_precise: false,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["tool_name"], "read");
+        assert_eq!(json["arguments"]["path"], "/tmp/test.txt");
+
+        let deserialized: ToolExecuteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.turn_id, "turn-1");
+        assert_eq!(deserialized.tool_name, "read");
+    }
+
+    #[test]
+    fn test_tool_execute_request_force_precise_default() {
+        // Test that force_precise defaults to false when deserializing
+        let json = serde_json::json!({
+            "turn_id": "turn-1",
+            "tool_call_id": "call_1",
+            "tool_name": "read",
+            "arguments": {"path": "/tmp/test.txt"}
+        });
+        let req: ToolExecuteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.turn_id, "turn-1");
+        assert!(!req.force_precise);
+    }
+
+    #[test]
+    fn test_tool_execute_request_force_precise_true() {
+        let req = ToolExecuteRequest {
+            turn_id: "turn-1".to_string(),
+            tool_call_id: "call_1".to_string(),
+            tool_name: "read".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            force_precise: true,
+        };
+        assert!(req.force_precise);
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json["force_precise"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_tool_execute_response_roundtrip() {
+        let resp = ToolExecuteResponse {
+            content: "file content here".to_string(),
+            is_error: false,
+            is_prediction: false,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["content"], "file content here");
+        assert!(!json["is_error"].as_bool().unwrap());
+
+        let deserialized: ToolExecuteResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.content, "file content here");
+        assert!(!deserialized.is_error);
+    }
+
+    #[test]
+    fn test_tool_execute_response_error() {
+        let resp = ToolExecuteResponse {
+            content: "File not found".to_string(),
+            is_error: true,
+            is_prediction: false,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["is_error"].as_bool().unwrap());
+
+        let deserialized: ToolExecuteResponse = serde_json::from_value(json).unwrap();
+        assert!(deserialized.is_error);
+    }
+
+    #[test]
+    fn test_health_status() {
+        let status = HealthStatus {
+            status: "ok".to_string(),
+            version: "0.1.0".to_string(),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["version"], "0.1.0");
+    }
+
+    #[test]
+    fn test_message_roundtrip() {
+        let msg = Message {
+            role: "user".to_string(),
+            content: "Hello world".to_string(),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+
+        let deserialized: Message = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.role, "user");
+        assert_eq!(deserialized.content, "Hello world");
+    }
+
+    #[test]
+    fn test_tool_def_roundtrip() {
+        let def = ToolDef {
+            name: "grep".to_string(),
+            description: "Search text".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"}
+                }
+            }),
+        };
+        let json = serde_json::to_value(&def).unwrap();
+        let deserialized: ToolDef = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.name, "grep");
+        assert!(deserialized.input_schema["properties"]["pattern"]["type"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_token_usage_default() {
+        let usage = TokenUsage::default();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_token_usage_roundtrip() {
+        let usage = TokenUsage { input_tokens: 100, output_tokens: 50, total_tokens: 150 };
+        let json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(json["input_tokens"], 100);
+        assert_eq!(json["output_tokens"], 50);
+        assert_eq!(json["total_tokens"], 150);
+
+        let deserialized: TokenUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.input_tokens, 100);
+        assert_eq!(deserialized.output_tokens, 50);
+    }
+
+    #[test]
+    fn test_json_rpc_request_parse() {
+        let json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "agent/run_turn",
+            "params": {"key": "value"}
+        });
+        let req: JsonRpcRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.jsonrpc, "2.0");
+        assert_eq!(req.id, 42);
+        assert_eq!(req.method, "agent/run_turn");
+        assert_eq!(req.params["key"], "value");
+    }
+
+    #[test]
+    fn test_json_rpc_request_notification() {
+        // Notification has no id
+        let json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "agent/notify",
+            "params": {}
+        });
+        let req: JsonRpcRequest = serde_json::from_value(json).unwrap();
+        assert!(req.id.is_null());
+    }
+
+    #[test]
+    fn test_json_rpc_response_ok() {
+        let resp = JsonRpcResponse::ok(serde_json::json!(1), serde_json::json!({"result": "ok"}));
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 1);
+        assert_eq!(json["result"]["result"], "ok");
+    }
+
+    #[test]
+    fn test_json_rpc_error_response() {
+        let err = JsonRpcErrorResponse::new(serde_json::json!(null), -32700, "Parse error".to_string());
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["error"]["code"], -32700);
+        assert_eq!(json["error"]["message"], "Parse error");
+        assert!(json["error"].get("data").is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_error_with_data() {
+        let err = JsonRpcError {
+            code: -32000,
+            message: "Custom error".to_string(),
+            data: Some(serde_json::json!({"detail": "something broke"})),
+        };
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["code"], -32000);
+        assert_eq!(json["data"]["detail"], "something broke");
+    }
+
+    #[test]
+    fn test_methods_constants() {
+        assert_eq!(methods::RUN_TURN, "agent/run_turn");
+        assert_eq!(methods::CANCEL_TURN, "agent/cancel_turn");
+        assert_eq!(methods::HEALTH, "agent/health");
+        assert_eq!(methods::SHUTDOWN, "agent/shutdown");
+        assert_eq!(methods::HOST_LLM_CHAT, "host/llm_chat");
+        assert_eq!(methods::HOST_EXECUTE_TOOL, "host/execute_tool");
+    }
+
+    #[test]
+    fn test_llm_provider_def_deserialize() {
+        let json = serde_json::json!({
+            "name": "fast-llm",
+            "model": "gpt-4o-mini",
+            "system_prompt": "You are fast."
+        });
+        let def: LlmProviderDef = serde_json::from_value(json).unwrap();
+        assert_eq!(def.name, "fast-llm");
+        assert_eq!(def.model, "gpt-4o-mini");
+        assert_eq!(def.system_prompt, "You are fast.");
+    }
+
+    #[test]
+    fn test_notification_parse() {
+        let json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "host/event",
+            "params": {"type": "progress"}
+        });
+        let notif: JsonRpcNotification = serde_json::from_value(json).unwrap();
+        assert_eq!(notif.jsonrpc, "2.0");
+        assert_eq!(notif.method, "host/event");
+        assert_eq!(notif.params["type"], "progress");
+    }
+
+    #[test]
+    fn test_llm_tool_call_roundtrip() {
+        let tc = LlmToolCall {
+            id: "call_abc".to_string(),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/x.txt"}),
+        };
+        let json = serde_json::to_value(&tc).unwrap();
+        let deserialized: LlmToolCall = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.id, "call_abc");
+        assert_eq!(deserialized.name, "read_file");
+    }
+
+    #[test]
+    fn test_empty_providers_default() {
+        let json = serde_json::json!({
+            "turn_id": "t1",
+            "system_prompt": "hi",
+            "model_name": "m",
+            "messages": [],
+            "tools": []
+        });
+        let params: RunTurnParams = serde_json::from_value(json).unwrap();
+        assert!(params.providers.is_empty());
+    }
+
+    #[test]
+    fn test_tool_def_empty_schema() {
+        let def = ToolDef {
+            name: "bash".to_string(),
+            description: "Run shell".to_string(),
+            input_schema: serde_json::Value::Object(Default::default()),
+        };
+        let json = serde_json::to_value(&def).unwrap();
+        let deserialized: ToolDef = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.name, "bash");
+        assert!(deserialized.input_schema.as_object().unwrap().is_empty());
     }
 }
