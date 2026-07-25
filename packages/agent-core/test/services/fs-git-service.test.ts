@@ -118,6 +118,19 @@ async function driveStatus(service: FsGitService) {
   return p;
 }
 
+async function driveDiff(service: FsGitService, diff: string) {
+  const p = service.diff('sid', { path: 'large.txt' });
+  await waitForSpawn(1);
+  finishLatest('true\n', 0);
+  await waitForSpawn(2);
+  finishLatest('?? large.txt\n', 0);
+  await waitForSpawn(3);
+  finishLatest('', 1);
+  await waitForSpawn(4);
+  finishLatest(diff, 1);
+  return p;
+}
+
 describe('FsGitService pull request lookup', () => {
   it('returns a normalized pull request when gh pr view succeeds', async () => {
     ghResponse = {
@@ -191,5 +204,16 @@ describe('FsGitService pull request lookup', () => {
     const result = await p;
     expect(result.pullRequest).toBeNull();
     expect(spawned[2]?.kill).toHaveBeenCalled();
+  });
+});
+
+describe('FsGitService diff output', () => {
+  it('limits a large UTF-8 diff to one MiB', async () => {
+    const service = new FsGitService(sessions);
+
+    const result = await driveDiff(service, '界'.repeat(400_000));
+
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.diff, 'utf8')).toBeLessThanOrEqual(1_048_576);
   });
 });
