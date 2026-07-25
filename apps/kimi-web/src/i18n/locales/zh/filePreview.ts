@@ -21,6 +21,7 @@ export default {
   actual: '原始',
   pdfNoPreview: '无法内嵌预览此 PDF，可以下载后查看',
   imageNoPreview: '图片文件 · {mime} · {size} · 暂不预览',
+  videoNoPreview: '视频文件 · {mime} · {size} · 暂不预览',
   binaryNoPreview: '二进制文件 · {mime} · {size} 字节 · 暂不预览',
   unknownType: '未知类型',
   copyCode: '复制代码',

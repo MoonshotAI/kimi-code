@@ -166,6 +166,13 @@ export interface TranscriptEntry {
   turnId?: string;
   renderMode: 'markdown' | 'plain' | 'notice';
   content: string;
+  /**
+   * True only for entries holding real model-authored text (created by the
+   * assistant stream). Derived cards — hook results, goal completions, goal
+   * reminders — share kind 'assistant' but are not replies, so /copy must
+   * skip them.
+   */
+  modelText?: boolean;
   color?: ColorToken;
   detail?: string;
   /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` replaces the sparkles marker). */

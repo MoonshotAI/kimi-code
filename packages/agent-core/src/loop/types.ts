@@ -125,6 +125,7 @@ export interface ToolUpdate {
 export interface ExecutableToolContext {
   readonly turnId: string;
   readonly toolCallId: string;
+  readonly traceId?: string;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
@@ -170,6 +171,7 @@ export interface LoopStepHookContext {
 }
 
 export interface ToolExecutionHookContext extends LoopStepHookContext {
+  readonly traceId?: string;
   readonly toolCall: ToolCall;
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;

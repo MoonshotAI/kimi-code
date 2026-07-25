@@ -9,14 +9,14 @@ const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
     description: 'Approve every action yourself.',
   },
   {
-    value: 'auto',
-    label: 'Auto',
-    description: 'Run all actions automatically, including risky ones.',
-  },
-  {
     value: 'yolo',
     label: 'YOLO',
-    description: 'AI decides which actions need your approval.',
+    description: 'Auto-approve tool actions, but the agent may still ask questions.',
+  },
+  {
+    value: 'auto',
+    label: 'Auto',
+    description: 'Fully autonomous — agent decides everything without asking.',
   },
 ];
 

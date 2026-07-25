@@ -87,7 +87,9 @@ function createTelemetryStub(): ITelemetryService {
 function createToolExecutorStub(): IAgentToolExecutorService {
   return {
     _serviceBrand: undefined,
-    hooks: { onBeforeExecuteTool: hookSlot(), onDidExecuteTool: hookSlot() },
+    onBeforeExecuteTool: Event.None,
+    onWillExecuteTool: Event.None,
+    hooks: { onDidExecuteTool: hookSlot() },
   } as unknown as IAgentToolExecutorService;
 }
 

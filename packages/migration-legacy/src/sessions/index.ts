@@ -52,14 +52,24 @@ export async function migrateSessionsStep(
   let bucketDirs: string[];
   try {
     bucketDirs = await readdir(sessionsDir);
-  } catch {
-    return emptySummary();
+  } catch (error) {
+    if (isMissingError(error)) return emptySummary();
+    return {
+      ...emptySummary(),
+      sessionsFailed: [
+        {
+          sourcePath: sessionsDir,
+          reason: `Legacy sessions directory could not be read: ${formatError(error)}`,
+        },
+      ],
+    };
   }
 
   const candidates: SessionCandidate[] = [];
 
   for (const bucketName of bucketDirs) {
     bucketsScanned++;
+    const bucketPath = join(sessionsDir, bucketName);
     const workdir = resolveBucket(bucketName, md5ToWorkdir);
     if (workdir.kind === 'nonlocal-kaos') {
       bucketsSkippedNonlocalKaos++;
@@ -67,14 +77,21 @@ export async function migrateSessionsStep(
     }
     if (workdir.kind === 'no-workdir-found') {
       bucketsSkippedNoWorkdirFound++;
+      sessionsFailed.push({
+        sourcePath: bucketPath,
+        reason: unknownWorkdirReason(),
+      });
       continue;
     }
     // workdir.kind === 'local'
-    const bucketPath = join(sessionsDir, bucketName);
     let sessionUuids: string[];
     try {
       sessionUuids = await readdir(bucketPath);
-    } catch {
+    } catch (error) {
+      sessionsFailed.push({
+        sourcePath: bucketPath,
+        reason: `Legacy session bucket could not be read: ${formatError(error)}`,
+      });
       continue;
     }
     for (const uuid of sessionUuids) {
@@ -89,7 +106,10 @@ export async function migrateSessionsStep(
         continue;
       }
       if (cls === 'malformed') {
-        sessionsSkippedMalformed++;
+        sessionsFailed.push({
+          sourcePath: sessionDir,
+          reason: unreadableSessionReason(),
+        });
         continue;
       }
       const wireMtime = await readWireMtime(sessionDir);
@@ -265,4 +285,25 @@ function emptySummary(): SessionsSummary {
     sessionsFailed: [],
     sessionsConflicts: [],
   };
+}
+
+function unknownWorkdirReason(): string {
+  return 'No local workdir mapping was found for this legacy session bucket; kimi.json may be missing, unreadable, or not list the workdir.';
+}
+
+function unreadableSessionReason(): string {
+  return 'Legacy session could not be inspected because context.jsonl is missing or unreadable.';
+}
+
+function isMissingError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { readonly code?: unknown }).code === 'ENOENT'
+  );
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

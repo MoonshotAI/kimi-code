@@ -5,24 +5,10 @@ import {
   permissionRuleSchema,
   sessionCreateSchema,
   sessionSchema,
-  sessionStatusSchema,
   sessionUpdateSchema,
   sessionUsageSchema,
   type Session,
 } from '../session';
-
-describe('sessionStatusSchema', () => {
-  it.each(['idle', 'running', 'awaiting_approval', 'awaiting_question', 'aborted'] as const)(
-    'accepts %s',
-    (status) => {
-      expect(sessionStatusSchema.parse(status)).toBe(status);
-    },
-  );
-
-  it('rejects unknown status', () => {
-    expect(sessionStatusSchema.safeParse('chilling').success).toBe(false);
-  });
-});
 
 describe('sessionUsageSchema + emptySessionUsage', () => {
   it('emptySessionUsage is parseable as zero usage', () => {
@@ -65,7 +51,9 @@ describe('sessionSchema', () => {
     title: 'Test session',
     created_at: '2026-06-04T10:30:00.000Z',
     updated_at: '2026-06-04T10:35:00.000Z',
-    status: 'idle',
+    busy: true,
+    main_turn_active: true,
+    pending_interaction: 'approval',
     archived: false,
     metadata: { cwd: '/tmp/test' },
     agent_config: { model: 'moonshot-v1-128k' },

@@ -122,6 +122,7 @@ export class KosongLLM implements LLM {
       onRequestStart: markRequestStart,
       onRequestSent: markRequestSent,
       onStreamEnd: markStreamEnd,
+      onTraceId: (traceId) => params.trace?.capture(traceId),
       requestLogFields: params.requestLogFields,
     };
 
@@ -157,6 +158,7 @@ export class KosongLLM implements LLM {
         firstChunkAt === undefined
           ? undefined
           : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, decodeStats),
+      traceId: result.traceId ?? undefined,
     };
 
     return response;

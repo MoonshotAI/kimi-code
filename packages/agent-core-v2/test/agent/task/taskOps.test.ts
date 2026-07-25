@@ -66,7 +66,7 @@ function info(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
 }
 
 describe('task ops (wire-backed)', () => {
-  it('started/terminated fold into the task map by id without persisting (live-only)', async () => {
+  it('started/terminated fold into the task map by id and persist to the journal', async () => {
     expect(wire.getModel(TaskModel).size).toBe(0);
 
     wire.dispatch(taskStarted({ info: info('t1', 'running') }));
@@ -78,7 +78,25 @@ describe('task ops (wire-backed)', () => {
     wire.dispatch(taskStarted({ info: info('t2', 'running') }));
     expect(wire.getModel(TaskModel).size).toBe(2);
 
-    expect(await readRecords()).toEqual([]);
+    expect(await readRecords()).toEqual([
+      { type: 'task.started', info: info('t1', 'running'), time: expect.any(Number) },
+      { type: 'task.terminated', info: info('t1', 'completed'), time: expect.any(Number) },
+      { type: 'task.started', info: info('t2', 'running'), time: expect.any(Number) },
+    ]);
+  });
+
+  it('task.terminated persists the optional outputTail snapshot (fold-only, never in the model)', async () => {
+    wire.dispatch(taskTerminated({ info: info('t1', 'completed'), outputTail: 'last lines' }));
+
+    expect(await readRecords()).toEqual([
+      {
+        type: 'task.terminated',
+        info: info('t1', 'completed'),
+        outputTail: 'last lines',
+        time: expect.any(Number),
+      },
+    ]);
+    expect(wire.getModel(TaskModel).get('t1')).toEqual(info('t1', 'completed'));
   });
 
   it('apply returns a new Map on change (the model is the restore seed)', () => {
@@ -89,10 +107,10 @@ describe('task ops (wire-backed)', () => {
     expect(after.get('t1')?.status).toBe('running');
   });
 
-  it('replay rebuilds the task map from legacy task.* records silently', async () => {
+  it('replay rebuilds the task map from persisted task.* records silently', async () => {
     const records: WireRecord[] = [
       { type: 'task.started', info: info('t1', 'running') },
-      { type: 'task.terminated', info: info('t1', 'completed') },
+      { type: 'task.terminated', info: info('t1', 'completed'), outputTail: 'tail' },
       { type: 'task.started', info: info('t2', 'running') },
     ] as unknown as WireRecord[];
 

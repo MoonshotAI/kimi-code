@@ -55,6 +55,13 @@ export interface FetchManagedKimiCodeModelsOptions {
   readonly baseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
   readonly headers?: Record<string, string> | undefined;
+  /**
+   * What `accessToken` actually is; only affects auth-error wording. Defaults
+   * to 'oauth' (the managed login flow); api-key providers refreshed against
+   * the managed endpoint pass 'apiKey' so a 401 doesn't tell the user their
+   * "OAuth credentials" were rejected.
+   */
+  readonly credentialKind?: 'oauth' | 'apiKey' | undefined;
 }
 
 export interface ManagedKimiCodeApplyResult {
@@ -107,9 +114,12 @@ export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
     readonly status: number;
     readonly baseUrl: string;
     readonly message: string;
+    readonly credentialKind?: 'oauth' | 'apiKey' | undefined;
   }) {
     super(
-      `Kimi Code models endpoint ${options.baseUrl} rejected OAuth credentials: ${options.message}`,
+      `Kimi Code models endpoint ${options.baseUrl} rejected ${
+        options.credentialKind === 'apiKey' ? 'the API key' : 'OAuth credentials'
+      }: ${options.message}`,
     );
     this.name = 'ManagedKimiCodeModelsAuthError';
     this.status = options.status;
@@ -497,6 +507,7 @@ export async function fetchManagedKimiCodeModels(
         status: response.status,
         baseUrl,
         message,
+        credentialKind: options.credentialKind,
       });
     }
     throw new Error(message);
@@ -508,6 +519,45 @@ export async function fetchManagedKimiCodeModels(
   return payload['data']
     .map((item) => toModelInfo(item))
     .filter((item): item is ManagedKimiCodeModelInfo => item !== undefined);
+}
+
+/**
+ * Builds the upstream-owned alias record for one `/models` entry. Shared by
+ * `applyManagedKimiCodeConfig` (OAuth provisioning/refresh) and
+ * `applyManagedApiKeyProviderModels` (api-key provider refresh) so both write
+ * identical upstream-owned fields for the same model payload.
+ */
+export function toManagedModelAlias(
+  providerId: string,
+  model: ManagedKimiCodeModelInfo,
+): ManagedKimiModelAlias {
+  const capabilities = capabilitiesForModel(model);
+  // Kimi's Anthropic-compatible endpoint only accepts adaptive thinking
+  // (`thinking: { type: 'adaptive' }`); the kosong adapter otherwise infers
+  // budget-based thinking from the model name, which fails for Kimi model ids.
+  // Restrict the override to thinking-capable models: the UI treats
+  // `adaptiveThinking === true` as "supports a thinking toggle", so marking a
+  // non-thinking model would misrepresent it.
+  const supportsAdaptiveThinking =
+    model.protocol === 'anthropic' &&
+    (capabilities?.includes('thinking') === true ||
+      capabilities?.includes('always_thinking') === true);
+  return {
+    provider: providerId,
+    model: model.id,
+    maxContextSize: model.contextLength,
+    capabilities,
+    ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+    ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
+    ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
+    protocol: model.protocol,
+    // Kimi's anthropic-compatible endpoint is served behind the beta Messages
+    // API (`/v1/messages?beta=true`), so route anthropic-protocol models
+    // through `client.beta.messages.create`. Cleared on refresh when the
+    // server stops declaring anthropic so stale routing never lingers.
+    betaApi: model.protocol === 'anthropic' ? true : undefined,
+    adaptiveThinking: supportsAdaptiveThinking ? true : undefined,
+  };
 }
 
 export function applyManagedKimiCodeConfig(
@@ -560,36 +610,13 @@ export function applyManagedKimiCodeConfig(
     }
   }
   for (const model of options.models) {
-    const capabilities = capabilitiesForModel(model);
     const key = managedModelKey(model.id);
     const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
-    // Kimi's Anthropic-compatible endpoint only accepts adaptive thinking
-    // (`thinking: { type: 'adaptive' }`); the kosong adapter otherwise infers
-    // budget-based thinking from the model name, which fails for Kimi model ids.
-    // Restrict the override to thinking-capable models: the UI treats
-    // `adaptiveThinking === true` as "supports a thinking toggle", so marking a
-    // non-thinking model would misrepresent it.
-    const supportsAdaptiveThinking =
-      model.protocol === 'anthropic' &&
-      (capabilities?.includes('thinking') === true ||
-        capabilities?.includes('always_thinking') === true);
-    const remoteAlias: ManagedKimiModelAlias = {
-      provider: KIMI_CODE_PROVIDER_NAME,
-      model: model.id,
-      maxContextSize: model.contextLength,
-      capabilities,
-      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
-      ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
-      ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
-      protocol: model.protocol,
-      // Kimi's anthropic-compatible endpoint is served behind the beta Messages
-      // API (`/v1/messages?beta=true`), so route anthropic-protocol models
-      // through `client.beta.messages.create`. Cleared on refresh when the
-      // server stops declaring anthropic so stale routing never lingers.
-      betaApi: model.protocol === 'anthropic' ? true : undefined,
-      adaptiveThinking: supportsAdaptiveThinking ? true : undefined,
-    };
-    existingModels[key] = mergeRefreshedModelAlias(existing, remoteAlias, MANAGED_KIMI_MODEL_FIELDS);
+    existingModels[key] = mergeRefreshedModelAlias(
+      existing,
+      toManagedModelAlias(KIMI_CODE_PROVIDER_NAME, model),
+      MANAGED_KIMI_MODEL_FIELDS,
+    );
   }
 
   config.models = existingModels;
@@ -612,6 +639,54 @@ export function applyManagedKimiCodeConfig(
     defaultModel: selectedDefault.modelKey,
     defaultThinking: selectedDefault.thinking,
   };
+}
+
+/**
+ * Merge refreshed `/models` entries into the aliases of an api-key provider
+ * pointing at the managed Kimi Code endpoint (a hand-configured provider using
+ * a distributed API key instead of OAuth). Unlike `applyManagedKimiCodeConfig`
+ * this touches ONLY `config.models`: the provider record (type / baseUrl /
+ * apiKey and any hand-written extras), `services`, `defaultModel`, and
+ * `thinking` are all left untouched — the provider is user-owned, only its
+ * model catalog is upstream-owned.
+ *
+ * `aliasPrefix` scopes which aliases count as refresh-generated:
+ * `${providerId}/` for ordinary providers, `kimi-code/` for a hand-written
+ * `managed:kimi-code` entry so its aliases line up with the OAuth provisioned
+ * shape. Aliases outside the prefix are the caller's responsibility (the
+ * refresh orchestrator preserves them via `preserveUserProviderAliases`).
+ */
+export function applyManagedApiKeyProviderModels(
+  config: ManagedKimiConfigShape,
+  providerId: string,
+  models: readonly ManagedKimiCodeModelInfo[],
+  aliasPrefix: string,
+): void {
+  for (const model of models) {
+    assertPositiveContextLength(model);
+  }
+
+  const existingModels = config.models ?? {};
+  // Same merge contract as `applyManagedKimiCodeConfig`: upstream-owned fields
+  // are overwritten, hand-written extras survive, and aliases upstream no
+  // longer lists are removed (the orchestrator restores non-prefix ones).
+  const upstreamKeys = new Set(models.map((m) => `${aliasPrefix}${m.id}`));
+  for (const [key, model] of Object.entries(existingModels)) {
+    if (isRecord(model) && model['provider'] === providerId && !upstreamKeys.has(key)) {
+      delete existingModels[key];
+    }
+  }
+  for (const model of models) {
+    const key = `${aliasPrefix}${model.id}`;
+    const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
+    existingModels[key] = mergeRefreshedModelAlias(
+      existing,
+      toManagedModelAlias(providerId, model),
+      MANAGED_KIMI_MODEL_FIELDS,
+    );
+  }
+
+  config.models = existingModels;
 }
 
 export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape): void {

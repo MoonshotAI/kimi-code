@@ -70,6 +70,7 @@ describe('Event public types', () => {
         case 'session.meta.updated':
         case 'event.session.created':
         case 'event.session.status_changed':
+        case 'event.session.work_changed':
         case 'event.workspace.created':
         case 'event.workspace.updated':
         case 'event.workspace.deleted':
@@ -94,6 +95,7 @@ describe('Event public types', () => {
         case 'tool.progress':
         case 'shell.output':
         case 'shell.started':
+        case 'shell.completed':
         case 'tool.result':
         case 'tool.list.updated':
         case 'mcp.server.status':

@@ -18,6 +18,5 @@ export function stubPermissionPolicyService(
   return {
     _serviceBrand: undefined,
     evaluate: () => Promise.resolve(next()),
-    registerPolicy: () => ({ dispose: () => {} }),
   };
 }

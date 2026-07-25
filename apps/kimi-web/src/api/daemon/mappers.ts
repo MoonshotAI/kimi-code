@@ -15,7 +15,6 @@ import type {
   AppMessageRole,
   AppQuestionRequest,
   AppSession,
-  AppSessionStatus,
   AppSessionUsage,
   AppTask,
   AppTaskStatus,
@@ -46,7 +45,6 @@ import type {
   WireQuestionRequest,
   WireQuestionResponse,
   WireSession,
-  WireSessionStatus,
   WireSessionUsage,
   WireWorkspace,
   WireEvent,
@@ -88,33 +86,16 @@ export function isPlaceholderSessionUsage(usage: AppSessionUsage): boolean {
   );
 }
 
-export function toAppSessionStatus(wire: WireSessionStatus): AppSessionStatus {
-  switch (wire) {
-    case 'idle': return 'idle';
-    case 'running': return 'running';
-    case 'awaiting_approval': return 'awaitingApproval';
-    case 'awaiting_question': return 'awaitingQuestion';
-    case 'aborted': return 'aborted';
-  }
-}
-
-export function toWireSessionStatus(status: AppSessionStatus): WireSessionStatus {
-  switch (status) {
-    case 'idle': return 'idle';
-    case 'running': return 'running';
-    case 'awaitingApproval': return 'awaiting_approval';
-    case 'awaitingQuestion': return 'awaiting_question';
-    case 'aborted': return 'aborted';
-  }
-}
-
 export function toAppSession(wire: WireSession): AppSession {
   return {
     id: wire.id,
     title: wire.title,
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
-    status: toAppSessionStatus(wire.status),
+    busy: wire.busy,
+    mainTurnActive: wire.main_turn_active,
+    pendingInteraction: wire.pending_interaction,
+    lastTurnReason: wire.last_turn_reason,
     archived: wire.archived ?? false,
     currentPromptId: wire.current_prompt_id,
     lastPrompt: wire.last_prompt,
@@ -136,8 +117,6 @@ export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {
     id: wire.id,
     root: wire.root,
     name: wire.name,
-    isGitRepo: wire.is_git_repo,
-    branch: wire.branch ?? undefined,
     lastOpenedAt: wire.last_opened_at,
     sessionCount: wire.session_count,
   };
@@ -154,7 +133,7 @@ function toAppImageSource(src: WireImageSource): ImageSource {
   if (src.kind === 'file') {
     return { kind: 'file', fileId: src.file_id };
   }
-  return { kind: 'url', url: src.url };
+  return { kind: 'url', url: src.url, id: src.id };
 }
 
 export function toAppMessageContent(wire: WireMessageContent): AppMessageContent {
@@ -250,7 +229,7 @@ function toWireMessageContent(app: AppMessageContent): WireMessageContent {
       } else if (src.kind === 'file') {
         wireSrc = { kind: 'file', file_id: src.fileId };
       } else {
-        wireSrc = { kind: 'url', url: src.url };
+        wireSrc = { kind: 'url', url: src.url, id: src.id };
       }
       return { type: app.type, source: wireSrc };
     }
@@ -530,13 +509,31 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         root: w.payload.root,
       };
 
+    case 'event.session.work_changed':
+      return {
+        type: 'sessionWorkChanged',
+        sessionId: w.session_id,
+        busy: w.payload.busy,
+        mainTurnActive: w.payload.main_turn_active,
+        pendingInteraction: w.payload.pending_interaction,
+        lastTurnReason: w.payload.last_turn_reason,
+      };
+
+    // Deprecated: old journals may still carry status_changed; fold it onto
+    // the busy flag (awaiting/running were live work, aborted was not).
     case 'event.session.status_changed':
       return {
-        type: 'sessionStatusChanged',
+        type: 'sessionWorkChanged',
         sessionId: w.session_id,
-        status: toAppSessionStatus(w.payload.status),
-        previousStatus: toAppSessionStatus(w.payload.previous_status),
-        currentPromptId: w.payload.current_prompt_id,
+        busy: w.payload.status !== 'idle' && w.payload.status !== 'aborted',
+        mainTurnActive: w.payload.status !== 'idle' && w.payload.status !== 'aborted',
+        pendingInteraction:
+          w.payload.status === 'awaiting_approval'
+            ? 'approval'
+            : w.payload.status === 'awaiting_question'
+              ? 'question'
+              : 'none',
+        lastTurnReason: w.payload.status === 'aborted' ? 'cancelled' : undefined,
       };
 
     case 'event.session.usage_updated':

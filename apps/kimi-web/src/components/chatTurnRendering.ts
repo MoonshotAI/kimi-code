@@ -4,11 +4,9 @@
 // stateful copy/edit helpers.
 import type { ChatTurn, TurnBlock } from '../types';
 
-export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
+// Shared 1024-based token formatter (lib/formatTokens); re-exported so the
+// existing ChatPane import keeps working.
+export { formatTokens } from '../lib/formatTokens';
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;

@@ -43,6 +43,12 @@ export interface LoopStepEndEvent {
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
   readonly messageId?: string | undefined;
+  /**
+   * Provider trace identifier from the `x-trace-id` response header of this
+   * step's final request attempt (Kimi/KFC only). Telemetry-only; must not
+   * drive loop control.
+   */
+  readonly traceId?: string;
 }
 
 export interface LoopStepRetryingEvent {
@@ -80,6 +86,7 @@ export interface LoopToolCallEvent {
   readonly description?: string | undefined;
   readonly display?: ToolInputDisplay | undefined;
   readonly extras?: Record<string, unknown> | undefined;
+  readonly traceId?: string;
 }
 
 export interface LoopToolResultEvent {
@@ -87,6 +94,7 @@ export interface LoopToolResultEvent {
   readonly parentUuid: string;
   readonly toolCallId: string;
   readonly result: ExecutableToolResult;
+  readonly traceId?: string;
 }
 
 export interface LoopTurnInterruptedEvent {
@@ -100,6 +108,7 @@ export interface LoopTurnInterruptedEvent {
    * cancel vs. any other abort; `max_steps`/`error` mirror `reason`.
    */
   readonly interruptReason?: LoopInterruptCause | undefined;
+  readonly traceId?: string;
 }
 
 export interface LoopTextDeltaEvent {

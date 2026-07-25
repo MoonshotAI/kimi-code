@@ -5,7 +5,7 @@ import { ErrorCodes, KimiError } from '../../errors';
 import type { LoopRecordedEvent } from '../../loop';
 import { extractImageCompressionCaptions } from '../../tools/support/image-compress';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
-import { escapeXml } from '../../utils/xml-escape';
+import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   COMPACTION_ELISION_VARIANT,
@@ -40,6 +40,10 @@ export * from './dynamic-tools';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+
+const IMPORT_CONTEXT_GUIDANCE =
+  'This is a prior conversation history that may be relevant to the current session. ' +
+  'Please review this context and use it to inform your responses.';
 
 // Invariant: _history must not contain an unresolved tool call exchange except
 // at the tail. When the tail is unresolved, pendingToolResultIds is exactly the
@@ -177,6 +181,73 @@ export class ContextMemory {
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.tools.onContextCleared();
+    this.agent.emitStatusUpdated();
+  }
+
+  importContext(content: string, source: string): void {
+    if (content.trim().length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context cannot be empty', {
+        details: { reason: 'import_content_empty' },
+      });
+    }
+    const normalizedSource = source.trim();
+    if (normalizedSource.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context source cannot be empty', {
+        details: { reason: 'import_source_empty' },
+      });
+    }
+
+    const message: ContextMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            `<system>The user has imported context from ${escapeXml(normalizedSource)}. ` +
+            `${IMPORT_CONTEXT_GUIDANCE}</system>`,
+        },
+        {
+          type: 'text',
+          text:
+            `<imported_context source="${escapeXmlAttr(normalizedSource)}">\n` +
+            `${content}\n</imported_context>`,
+        },
+      ],
+      toolCalls: [],
+      origin: USER_PROMPT_ORIGIN,
+    };
+    const currentTokenCount = this.tokenCountWithPending;
+    const importTokenCount = estimateTokensForMessages([message]);
+    const totalTokenCount = currentTokenCount + importTokenCount;
+    const capability = this.agent.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
+    if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
+      throw new KimiError(
+        ErrorCodes.CONTEXT_OVERFLOW,
+        'Imported content is too large for the current model context ' +
+          `(~${String(importTokenCount)} import tokens + ${String(currentTokenCount)} existing ` +
+          `= ~${String(totalTokenCount)} total > ${String(maxContextTokens)} token limit). ` +
+          'Please import a smaller file or session.',
+        {
+          details: {
+            reason: 'import_context_overflow',
+            importTokenCount,
+            currentTokenCount,
+            totalTokenCount,
+            maxContextTokens,
+          },
+        },
+      );
+    }
+
+    this.appendMessage(message);
+    this.updateTokenCount(totalTokenCount);
+  }
+
+  updateTokenCount(tokenCount: number): void {
+    this.agent.records.logRecord({ type: 'context.update_token_count', tokenCount });
+    this._tokenCount = tokenCount;
+    this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.emitStatusUpdated();
   }
 
@@ -386,7 +457,9 @@ export class ContextMemory {
     // project() strips `origin`, the only anchor for the announcements.
     // setModel never rewrites history, so a mid-session switch
     // degrades/upgrades losslessly.
-    const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
+    const shaped = this.agent.toolSelectEnabled
+      ? this.agent.tools.shapeDynamicToolHistory(messages)
+      : stripDynamicToolContext(messages);
     const anomalies: ProjectionAnomaly[] = [];
     const result = project(this.agent.microCompaction.compact(shaped), {
       ...options,
@@ -428,6 +501,7 @@ export class ContextMemory {
     let leadingDropped = 0;
     let assistantsMerged = 0;
     let whitespaceDropped = 0;
+    let vacuousDropped = 0;
     for (const anomaly of notable) {
       if (anomaly.kind === 'tool_result_reordered') reordered += 1;
       else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
@@ -436,6 +510,7 @@ export class ContextMemory {
       else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
       else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
       else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else if (anomaly.kind === 'vacuous_message_dropped') vacuousDropped += 1;
       else whitespaceDropped += 1;
     }
     const toolCallIds = [
@@ -452,6 +527,7 @@ export class ContextMemory {
       leadingDropped,
       assistantsMerged,
       whitespaceDropped,
+      vacuousDropped,
       toolCallIds,
     });
     this.agent.telemetry.track('context_projection_repaired', {
@@ -463,6 +539,7 @@ export class ContextMemory {
       leading_dropped: leadingDropped,
       assistants_merged: assistantsMerged,
       whitespace_dropped: whitespaceDropped,
+      vacuous_dropped: vacuousDropped,
     });
   }
 
@@ -654,6 +731,10 @@ export class ContextMemory {
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
           extras: event.extras,
         });
+        if (event.display !== undefined) {
+          openStep.toolCallDisplays ??= {};
+          openStep.toolCallDisplays[event.toolCallId] = event.display;
+        }
         this.pendingToolResultIds.add(event.toolCallId);
         return;
       }

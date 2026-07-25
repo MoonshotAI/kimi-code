@@ -3,10 +3,12 @@
  *     Body:  PromptSubmission {
  *              content: MessageContent[],
  *              metadata?: ...,
+ *              profile?: string,
  *              model?: string,
  *              thinking?: 'off'|'low'|'medium'|'high'|'xhigh'|'max',
  *              permission_mode?: 'manual'|'yolo'|'auto',
  *              plan_mode?: boolean,
+ *              disabled_tools?: string[],
  *            }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
  *            status='running' when sent immediately, status='queued' when
@@ -45,6 +47,9 @@ export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
   agent_id: z.string().min(1).optional(),
+  // Agent profile to bind at the target agent's first bind. Once bound,
+  // subsequent prompts must repeat the same value or omit the field.
+  profile: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
@@ -52,6 +57,10 @@ export const promptSubmissionSchema = z.object({
   swarm_mode: z.boolean().optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  // Client-managed session tool denylist: full-replace on every submit; the
+  // bound profile's own deny always survives. Omit to keep the persisted
+  // value, send `[]` to clear the client portion.
+  disabled_tools: z.array(z.string()).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

@@ -107,7 +107,7 @@ export function formatHostErrorMessage(host: string | undefined): string {
   const normalizedHost = host === undefined || host.length === 0 ? undefined : stripPort(host);
   const hostLabel = normalizedHost ?? '<missing>';
   const hostArg = normalizedHost ?? '<host>';
-  return `Invalid Host header: ${hostLabel}; allow this host with KIMI_CODE_ALLOWED_HOSTS=${hostArg} or 'kimi server run --allowed-host ${hostArg}'.`;
+  return `Invalid Host header: ${hostLabel}; allow this host with KIMI_CODE_ALLOWED_HOSTS=${hostArg} or 'kimi web --allowed-host ${hostArg}'.`;
 }
 
 /**

@@ -109,3 +109,85 @@ test('strict mode truncates at the first bad frame', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// catchUpFromWal: a read-only replica applies only the WAL frames appended
+// after its watermark; the result must be identical to a from-scratch replay
+// (store, dt, compound, secondary, unique and text indexes alike).
+for (const valueMode of ['memory', 'disk'] as const) {
+  test(`catchUpFromWal (${valueMode}): mixed tail applies identically to a full reopen`, { timeout: 60_000 }, async () => {
+    const dir = await tmpDir();
+    try {
+      const doc = (i: number) => ({ n: i, c: `c${i % 7}`, u: `u${i}`, t: `alpha beta w${i % 13}` });
+      const writer = await MiniDb.open<Record<string, unknown>>({
+        dir,
+        valueCodec: 'json',
+        valueMode,
+        fsyncPolicy: 'no',
+        autoCompact: false,
+      });
+      await writer.createIndex('c', { field: 'c' });
+      await writer.createIndex('n', { field: 'n', type: 'range' });
+      await writer.createIndex('u', { field: 'u', unique: true });
+      await writer.createTextIndex('t', { fields: ['t'] });
+      await writer.createCompoundIndex('cg', { groupBy: 'c', orderBy: 'n' });
+      for (let i = 0; i < 2000; i++) await writer.set(`pre:${i}`, doc(i), { dt: { created: 1700000000000 + i } });
+
+      const reader = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode, readOnly: true });
+      const ri = reader.recoveryInfo!;
+      assert.ok(ri.walScanEnd > 0);
+      assert.ok(ri.walIno !== 0);
+
+      // Mixed storm: updates, new sets, dels, one BATCH frame, short/long TTL,
+      // dt-only change. 500 + 500 + 300 + 1 + 2 = 1303 appended frames.
+      for (let i = 1500; i < 2000; i++) {
+        await writer.set(`pre:${i}`, { ...doc(i), n: i * 10, t: `alpha changed w${i % 13}` }, { dt: { created: 1700000009000 + i } });
+      }
+      for (let i = 0; i < 500; i++) await writer.set(`s:${i}`, { ...doc(i), u: `us${i}` }, { dt: { created: 1700001000000 + i } });
+      for (let i = 0; i < 1500; i += 5) await writer.del(`pre:${i}`);
+      await writer.batch([
+        { op: 'set', key: 's:b1', value: doc(9001), dt: { created: 1700002000000 } },
+        { op: 'set', key: 's:b2', value: { ...doc(9002), t: 'alpha batch' } },
+        { op: 'del', key: 's:b1' },
+      ]);
+      await writer.set('s:short', doc(9100), { ttl: 1 });
+      await writer.set('s:long', doc(9101), { ttl: 3_600_000 });
+
+      const res = await reader.catchUpFromWal(ri.walScanEnd);
+      assert.ok(res, 'clean watermark must catch up');
+      assert.equal(res.appliedFrames, 1303);
+      assert.ok(res.offset > ri.walScanEnd);
+
+      // Reference: a full from-scratch replay of the same files.
+      const ref = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode, readOnly: true });
+      const sortByKey = (a: { key: string }, b: { key: string }): number => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+      assert.equal(reader.size, ref.size);
+      assert.deepEqual(reader.scan(), ref.scan());
+      assert.deepEqual(reader.dtColumns(), ref.dtColumns());
+      assert.deepEqual(reader.findEq('c', 'c3').sort(sortByKey), ref.findEq('c', 'c3').sort(sortByKey));
+      assert.deepEqual(reader.findEq('u', 'u1700'), ref.findEq('u', 'u1700'));
+      assert.deepEqual(
+        reader.findRange('n', { min: 100, max: 500 }).sort(sortByKey),
+        ref.findRange('n', { min: 100, max: 500 }).sort(sortByKey),
+      );
+      assert.deepEqual(reader.dtRange('created', { gte: 1700000009000, limit: 20 }), ref.dtRange('created', { gte: 1700000009000, limit: 20 }));
+      assert.deepEqual(reader.compoundRange('cg', 'c2', { limit: 25 }), ref.compoundRange('cg', 'c2', { limit: 25 }));
+      assert.deepEqual(reader.search('t', 'alpha'), ref.search('t', 'alpha'));
+      assert.deepEqual(reader.search('t', 'changed'), ref.search('t', 'changed'));
+      assert.deepEqual(reader.search('t', 'batch'), ref.search('t', 'batch'));
+      assert.equal(reader.get('s:short'), undefined);
+      assert.equal(ref.get('s:short'), undefined);
+      assert.deepEqual(reader.get('s:long'), ref.get('s:long'));
+
+      // No new writes: catch-up is a cheap no-op at the same offset.
+      assert.deepEqual(await reader.catchUpFromWal(res.offset), { offset: res.offset, appliedFrames: 0 });
+      // Not a frame boundary (byte 3 of the first frame's header: flags=0).
+      assert.equal(await reader.catchUpFromWal(3), null);
+
+      await ref.close();
+      await reader.close();
+      await writer.close();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}

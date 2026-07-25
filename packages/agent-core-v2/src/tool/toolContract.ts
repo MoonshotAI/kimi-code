@@ -15,9 +15,10 @@
  * scoped service.
  */
 
-import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
@@ -66,6 +67,7 @@ export interface ToolUpdate {
 export interface ExecutableToolContext {
   readonly turnId: number;
   readonly toolCallId: string;
+  readonly trace?: LLMRequestTrace;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
@@ -90,12 +92,14 @@ export interface ExecutableTool<Input = unknown> extends Tool {
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
+export type ToolDisclosure = 'inline' | 'deferred';
 
 export interface ToolDefinition {
   readonly name: string;
   readonly description: string;
   readonly parameters?: Record<string, unknown>;
   readonly source?: ToolSource;
+  readonly disclosure?: ToolDisclosure;
   readonly info?: Record<string, unknown>;
 }
 

@@ -48,7 +48,9 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
           return { isError: true, output: `Failed to enter plan mode: ${message}` };
         }
 
-        this.telemetry.track2('plan_enter_resolved', { outcome: 'auto_approved' });
+        this.telemetry.track2('plan_enter_resolved', {
+          outcome: 'auto_approved',
+        });
         const after = await this.planMode.status();
         return { output: enteredPlanModeMessage(after?.path ?? null) };
       },

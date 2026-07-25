@@ -50,9 +50,9 @@ export function defaultThinkingEffortFor(model: ModelAlias | undefined): Thinkin
 export function supportsThinkingEffort(
   effort: ThinkingEffort,
   model: ModelAlias | undefined,
-  kimiProvider: boolean,
+  kimiProtocol: boolean,
 ): boolean {
-  if (!kimiProvider || effort === 'off') return true;
+  if (!kimiProtocol || effort === 'off') return true;
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   if (!supportsThinking(effective)) return false;
   const efforts = effortsFor(effective);
@@ -62,7 +62,7 @@ export function supportsThinkingEffort(
 function normalizeThinkingEffortForModel(
   effort: ThinkingEffort,
   model: ModelAlias | undefined,
-  kimiProvider: boolean,
+  kimiProtocol: boolean,
 ): ThinkingEffort {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   if (effort === 'off' && effective?.capabilities?.includes('always_thinking') !== true) {
@@ -70,7 +70,7 @@ function normalizeThinkingEffortForModel(
   }
 
   const efforts = effortsFor(effective);
-  if (!kimiProvider) {
+  if (!kimiProtocol) {
     return effort === 'on' && efforts.length > 0
       ? defaultThinkingEffortFor(effective)
       : effort;
@@ -91,33 +91,46 @@ function normalizeThinkingEffortForModel(
  *   2. `thinking.enabled === false` forces `'off'`;
  *   3. otherwise `thinking.effort` when set, else the model's default effort.
  *
- * The `always_thinking` constraint is enforced here and only here: when a
- * model declares `always_thinking`, an `'off'` result is clamped back to the
- * model's default effort so thinking can never be disabled for it.
+ * A model that declares `always_thinking` can never resolve to `'off'`, on
+ * any wire — a claimed off state would be a lie, since upstream keeps
+ * reasoning at its default when no off encoding exists. (Compatible
+ * protocols still receive every other requested value unchanged so their
+ * backend can make the final capability decision.)
  */
 export function resolveThinkingEffort(
   requested: ThinkingEffort | undefined,
   config: ThinkingConfig | undefined,
   model: ModelAlias | undefined,
-  kimiProvider = false,
+  kimiProtocol = false,
 ): ThinkingEffort {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
+  // Normalize the configured value once: 'OFF' / ' off ' must be read as off
+  // on every path, not passed upstream as a concrete effort; whitespace-only
+  // reads as absent.
+  const configuredRaw = config?.effort?.trim().toLowerCase();
+  const configured = configuredRaw === undefined || configuredRaw === '' ? undefined : configuredRaw;
+  const requestedRaw = requested?.trim().toLowerCase();
+  const requestedNormalized =
+    requestedRaw === undefined || requestedRaw === '' ? undefined : (requestedRaw as ThinkingEffort);
   let effort: ThinkingEffort;
-  if (requested !== undefined) {
-    effort = requested;
+  if (requestedNormalized !== undefined) {
+    effort = requestedNormalized;
   } else if (config?.enabled === false) {
     effort = 'off';
   } else {
-    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
+    effort = configured ?? defaultThinkingEffortFor(effectiveModel);
   }
 
   if (effort === 'off' && effectiveModel?.capabilities?.includes('always_thinking') === true) {
     // always_thinking forces thinking on, but an explicitly configured effort
     // is still honored — `enabled = false` only expresses the intent to
-    // disable, it should not also discard a chosen effort. Fall back to the
-    // model default only when no effort is configured.
-    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
+    // disable, it should not also discard a chosen effort. A configured
+    // 'off' is treated as absent: the model default applies instead.
+    effort =
+      configured !== undefined && configured !== 'off'
+        ? configured
+        : defaultThinkingEffortFor(effectiveModel);
   }
 
-  return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProvider);
+  return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
 }

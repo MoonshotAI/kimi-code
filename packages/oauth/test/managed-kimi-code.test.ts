@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  applyManagedApiKeyProviderModels,
   applyManagedKimiCodeLogoutConfig,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -1294,6 +1295,98 @@ describe('selective merge', () => {
 
     expect(config.models?.['kimi-code/kimi-k2']).toBeDefined();
     expect(config.models?.['kimi-code/removed']).toBeUndefined();
+  });
+});
+
+describe('applyManagedApiKeyProviderModels', () => {
+  it('merges upstream models without touching provider, services, or defaults', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl: 'https://api.example.test/coding/v1',
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {
+        'my-kimi/kimi-k2': {
+          provider: 'my-kimi',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          displayName: 'Old K2',
+          maxOutputSize: 4096,
+        } as Record<string, unknown>,
+        'my-kimi/kimi-old': {
+          provider: 'my-kimi',
+          model: 'kimi-old',
+          maxContextSize: 128000,
+        },
+        'other/m1': {
+          provider: 'other',
+          model: 'm1',
+          maxContextSize: 128000,
+        },
+      },
+      defaultModel: 'my-kimi/kimi-k2',
+      thinking: { enabled: false },
+    };
+
+    applyManagedApiKeyProviderModels(
+      config,
+      'my-kimi',
+      [makeModelInfo('kimi-k2', { displayName: 'Fresh K2' }), makeModelInfo('kimi-k2.5')],
+      'my-kimi/',
+    );
+
+    // The provider record is user-owned: no rewrite, no oauth, no apiKey reset.
+    expect(config.providers['my-kimi']).toEqual({
+      type: 'kimi',
+      baseUrl: 'https://api.example.test/coding/v1',
+      apiKey: 'sk-distributed-key',
+    });
+    // Defaults and services are the orchestrator's / OAuth branch's business.
+    expect(config.defaultModel).toBe('my-kimi/kimi-k2');
+    expect(config.thinking).toEqual({ enabled: false });
+    expect(config.services).toBeUndefined();
+    // Upstream-owned fields merge; hand-written extras survive.
+    const alias = config.models?.['my-kimi/kimi-k2'];
+    expect(alias?.['displayName']).toBe('Fresh K2');
+    expect(alias?.['maxOutputSize']).toBe(4096);
+    // New upstream model added; dropped one removed; other providers untouched.
+    expect(config.models?.['my-kimi/kimi-k2.5']).toBeDefined();
+    expect(config.models?.['my-kimi/kimi-old']).toBeUndefined();
+    expect(config.models?.['other/m1']).toBeDefined();
+  });
+
+  it('writes protocol routing fields for anthropic-protocol models', () => {
+    const config: ManagedKimiConfigShape = { providers: {}, models: {} };
+
+    applyManagedApiKeyProviderModels(
+      config,
+      'my-kimi',
+      [makeModelInfo('kimi-for-coding', { protocol: 'anthropic', supportsReasoning: true })],
+      'my-kimi/',
+    );
+
+    const alias = config.models?.['my-kimi/kimi-for-coding'];
+    expect(alias?.['provider']).toBe('my-kimi');
+    expect(alias?.['protocol']).toBe('anthropic');
+    expect(alias?.['betaApi']).toBe(true);
+    expect(alias?.['adaptiveThinking']).toBe(true);
+    expect(alias?.['capabilities']).toEqual(['thinking', 'tool_use']);
+  });
+
+  it('rejects models without a positive context length', () => {
+    const config: ManagedKimiConfigShape = { providers: {}, models: {} };
+
+    expect(() => {
+      applyManagedApiKeyProviderModels(
+        config,
+        'my-kimi',
+        [makeModelInfo('bad', { contextLength: 0 })],
+        'my-kimi/',
+      );
+    }).toThrow('context_length');
   });
 });
 

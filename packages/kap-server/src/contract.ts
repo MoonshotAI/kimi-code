@@ -1,23 +1,15 @@
 /**
- * `@moonshot-ai/kap-server/contract` — the public `/api/v2` wire contract.
+ * `@moonshot-ai/kap-server/contract` — the public RPC wire contract.
  *
- * Re-exports the channel registry: the set of Services exposed over the wire,
- * keyed by decorator id (the channel name). In the VS Code model there is no
- * per-method allowlist — a registered Service exposes all of its methods by
- * reflection — so the registry is the whole surface. Client SDKs import this to
- * stay in lockstep (e.g. drift tests that assert every registered channel has a
- * typed client binding).
+ * Re-exports the channel descriptor types. The exposed surface itself is the
+ * ENTIRE scoped DI registry (there is no whitelist): a registered Service is
+ * the public contract, and all of its methods are reachable by reflection.
+ * Clients load the live surface from `GET {rpcBasePath}/channels` instead of
+ * importing a static list.
  *
- * Note: this module intentionally pulls in `@moonshot-ai/agent-core-v2` types
- * (the registered `ServiceIdentifier`s). It is meant for tooling and tests, not
- * for runtime import by a wire-only client.
+ * Note: this module intentionally pulls in `@moonshot-ai/agent-core-v2` types.
+ * It is meant for tooling and tests, not for runtime import by a wire-only
+ * client.
  */
-export {
-  describeChannels,
-  hasChannel,
-  registerChannel,
-  registeredChannelNames,
-  resolveChannel,
-} from './transport/channelRegistry';
 export type { ChannelDescriptor, ChannelMethodDescriptor } from './transport/channelRegistry';
 export type { IChannel, ScopeKind } from './transport/channel';

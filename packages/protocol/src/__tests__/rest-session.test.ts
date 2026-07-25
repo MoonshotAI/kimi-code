@@ -119,12 +119,12 @@ describe('listSessionsQuerySchema', () => {
     expect(listSessionsQuerySchema.safeParse({ page_size: 101 }).success).toBe(false);
   });
 
-  it('accepts a status filter', () => {
-    expect(listSessionsQuerySchema.parse({ status: 'idle' })).toEqual({ status: 'idle' });
+  it('accepts a busy filter', () => {
+    expect(listSessionsQuerySchema.parse({ busy: true })).toEqual({ busy: true });
   });
 
-  it('rejects an unknown status value', () => {
-    expect(listSessionsQuerySchema.safeParse({ status: 'frozen' }).success).toBe(false);
+  it('rejects a non-boolean busy value', () => {
+    expect(listSessionsQuerySchema.safeParse({ busy: 'frozen' }).success).toBe(false);
   });
 
   it('parses include_archive string values to boolean', () => {
@@ -179,7 +179,7 @@ describe('getSessionProfileResponseSchema', () => {
       title: 'Profile',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
-      status: 'idle',
+      busy: true,
       metadata: { cwd: '/tmp/foo' },
       agent_config: { model: '' },
       usage: {
@@ -271,7 +271,7 @@ describe('forkSessionResponseSchema', () => {
       title: 'Fork: source',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
-      status: 'idle',
+      busy: true,
       metadata: { cwd: '/tmp/foo', origin: 'web' },
       agent_config: { model: '' },
       usage: {
@@ -317,7 +317,7 @@ describe('createSessionChildResponseSchema', () => {
       title: 'Child: source',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
-      status: 'idle',
+      busy: true,
       metadata: { cwd: '/tmp/foo', parent_session_id: 'sess_parent' },
       agent_config: { model: '' },
       usage: {
@@ -348,7 +348,7 @@ describe('listSessionChildrenResponseSchema', () => {
           title: 'Child: source',
           created_at: '2026-01-01T00:00:00.000Z',
           updated_at: '2026-01-01T00:00:00.000Z',
-          status: 'idle',
+          busy: true,
           metadata: { cwd: '/tmp/foo', parent_session_id: 'sess_parent' },
           agent_config: { model: '' },
           usage: {
@@ -375,7 +375,7 @@ describe('listSessionChildrenResponseSchema', () => {
 describe('sessionStatusResponseSchema', () => {
   it('accepts a full valid shape', () => {
     const parsed = sessionStatusResponseSchema.parse({
-      status: 'running',
+      busy: true,
       model: 'moonshot-v1-128k',
       thinking_level: 'on',
       permission: 'ask',
@@ -385,7 +385,7 @@ describe('sessionStatusResponseSchema', () => {
       max_context_tokens: 128000,
       context_usage: 0.008,
     });
-    expect(parsed.status).toBe('running');
+    expect(parsed.busy).toBe(true);
     expect(parsed.model).toBe('moonshot-v1-128k');
     expect(parsed.plan_mode).toBe(true);
     expect(parsed.context_usage).toBe(0.008);
@@ -393,7 +393,7 @@ describe('sessionStatusResponseSchema', () => {
 
   it('accepts minimal shape without model', () => {
     const parsed = sessionStatusResponseSchema.parse({
-      status: 'idle',
+      busy: false,
       thinking_level: 'off',
       permission: 'auto',
       plan_mode: false,
@@ -402,11 +402,11 @@ describe('sessionStatusResponseSchema', () => {
       max_context_tokens: 0,
       context_usage: 0,
     });
-    expect(parsed.status).toBe('idle');
+    expect(parsed.busy).toBe(false);
     expect(parsed.model).toBeUndefined();
   });
 
-  it('rejects missing status', () => {
+  it('rejects missing busy', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
         thinking_level: 'off',
@@ -420,10 +420,10 @@ describe('sessionStatusResponseSchema', () => {
     ).toBe(false);
   });
 
-  it('rejects invalid status', () => {
+  it('rejects invalid busy', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
-        status: 'unknown',
+        busy: 'unknown',
         thinking_level: 'off',
         permission: 'auto',
         plan_mode: false,
@@ -438,7 +438,7 @@ describe('sessionStatusResponseSchema', () => {
   it('rejects negative context_tokens', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
-        status: 'idle',
+        busy: true,
         thinking_level: 'off',
         permission: 'auto',
         plan_mode: false,
@@ -453,7 +453,7 @@ describe('sessionStatusResponseSchema', () => {
   it('rejects context_usage > 1', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
-        status: 'idle',
+        busy: true,
         thinking_level: 'off',
         permission: 'auto',
         plan_mode: false,
@@ -526,7 +526,7 @@ describe('undoSessionResponseSchema', () => {
         has_more: false,
       },
       status: {
-        status: 'idle',
+        busy: true,
         model: 'kimi-k2',
         thinking_level: 'auto',
         permission: 'manual',
@@ -560,7 +560,7 @@ describe('restoreSessionResponseSchema', () => {
       title: 'Restored',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
-      status: 'idle',
+      busy: true,
       archived: false,
       metadata: { cwd: '/tmp/foo' },
       agent_config: { model: '' },

@@ -11,6 +11,9 @@
  * 5-kind answer union) is produced at the edge — see the
  * `server-v2` questions route, which is the single protocol↔in-process
  * adapter for this domain. Session-scoped — one instance per session.
+ * `request` accepts the owning `agentId` so question events and transcript
+ * frames route to the asking agent's surfaces instead of falling back to
+ * 'main' (a subagent's question must not land there).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -51,7 +54,10 @@ export interface QuestionRequest {
 export interface ISessionQuestionService {
   readonly _serviceBrand: undefined;
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult>;
+  request(
+    req: QuestionRequest,
+    options?: { signal?: AbortSignal; agentId?: string },
+  ): Promise<QuestionResult>;
   enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string };
   answer(id: string, result: QuestionResult): void;
   dismiss(id: string): void;

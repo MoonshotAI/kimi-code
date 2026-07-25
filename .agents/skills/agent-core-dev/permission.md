@@ -4,6 +4,8 @@ The target design for the agent-core permission system. Read this when touching 
 
 > **The permission system should be a composable, registrable chain of responsibility (a microkernel).** The kernel only runs the chain in order, first hit wins; concrete permission dimensions (policies) are contributed by their owning Domain Services through a registry; tools only declare standardized resource access (`accesses`) in `resolveExecution`, and generic dimensions consume that metadata.
 >
+> **The chain adjudicates risk only.** A policy node answers "how dangerous is this call, and may the user override that judgment?" — its `ask`/`deny` outcomes are always user-overridable. **Harness constraints are not permissions**: a mechanism that limits the agent for its own correctness (plan-mode write guard, AgentSwarm batch exclusivity, btw side-question fork, goal budget rejection) produces a hard deny with no ask channel and no per-call user exemption. Those live in their owning domains as `onBeforeExecuteTool` veto listeners that call `event.veto(...)` (precedent: `goalService.ts`'s budget/stale rejection). Product reviews (plan review, goal-start review) are likewise not permissions: the owning domain intercepts its tool with a cold `event.waitUntil(factory)` and drives the shared `IAgentToolApprovalService` round-trip itself, so the review only starts once no other listener vetoed the call.
+>
 > **Do not introduce Casbin** — the hard part here is *decision behavior* (continuations, side effects, RPC, state machines), not "match + scalar decision".
 
 ## 1. Problem definition
@@ -56,7 +58,7 @@ Casbin = single Strategy + data-driven. This design = multiple Strategies + chai
 
 1. **The chain encodes "permission dimensions", not "tools".** Adding a tool does not lengthen the chain; only adding a dimension adds a node.
 2. **Two contribution paths:** high-frequency trivial specifics go through the **data path** (rules); low-frequency new dimensions with behavior go through the **code path** (policies).
-3. **Domain self-registration:** a domain that owns a dimension (plan/goal/swarm) registers its policy in DI, mirroring v2's existing "domain self-registers tools".
+3. **Guard/review off-chain, risk on-chain:** harness constraints and product reviews ship with their owning domain as `onBeforeExecuteTool` veto listeners (§5.4); risk dimensions contributed by a domain self-register as chain policies in DI, mirroring v2's "domain self-registers tools".
 4. **Tools declare resources; generic dimensions consume them:** bash/write/read only declare `accesses`; file/security dimensions judge centrally.
 
 ### 5.2 Core abstractions
@@ -106,23 +108,23 @@ Key points:
 
 Most growth goes through the data path — node count is bounded by "kinds of behavior"; rule count grows with specifics (rule matching is a cheap Set/glob).
 
-### 5.4 Domain self-registration
+### 5.4 Domain dimensions: guard/review via the executor veto event, policy registration for risk
 
-Mirrors v2's "domain registers tools in its constructor". `PlanService` self-registers its dimensions:
+**Harness constraints and product reviews no longer live on the chain.** A domain that owns one registers an `onBeforeExecuteTool` veto listener and adjudicates through the event:
 
 ```ts
-// src/plan/planService.ts
-constructor(@IPermissionPolicyRegistry registry: IPermissionPolicyRegistry) {
-  registry.register({ name: 'plan-mode-guard-deny', phase: 'guard',
-    factory: a => new PlanModeGuardDenyPolicy(a.get(IPlanService)) });
-  registry.register({ name: 'plan-mode-tool-approve', phase: 'mode',
-    factory: a => new PlanModeToolApprovePolicy(a.get(IPlanService)) });
-  registry.register({ name: 'exit-plan-mode-review-ask', phase: 'user-ask',
-    factory: a => new ExitPlanModeReviewAskPolicy(a.get(IPlanService), a.get(IPermissionModeService)) });
+// src/plan/planService.ts — constructor
+constructor(@IAgentToolExecutorService executor, ...) {
+  executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
 ```
 
-A complex domain may register a single **composite** node externally and run a small internal chain, hiding its internal order from the global chain.
+- The veto event carries no id and no ordering contract. Listeners answer with `event.veto(result)` (first one wins, ends adjudication), `event.allow()` (final pass, ends everything including the permission gate's own listener), `event.pass(metadata)` (pass with an `executionMetadata` trace, ends nothing), or `event.waitUntil(factory)` (defer to a cold factory).
+- **Guard** (hard deny): call `event.veto(denyToolExecution(toolApproval.formatDenyMessage(...)))`. An immediate veto suppresses every pending `waitUntil` factory, so a deny can never be preceded by someone else's approval prompt.
+- **Review** (product approval): intercept the tool with `event.waitUntil(() => ...requestToolApproval(event, ask, origin))`. The factory is cold — the executor only invokes it after every listener ran without a veto or an allow, so the review's Interaction starts only once the call is otherwise clear to proceed; abstain (no statement) for every case you do not review so user rules still apply.
+- **Plain allow**: do NOT `allow()` casually — prefer putting the tool in `default-tool-approve`'s whitelist so user deny/ask rules keep their precedence; reserve `allow()` for cases like the plan-file write guard that must bypass even the permission chain.
+
+**Risk dimensions contributed by a domain still go through the chain** (the registry path below): a domain whose state changes the *risk* verdict registers its policy via `IPermissionPolicyRegistry`, mirroring v2's "domain self-registers tools". A complex domain may register a single **composite** node externally and run a small internal chain, hiding its internal order from the global chain.
 
 ### 5.5 Tools declare resources at runtime (`resolveExecution` / `accesses`)
 
@@ -170,37 +172,42 @@ Each new resource kind can pair with a generic dimension that consumes it; tools
 
 ### 5.6 Dimension ownership
 
-| Dimension | Owner (who registers) | Type |
+| Dimension | Owner | Type |
 |---|---|---|
 | external hook veto | `externalHooks` domain | generic |
-| tool-batch exclusivity | `swarm` domain | domain-specific (ships with the AgentSwarm tool) |
-| runtime-mode posture | `permissionMode` domain | generic |
-| plan-mode constraints | `plan` domain | domain-specific |
-| goal-start approval | `goal` domain | domain-specific |
+| tool-batch exclusivity | `swarm` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| plan-mode write guard | `plan` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| plan review | `plan` domain — same listener's `waitUntil` + `toolApproval` | product review (off-chain) |
+| goal-start review | `goal` domain — veto listener's `waitUntil` + `toolApproval` | product review (off-chain) |
+| goal budget / stale rejection | `goal` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| btw tool disablement | `btw` domain — veto listener on the fork | harness constraint (off-chain) |
+| runtime-mode posture (auto/yolo) | `permissionMode` domain (chain nodes, pending the level×routing split) | generic |
 | static config rules | `permissionRules` domain | generic (data path) |
 | session approval memory | `permissionRules` domain | generic |
 | sensitive / special paths | generic "file-access/security" dimension | generic (consumes `accesses`) |
-| tool intrinsic risk | core permission | generic (consumes tool declarations) |
+| tool intrinsic risk | core permission (`default-tool-approve`) | generic (consumes tool declarations) |
 | workspace write trust | generic "file-access/security" dimension | generic (consumes `accesses`) |
 | fallback | core permission | generic |
+| approval round-trip | `toolApproval` domain — shared by gate asks and domain reviews | infrastructure |
 
-Pattern: **specific dimensions ship with their owning domain + tool; generic dimensions register centrally and apply across tools via the declared `accesses`.**
+Pattern: **harness constraints and reviews ship with their owning domain as `onBeforeExecuteTool` veto listeners; risk dimensions ship as chain policies (self-registered once the registry lands); generic dimensions register centrally and apply across tools via the declared `accesses`.**
 
 ## 6. Evolution path
 
 Incremental, not big-bang:
 
-1. **Registry + Composer (zero behavior change).** Replace the 19 hardcoded `new`s in v2 `PermissionPolicyService` with reads from `IPermissionPolicyRegistry`; register existing policies as-is. Immediately gain multi-agent/mode selectable chains and an external registration entry.
-2. **Declarative modes.** Lift the mode guards in `YoloModeApprove` / `AutoModeApprove` into `modes` metadata.
-3. **Sink domain dimensions.** Move registration of plan/goal/swarm policies into their owning domain service constructors.
+1. ~~**Sink domain dimensions.**~~ **Done** — plan guard/review, goal-start review, swarm batch exclusivity, and btw deny-all moved out of the chain into their owning domains as `onBeforeExecuteTool` veto listeners (immediate `veto` / `allow` / `pass` statements plus cold `waitUntil` factories for approval round-trips); the shared approval round-trip was extracted to `IAgentToolApprovalService`; `registerPolicy` was removed (btw was its only production user). The chain now holds 12 risk-adjudication nodes only.
+2. **Level × routing split.** Separate "risk level" (read-only / read-write / yolo posture — what `yolo-mode-approve` really is) from "interaction routing" (what `auto-mode-approve` / `auto-mode-ask-user-question-deny` really are: route permission asks and reviews without the user). The routing layer lands on the `session/approval` broker; the three remaining mode policies leave the chain here.
+3. **Registry + Composer.** Replace the hardcoded `new`s in `PermissionPolicyService` with reads from `IPermissionPolicyRegistry`; lift mode guards into `modes` metadata. Chain shape becomes selectable per `(agent, mode)` and externally extensible.
 4. **(On demand) extend resource types.** When non-file resources (network/DB/shell) need structural dimensions, extend the `ToolResourceAccess` union.
 5. **(On demand) swap the matching kernel for Casbin.** Only when external rules genuinely need RBAC/ABAC semantics, swap the data-path rule-matching kernel for Casbin. Not before.
 
 ## Red lines (this topic)
 
 - Do not introduce Casbin — decisions are behavior bundles, not scalar effects.
+- The chain adjudicates risk only. A node whose deny/ask the user cannot per-call exempt is a harness constraint: implement it as an `onBeforeExecuteTool` veto listener in the owning domain (`event.veto(...)` / `event.allow()`), never as a chain policy.
+- Product reviews (plan/goal) are not permissions either: the owning domain intercepts its tool with a cold `event.waitUntil(factory)` and drives `IAgentToolApprovalService` itself; the gate only handles chain asks.
 - The chain encodes dimensions, not tools: a new tool must not lengthen the chain.
-- New specifics go through the data path (rules); only new behavior goes through the code path (a policy node).
-- A domain that owns a dimension self-registers its policy in DI; do not centralize domain policies in core.
+- New specifics go through the data path (rules); only new risk behavior goes through the code path (a policy node).
 - Tools only declare `accesses`; generic dimensions consume them. kaos is the execution environment, not the permission abstraction.
 - Use `factory` (Agent-scope instantiation), not `instance`, for registered policies.

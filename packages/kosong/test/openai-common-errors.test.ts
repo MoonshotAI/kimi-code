@@ -14,6 +14,7 @@ import {
   convertOpenAIError,
 } from '#/providers/openai-common';
 import { OpenAILegacyChatProvider, OpenAILegacyStreamedMessage } from '#/providers/openai-legacy';
+import { ReasoningKeyDialect } from '#/providers/reasoning-key';
 import {
   APIError as OpenAIAPIError,
   APIConnectionError as OpenAIConnectionError,
@@ -141,6 +142,37 @@ describe('convertOpenAIError: provider rate limit', () => {
     expect(result).toBeInstanceOf(APIProviderRateLimitError);
     expect((result as APIProviderRateLimitError).retryAfterMs).toBeNull();
   });
+
+  it('carries the x-trace-id response header onto the status error', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': 'trace-err-500' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBe('trace-err-500');
+  });
+
+  it('leaves traceId null when the error response has no x-trace-id header', () => {
+    const err = new OpenAIAPIError(500, undefined, 'Internal server error', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
+
+  it('leaves traceId null when the x-trace-id header is empty', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': '' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
 });
 describe('convertOpenAIError: subclass errors still match first', () => {
   it('APIConnectionError matches its own case', () => {
@@ -170,16 +202,44 @@ describe('convertOpenAIError: APIError with body skips heuristic', () => {
     expect(result.constructor).toBe(ChatProviderError);
   });
 });
-describe('convertOpenAIError: subclass errors fall through', () => {
-  it('APIUserAbortError is not heuristically reclassified', () => {
-    // APIUserAbortError is a subclass of APIError (not exact APIError),
-    // so the heuristic branch should not apply even with network keywords.
+describe('convertOpenAIError: abort guard', () => {
+  it('APIUserAbortError throws the standard abort DOMException instead of being classified', () => {
+    // A user cancellation must never be converted into (or returned as) a
+    // retryable provider error: the guard at the very front of the
+    // classification chain throws the standard abort shape.
     const err = new OpenAIUserAbortError({ message: 'connection aborted by user' });
-    const result = convertOpenAIError(err);
-    // Should fall through to generic handling, not become APIConnectionError
-    expect(result.constructor).toBe(ChatProviderError);
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
+  });
+
+  it('bare AbortError DOMException throws the standard abort DOMException', () => {
+    const err = new DOMException('The operation was aborted.', 'AbortError');
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
+  });
+
+  it('bare Error named AbortError throws the standard abort DOMException', () => {
+    const err = new Error('The operation was aborted.');
+    err.name = 'AbortError';
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
   });
 });
+
+function catchThrown(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('Expected the function to throw');
+}
 describe('OpenAI streaming error propagation', () => {
   it('base APIError("Network connection lost.") during streaming becomes APIConnectionError', async () => {
     // Simulates: streaming for ~33 minutes, then SSE connection drops
@@ -193,7 +253,7 @@ describe('OpenAI streaming error propagation', () => {
     const msg = new OpenAILegacyStreamedMessage(
       failingStream() as AsyncIterable<never>,
       true,
-      undefined,
+      new ReasoningKeyDialect(),
     );
 
     await expect(async () => {
@@ -211,7 +271,7 @@ describe('OpenAI streaming error propagation', () => {
       const msg2 = new OpenAILegacyStreamedMessage(
         failingStream2() as AsyncIterable<never>,
         true,
-        undefined,
+        new ReasoningKeyDialect(),
       );
       for await (const _ of msg2) {
         void _;
@@ -260,7 +320,7 @@ describe('OpenAI streaming: undici terminated mid-stream', () => {
     const msg = new OpenAILegacyStreamedMessage(
       terminatedStream() as AsyncIterable<never>,
       true,
-      undefined,
+      new ReasoningKeyDialect(),
     );
 
     let caught: unknown;

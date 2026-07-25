@@ -16,7 +16,7 @@ import { promises as fsp } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { basename as posixBasename } from 'pathe';
 
-import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
+import { encodeWorkDirKey, normalizeWorkDir, workspaceRootKey } from '#/session/store/workdir-key';
 
 const WORKSPACE_REGISTRY_FILE = 'workspaces.json';
 const WORKSPACE_REGISTRY_VERSION = 1;
@@ -119,6 +119,12 @@ export async function writeWorkspaceRegistryFile(
  * non-fatal (the catalog is a hint, not session state). Concurrent writers in
  * other processes cannot corrupt the file (atomic rename), though a lost
  * update is possible — the next session-index merge heals missing entries.
+ *
+ * Identity folding matches the service: a spelling that only case/slash-differs
+ * from an existing entry's root (e.g. `c:\Foo` after `C:\Foo` was added)
+ * touches THAT entry instead of minting a duplicate. Without this the session
+ * store's `resolveWorkspaceId` would split buckets again — the minted alias id
+ * becomes the preferred id on the next create.
  */
 export async function touchWorkspaceRegistry(
   homeDir: string,
@@ -126,10 +132,21 @@ export async function touchWorkspaceRegistry(
   name?: string,
 ): Promise<{ workspaceId: string; created: boolean }> {
   const normalizedRoot = normalizeWorkDir(root);
-  const workspaceId = encodeWorkDirKey(normalizedRoot);
+  const mintedId = encodeWorkDirKey(normalizedRoot);
   const now = new Date().toISOString();
   const file = await readWorkspaceRegistryFile(homeDir);
-  const existing = file.workspaces[workspaceId];
+  let workspaceId = mintedId;
+  let existing = file.workspaces[mintedId];
+  if (existing === undefined) {
+    const rootKey = workspaceRootKey(normalizedRoot);
+    const aliasId = Object.keys(file.workspaces).find(
+      (id) => workspaceRootKey(file.workspaces[id]!.root) === rootKey,
+    );
+    if (aliasId !== undefined) {
+      workspaceId = aliasId;
+      existing = file.workspaces[aliasId];
+    }
+  }
   file.workspaces[workspaceId] =
     existing !== undefined
       ? { ...existing, last_opened_at: now }

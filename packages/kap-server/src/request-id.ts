@@ -1,14 +1,14 @@
 /**
  * `request_id` resolution at the server's REST boundary.
  *
- * Delegates to `parseOrGenerateRequestId` from `@moonshot-ai/protocol`, which:
+ * Delegates to `parseOrGenerateRequestId` from the local `protocol` module, which:
  *   - returns a bare 26-char ULID (no `req_` prefix);
  *   - validates client-supplied `X-Request-Id` is a real ULID and regenerates
  *     a fresh one on malformed input so operator logs do not carry
  *     attacker-controlled strings verbatim.
  */
 
-import { parseOrGenerateRequestId } from '@moonshot-ai/protocol';
+import { parseOrGenerateRequestId } from './protocol/request-id';
 
 const REQUEST_ID_HEADER = 'x-request-id';
 

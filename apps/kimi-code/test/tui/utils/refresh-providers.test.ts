@@ -768,4 +768,486 @@ describe('refreshAllProviderModels', () => {
     expect(host.current().defaultModel).toBe('kimi-code/kimi-deep-coder');
     expect(host.current().thinking?.enabled).toBe(true);
   });
+
+  it('refreshes a hand-configured API-key provider pointing at the managed endpoint', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const userAliasModel = {
+      provider: 'my-kimi',
+      model: 'kimi-for-coding',
+      maxContextSize: 131072,
+      capabilities: ['tool_use'],
+      displayName: 'My Coding',
+    };
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {
+        'my-kimi/kimi-for-coding': {
+          provider: 'my-kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+          displayName: 'Old Kimi',
+        },
+        'my-kimi/kimi-old': {
+          provider: 'my-kimi',
+          model: 'kimi-old',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+        },
+        'my-fav': userAliasModel,
+      },
+      defaultModel: 'my-kimi/kimi-for-coding',
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-distributed-key');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+              display_name: 'Fresh Kimi',
+            },
+            { id: 'kimi-k2', context_length: 131072 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { providerId: 'my-kimi', providerName: 'my-kimi', added: 1, removed: 1 },
+    ]);
+    // The provider record is user-owned and must survive untouched.
+    expect(host.current().providers['my-kimi']).toEqual({
+      type: 'kimi',
+      baseUrl,
+      apiKey: 'sk-distributed-key',
+    });
+    // Upstream-owned fields merge; the dropped model disappears; the new one appears.
+    expect(host.current().models?.['my-kimi/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
+    expect(host.current().models?.['my-kimi/kimi-for-coding']?.capabilities).toEqual([
+      'thinking',
+      'tool_use',
+    ]);
+    expect(host.current().models?.['my-kimi/kimi-k2']).toBeDefined();
+    expect(host.current().models?.['my-kimi/kimi-old']).toBeUndefined();
+    // Non-prefix user aliases and the default selection are preserved.
+    expect(host.current().models?.['my-fav']).toEqual(userAliasModel);
+    expect(host.current().defaultModel).toBe('my-kimi/kimi-for-coding');
+  });
+
+  it('resolves the API key from the provider env sub-table when api_key is empty', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          env: { KIMI_API_KEY: 'sk-env-key' },
+        },
+      },
+      models: {
+        'my-kimi/kimi-for-coding': {
+          provider: 'my-kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-env-key');
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 'kimi-for-coding', context_length: 262144, supports_reasoning: true }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual(['my-kimi']);
+    expect(host.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('matches the managed endpoint even with a trailing slash on the configured baseUrl', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.managed.example.test/coding/v1');
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl: 'https://api.managed.example.test/coding/v1/',
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {},
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      expect(fetchInputUrl(input)).toBe('https://api.managed.example.test/coding/v1/models');
+      return new Response(
+        JSON.stringify({ data: [{ id: 'kimi-for-coding', context_length: 262144 }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { providerId: 'my-kimi', providerName: 'my-kimi', added: 1, removed: 0 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh API-key providers pointing at non-managed endpoints', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.managed.example.test/coding/v1');
+    const host = makeRefreshHost({
+      providers: {
+        gateway: {
+          type: 'kimi',
+          baseUrl: 'https://gateway.example.test/v1',
+          apiKey: 'sk-gateway-key',
+        },
+        'moonshot-lookalike': {
+          type: 'kimi',
+          baseUrl: 'https://api.moonshot.cn/v1',
+          apiKey: 'sk-platform-key',
+        },
+      },
+      models: {},
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result).toEqual({ changed: [], unchanged: [], failed: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a hand-written managed:kimi-code provider that uses an API key instead of OAuth', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const host = makeRefreshHost({
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+          displayName: 'Old Kimi',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const resolveOAuthToken = vi.fn(async () => 'oauth-access-token');
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-distributed-key');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+              display_name: 'Fresh Kimi',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken,
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      {
+        providerId: KIMI_CODE_PROVIDER_NAME,
+        providerName: KIMI_CODE_PROVIDER_NAME,
+        added: 0,
+        removed: 0,
+      },
+    ]);
+    // The OAuth branch must not run: no token resolution, and the provider
+    // record keeps the user's API-key shape (no oauth ref, no apiKey reset).
+    expect(resolveOAuthToken).not.toHaveBeenCalled();
+    expect(host.current().providers[KIMI_CODE_PROVIDER_NAME]).toEqual({
+      type: 'kimi',
+      baseUrl,
+      apiKey: 'sk-distributed-key',
+    });
+    expect(host.current().services).toBeUndefined();
+    expect(host.current().models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
+    expect(host.current().defaultModel).toBe('kimi-code/kimi-for-coding');
+  });
+
+  it('reports a failed refresh and keeps config when the managed endpoint rejects the API key', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-revoked-key',
+        },
+      },
+      models: {
+        'my-kimi/kimi-for-coding': {
+          provider: 'my-kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'invalid key' } }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.changed).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.provider).toBe('my-kimi');
+    expect(result.failed[0]?.reason).toContain('the API key');
+    expect(host.setConfig).not.toHaveBeenCalled();
+    expect(host.current().models?.['my-kimi/kimi-for-coding']).toBeDefined();
+  });
+
+  it('skips the API-key refresh when the managed endpoint returns no models', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {
+        'my-kimi/kimi-for-coding': {
+          provider: 'my-kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result).toEqual({ changed: [], unchanged: [], failed: [] });
+    expect(host.setConfig).not.toHaveBeenCalled();
+    expect(host.current().models?.['my-kimi/kimi-for-coding']).toBeDefined();
+  });
+
+  it('writes defaultProvider back when refreshing the provider it points at', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const host = makeRefreshHost({
+      providers: {
+        'my-kimi': {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-distributed-key',
+        },
+      },
+      models: {
+        'my-kimi/kimi-for-coding': {
+          provider: 'my-kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+          displayName: 'Old Kimi',
+        },
+      },
+      defaultProvider: 'my-kimi',
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 262144,
+                supports_reasoning: true,
+                display_name: 'Fresh Kimi',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toHaveLength(1);
+    // The v1 removeProvider RPC clears defaultProvider when it points at the
+    // refreshed provider; the setConfig patch must carry the original value
+    // back.
+    expect(host.setConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultProvider: 'my-kimi' }),
+    );
+    expect(host.current().defaultProvider).toBe('my-kimi');
+  });
+
+  it('leaves registry-sourced providers at the managed base URL to the registry branch', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const host = makeRefreshHost({
+      providers: {
+        custom: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: 'sk-test-token',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        'custom/m1': {
+          provider: 'custom',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      expect(fetchInputUrl(input)).toBe(registryUrl);
+      return new Response(
+        JSON.stringify({
+          custom: {
+            id: 'custom',
+            name: 'Custom',
+            api: baseUrl,
+            type: 'kimi',
+            models: { m1: { id: 'm1' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual(['custom']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.setConfig).not.toHaveBeenCalled();
+  });
 });

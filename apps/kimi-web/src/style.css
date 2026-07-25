@@ -396,6 +396,18 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-surface: #fafbfc;
   --color-surface-raised: #ffffff;
   --color-surface-sunken: #f3f5f8;
+  /* Checkerboard canvas behind <img> so transparent PNGs keep white/black
+     content visible and read as transparent. Squares are mixed from the
+     theme's bg/text (≈#858585/#6b6b6b light, ≈#676b72/#7a7e85 dark), each
+     ≥3:1 against both white and black; opaque images simply cover it. */
+  --color-media-alpha-bg-1: color-mix(in srgb, var(--color-bg) 52%, var(--color-text) 48%);
+  --color-media-alpha-bg-2: color-mix(in srgb, var(--color-bg) 42%, var(--color-text) 58%);
+  --media-alpha-canvas: conic-gradient(
+    var(--color-media-alpha-bg-1) 25%,
+    var(--color-media-alpha-bg-2) 0 50%,
+    var(--color-media-alpha-bg-1) 0 75%,
+    var(--color-media-alpha-bg-2) 0
+  ) 0 0 / 16px 16px;
   /* Foreground text colours. `--color-text` is the default solid body / UI
      colour (headings and emphasis share it); muted / faint step down for
      secondary and tertiary copy; on-accent is text drawn on the accent fill. */

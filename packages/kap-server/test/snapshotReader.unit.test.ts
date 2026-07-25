@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import {
   ISessionIndex,
   ISessionLifecycleService,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   type ContextMessage,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -65,7 +65,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
   const core = {
     accessor: fakeAccessor([
       [ISessionIndex, { get: async (sid: string) => index.get(sid) }],
-      [IWorkspaceRegistry, { get: async (ws: string) => workspaces.get(ws) }],
+      [IWorkspaceService, { get: async (ws: string) => workspaces.get(ws) }],
       // Cold by default — no live handle.
       [ISessionLifecycleService, { get: () => undefined }],
     ]),
@@ -161,7 +161,7 @@ describe('SnapshotReader.read', () => {
     await seedSession(f, 'sess_empty');
     const snap = await f.reader.read('sess_empty');
     expect(snap.session.id).toBe('sess_empty');
-    expect(snap.session.status).toBe('idle');
+    expect(snap.session.busy).toBe(false);
     expect(snap.messages.items).toEqual([]);
     expect(snap.messages.has_more).toBe(false);
     expect(snap.in_flight_turn).toBeNull();

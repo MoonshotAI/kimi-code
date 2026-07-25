@@ -1,3 +1,9 @@
+/**
+ * Scenario: translating legacy session state into the v1 session metadata file.
+ * Responsibilities: user-visible metadata and legacy session-scoped fields survive migration.
+ * Wiring: real state writer and filesystem; no collaborators are stubbed.
+ * Run: pnpm exec vitest run packages/migration-legacy/test/sessions/state-writer.test.ts
+ */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -71,5 +77,39 @@ describe('writeSessionState', () => {
     });
     const meta = JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8'));
     expect(meta.custom.archived).toBe(true);
+  });
+
+  it('writes legacy additional dirs into session-scoped metadata', async () => {
+    await writeSessionState(dir, {
+      oldState: {
+        additional_dirs: ['../shared', 'C:\\Projects\\reference'],
+        wire_mtime: 1,
+      },
+      lastUserPrompt: 'x',
+      sourcePath: '/a',
+      oldSessionUuid: 'u',
+      wireProtocolFromOld: null,
+      createdAtMs: 1,
+    });
+
+    const meta = JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8'));
+    expect(meta.additionalDirs).toEqual(['../shared', 'C:\\Projects\\reference']);
+  });
+
+  it('preserves the independent legacy yolo and afk flags', async () => {
+    await writeSessionState(dir, {
+      oldState: {
+        approval: { yolo: true, afk: false },
+        wire_mtime: 1,
+      },
+      lastUserPrompt: 'x',
+      sourcePath: '/a',
+      oldSessionUuid: 'u',
+      wireProtocolFromOld: null,
+      createdAtMs: 1,
+    });
+
+    const meta = JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8'));
+    expect(meta.custom.vscode_legacy_approval).toEqual({ yolo: true, afk: false });
   });
 });

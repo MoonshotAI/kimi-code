@@ -31,7 +31,10 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
-  private _unforcedThinkingEffort: ThinkingEffort = 'off';
+  // `undefined` until an effort has actually been resolved: a bare modelAlias
+  // update must then fall through to the model's own default instead of
+  // treating the never-chosen initial "off" as an explicit user choice.
+  private _unforcedThinkingEffort: ThinkingEffort | undefined;
   private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
@@ -46,6 +49,7 @@ export class ConfigState {
     const targetAlias = changed.modelAlias ?? this._modelAlias;
     const targetProvider = this.tryResolvedProviderConfigFor(targetAlias);
     const targetModel = this.modelForThinking(targetAlias, targetProvider);
+    const kimiProtocol = targetProvider?.provider.type === 'kimi';
     const kimiProvider = targetProvider?.type === 'kimi';
     let unforcedThinkingEffort: ThinkingEffort | undefined;
     let thinkingEffort: ThinkingEffort | undefined;
@@ -54,14 +58,19 @@ export class ConfigState {
         changed.thinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
-        kimiProvider,
+        kimiProtocol,
       );
     } else if (changed.modelAlias !== undefined) {
+      // A bare model switch carries the previously resolved effort over to the
+      // new model. Before any effort was resolved (fresh session bootstrap)
+      // `undefined` lets resolveThinkingEffort fall through to the model
+      // default — computed from the resolved provider, whose capabilities and
+      // efforts include the provider-level protocol inference.
       unforcedThinkingEffort = resolveThinkingEffort(
-        this._modelAlias === undefined ? undefined : this._unforcedThinkingEffort,
+        this._unforcedThinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
-        kimiProvider,
+        kimiProtocol,
       );
     }
     if (unforcedThinkingEffort !== undefined) {
@@ -100,13 +109,16 @@ export class ConfigState {
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
+    if (thinkingEffort !== undefined || changed.modelAlias !== undefined) {
+      this.agent.warnAboutCurrentAnthropicThinkingEffort();
+    }
     this.agent.emitStatusUpdated(thinkingEffort !== undefined);
   }
 
   setThinkingEffort(effort: ThinkingEffort): void {
     const model = this.currentModel;
-    const kimiProvider = this.tryResolvedProviderConfig()?.type === 'kimi';
-    if (!supportsThinkingEffort(effort, model, kimiProvider)) {
+    const kimiProtocol = this.tryResolvedProviderConfig()?.provider.type === 'kimi';
+    if (!supportsThinkingEffort(effort, model, kimiProtocol)) {
       const efforts = model?.supportEfforts ?? [];
       const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
       throw new KimiError(
@@ -150,6 +162,17 @@ export class ConfigState {
     return provider;
   }
 
+  /**
+   * Memo of the base provider built by {@link provider}, keyed by config
+   * content. The morphs applied per access (withThinking, sampling,
+   * thinking.keep) clone the base, and the clones share provider-level state
+   * — the OpenAI client and the reasoning-field dialect detected from inbound
+   * responses. Rebuilding the base per access would silently reset that
+   * dialect on every turn; a config change (model switch, credential refresh)
+   * changes the key and rebuilds cleanly.
+   */
+  private providerMemo: { key: string; provider: ChatProvider } | undefined;
+
   get provider(): ChatProvider {
     // All provider-level request config is applied here so every request built
     // from config.provider — the main loop AND full-history compaction — carries it:
@@ -160,7 +183,12 @@ export class ConfigState {
     //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all"
     //     (only while thinking is on). Drives Kimi's `thinking.keep` and, on the
     //     Anthropic path, a `context_management` `clear_thinking_20251015` edit.
-    const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
+    const providerConfig = this.providerConfig;
+    const memoKey = JSON.stringify(providerConfig);
+    if (this.providerMemo?.key !== memoKey) {
+      this.providerMemo = { key: memoKey, provider: createProvider(providerConfig) };
+    }
+    const provider = this.providerMemo.provider.withThinking(this.thinkingEffort);
     const withSampling = applyKimiEnvSamplingParams(provider);
     const configKeep = this.agent.kimiConfig?.thinking?.keep;
     const withKimiKeep = applyKimiEnvThinkingKeep(

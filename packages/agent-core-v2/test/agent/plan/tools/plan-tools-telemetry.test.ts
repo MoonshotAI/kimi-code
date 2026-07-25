@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
@@ -36,6 +36,7 @@ const options = [
   { label: 'Approach A', description: 'Small change.' },
   { label: 'Approach B', description: 'Larger change.' },
 ] satisfies NonNullable<ExitPlanModeInput['options']>;
+
 
 function recordingTelemetry(): {
   readonly telemetry: ITelemetryService;
@@ -84,6 +85,7 @@ function planService({
     cancel: vi.fn(),
     clear: vi.fn(async () => {}),
     exit: exit ?? vi.fn(),
+    recordRevision: vi.fn(async () => {}),
     status: vi.fn(async () => status),
   };
 }
@@ -271,7 +273,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
         ).toBe(false);
         expect(records).toContainEqual({
           event: 'plan_enter_resolved',
-          properties: { outcome: 'auto_approved' },
+          properties: { agent_id: 'main', outcome: 'auto_approved' },
         });
       });
     });
@@ -375,7 +377,9 @@ describe('ExitPlanModeTool telemetry', () => {
 
     expect(result.isError).toBe(false);
     expect(exit).toHaveBeenCalledTimes(1);
-    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(track2).toHaveBeenCalledWith('plan_submitted', {
+      has_options: false,
+    });
     expect(track2).toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });
@@ -392,7 +396,9 @@ describe('ExitPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: true });
+    expect(track2).toHaveBeenCalledWith('plan_submitted', {
+      has_options: true,
+    });
     expect(track2).toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });
@@ -414,7 +420,9 @@ describe('ExitPlanModeTool telemetry', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Failed to exit plan mode');
     expect(exit).toHaveBeenCalledTimes(1);
-    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(track2).toHaveBeenCalledWith('plan_submitted', {
+      has_options: false,
+    });
     expect(track2).not.toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });

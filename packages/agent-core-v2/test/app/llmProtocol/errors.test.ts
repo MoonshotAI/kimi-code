@@ -20,7 +20,7 @@ import {
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
-} from '#/app/llmProtocol/errors';
+} from '#/kosong/contract/errors';
 import { describe, expect, it } from 'vitest';
 
 describe('ChatProviderError', () => {
@@ -651,6 +651,17 @@ describe('isRecoverableRequestStructureError', () => {
         new APIStatusError(
           400,
           'messages: roles must alternate between "user" and "assistant", but found multiple "user" roles in a row',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches the Moonshot/Kimi vacuous-message rejection', () => {
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(
+          400,
+          "400 the message at position 105 with role 'assistant' must not be empty",
         ),
       ),
     ).toBe(true);

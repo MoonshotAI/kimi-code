@@ -259,6 +259,7 @@ describe('current builtin collaboration tools', () => {
         requestQuestion: vi.fn(async () => ({ 'Which path?': 'A' })),
       },
       telemetry: { track: vi.fn() },
+      turn: { traceIdForTurn: () => undefined },
     } as unknown as Agent);
 
     const input = {

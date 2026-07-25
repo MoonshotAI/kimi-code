@@ -12,6 +12,16 @@ export interface MigrationPlan {
   readonly detectedPlugins: readonly string[];
   readonly detectedMcpOauthServers: readonly string[];
   readonly totalSessions: number; // sum across workdirs (real, post-classify)
+  /**
+   * Session storage that detection could see but could not safely inspect.
+   * Optional for callers that persisted or constructed an older plan shape.
+   */
+  readonly sessionScanFailures?: readonly SessionMigrationFailure[];
+}
+
+export interface SessionMigrationFailure {
+  readonly sourcePath: string;
+  readonly reason: string;
 }
 
 /**
@@ -115,7 +125,7 @@ export interface SessionsSummary {
   readonly sessionsSkippedPlaceholder: number;
   readonly sessionsSkippedEmpty: number;
   readonly sessionsSkippedMalformed: number;
-  readonly sessionsFailed: ReadonlyArray<{ readonly sourcePath: string; readonly reason: string }>;
+  readonly sessionsFailed: readonly SessionMigrationFailure[];
   readonly sessionsConflicts: ReadonlyArray<{ readonly sourcePath: string; readonly targetPath: string }>;
 }
 

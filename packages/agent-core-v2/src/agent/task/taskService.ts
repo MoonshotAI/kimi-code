@@ -8,8 +8,10 @@
  * layout), lets only the main agent read through the previous v2
  * session-level task root without writing back to it, reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
- * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
- * signals), restores ghosts through a single `wire.hooks.onDidRestore` hook
+ * (persisted `task.started` / `task.terminated` Ops into `TaskModel`, the
+ * terminated record carrying a bounded tail of the task's retained output as
+ * `outputTail`, plus the matching signals), restores ghosts through a single
+ * `wire.hooks.onDidRestore` hook
  * (wire replay -> disk load -> reconcile, in that order), delivers live
  * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
  * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
@@ -33,10 +35,13 @@ import { join } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { abortable } from '#/_base/utils/abort';
+import {
+  abortable,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
@@ -154,6 +159,8 @@ interface ManagedTask {
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 
+const TERMINAL_OUTPUT_TAIL_BYTES = 4 * 1024;
+
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 function outputLimitReason(): string {
@@ -167,7 +174,6 @@ function outputLimitReason(): string {
 
 const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
@@ -625,6 +631,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
+  async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return undefined;
+    const reason = userCancellationReason();
+    return this.terminateWithGrace(entry, {
+      stopReason: reason.message,
+      abortReason: reason,
+      finalStatus: 'killed',
+    });
+  }
+
   private async terminateWithGrace(
     entry: ManagedTask,
     options: {
@@ -964,19 +981,28 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.terminalFired = true;
     const info = this.toInfo(entry);
     void this.notifyAgentTask(info).catch(() => { });
-    this.recordTaskTerminated(info);
+    this.recordTaskTerminated(info, this.retainedOutputTail(entry));
+  }
+
+  private retainedOutputTail(entry: ManagedTask): string | undefined {
+    if (entry.outputChunks.length === 0) return undefined;
+    const retained = Buffer.from(entry.outputChunks.join(''), 'utf-8');
+    const offset = Math.max(0, retained.byteLength - TERMINAL_OUTPUT_TAIL_BYTES);
+    return retained.subarray(offset).toString('utf-8');
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
     this.wire.dispatch(taskStarted({ info }));
     this.telemetry.track2('background_task_created', {
+      task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
 
-  private recordTaskTerminated(info: AgentTaskInfo): void {
-    this.wire.dispatch(taskTerminated({ info }));
+  private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+    this.wire.dispatch(taskTerminated({ info, outputTail }));
     this.telemetry.track2('background_task_completed', {
+      task_id: info.taskId,
       kind: info.kind,
       duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,
@@ -1098,8 +1124,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
     const abortFromSignal = (): void => {
       if (this.isDetached(entry)) return;
+      const userReason = userCancellationReason();
       void this.terminateWithGrace(entry, {
-        stopReason: USER_INTERRUPT_REASON,
+        stopReason: userReason.message,
         abortReason: signal.reason,
         finalStatus: 'killed',
       });
@@ -1229,9 +1256,11 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
   const baseLine =
     info.status === 'timed_out'
       ? `${info.description} timed out.`
-      : info.stopReason
-        ? `${info.description} ${info.status === 'killed' ? 'was killed' : info.status}: ${info.stopReason}.`
-        : `${info.description} ${info.status}.`;
+      : info.status === 'killed' && isSerializedUserCancellation(info.stopReason)
+        ? `${info.description} was stopped by user.`
+        : info.stopReason
+          ? `${info.description} ${info.status === 'killed' ? 'was stopped' : info.status}. Reason: ${info.stopReason}`
+          : `${info.description} ${info.status}.`;
 
   if (info.kind !== 'agent') return baseLine;
   if (info.status === 'completed') return baseLine;
@@ -1261,6 +1290,10 @@ function generateTaskId(kind: string): string {
 function normalizeReason(reason: string | undefined): string | undefined {
   const trimmed = reason?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function isSerializedUserCancellation(reason: string | undefined): boolean {
+  return reason === userCancellationReason().message;
 }
 
 function createForegroundRelease(): ForegroundRelease {

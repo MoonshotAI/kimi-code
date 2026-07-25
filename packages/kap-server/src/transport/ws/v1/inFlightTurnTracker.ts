@@ -18,7 +18,8 @@
  * describe a different stream and would corrupt the accumulation.
  */
 
-import type { Event, InFlightToolCall, InFlightTurn } from '@moonshot-ai/protocol';
+import type { Event } from './events';
+import type { InFlightToolCall, InFlightTurn } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
 

@@ -5,6 +5,11 @@
  * exit plan mode. The plan must already be written to the current plan
  * file; this tool reads that file and flips plan mode off.
  *
+ * Every submission — the moment the final content is read for the
+ * `plan_review` display — records a plan revision through
+ * `planMode.recordRevision()` (blob snapshot + `plan.revision` wire
+ * record), so a Revise → resubmit archives each reviewed version.
+ *
  * `execute` runs only when no interactive review ask intercepted the
  * call. In auto permission mode the auto-mode-approve policy lets every
  * call through before any ask can fire, so the result is worded as
@@ -112,6 +117,14 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       return undefined;
     }
     if (data === null || data.content.trim().length === 0) return undefined;
+    // Every submission finalises a revision of the exact content under
+    // review (a Revise → resubmit records the next version). Best-effort:
+    // a recording failure must not block the review round-trip.
+    try {
+      await this.planMode.recordRevision();
+    } catch {
+      // Revision recording failed; the review continues with the live file.
+    }
     const display: ToolInputDisplay = {
       kind: 'plan_review',
       plan: data.content,
@@ -144,14 +157,18 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     if (failed !== undefined) return failed;
 
     if (this.permissionMode.mode === 'auto') {
-      this.telemetry.track2('plan_resolved', { outcome: 'auto_approved' });
+      this.telemetry.track2('plan_resolved', {
+        outcome: 'auto_approved',
+      });
       return {
         isError: false,
         output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
       };
     }
 
-    this.telemetry.track2('plan_resolved', { outcome: 'approved' });
+    this.telemetry.track2('plan_resolved', {
+      outcome: 'approved',
+    });
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,

@@ -30,6 +30,18 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   return legacyCopy(text);
 }
 
+/**
+ * Complete markstream's code-block copy on plain HTTP without intercepting
+ * native selection-copy events that bubble through MarkdownRender.
+ */
+export function copyCodeBlockFallback(payload: unknown): void {
+  if (typeof payload !== 'string') return;
+
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+  if (clipboard && typeof clipboard.writeText === 'function') return;
+  void copyTextToClipboard(payload);
+}
+
 function legacyCopy(text: string): boolean {
   if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
     return false;

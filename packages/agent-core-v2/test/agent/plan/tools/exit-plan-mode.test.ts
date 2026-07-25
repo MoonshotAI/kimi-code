@@ -14,6 +14,7 @@ import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 
+
 const options = [
   { label: 'Approach A', description: 'Small change.' },
   { label: 'Approach B', description: 'Larger change.' },
@@ -26,6 +27,7 @@ function planService(): IAgentPlanService {
     cancel: () => {},
     clear: async () => {},
     exit: vi.fn(),
+    recordRevision: async () => {},
     status: async () =>
       ({
         id: 'test-plan',
@@ -200,7 +202,9 @@ describe('ExitPlanMode option output', () => {
     // so the output keeps the user-approved wording.
     expect(result.output).toContain('## Approved Plan:');
     expect(result.output).not.toContain('auto-approved');
-    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', { outcome: 'approved' });
+    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', {
+      outcome: 'approved',
+    });
   });
 
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {
@@ -218,5 +222,67 @@ describe('ExitPlanMode option output', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).not.toContain('User feedback:');
+  });
+
+  it('records a revision once per submission when the review display resolves', async () => {
+    const recordRevision = vi.fn(async () => {});
+    const service: IAgentPlanService = { ...planService(), recordRevision };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_record',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(recordRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it('still submits when revision recording fails', async () => {
+    const recordRevision = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    const service: IAgentPlanService = { ...planService(), recordRevision };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_record_failure',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(recordRevision).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Exited plan mode');
+  });
+
+  it('skips revision recording when the plan content is empty', async () => {
+    const recordRevision = vi.fn(async () => {});
+    const service: IAgentPlanService = {
+      ...planService(),
+      recordRevision,
+      status: async () => ({ id: 'test-plan', content: '   ', path: '/tmp/kimi-plan.md' }),
+    };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_empty',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(recordRevision).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('No plan file found');
   });
 });

@@ -31,6 +31,24 @@ function createProvider(stream: boolean = false): KimiChatProvider {
   });
 }
 
+/**
+ * The provider reads the KFC `x-trace-id` response header via the SDK's
+ * `APIPromise.withResponse()`, so mocked `chat.completions.create` calls must
+ * resolve to an object exposing that method. `traceId` sets the header value
+ * the fake response reports.
+ */
+function mockCreateResult(data: unknown, traceId?: string) {
+  return {
+    withResponse: () =>
+      Promise.resolve({
+        data,
+        response: new Response(null, {
+          headers: traceId === undefined ? {} : { 'x-trace-id': traceId },
+        }),
+      }),
+  };
+}
+
 type KimiGenerationState = {
   max_tokens?: number | undefined;
   temperature?: number | undefined;
@@ -56,7 +74,7 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeChatCompletionResponse('kimi-k2'));
+      return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
     });
 
   const stream = await provider.generate(systemPrompt, tools, history, options);
@@ -77,7 +95,7 @@ async function captureKimiMessages(
   let captured: Record<string, unknown> | undefined;
   const create = vi.fn().mockImplementation((params: unknown) => {
     captured = params as Record<string, unknown>;
-    return Promise.resolve(makeChatCompletionResponse('kimi-k2'));
+    return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
   });
   let provider = new KimiChatProvider({
     model: 'kimi-k2',
@@ -633,7 +651,7 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
-    it('backfills an assistant tool-call message when preserved thinking is active', async () => {
+    it('sends empty reasoning_content for an assistant tool call when preserved thinking is active', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -651,7 +669,7 @@ describe('KimiChatProvider', () => {
       expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
-    it('backfills a text assistant message when keep=all omits thinking.type', async () => {
+    it('sends empty reasoning_content for a text assistant when keep=all omits thinking.type', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -667,27 +685,59 @@ describe('KimiChatProvider', () => {
       expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
-    it.each([
-      ['empty', ''],
-      ['non-empty', 'reasoning text'],
-    ])(
-      'sends an existing %s ThinkPart verbatim when preserved thinking is active',
-      async (_kind, think) => {
-        const history: Message[] = [
-          {
-            role: 'assistant',
-            content: [{ type: 'think', think }],
-            toolCalls: [],
-          },
-        ];
+    it('replays an existing empty ThinkPart unchanged when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [],
+        },
+      ];
 
-        const messages = await captureKimiMessages(history, (provider) =>
-          provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
-        );
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
 
-        expect(messages[0]).toHaveProperty('reasoning_content', think);
-      },
-    );
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('replays aggregated empty ThinkParts unchanged when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: '' },
+            { type: 'think', think: '' },
+          ],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('preserves non-empty reasoning when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: '' },
+            { type: 'think', think: 'reasoning text' },
+          ],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', 'reasoning text');
+    });
 
     it.each([
       ['missing', undefined],
@@ -1050,7 +1100,7 @@ describe('KimiChatProvider', () => {
       const client = {
         chat: {
           completions: {
-            create: vi.fn().mockResolvedValue(makeChatCompletionResponse('kimi-k2')),
+            create: vi.fn().mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'))),
           },
         },
       };
@@ -1132,11 +1182,13 @@ describe('KimiChatProvider', () => {
   describe('non-stream response parsing', () => {
     it('yields text content from non-stream response', async () => {
       const provider = createProvider();
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-123',
-        choices: [{ message: { role: 'assistant', content: 'Hello world' } }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [{ message: { role: 'assistant', content: 'Hello world' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1161,19 +1213,21 @@ describe('KimiChatProvider', () => {
 
     it('yields reasoning_content as ThinkPart', async () => {
       const provider = createProvider();
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-123',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'The answer is 4.',
-              reasoning_content: 'Let me think about this...',
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'The answer is 4.',
+                reasoning_content: 'Let me think about this...',
+              },
             },
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1194,25 +1248,27 @@ describe('KimiChatProvider', () => {
 
     it('yields an empty ThinkPart when reasoning_content is explicitly empty', async () => {
       const provider = createProvider();
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-empty-reasoning',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              reasoning_content: '',
-              tool_calls: [
-                {
-                  id: 'call_1',
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{"q":"test"}' },
-                },
-              ],
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-empty-reasoning',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"q":"test"}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
 
       const stream = await provider.generate('', [], []);
       const parts = [];
@@ -1227,6 +1283,266 @@ describe('KimiChatProvider', () => {
           arguments: '{"q":"test"}',
         },
       ]);
+    });
+
+    it('yields reasoning as ThinkPart (vLLM wire field)', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'The answer is 4.',
+                reasoning: 'Let me think about this...',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'Let me think about this...' },
+        { type: 'text', text: 'The answer is 4.' },
+      ]);
+    });
+
+    it('prefers reasoning_content when both fields are present', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: 'from reasoning_content',
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning_content' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+
+    it('falls back to reasoning when reasoning_content is null', async () => {
+      // Current vLLM emits a compatibility `reasoning_content: null` alongside
+      // the real `reasoning` string; the null must fall through.
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: null,
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+  });
+
+  describe('reasoning key dialect', () => {
+    const THINK_HISTORY: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'hmm' },
+          { type: 'text', text: 'ok' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    it('echoes thinking under reasoning after a non-stream response used that field', async () => {
+      const provider = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [
+              { message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } },
+            ],
+          });
+        });
+
+      // Detection happens while draining the first response.
+      const first = await provider.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('detects the dialect from streaming deltas and echoes it on the next request', async () => {
+      const provider = createProvider(true);
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          async function* chunks(): AsyncIterable<Record<string, unknown>> {
+            yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+            yield {
+              id: 'chatcmpl-s',
+              choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+            };
+          }
+          return mockCreateResult(chunks());
+        });
+
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('defaults to reasoning_content before any detection', async () => {
+      const provider = createProvider();
+      let captured: Record<string, unknown> | undefined;
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured = params as Record<string, unknown>;
+          return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
+        });
+
+      const stream = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of stream) void part;
+
+      const messages = captured?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning_content: 'hmm' });
+    });
+
+    it('dialect detected on a per-step clone steers the original provider', async () => {
+      const original = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (original as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [{ message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } }],
+          });
+        });
+
+      // The per-step clone shares `_client` (mocked above) and must also share
+      // the dialect cell: learning on the clone steers the original.
+      const clone = original.withMaxCompletionTokens(2048);
+      const first = await clone.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await original.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+  });
+
+  describe('trace id capture', () => {
+    it('reads x-trace-id from a non-stream response', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'), 'trace-abc'));
+
+      const stream = await provider.generate('', [], []);
+      for await (const part of stream) void part;
+
+      expect(stream.traceId).toBe('trace-abc');
+    });
+
+    it('reads x-trace-id from a streaming response before the body is drained', async () => {
+      const provider = createProvider(true);
+      async function* chunks(): AsyncIterable<Record<string, unknown>> {
+        yield {
+          id: 'chatcmpl-stream',
+          choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: 'stop' }],
+        };
+      }
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(chunks(), 'trace-stream'));
+
+      const stream = await provider.generate('', [], []);
+      // The header arrives with the response, before any streamed part.
+      expect(stream.traceId).toBe('trace-stream');
+      for await (const part of stream) void part;
+      expect(stream.traceId).toBe('trace-stream');
+    });
+
+    it('reports null when the response carries no x-trace-id header', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2')));
+
+      const stream = await provider.generate('', [], []);
+      for await (const part of stream) void part;
+
+      expect(stream.traceId).toBeNull();
+    });
+
+    it('generate() carries traceId onto the result and fires onTraceId once headers arrive', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'), 'trace-gen'));
+
+      const traceIds: Array<string | null> = [];
+      const result = await generate(provider, '', [], [], undefined, {
+        onTraceId: (traceId) => traceIds.push(traceId),
+      });
+
+      expect(traceIds).toEqual(['trace-gen']);
+      expect(result.traceId).toBe('trace-gen');
     });
   });
 
@@ -1278,7 +1594,7 @@ describe('KimiChatProvider', () => {
       ];
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const stream = await provider.generate('', [], []);
       const parts = [];
@@ -1300,7 +1616,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const result = await generate(
         provider,
@@ -1332,7 +1648,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const events: string[] = [];
       await generate(
@@ -1389,7 +1705,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const result = await generate(
         provider,
@@ -1464,7 +1780,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream([singleChunk]));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream([singleChunk])));
 
       // generate() uses the reducer which expects a ToolCall header before
       // accumulating arguments. A pure arg-only without a prior header is
@@ -1479,25 +1795,27 @@ describe('KimiChatProvider', () => {
 
     it('non-stream response with tool_calls yields ToolCall parts', async () => {
       const provider = createProvider(false);
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-nonstream',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'call_ns_a',
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{"q":"hi"}' },
-                },
-              ],
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-nonstream',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_ns_a',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"q":"hi"}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1518,23 +1836,25 @@ describe('KimiChatProvider', () => {
 
     it('non-stream response generates UUID when tool_call has no id', async () => {
       const provider = createProvider(false);
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-uuid',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{}' },
-                },
-              ],
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-uuid',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
 
       const stream = await provider.generate(
         '',

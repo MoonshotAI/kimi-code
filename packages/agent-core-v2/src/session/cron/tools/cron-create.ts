@@ -5,7 +5,7 @@
  *
  * Tasks live in `ISessionCronService` (Session scope) and are persisted
  * through the App-scoped `ICronTaskPersistence` under the project's cron
- * scope, so a `kimi resume` of the same session reloads them and the
+ * scope, so resuming the same session reloads them and the
  * scheduler picks up where it left off (fires that fell during downtime
  * are collapsed into a single delivery with `coalescedCount`). Tasks do
  * NOT carry over into a brand-new session.
@@ -28,6 +28,7 @@ import { z } from 'zod';
 import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
@@ -80,7 +81,10 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     CronCreateInputSchema,
   );
 
-  constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
+  constructor(
+    @ISessionCronService private readonly cron: ISessionCronService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
     if (this.cron.isDisabled()) {
@@ -188,7 +192,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
         const humanSchedule = cronToHuman(parsed);
 
-        this.cron.emitScheduled(task);
+        this.cron.emitScheduled(task, this.scopeContext.agentId);
 
         const output: CronCreateOutput = {
           id: task.id,

@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024"],
+    "types": ["node", "vscode"],
+    "sourceMap": true,
+    "declaration": false,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "shared/*": ["./shared/*"],
+      "@moonshot-ai/kimi-code-sdk": ["../../packages/node-sdk/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "shared/**/*", "test/**/*"],
+  "exclude": ["dist", "node_modules", "webview-ui", "test/settings-store.test.ts"]
+}

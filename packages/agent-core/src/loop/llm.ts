@@ -68,6 +68,22 @@ export interface LLMStreamTiming {
   readonly clientConsumeMs?: number;
 }
 
+export interface LLMRequestTrace {
+  readonly traceId: string | undefined;
+}
+
+export class LLMRequestTraceState implements LLMRequestTrace {
+  traceId: string | undefined;
+
+  reset(): void {
+    this.traceId = undefined;
+  }
+
+  capture(traceId: string | null | undefined): void {
+    this.traceId = traceId ?? undefined;
+  }
+}
+
 export interface LLMChatParams {
   messages: Message[];
   tools: readonly Tool[];
@@ -90,6 +106,7 @@ export interface LLMChatParams {
    * order. Durable transcript writes receive completed blocks only.
    */
   onThinkPart?: ((part: ThinkPart) => Promise<void> | void) | undefined;
+  trace?: LLMRequestTraceState;
 }
 
 export interface LLMChatResponse {
@@ -99,6 +116,8 @@ export interface LLMChatResponse {
   messageId?: string;
   usage: TokenUsage;
   streamTiming?: LLMStreamTiming;
+  /** Provider trace identifier from the `x-trace-id` response header (Kimi/KFC only). */
+  traceId?: string;
 }
 
 export interface LLM {

@@ -6,13 +6,14 @@
  * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
  * provider through `mcp/oauth` when tokens are present, flips failing
  * servers into `needs-auth` on 401, and reconnects after authentication.
- * Emits server status changes to subscribers. Constructed by `AgentMcpService`.
+ * Applies per-server settings over session defaults and emits status changes
+ * to subscribers. Constructed by `SessionMcpService`.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
-import type { Tool } from '#/app/llmProtocol/tool';
+import type { Tool } from '#/kosong/contract/tool';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -58,16 +59,28 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
+/**
+ * Global default timeouts applied when a server entry does not set its own
+ * `startupTimeoutMs` / `toolTimeoutMs`. Resolved at each (re)connect, not at
+ * construction, so late-ready or changed configuration is picked up.
+ */
+export interface McpDefaultTimeouts {
+  readonly startupTimeoutMs?: number;
+  readonly toolTimeoutMs?: number;
+}
+
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
+  readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
 }
 
 export class McpConnectionManager {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
+  private readonly inFlightReconnects = new Map<string, Promise<void>>();
   private initialLoad: Promise<void> = Promise.resolve();
   private initialLoadAttemptId = 0;
   private initialLoadStartedAt: number | undefined;
@@ -232,6 +245,18 @@ export class McpConnectionManager {
     await this.connectOne(entry, attemptId);
   }
 
+  reconnectAndJoin(name: string): Promise<void> {
+    const existing = this.inFlightReconnects.get(name);
+    if (existing !== undefined) return existing;
+    const work = this.reconnect(name).finally(() => {
+      if (this.inFlightReconnects.get(name) === work) {
+        this.inFlightReconnects.delete(name);
+      }
+    });
+    this.inFlightReconnects.set(name, work);
+    return work;
+  }
+
   async shutdown(): Promise<void> {
     const entries = Array.from(this.entries.values());
     this.entries.clear();
@@ -240,11 +265,14 @@ export class McpConnectionManager {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
-    const timeoutMs = entry.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const timeoutMs =
+      entry.config.startupTimeoutMs ??
+      this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
+      DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
     try {
-      const startupClient = await this.createClient(entry.config, entry.name);
+      const startupClient = await this.createClient(entry.config, entry.name, timeoutMs);
       client = startupClient;
       entry.client = startupClient;
       const discovered = await withTimeout(
@@ -310,19 +338,30 @@ export class McpConnectionManager {
     return entry.attemptId;
   }
 
-  private async createClient(config: McpServerConfig, name: string): Promise<RuntimeMcpClient> {
-    const toolCallTimeoutMs = config.toolTimeoutMs;
+  private async createClient(
+    config: McpServerConfig,
+    name: string,
+    startupTimeoutMs: number,
+  ): Promise<RuntimeMcpClient> {
+    const toolCallTimeoutMs =
+      config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
+      return new StdioMcpClient(config, {
+        startupTimeoutMs,
+        toolCallTimeoutMs,
+        defaultCwd: this.options.stdioCwd,
+      });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {
+        startupTimeoutMs,
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
       });
     }
     return new HttpMcpClient(config, {
+      startupTimeoutMs,
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),

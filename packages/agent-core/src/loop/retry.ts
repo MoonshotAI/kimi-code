@@ -1,5 +1,6 @@
 import { sleep } from '@antfu/utils';
 
+import { APIStatusError } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
@@ -39,9 +40,13 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
   if (input.llm.isRetryableError === undefined || maxAttempts <= 1) {
     const effectiveMaxAttempts = Math.max(maxAttempts, 1);
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
+      captureAttemptTraceId(input, error);
       logRequestFailure(input, error, 1, effectiveMaxAttempts);
       throw error;
     }
@@ -50,9 +55,13 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
   const delays = retryBackoffDelays(maxAttempts);
 
   for (let attempt = 1; ; attempt += 1) {
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
+      captureAttemptTraceId(input, error);
       if (attempt >= maxAttempts || !input.llm.isRetryableError(error)) {
         logRequestFailure(input, error, attempt, maxAttempts);
         throw error;
@@ -92,6 +101,34 @@ function logRequestFailure(
     model: input.llm.modelName,
     ...retryErrorFields(error),
   });
+}
+
+/**
+ * Surface a failed attempt's trace id through the same early-capture channel
+ * as a successful attempt. A status-error response still carried response
+ * headers, so its `x-trace-id` is available on the converted error; writing
+ * it here (before the failure propagates to the loop's `turn.interrupted`
+ * dispatch) lets turn-level telemetry attribute the turn to the failed
+ * request rather than the previous successful one. Mid-stream failures were
+ * already captured by the attempt's request trace; failures before any
+ * response (network errors, local aborts) keep the attempt-start reset.
+ */
+function captureAttemptTraceId(input: ChatWithRetryInput, error: unknown): void {
+  const statusError = findAPIStatusError(error);
+  if (statusError?.traceId !== null && statusError?.traceId !== undefined) {
+    input.params.trace?.capture(statusError.traceId);
+  }
+}
+
+export function findAPIStatusError(error: unknown): APIStatusError | undefined {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (current !== null && typeof current === 'object' && !visited.has(current)) {
+    if (current instanceof APIStatusError) return current;
+    visited.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 function paramsForAttempt(

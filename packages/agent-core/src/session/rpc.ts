@@ -16,6 +16,7 @@ import type {
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  ImportContextPayload,
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
@@ -127,6 +128,12 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {
+    if (agentId === 'main') {
+      // A steer is user input like a prompt — and can even launch the
+      // session's first turn (e.g. goal mode) — so keep title/lastPrompt in
+      // sync the same way.
+      await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
+    }
     return (await this.getAgent(agentId)).steer(payload);
   }
 
@@ -216,6 +223,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async clearContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).clearContext(payload);
+  }
+
+  async importContext({ agentId, ...payload }: AgentScopedPayload<ImportContextPayload>) {
+    return (await this.getAgent(agentId)).importContext(payload);
   }
 
   async activateSkill({ agentId, ...payload }: AgentScopedPayload<ActivateSkillPayload>) {

@@ -7,8 +7,9 @@
  * compression. Run: pnpm test -- test/agent/media/tools/read-media.test.ts
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ContentPart } from '#/kosong/contract/message';
+import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,7 +37,8 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IAgentProfileService } from '#/agent/profile/profile';
-import type { Model } from '#/app/model/modelInstance';
+import type { IModelCatalog } from '#/kosong/model/catalog';
+import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -171,6 +173,7 @@ function makeTool(
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
+  inlineVideoSupported?: boolean,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     createTestFs(files),
@@ -179,6 +182,7 @@ function makeTool(
     caps,
     videoUploader,
     telemetry,
+    inlineVideoSupported,
   );
 }
 
@@ -683,6 +687,75 @@ describe('ReadMediaFileTool', () => {
     expect(parts[1]).toEqual(uploadResult);
   });
 
+  it('falls back to an inline base64 video part when the upload fails', async () => {
+    const videoUploader = vi.fn<VideoUploader>().mockRejectedValue(new Error('404 route not found'));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(videoUploader).toHaveBeenCalledOnce();
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
+  });
+
+  it('surfaces auth rejections from the upload channel instead of falling back', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(Object.assign(new Error('401 Unauthorized'), { statusCode: 401 }));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('401 Unauthorized');
+  });
+
+  it('surfaces the by-design no-hook error instead of falling back to inline', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "stub" (protocol=openai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('does not support video upload');
+  });
+
+  it('falls back to inline for a no-hook provider whose wire carries video', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "gemini-stub" (protocol=google-genai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        true,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
+  });
+
   it('rejects empty files', async () => {
     const result = await execute(
       makeTool({ '/workspace/sample.png': { data: pngBuffer(), size: 0 } }),
@@ -748,7 +821,6 @@ describe('AgentMediaToolsRegistrar', () => {
   interface ProfileState {
     alias: string;
     capabilities: ModelCapability;
-    model: Model | undefined;
   }
 
   function createRegistrarHarness() {
@@ -757,13 +829,16 @@ describe('AgentMediaToolsRegistrar', () => {
     const state: ProfileState = {
       alias: '',
       capabilities: capabilities({ image_in: false, video_in: false }),
-      model: undefined,
     };
     const profile = {
       getModelCapabilities: () => state.capabilities,
       getModel: () => state.alias,
-      resolveModel: () => state.model,
     } as unknown as IAgentProfileService;
+    const modelCatalog = {
+      getRequester: (id: string) => ({
+        model: { id, name: id, providerName: 'test', protocol: 'openai' },
+      }),
+    } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
       additionalDirs: [],
@@ -771,6 +846,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const registrar = new AgentMediaToolsRegistrar(
       registry,
       profile,
+      modelCatalog,
       eventBus,
       createTestFs({}),
       createTestEnv(),
@@ -847,20 +923,20 @@ describe('createVideoUploader', () => {
   };
   const input = { data: new Uint8Array(2048), mimeType: 'video/mp4', filename: 'clip.mp4' };
 
-  function modelWith(uploadVideo: Model['uploadVideo']): Pick<Model, 'uploadVideo'> {
-    return { uploadVideo } as Pick<Model, 'uploadVideo'>;
+  function modelWith(uploadVideo: ModelRequester['uploadVideo']): Pick<ModelRequester, 'uploadVideo'> {
+    return { uploadVideo } as Pick<ModelRequester, 'uploadVideo'>;
   }
 
   it('returns undefined when the model does not support video upload', () => {
     expect(createVideoUploader(undefined)).toBeUndefined();
-    expect(createVideoUploader({} as Pick<Model, 'uploadVideo'>)).toBeUndefined();
+    expect(createVideoUploader({} as Pick<ModelRequester, 'uploadVideo'>)).toBeUndefined();
   });
 
   it('binds uploadVideo without telemetry', async () => {
     const uploadVideo = vi.fn().mockResolvedValue(uploadResult);
     const uploader = createVideoUploader(modelWith(uploadVideo));
     await expect(uploader!(input)).resolves.toEqual(uploadResult);
-    expect(uploadVideo).toHaveBeenCalledWith(input);
+    expect(uploadVideo).toHaveBeenCalledWith(input, undefined);
   });
 
   it('reports video_upload telemetry on success', async () => {

@@ -91,7 +91,7 @@ function session(id: string, cwd: string): Session {
     title: id,
     created_at: '2026-06-04T10:30:00.000Z',
     updated_at: '2026-06-04T10:30:00.000Z',
-    status: 'idle',
+    busy: false,
     archived: false,
     metadata: { cwd },
     agent_config: { model: '' },

@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { z } from 'zod';
 
 import type { McpOAuthStore } from '#/agent/mcp/oauth/store';
@@ -21,6 +21,10 @@ export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
 export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
 export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
 export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url).pathname;
+export const slowToolStdioFixture = new URL(
+  './fixtures/slow-tool-stdio-server.mjs',
+  import.meta.url,
+).pathname;
 export const hangingListStdioFixture = new URL(
   './fixtures/hanging-list-stdio-server.mjs',
   import.meta.url,
@@ -77,6 +81,7 @@ export function fakeMcpClient(
       }
       return { content: [{ type: 'text', text: 'ok' }], isError: false };
     },
+    async ping() {},
   };
 }
 

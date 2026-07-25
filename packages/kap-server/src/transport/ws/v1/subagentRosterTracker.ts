@@ -38,7 +38,8 @@
  * would duplicate the row after a refresh.
  */
 
-import type { Event, SnapshotSubagent } from '@moonshot-ai/protocol';
+import type { Event } from './events';
+import type { SnapshotSubagent } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
 

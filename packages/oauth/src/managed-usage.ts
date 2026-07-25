@@ -42,6 +42,29 @@ export function kimiCodeUsageUrl(): string {
   return `${kimiCodeBaseUrl()}/usages`;
 }
 
+/**
+ * Strict match against the managed Kimi Code endpoint: both URLs are parsed
+ * and compared by lowercase origin + pathname without trailing slashes.
+ * Anything that fails to parse — or differs in host or path, e.g. a proxy,
+ * gateway, or self-hosted mirror — is NOT the managed endpoint and must not
+ * be auto-refreshed, because its `/models` schema cannot be trusted.
+ */
+export function isManagedKimiCodeBaseUrl(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined) return false;
+  const managed = parseNormalizedUrl(kimiCodeBaseUrl());
+  const candidate = parseNormalizedUrl(baseUrl);
+  return managed !== undefined && candidate !== undefined && managed === candidate;
+}
+
+function parseNormalizedUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface UsageRow {
   readonly label: string;
   readonly used: number;

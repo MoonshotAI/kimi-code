@@ -129,21 +129,23 @@ export class EditorKeyboardController {
         return;
       }
 
-      if (host.state.appState.isCompacting) {
-        this.clearPendingExit();
-
-        if (this.clearEditorTextIfPresent()) return;
-
-        this.cancelCurrentCompaction();
-        return;
-      }
-
+      // The btw panel stacks above the transcript, so Ctrl+C cancels/closes it
+      // before touching an in-flight compaction or stream.
       if (host.btwPanelController.cancelRunning()) {
         this.clearPendingExit();
         return;
       }
       if (host.btwPanelController.closeOrCancel()) {
         this.clearPendingExit();
+        return;
+      }
+
+      if (host.state.appState.isCompacting) {
+        this.clearPendingExit();
+
+        if (this.clearEditorTextIfPresent()) return;
+
+        this.cancelCurrentCompaction();
         return;
       }
 
@@ -184,12 +186,14 @@ export class EditorKeyboardController {
         this.clearPendingUndoEsc();
         return;
       }
-      if (host.state.appState.isCompacting) {
-        this.cancelCurrentCompaction();
+      // The btw panel stacks above the transcript, so Esc dismisses it before
+      // touching an in-flight compaction or stream.
+      if (host.btwPanelController.closeOrCancel()) {
         this.clearPendingUndoEsc();
         return;
       }
-      if (host.btwPanelController.closeOrCancel()) {
+      if (host.state.appState.isCompacting) {
+        this.cancelCurrentCompaction();
         this.clearPendingUndoEsc();
         return;
       }

@@ -506,6 +506,17 @@ describe('isRecoverableRequestStructureError', () => {
     ).toBe(true);
   });
 
+  it('matches the Moonshot/Kimi vacuous-message rejection', () => {
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(
+          400,
+          "400 the message at position 105 with role 'assistant' must not be empty",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it('does not match context overflow, auth, or non-status errors', () => {
     expect(
       isRecoverableRequestStructureError(new APIContextOverflowError(400, 'context length exceeded')),

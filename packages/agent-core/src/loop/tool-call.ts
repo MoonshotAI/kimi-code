@@ -28,7 +28,7 @@ import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import { parseToolCallArguments } from './tool-args-parse';
-import type { LLM, LLMChatResponse } from './llm';
+import type { LLM, LLMChatResponse, LLMRequestTrace } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
@@ -45,6 +45,18 @@ import type {
 const GRACE_TIMEOUT_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
+
+/**
+ * Output for a tool call the step never executed: the provider stream broke
+ * off (paused / overloaded / token limit), so running the call — whose
+ * arguments may be truncated mid-stream — would be unsafe. The wording tells
+ * the model the call did not run and invites a clean re-issue instead of
+ * assumptions about the outcome.
+ */
+const UNEXECUTED_TOOL_CALL_OUTPUT =
+  'This tool call was not executed: the model response ended before tool execution could start ' +
+  '(the provider stream was interrupted). Do not assume the tool ran — ' +
+  're-issue the call if it is still needed.';
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
 
@@ -73,6 +85,7 @@ export interface ToolCallStepContext {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
+  readonly trace: LLMRequestTrace;
 }
 
 interface ToolCallBatchContext extends ToolCallStepContext {
@@ -160,6 +173,7 @@ export async function runToolCallBatch(
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
         result: result.result,
+        traceId: step.trace.traceId,
       });
     }
   } finally {
@@ -169,6 +183,53 @@ export async function runToolCallBatch(
     await Promise.allSettled(pendingResults);
   }
   return { stopTurn };
+}
+
+/**
+ * Record tool calls from a response the step will NOT execute: the provider
+ * stream broke off (paused / overloaded / token limit), so running the calls
+ * — whose arguments may be truncated mid-stream — would be unsafe. Dropping
+ * them silently is not an option either: it loses the model's intent and,
+ * when the response carried no other usable content, persists an assistant
+ * message strict providers reject as empty. Each call is recorded with
+ * sanitized arguments (unparseable JSON, e.g. truncated by an interrupted
+ * stream, becomes `{}`) and immediately closed with a synthetic error result,
+ * so the exchange stays wire-valid and the model learns the calls never ran.
+ */
+export async function recordUnexecutedToolCalls(
+  step: ToolCallStepContext,
+  response: LLMChatResponse,
+): Promise<void> {
+  for (const toolCall of response.toolCalls) {
+    const parsedArgs = parseToolCallArguments(toolCall.arguments);
+    if (parsedArgs.parseFailed) {
+      step.log?.debug('recording unexecuted tool call with unparseable arguments', {
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        rawLength: toolCall.arguments?.length ?? 0,
+        error: parsedArgs.error,
+      });
+    }
+    await step.dispatchEvent({
+      type: 'tool.call',
+      uuid: toolCall.id,
+      turnId: step.turnId,
+      step: step.currentStep,
+      stepUuid: step.stepUuid,
+      toolCallId: toolCall.id,
+      name: toolCall.name,
+      args: parsedArgs.data,
+      extras: toolCall.extras,
+      traceId: step.trace.traceId,
+    });
+    await step.dispatchEvent({
+      type: 'tool.result',
+      parentUuid: toolCall.id,
+      toolCallId: toolCall.id,
+      result: { output: UNEXECUTED_TOOL_CALL_OUTPUT, isError: true },
+      traceId: step.trace.traceId,
+    });
+  }
 }
 
 /**
@@ -368,6 +429,7 @@ async function runPrepareToolExecutionHook(
       args,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -422,6 +484,7 @@ async function runAuthorizeToolExecutionHook(
       execution,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -504,6 +567,7 @@ async function finalizePendingToolResult(
       result: pendingResult.result,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -552,6 +616,7 @@ async function executeTool(
   const executePromise = execution.execute({
     turnId,
     toolCallId: toolCall.id,
+    traceId: step.trace.traceId,
     metadata,
     signal,
     onUpdate: (update) => {
@@ -723,5 +788,6 @@ async function dispatchToolCall(
     description: displayFields?.description,
     display: displayFields?.display,
     extras: toolCall.extras,
+    traceId: step.trace.traceId,
   });
 }

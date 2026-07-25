@@ -217,7 +217,70 @@ describe('kimi-datasource MCP server', () => {
     }
   });
 
-  it('registers yuandian_law in the get_data_source_desc enum', async () => {
+  it('retries with a rotated credential when the backend rejects the previous token', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
+    const kimiHome = join(tempDir, 'kimi-home');
+    const credentialsFile = join(kimiHome, 'credentials', 'kimi-code.json');
+    const authorizations: Array<string | undefined> = [];
+    let child: ChildProcessWithoutNullStreams | undefined;
+
+    const server = createServer((request, response) => {
+      void handleCredentialRotationRequest(request, response, {
+        authorizations,
+        credentialsFile,
+      });
+    });
+
+    try {
+      await mkdir(join(kimiHome, 'credentials'), { recursive: true });
+      await writeFile(
+        credentialsFile,
+        JSON.stringify({ access_token: 'previous-token', expires_at: 1 }),
+        'utf8',
+      );
+      await listen(server);
+
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('Expected an ephemeral TCP port for the test server.');
+      }
+
+      child = spawn(process.execPath, [SERVER_ENTRY], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          KIMI_CODE_HOME: kimiHome,
+          KIMI_DATASOURCE_API_URL: `http://127.0.0.1:${address.port}`,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const client = createRpcClient(child);
+
+      await client.request('initialize', {});
+      const result = await client.request('tools/call', {
+        name: 'get_data_source_desc',
+        arguments: { name: 'imf' },
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual({
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('assistant complete result'),
+          },
+        ],
+      });
+      expect(authorizations).toEqual(['Bearer previous-token', 'Bearer refreshed-token']);
+    } finally {
+      child?.stdin.end();
+      child?.kill();
+      await closeServer(server);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns the complete data-source routing contract when tools are listed', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
     const kimiHome = join(tempDir, 'kimi-home');
     let child: ChildProcessWithoutNullStreams | undefined;
@@ -241,11 +304,42 @@ describe('kimi-datasource MCP server', () => {
 
       const tools = (
         result.result as {
-          tools: Array<{ name: string; inputSchema: { properties: { name: { enum: string[] } } } }>;
+          tools: Array<{
+            name: string;
+            description: string;
+            inputSchema: {
+              properties: Record<string, { description?: string; enum?: string[] }>;
+            };
+          }>;
         }
       ).tools;
+      const call = tools.find((tool) => tool.name === 'call_data_source_tool');
       const desc = tools.find((tool) => tool.name === 'get_data_source_desc');
-      expect(desc?.inputSchema.properties.name.enum).toContain('yuandian_law');
+      expect(desc?.inputSchema.properties['name']?.enum).toEqual([
+        'stock_finance_data',
+        'yahoo_finance',
+        'world_bank_open_data',
+        'tianyancha',
+        'arxiv',
+        'scholar',
+        'yuandian_law',
+        'wind',
+        'imf',
+        'gildata',
+        'sec_edgar',
+        'sp_data',
+      ]);
+      expect(call?.description).toContain(
+        'For a simple lookup, use one specialized source and stop after its first successful result',
+      );
+      expect(call?.description).toContain('When the user names a data source, use that source');
+      expect(call?.inputSchema.properties['data_source_name']?.description).toContain(
+        'When the user names a source, pass that source',
+      );
+      expect(desc?.description).toContain('choose exactly one specialized source');
+      expect(desc?.inputSchema.properties['name']?.description).toContain(
+        'yahoo_finance FX history is limited to about 2 years',
+      );
     } finally {
       child?.stdin.end();
       child?.kill();
@@ -363,6 +457,42 @@ async function handleMockDatasourceRequest(
           },
           { name: options.blockedFile, content: 'blocked\n' },
         ],
+      }),
+    );
+  } catch (error) {
+    response.statusCode = 500;
+    response.end(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleCredentialRotationRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: {
+    readonly authorizations: Array<string | undefined>;
+    readonly credentialsFile: string;
+  },
+): Promise<void> {
+  try {
+    await readJson(request);
+    options.authorizations.push(request.headers.authorization);
+    response.setHeader('Content-Type', 'application/json');
+
+    if (options.authorizations.length === 1) {
+      await writeFile(
+        options.credentialsFile,
+        JSON.stringify({ access_token: 'refreshed-token', expires_at: 4_102_444_800 }),
+        'utf8',
+      );
+      response.statusCode = 401;
+      response.end(JSON.stringify({ error: 'expired access token' }));
+      return;
+    }
+
+    response.end(
+      JSON.stringify({
+        is_success: true,
+        result: { assistant: [{ type: 'text', text: 'assistant complete result' }] },
       }),
     );
   } catch (error) {

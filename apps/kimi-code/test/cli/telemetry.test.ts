@@ -60,7 +60,6 @@ describe('initializeServerTelemetry', () => {
   it('configures the sink with ui_mode="web" and the CLI product identity', async () => {
     const { initializeServerTelemetry } = await import('#/cli/telemetry');
     const client = initializeServerTelemetry({ version: '1.2.3' });
-
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({
         appName: 'kimi-code-cli',
@@ -81,7 +80,10 @@ describe('initializeServerTelemetry', () => {
         setContext: expect.any(Function),
       }),
     );
-  });
+    // The first dynamic import pulls in the whole SDK/oauth chain (~3s idle,
+    // more under full-suite transform contention) — give it headroom past the
+    // 5s default timeout.
+  }, 20000);
 
   it('disables telemetry when config.toml sets telemetry = false', async () => {
     mocks.loadRuntimeConfigSafe.mockReturnValue({

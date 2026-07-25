@@ -9,11 +9,13 @@
  * `IGitService`; this service only confines paths and computes repo-relative
  * paths before calling it.
  *
- * Path confinement is lexical (`ISessionWorkspaceContext.isWithin`); it does not
- * follow symlinks, matching the rest of v2 (`_base/tools/policies/path-access.ts`).
+ * Path confinement applies the lexical `ISessionWorkspaceContext.isWithin`
+ * check first, then re-verifies the candidate through `IHostFileSystem.realpath`
+ * (resolving the longest existing prefix, so not-yet-created paths still work):
+ * a symlink inside the workspace must not steer fs actions to files outside it.
  */
 
-import { basename, extname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import {
   type FsDiffRequest,
@@ -60,7 +62,15 @@ import ignore, { type Ignore } from 'ignore';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import {
+  buildEtag,
+  countLines,
+  detectBinary,
+  FS_BINARY_SAMPLE_BYTES,
+  guessLanguageId,
+  guessMime,
+} from '#/_base/utils/fileMeta';
+import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
@@ -86,8 +96,6 @@ const GREP_TIMEOUT_MS = 30_000;
 const WALK_MAX_DEPTH = 64;
 
 const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
-const FS_BINARY_SAMPLE_BYTES = 4096;
-const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
 const HIDDEN_NAME_RE = /^\./;
 const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
@@ -111,7 +119,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async list(req: FsListRequest): Promise<FsListResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
 
     let topStat: HostFileStat;
@@ -166,7 +174,7 @@ export class SessionFsService implements ISessionFsService {
           continue;
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
-        const st = await this.hostFs.stat(this.absOf(childRel)).catch(() => undefined);
+        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
         if (st === undefined) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
@@ -203,7 +211,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async read(req: FsReadRequest): Promise<FsReadResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
 
     let st: HostFileStat;
@@ -303,11 +311,11 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async stat(req: FsStatRequest): Promise<FsStatResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, req.path);
     }
@@ -316,16 +324,18 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async statMany(req: FsStatManyRequest): Promise<FsStatManyResponse> {
-    const resolved = req.paths.map((p) => {
-      const abs = this.resolveWithin(p);
-      return { raw: p, rel: this.toRel(abs), abs };
-    });
+    const resolved = await Promise.all(
+      req.paths.map(async (p) => {
+        const abs = await this.resolveWithin(p);
+        return { raw: p, rel: this.toRel(abs), abs };
+      }),
+    );
 
     const entries: Record<string, FsEntry | null> = {};
     await Promise.all(
       resolved.map(async ({ raw, rel, abs }) => {
         try {
-          const st = await this.hostFs.stat(abs);
+          const st = await this.hostFs.lstat(abs);
           const name = rel === '.' ? basename(this.workspace.workDir) : basename(abs);
           entries[raw] = buildFsEntry(rel, name, st, false);
         } catch {
@@ -337,7 +347,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
     try {
       await this.hostFs.mkdir(abs, { recursive: req.recursive });
@@ -355,16 +365,16 @@ export class SessionFsService implements ISessionFsService {
       }
       throw err;
     }
-    const st = await this.hostFs.stat(abs);
+    const st = await this.hostFs.lstat(abs);
     return buildFsEntry(rel, basename(abs), st, false);
   }
 
   async resolvePath(relPath: string): Promise<FsPathResolved> {
-    const abs = this.resolveWithin(relPath);
+    const abs = await this.resolveWithin(relPath);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, relPath);
     }
@@ -372,7 +382,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async resolveDownload(relPath: string): Promise<FsDownloadResolved> {
-    const abs = this.resolveWithin(relPath);
+    const abs = await this.resolveWithin(relPath);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -456,7 +466,7 @@ export class SessionFsService implements ISessionFsService {
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
       for (const p of req.paths) {
-        filter.add(this.toRel(this.resolveWithin(p)));
+        filter.add(this.toRel(await this.resolveWithin(p)));
       }
     }
 
@@ -465,7 +475,7 @@ export class SessionFsService implements ISessionFsService {
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
     const cwd = this.workspace.workDir;
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     return this.git.diff(cwd, this.toRel(abs), abs);
   }
 
@@ -683,7 +693,43 @@ export class SessionFsService implements ISessionFsService {
     return this.rgResolution;
   }
 
-  private resolveWithin(inputPath: string): string {
+  private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined;
+
+  private async realRoots(): Promise<readonly string[]> {
+    const dirs = [this.workspace.workDir, ...this.workspace.additionalDirs];
+    const key = dirs.join('\n');
+    if (this.realRootsCache?.key === key) return this.realRootsCache.roots;
+    const roots: string[] = [];
+    for (const dir of dirs) {
+      try {
+        roots.push(await this.hostFs.realpath(dir));
+      } catch {
+        roots.push(dir);
+      }
+    }
+    this.realRootsCache = { key, roots };
+    return roots;
+  }
+
+  private async realpathExistingPrefix(abs: string): Promise<string> {
+    const tail: string[] = [];
+    let current = abs;
+    for (let i = 0; i < 256; i++) {
+      try {
+        const real = await this.hostFs.realpath(current);
+        return tail.length === 0 ? real : join(real, ...tail.reverse());
+      } catch (err) {
+        if (!isMissingPathError(err)) throw err;
+        const parent = dirname(current);
+        if (parent === current) return abs;
+        tail.push(basename(current));
+        current = parent;
+      }
+    }
+    return abs;
+  }
+
+  private async resolveWithin(inputPath: string): Promise<string> {
     if (inputPath === '' || inputPath === '/') {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
@@ -705,6 +751,15 @@ export class SessionFsService implements ISessionFsService {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
+    }
+    const resolved = await this.realpathExistingPrefix(abs);
+    const roots = await this.realRoots();
+    if (!roots.some((root) => isInsideOrEqual(resolved, root))) {
+      throw new Error2(
+        ErrorCodes.FS_PATH_ESCAPES,
+        `path "${inputPath}" escapes workspace through a symlink`,
+        { details: { path: inputPath, reason: 'symlink_outside' } },
+      );
     }
     return abs;
   }
@@ -852,12 +907,6 @@ function sortChildren(
   children.sort(cmp);
 }
 
-function buildEtag(st: HostFileStat): string {
-  const mtime = Math.floor(st.mtimeMs ?? 0);
-  const ino = st.ino ?? 0;
-  return [mtime.toString(36), st.size.toString(36), ino.toString(36)].join('-');
-}
-
 function buildFsEntry(
   relPath: string,
   name: string,
@@ -887,29 +936,6 @@ function buildFsEntry(
   return entry;
 }
 
-function detectBinary(buf: Uint8Array): boolean {
-  if (buf.length === 0) return false;
-  let nonPrintable = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i]!;
-    if (b === 0) return true;
-    if (b === 9 || b === 10 || b === 13) continue;
-    if (b >= 32 && b <= 126) continue;
-    nonPrintable++;
-  }
-  return nonPrintable / buf.length > FS_BINARY_NONPRINTABLE_FRACTION;
-}
-
-function countLines(text: string): number {
-  if (text.length === 0) return 0;
-  let n = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) n++;
-  }
-  if (text.charCodeAt(text.length - 1) === 10) n--;
-  return Math.max(0, n);
-}
-
 function errnoCode(err: unknown): string | undefined {
   const unwrapped = unwrapErrorCause(err);
   if (typeof unwrapped === 'object' && unwrapped !== null && 'code' in unwrapped) {
@@ -917,6 +943,24 @@ function errnoCode(err: unknown): string | undefined {
     return typeof c === 'string' ? c : undefined;
   }
   return undefined;
+}
+
+function isMissingPathError(err: unknown): boolean {
+  if (isError2(err)) {
+    return (
+      err.code === ErrorCodes.OS_FS_NOT_FOUND || err.code === ErrorCodes.OS_FS_NOT_DIRECTORY
+    );
+  }
+  const code = errnoCode(err);
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function isInsideOrEqual(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  if (rel === '') return true;
+  if (rel.startsWith('..')) return false;
+  if (isAbsolute(rel)) return false;
+  return true;
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {
@@ -948,63 +992,6 @@ function toWireError(err: unknown): { code: number; msg: string } {
     code: FsWireErrorCode.INTERNAL_ERROR,
     msg: err instanceof Error ? err.message : 'internal error',
   };
-}
-
-const EXT_TO_MIME: Readonly<Record<string, string>> = {
-  '.ts': 'text/typescript',
-  '.tsx': 'text/typescript',
-  '.js': 'text/javascript',
-  '.jsx': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.cjs': 'text/javascript',
-  '.json': 'application/json',
-  '.md': 'text/markdown',
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.pdf': 'application/pdf',
-  '.yaml': 'text/yaml',
-  '.yml': 'text/yaml',
-  '.toml': 'application/toml',
-  '.sh': 'text/x-shellscript',
-  '.py': 'text/x-python',
-  '.rs': 'text/rust',
-  '.go': 'text/x-go',
-};
-
-function guessMime(relPath: string, isBinary: boolean): string {
-  const ext = extname(relPath).toLowerCase();
-  const mapped = EXT_TO_MIME[ext];
-  if (mapped !== undefined) return mapped;
-  return isBinary ? 'application/octet-stream' : 'text/plain';
-}
-
-const EXT_TO_LANGUAGE: Readonly<Record<string, string>> = {
-  '.ts': 'typescript',
-  '.tsx': 'typescriptreact',
-  '.js': 'javascript',
-  '.jsx': 'javascriptreact',
-  '.mjs': 'javascript',
-  '.cjs': 'javascript',
-  '.json': 'json',
-  '.md': 'markdown',
-  '.html': 'html',
-  '.css': 'css',
-  '.yaml': 'yaml',
-  '.yml': 'yaml',
-  '.toml': 'toml',
-  '.sh': 'shellscript',
-  '.py': 'python',
-  '.rs': 'rust',
-  '.go': 'go',
-};
-
-function guessLanguageId(relPath: string): string | undefined {
-  return EXT_TO_LANGUAGE[extname(relPath).toLowerCase()];
 }
 
 registerScopedService(

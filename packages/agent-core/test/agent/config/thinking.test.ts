@@ -104,8 +104,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on when the resolved effort is off', () => {
-    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 
   it('honors a configured effort when clamping always-thinking models back on', () => {
@@ -113,12 +115,65 @@ describe('resolveThinkingEffort', () => {
     // an explicitly configured effort is preserved instead of falling back to
     // the model default.
     expect(
-      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel),
+      resolveThinkingEffort(
+        undefined,
+        { enabled: false, effort: 'max' },
+        alwaysThinkingEffortModel,
+        true,
+      ),
     ).toBe('max');
     // without an explicit effort, fall back to the model's default effort.
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel)).toBe(
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, true),
+    ).toBe('high');
+  });
+
+  it('clamps always-thinking models to their default effort on every protocol', () => {
+    // A model declared always-on never resolves to off — claiming off while
+    // upstream keeps reasoning at its default would be a lie.
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe(
       'high',
     );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, false)).toBe('on');
+  });
+
+  it('normalizes a configured off value (case/whitespace) instead of sending it upstream', () => {
+    expect(resolveThinkingEffort(undefined, { effort: ' OFF ' }, effortModel, false)).toBe('off');
+    expect(resolveThinkingEffort(undefined, { effort: 'Off' }, booleanModel, false)).toBe('off');
+    // … and inside the always-on clamp it is treated as absent, not as an effort.
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: ' OFF ' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+  });
+
+  it('reads a whitespace-only configured effort as absent, not as an empty effort', () => {
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, effortModel, false)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, alwaysThinkingModel, false)).toBe('on');
+  });
+
+  it('normalizes the requested effort (case/whitespace) on every wire', () => {
+    expect(resolveThinkingEffort(' OFF ', undefined, effortModel, false)).toBe('off');
+    expect(resolveThinkingEffort(' Max ', undefined, effortModel, false)).toBe('max');
+    expect(resolveThinkingEffort('  ', undefined, effortModel, false)).toBe('medium');
+  });
+
+  it('treats a configured off as absent when clamping always-thinking models', () => {
+    expect(resolveThinkingEffort(undefined, { effort: 'off' }, alwaysThinkingEffortModel, false)).toBe(
+      'high',
+    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'off' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: ' OFF ' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    // … while an explicitly configured concrete effort is still honored.
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel, true),
+    ).toBe('max');
   });
 
   it('does not force on for models that are not always-thinking', () => {
@@ -165,6 +220,7 @@ describe('resolveThinkingEffort overrides', () => {
           capabilities: ['thinking'],
           overrides: { capabilities: ['thinking', 'always_thinking'] },
         }),
+        true,
       ),
     ).toBe('on');
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   AgentSideConnection,
@@ -49,7 +49,12 @@ interface CapturedCall {
   options: { id?: string; workDir: string; mcpServers?: Record<string, unknown> };
 }
 
-function makeHarness(sessionId: string, captured: CapturedCall[]): {
+function makeHarness(
+  sessionId: string,
+  captured: CapturedCall[],
+  statusThinkingEffort?: string | Error,
+  fallbackThinking?: { enabled?: boolean; effort?: string },
+): {
   harness: KimiHarness;
   fakeSession: Session;
 } {
@@ -58,6 +63,13 @@ function makeHarness(sessionId: string, captured: CapturedCall[]): {
     prompt: async () => undefined,
     cancel: async () => undefined,
     onEvent: () => () => undefined,
+    getStatus:
+      statusThinkingEffort === undefined
+        ? undefined
+        : vi.fn(async () => {
+            if (statusThinkingEffort instanceof Error) throw statusThinkingEffort;
+            return { thinkingEffort: statusThinkingEffort };
+          }),
   } as unknown as Session;
   const harness = {
     auth: { status: async () => AUTHED_STATUS },
@@ -73,6 +85,7 @@ function makeHarness(sessionId: string, captured: CapturedCall[]): {
         { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: true },
         { id: 'kimi-plain', name: 'Kimi Plain', thinkingSupported: false },
       ]),
+      thinking: fallbackThinking,
     }),
   } as unknown as KimiHarness;
   return { harness, fakeSession };
@@ -207,4 +220,56 @@ describe('AcpServer session/new', () => {
     const modelValues = modelOpt!.options.map((o) => 'value' in o ? o.value : '');
     expect(modelValues).toEqual(['kimi-coder', 'kimi-plain']);
   });
+
+  it('advertises thinking on when the created session status has a high effort', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-thinking-high', captured, 'high');
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    void new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    const response = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    const thinking = response.configOptions?.find((option) => option.id === 'thinking');
+    if (thinking?.type !== 'select') throw new Error('thinking option must be a select');
+    expect(thinking.currentValue).toBe('on');
+  });
+
+  it.each([
+    { name: 'explicit high effort', config: { effort: 'high' }, expected: 'on' },
+    { name: 'explicit off effort', config: { effort: 'off' }, expected: 'off' },
+    {
+      name: 'disabled with a high effort',
+      config: { enabled: false, effort: 'high' },
+      expected: 'off',
+    },
+    {
+      name: 'enabled with an off effort',
+      config: { enabled: true, effort: 'off' },
+      expected: 'off',
+    },
+  ])(
+    'falls back to $name when the created session status cannot be read',
+    async ({ config, expected }) => {
+      const captured: CapturedCall[] = [];
+      const { harness, fakeSession } = makeHarness(
+        'sess-thinking-status-error',
+        captured,
+        new Error('status unavailable'),
+        config,
+      );
+      const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+      void new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+      const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+      const response = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+      expect(fakeSession.getStatus).toHaveBeenCalledOnce();
+      const thinking = response.configOptions?.find((option) => option.id === 'thinking');
+      if (thinking?.type !== 'select') throw new Error('thinking option must be a select');
+      expect(thinking.currentValue).toBe(expected);
+    },
+  );
 });

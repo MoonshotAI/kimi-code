@@ -393,15 +393,17 @@ function findMagicSync(fd: number, start: number, size: number): number {
   return -1;
 }
 
-/** Scan an open snapshot/WAL fd into frame refs without copying values. */
+/** Scan an open snapshot/WAL fd into frame refs without copying values.
+ *  `startOffset` restricts the scan to [startOffset, EOF) — used by replica
+ *  catch-up, which resumes at a known frame boundary. */
 export function scanFrameRefsFd(
   fd: number,
-  { onCorrupt = 'resync' }: { onCorrupt?: 'resync' | 'strict' } = {},
+  { onCorrupt = 'resync', startOffset = 0 }: { onCorrupt?: 'resync' | 'strict'; startOffset?: number } = {},
 ): ScanFrameRefsResult {
   const size = fs.fstatSync(fd).size;
   const frames: FrameRef[] = [];
   const corruptRanges: [number, number][] = [];
-  let pos = 0;
+  let pos = startOffset;
 
   while (pos < size) {
     const r = readFrameRefAt(fd, pos, size);

@@ -2,9 +2,9 @@
  * `/workspaces` route handlers — server-v2 port.
  *
  * Implements the v1 `/api/v1/workspaces` wire contract on top of
- * `agent-core-v2` services. Backed by `IWorkspaceRegistry` (Core scope) for the
- * catalog, `IHostFileSystem` to validate roots and detect git, and
- * `ISessionIndex` to derive `session_count`.
+ * `agent-core-v2` services. Backed by `IWorkspaceService` (App scope) for the
+ * catalog, `IHostFileSystem` to validate roots, and
+ * `IWorkspaceSessions` to derive `session_count`.
  *
  *   GET    /workspaces                    list
  *   POST   /workspaces                    register (idempotent on root)
@@ -14,24 +14,30 @@
  * **Wire fidelity**: the v1 `workspaceSchema` carries more fields than v2's
  * `Workspace` (`{ id, root, name, createdAt, lastOpenedAt }`). The handler
  * projects the v2 record onto the v1 shape, deriving the extra fields:
- *   - `is_git_repo` / `branch` — best-effort `.git` detection; `branch` is
- *     parsed from `.git/HEAD` (`ref: refs/heads/<branch>`), resolving the
- *     real git dir through a `.git` file for worktrees/submodules. Matches the
- *     v1 `agent-core` probe.
  *   - `created_at` / `last_opened_at` — from the registry's in-memory
  *     timestamps (reset on restart; the registry is still a skeleton).
- *   - `session_count` — count of persisted sessions for the workspace.
+ *   - `session_count` — count of persisted sessions for the workspace, summed
+ *     across every id spelling of the same root (`IWorkspaceSessions.count`
+ *     folds the alias set) so legacy split buckets count once for the
+ *     workspace, not per bucket.
  */
 
 import {
   IHostFileSystem,
-  ISessionIndex,
-  IWorkspaceRegistry,
+  IWorkspaceService,
+  IWorkspaceSessions,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
+import { isAbsolute } from 'node:path';
+
+import { z } from 'zod';
+
+import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
+import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
   deleteWorkspaceResponseSchema,
@@ -39,15 +45,8 @@ import {
   updateWorkspaceRequestSchema,
   updateWorkspaceResponseSchema,
   workspaceIdParamSchema,
-} from '@moonshot-ai/protocol';
-import type { Workspace as WorkspaceWire } from '@moonshot-ai/protocol';
-import { isAbsolute, join } from 'node:path';
-
-import { z } from 'zod';
-
-import { errEnvelope, okEnvelope } from '../envelope';
-import { requestLog } from '../lib/requestLog';
-import { defineRoute } from '../middleware/defineRoute';
+} from '../protocol/rest-workspace';
+import type { Workspace as WorkspaceWire } from '../protocol/workspace';
 
 interface WorkspaceRouteHost {
   get(
@@ -96,7 +95,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceRegistry).list();
+      const items = await core.accessor.get(IWorkspaceService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       reply.send(okEnvelope({ items: projected }, req.id));
     },
@@ -140,7 +139,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} does not exist`, req.id));
         return;
       }
-      const ws = await core.accessor.get(IWorkspaceRegistry).createOrTouch(root, req.body.name);
+      const ws = await core.accessor.get(IWorkspaceService).createOrTouch(root, req.body.name);
       reply.send(okEnvelope(await toWireWorkspace(core, ws), req.id));
     },
   );
@@ -167,7 +166,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     async (req, reply) => {
       const { workspace_id } = req.params;
       const ws = await core.accessor
-        .get(IWorkspaceRegistry)
+        .get(IWorkspaceService)
         .update(workspace_id, { name: req.body.name });
       if (ws === undefined) {
         reply.send(
@@ -199,7 +198,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const registry = core.accessor.get(IWorkspaceRegistry);
+      const registry = core.accessor.get(IWorkspaceService);
       const existing = await registry.get(workspace_id);
       if (existing === undefined) {
         reply.send(
@@ -224,65 +223,15 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
 // ---------------------------------------------------------------------------
 
 async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const [git, sessionCount] = await Promise.all([
-    detectGit(core, ws.root),
-    countSessions(core, ws.id),
-  ]);
+  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
   return {
     id: ws.id,
     root: ws.root,
     name: ws.name,
-    is_git_repo: git.isGitRepo,
-    branch: git.branch,
     created_at: new Date(ws.createdAt).toISOString(),
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,
   };
-}
-
-async function detectGit(
-  core: Scope,
-  root: string,
-): Promise<{ isGitRepo: boolean; branch: string | null }> {
-  // Mirror the v1 `agent-core` git probe: confirm `.git`, resolve the real git
-  // dir (a `.git` *file* in worktrees/submodules points at it via `gitdir:`),
-  // then read `<gitDir>/HEAD` and peel off `ref: refs/heads/<branch>`. Every
-  // step is best-effort so a missing/unreadable piece degrades to `null`
-  // rather than failing the projection.
-  const hostFs = core.accessor.get(IHostFileSystem);
-
-  const dotGit = await hostFs.stat(join(root, '.git')).catch(() => null);
-  if (dotGit === null) {
-    return { isGitRepo: false, branch: null };
-  }
-
-  let gitDir: string;
-  if (dotGit.isDirectory) {
-    gitDir = join(root, '.git');
-  } else if (dotGit.isFile) {
-    const text = await hostFs.readText(join(root, '.git')).catch(() => null);
-    const ref = (text === null ? '' : /^gitdir:\s*(.+)$/m.exec(text)?.[1] ?? '').trim();
-    if (ref === '') {
-      return { isGitRepo: false, branch: null };
-    }
-    gitDir = ref.startsWith('/') ? ref : join(root, ref);
-  } else {
-    return { isGitRepo: false, branch: null };
-  }
-
-  const head = await hostFs.readText(join(gitDir, 'HEAD')).catch(() => null);
-  if (head === null) {
-    return { isGitRepo: true, branch: null };
-  }
-  const branch = /^ref:\s*refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null;
-  return { isGitRepo: true, branch };
-}
-
-async function countSessions(core: Scope, workspaceId: string): Promise<number> {
-  const page = await core.accessor
-    .get(ISessionIndex)
-    .list({ workspaceId, includeArchived: true });
-  return page.items.length;
 }
 
 function buildValidationEnvelope(

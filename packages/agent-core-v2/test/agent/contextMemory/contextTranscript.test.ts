@@ -227,4 +227,50 @@ describe('reduceContextTranscript', () => {
     expect(result.entries[2]!.toolCallId).toBe('call_1');
     expect(result.foldedLength).toBe(3);
   });
+
+  it('drops an output-free assistant at step.end, mirroring the live fold', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: '' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user']);
+    expect(result.foldedLength).toBe(1);
+  });
+
+  it('drops a failed attempt left open when the retry begins', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({ type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'recovered' } }),
+      loopEvent({ type: 'step.end', uuid: 's2' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(texts(result)).toEqual(['q', 'recovered']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('keeps settled steps that carry any sendable output', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: 'real' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({
+        type: 'content.part',
+        stepUuid: 's2',
+        part: { type: 'think', think: '', encrypted: 'sig' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 's2' }),
+      loopEvent({ type: 'step.begin', uuid: 's3' }),
+      loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'think', think: '' } }),
+      loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'answer' } }),
+      loopEvent({ type: 'step.end', uuid: 's3' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(result.foldedLength).toBe(4);
+  });
 });

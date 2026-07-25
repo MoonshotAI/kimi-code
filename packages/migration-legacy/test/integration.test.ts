@@ -64,6 +64,27 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
     expect(report.summary.sessions.sessionsMigrated).toBeGreaterThan(0);
   });
 
+  it('does not write a completed marker when legacy session data remains unreadable', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'failed-session-marker-src-'));
+    try {
+      const bucket = join(src, 'sessions', '11111111111111111111111111111111');
+      await mkdir(join(bucket, 'legacy-session'), { recursive: true });
+      const plan = await detectMigration({ sourcePath: src });
+
+      const report = await runMigration({
+        plan,
+        scope: { config: true, mcp: true, userHistory: true, skills: true, sessions: true },
+        source: src,
+        target: tgt,
+      });
+
+      expect(report.summary.sessions.sessionsFailed).toHaveLength(1);
+      await expect(readFile(join(src, '.migrated-to-kimi-code'), 'utf-8')).rejects.toThrow();
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
   it('config-only scope writes config but skips sessions', async () => {
     // Materialize a config.toml in the fixture; afterEach cleans it up.
     await writeFile(FIXTURE_CONFIG, 'default_thinking = true\n');

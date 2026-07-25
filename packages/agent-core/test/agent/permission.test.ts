@@ -2197,6 +2197,21 @@ describe('ExitPlanMode permission policy', () => {
       }),
     );
   });
+
+  it('attaches the request trace id to permission_approval_result', async () => {
+    const { manager, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+    );
+
+    await expect(
+      manager.beforeToolCall(hookContext({ id: 'call_traced', traceId: 'trace-perm-1' })),
+    ).resolves.toBeUndefined();
+
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_approval_result',
+      expect.objectContaining({ result: 'approved', trace_id: 'trace-perm-1' }),
+    );
+  });
 });
 
 describe('Agent-local approve for session', () => {
@@ -3953,6 +3968,7 @@ function makePlanPermissionManager(input: {
     rpc: { requestApproval },
     log: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
     telemetry: { track: telemetryTrack },
+    turn: { traceIdForTurn: () => undefined },
     planMode: {
       get isActive() {
         return true;
@@ -3987,6 +4003,7 @@ function hookContext(input: {
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
   readonly toolCalls?: readonly ToolCall[] | undefined;
+  readonly traceId?: string | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -3999,6 +4016,7 @@ function hookContext(input: {
   return {
     turnId: '0',
     stepNumber: 1,
+    traceId: input.traceId,
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,

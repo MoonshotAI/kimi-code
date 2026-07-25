@@ -2,7 +2,7 @@
  * `toolSelect` domain (L4) — `IAgentToolSelectService` implementation.
  *
  * Shapes the provider-visible tool and history views for progressive tool
- * disclosure, loads MCP schemas into `contextMemory`, and exposes
+ * disclosure, loads dynamic schemas into `contextMemory`, and exposes
  * loadable-tools announcement text. Reads live tools from `toolRegistry`,
  * active-tool and capability state from `profile`, gates through `flag`,
  * hooks into `toolExecutor`, and listens to context lifecycle events through
@@ -14,11 +14,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import type { Tool } from '#/app/llmProtocol/tool';
+import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type { ToolInfo } from '#/tool/toolContract';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
@@ -44,6 +45,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
@@ -92,7 +94,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
         shaped.push(entry);
         continue;
       }
-      if (entry.source !== 'mcp') {
+      if (!this.isDynamicallyLoadable(entry)) {
         shaped.push(entry);
         continue;
       }
@@ -154,8 +156,8 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
 
   private shouldIntercept(name: string): boolean {
     if (!this.enabled()) return false;
-    const source = this.toolRegistry.list().find((info) => info.name === name)?.source;
-    if (source !== 'mcp') return false;
+    const info = this.toolRegistry.list().find((entry) => entry.name === name);
+    if (info === undefined || !this.isDynamicallyLoadable(info)) return false;
     if (!this.loadableToolNames().includes(name)) return false;
     return !this.activeLoadedToolNames().has(name);
   }
@@ -170,16 +172,26 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     if (!this.enabled()) return undefined;
     if (this.toolRegistry.resolve(name) !== undefined) return undefined;
     if (!this.loadedToolNames().has(name)) return undefined;
+    if (isMcpToolName(name)) {
+      return (
+        `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
+        'It may become available again when the server reconnects; do not retry immediately.'
+      );
+    }
     return (
-      `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
-      'It may become available again when the server reconnects; do not retry immediately.'
+      `Tool "${name}" was loaded but is no longer registered. ` +
+      'Do not retry it unless it becomes available again.'
     );
   }
 
   private loadableToolNames(): string[] {
     return this.toolRegistry
       .list()
-      .filter((info) => info.source === 'mcp' && this.profile.isToolActive(info.name, info.source))
+      .filter(
+        (info) =>
+          this.isDynamicallyLoadable(info) &&
+          this.toolPolicy.isToolActive(info.name, info.source),
+      )
       .map((info) => info.name)
       .toSorted((a, b) => a.localeCompare(b));
   }
@@ -204,7 +216,19 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   }
 
   private isLoadedToolActive(name: string): boolean {
-    return this.profile.isToolActive(name, 'mcp');
+    const info = this.toolRegistry.list().find((entry) => entry.name === name);
+    if (info !== undefined) {
+      return (
+        this.isDynamicallyLoadable(info) &&
+        this.toolPolicy.isToolActive(name, info.source)
+      );
+    }
+    if (isMcpToolName(name)) return this.toolPolicy.isToolActive(name, 'mcp');
+    return false;
+  }
+
+  private isDynamicallyLoadable(info: ToolInfo): boolean {
+    return info.source === 'mcp' || info.disclosure === 'deferred';
   }
 
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
@@ -259,8 +283,10 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i]!;
       const active =
-        this.profile.isToolActive(entry.name, entry.source) ||
-        (disclosure && entry.name === SELECT_TOOLS_TOOL_NAME);
+        this.toolPolicy.isToolActive(entry.name, entry.source) ||
+        (disclosure &&
+          entry.name === SELECT_TOOLS_TOOL_NAME &&
+          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
       const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
       if (keep) {
         if (filtered !== undefined) filtered.push(entry);

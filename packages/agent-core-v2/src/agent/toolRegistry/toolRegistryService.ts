@@ -1,12 +1,22 @@
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ExecutableTool, ToolInfo, ToolSource } from '#/tool/toolContract';
-import { IAgentToolRegistryService, type ToolRegistrationOptions } from './toolRegistry';
+import type {
+  ExecutableTool,
+  ToolDisclosure,
+  ToolInfo,
+  ToolSource,
+} from '#/tool/toolContract';
+import {
+  IAgentToolRegistryService,
+  type ToolReference,
+  type ToolRegistrationOptions,
+} from './toolRegistry';
 
 interface ToolEntry {
   readonly tool: ExecutableTool;
   readonly source: ToolSource;
+  readonly disclosure?: ToolDisclosure;
 }
 
 export class AgentToolRegistryService implements IAgentToolRegistryService {
@@ -15,7 +25,7 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
 
   register(tool: ExecutableTool, options: ToolRegistrationOptions = {}): IDisposable {
     const source = options.source ?? 'builtin';
-    const entry: ToolEntry = { tool, source };
+    const entry: ToolEntry = { tool, source, disclosure: options.disclosure };
     this.unregisterTool(tool.name);
     this.tools.set(tool.name, entry);
 
@@ -28,12 +38,19 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
 
   list(): readonly ToolInfo[] {
     return [...this.tools.values()]
-      .map(({ tool, source }) => ({
+      .map(({ tool, source, disclosure }) => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
         source,
+        disclosure,
       }))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  listReferences(): readonly ToolReference[] {
+    return [...this.tools.entries()]
+      .map(([name, { source }]) => ({ name, source }))
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 

@@ -2,10 +2,12 @@
  * `toolDedupe` domain (L4) — `IAgentToolDedupeService` implementation.
  *
  * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
- * hooks and `toolExecutor` onBeforeExecuteTool/onDidExecuteTool hooks to drive
- * same-step suppression and cross-step repeat reminders, and reports repeat
- * telemetry through `telemetry`. Constructed eagerly at Agent scope so the
- * hooks are installed without any other service injecting it.
+ * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
+ * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
+ * hook to drive same-step suppression and cross-step repeat reminders, and
+ * reports repeat telemetry through `telemetry`. Constructed eagerly at
+ * Agent scope so the hooks are installed without any other service
+ * injecting it.
  */
 
 import { createHash } from 'node:crypto';
@@ -14,10 +16,12 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
+import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
 const REMINDER_TEXT_1 =
@@ -129,13 +133,16 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       this.endStep();
       await next();
     });
-    toolExecutor.hooks.onBeforeExecuteTool.register('toolDedupe', async (ctx, next) => {
-      const checked = this.checkToolCall(ctx.toolCall.id, ctx.toolCall.name, ctx.args);
+    toolExecutor.onBeforeExecuteTool((event) => {
+      const checked = this.checkToolCall(
+        event.toolCall.id,
+        event.toolCall.name,
+        event.args,
+        event.trace,
+      );
       if (checked.syntheticResult !== null) {
-        ctx.decision = { syntheticResult: checked.syntheticResult };
-        return;
+        event.veto(checked.syntheticResult);
       }
-      await next();
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
       ctx.result = await this.finalizeResult(
@@ -143,6 +150,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
         ctx.toolCall.name,
         ctx.args,
         ctx.result,
+        ctx.trace,
       );
       if (ctx.result.stopTurn === true) {
         ctx.stopTurn = true;
@@ -185,7 +193,12 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
   }
 
-  private checkToolCall(toolCallId: string, toolName: string, args: unknown): CheckedToolCall {
+  private checkToolCall(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    trace: LLMRequestTrace | undefined,
+  ): CheckedToolCall {
     const key = makeKey(toolName, args);
     const index = this.stepCalls.length;
     this.stepCalls.push(key);
@@ -194,13 +207,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     const existing = this.stepDeferreds.get(key);
     if (existing !== undefined) {
       this.syntheticCallIds.add(toolCallId);
-      this.recordDupType(toolCallId, toolName, args, 'same_step');
+      this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
       return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
     }
     this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
     this.originalCallIndex.set(toolCallId, index);
     if (this.consecutiveKey === key && this.consecutiveCount > 0) {
-      this.recordDupType(toolCallId, toolName, args, 'cross_step');
+      this.recordDupType(toolCallId, toolName, args, 'cross_step', trace);
       return { syntheticResult: null };
     }
     return { syntheticResult: null };
@@ -211,16 +224,19 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     toolName: string,
     args: unknown,
     dupType: ToolCallDupType,
+    trace: LLMRequestTrace | undefined,
   ): void {
     this.toolExecutor.recordDupType(toolCallId, dupType);
-    this.telemetry.track2('tool_call_dedup_detected', {
-      turn_id: this.activeTurnId ?? 0,
+    const properties: ToolCallDedupDetectedEvent = {
+      turn_id: this.activeTurnId,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
       dup_type: dupType,
       args_hash: argsHash(args),
-    });
+      trace_id: trace?.traceId,
+    };
+    this.telemetry.track2('tool_call_dedup_detected', properties);
   }
 
   private async finalizeResult(
@@ -228,6 +244,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     toolName: string,
     args: unknown,
     result: ToolDedupeResult,
+    trace: LLMRequestTrace | undefined,
   ): Promise<ToolDedupeResult> {
     const key = this.callKeyByCallId.get(toolCallId);
     if (key === undefined) return result;
@@ -271,11 +288,14 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
 
     if (streak >= 2) {
-      this.telemetry.track2('tool_call_repeat', {
+      const properties: ToolCallRepeatEvent = {
+        turn_id: this.activeTurnId,
         tool_name: toolName,
         repeat_count: streak,
         action,
-      });
+        trace_id: trace?.traceId,
+      };
+      this.telemetry.track2('tool_call_repeat', properties);
     }
 
     this.stepDeferreds.get(key)?.resolve(finalResult);

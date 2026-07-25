@@ -13,6 +13,7 @@ import {
   ratioSeverity,
   renderProgressBar,
   safeUsageRatio,
+  usagePercent,
 } from '#/utils/usage/usage-format';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
@@ -266,7 +267,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
   if (options.maxContextTokens > 0) {
     const ratio = safeUsageRatio(options.contextUsage);
     const bar = renderProgressBar(ratio, 20);
-    const pct = `${(ratio * 100).toFixed(1)}%`;
+    const pct = `${String(usagePercent(options.contextTokens, options.maxContextTokens))}%`;
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
     lines.push('');
     lines.push(accent('Context window'));

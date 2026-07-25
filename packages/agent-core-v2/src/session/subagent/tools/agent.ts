@@ -10,6 +10,14 @@
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
  * detach), and terminal text formatting.
  *
+ * Spawn bindings use an explicit tool choice first, then the target profile's
+ * symbolic model preference, before `resolveSubagentBinding` falls back to the
+ * configured secondary model or the caller's model. The selected alias is
+ * resolved through the model catalog before lifecycle allocation. A resumed
+ * agent keeps the model recorded in its own wire journal — with per-subagent
+ * models there is no "child follows the parent's current model" invariant to
+ * enforce.
+ *
  * Registered via the module-level `registerTool(AgentTool)` at the bottom of
  * this file — the same "import = register" pattern used by every builtin tool.
  */
@@ -17,7 +25,11 @@
 import { z } from 'zod';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { isUserCancellation } from '#/_base/utils/abort';
+import {
+  isAbortError,
+  isUserCancellation,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -25,11 +37,15 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  isToolActive as evaluateToolActive,
+  resolveActiveToolNames,
+} from '#/agent/toolPolicy/evaluate';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { isAbortError } from '#/_base/utils/abort';
 import {
   ToolAccesses,
   type BuiltinTool,
@@ -38,10 +54,18 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { IAgentProfileCatalogService, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
+import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import {
+  subagentAllowlistFor,
+  subagentTypeNotAllowedMessage,
+} from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -51,9 +75,13 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
 import { ISessionSubagentService } from '../subagent';
 import {
+  buildSubagentModelDescriptions,
   formatSubagentTimeoutDescription,
+  resolveSubagentBinding,
   resolveSubagentTimeoutMs,
+  wrapSubagentModelError,
 } from '../configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '../flag';
 import { SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
@@ -102,6 +130,12 @@ export const AgentToolInputSchema = z.preprocess(
       .describe(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
       ),
+    model: z
+      .enum(['secondary', 'primary'])
+      .optional()
+      .describe(
+        'Which model to run the subagent on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
+      ),
   }),
 );
 
@@ -127,7 +161,8 @@ const BACKGROUND_AGENT_UNAVAILABLE =
 const RESUME_WITH_TYPE_UNAVAILABLE =
   'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.';
 const USER_INTERRUPTED_SUBAGENT_MESSAGE =
-  "The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user's next instruction.";
+  'The subagent was stopped before it finished by user.';
+const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
 
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
@@ -140,33 +175,57 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
-      this.profile.isToolActive('TaskList') &&
-      this.profile.isToolActive('TaskOutput') &&
-      this.profile.isToolActive('TaskStop');
+      this.toolPolicy.isToolActive('TaskList') &&
+      this.toolPolicy.isToolActive('TaskOutput') &&
+      this.toolPolicy.isToolActive('TaskStop');
   }
 
   get description(): string {
     const backgroundDescription = this.canRunInBackground()
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
-    const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const typeLines = buildProfileDescriptions(this.catalog.list());
-    return typeLines
-      ? `${baseDescription}\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`
-      : baseDescription;
+    let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
+    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+    const profiles =
+      allowlist === undefined
+        ? this.catalog.list()
+        : this.catalog.list().filter((profile) => allowlist.includes(profile.name));
+    const typeLines = buildProfileDescriptions(
+      profiles,
+      this.toolRegistry.listReferences(),
+      (profile, name, source) =>
+        this.toolPolicy.isToolActiveForProfile(profile, name, source),
+      this.flags.enabled(SECONDARY_MODEL_FLAG_ID),
+    );
+    if (typeLines) {
+      description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
+    }
+    const modelLines = buildSubagentModelDescriptions(
+      this.config,
+      this.flags,
+      this.profile.data().modelAlias,
+    );
+    if (modelLines !== undefined) {
+      description += `\n\n${modelLines}`;
+    }
+    return description;
   }
 
   async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
@@ -229,7 +288,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
-      this.realignChildModel(target);
       agentId = target.id;
       profileName =
         target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
@@ -237,23 +295,40 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
         : DEFAULT_PROFILE_NAME;
+      await this.catalog.ready;
+      const own = this.profile.data();
+      const allowlist = subagentAllowlistFor(this.catalog, own);
+      if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
+        throw new Error(subagentTypeNotAllowedMessage(requestedProfileName, allowlist));
+      }
       const profile = this.catalog.get(requestedProfileName);
       if (profile === undefined) {
         throw new Error(`Unknown agent type: "${requestedProfileName}"`);
       }
-      const own = this.profile.data();
       if (own.modelAlias === undefined) {
         throw new Error('Caller agent has no model bound');
       }
-      const created = await this.lifecycle.create({
-        binding: {
-          profile: profile.name,
-          model: own.modelAlias,
-          thinking: own.thinkingLevel,
-          cwd: own.cwd,
-        },
-        labels: subagentLabels(this.callerAgentId),
-      });
+      const binding = resolveSubagentBinding(
+        this.config,
+        this.flags,
+        { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+        args.model ?? profile.modelPreference,
+      );
+      let created: IAgentScopeHandle;
+      try {
+        this.modelCatalog.get(binding.model);
+        created = await this.lifecycle.create({
+          binding: {
+            profile: profile.name,
+            model: binding.model,
+            thinking: binding.thinking,
+            cwd: own.cwd,
+          },
+          labels: subagentLabels(this.callerAgentId),
+        });
+      } catch (error) {
+        throw wrapSubagentModelError(error, binding.model, own.modelAlias);
+      }
       created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
       created.accessor
         .get(IAgentUserToolService)
@@ -309,14 +384,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
       throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
     }
-  }
-
-  private realignChildModel(target: IAgentScopeHandle): void {
-    const modelAlias = this.profile.data().modelAlias;
-    if (modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
-    }
-    target.accessor.get(IAgentProfileService).update({ modelAlias });
   }
 
   private async execution(
@@ -428,11 +495,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     const timedOut = info?.status === 'timed_out';
     const message = timedOut
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
-      : info?.stopReason === 'Interrupted by user'
-        ? USER_INTERRUPTED_SUBAGENT_MESSAGE
-        : info?.stopReason !== undefined
-          ? info.stopReason
-          : 'The subagent was stopped before it finished.';
+      : formatSubagentStoppedMessage(info?.stopReason);
     return {
       output: formatForegroundAgentFailure(handle, message, timedOut),
       isError: true,
@@ -445,6 +508,13 @@ registerTool(AgentTool);
 
 function buildProfileDescriptions(
   profiles: readonly AgentProfile[],
+  tools: readonly ToolReference[],
+  isToolActive: (
+    profile: { readonly tools?: readonly string[]; readonly disallowedTools?: readonly string[] },
+    name: string,
+    source: ToolReference['source'],
+  ) => boolean,
+  showModelPreferences: boolean,
 ): string {
   return profiles
     .map((profile) => {
@@ -452,10 +522,35 @@ function buildProfileDescriptions(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
-      if (profile.tools.length === 0) {
-        return header;
+      const headerLines =
+        !showModelPreferences || profile.modelPreference === undefined
+          ? header
+          : `${header}\n  Model preference: ${profile.modelPreference}`;
+      const activeTools = resolveActiveToolNames(profile);
+      const externallyRestricted = tools.some(
+        (tool) =>
+          evaluateToolActive(profile, tool.name, tool.source) &&
+          !isToolActive(profile, tool.name, tool.source),
+      );
+      if (externallyRestricted) {
+        const effectiveTools = tools
+          .filter((tool) => isToolActive(profile, tool.name, tool.source))
+          .map((tool) => tool.name);
+        if (effectiveTools.length === 0) {
+          return `${headerLines}\n  Tools: none`;
+        }
+        return `${headerLines}\n  Tools: ${effectiveTools.join(', ')}`;
       }
-      return `${header}\n  Tools: ${profile.tools.join(', ')}`;
+      if (activeTools === undefined) {
+        if ((profile.disallowedTools?.length ?? 0) > 0) {
+          return `${headerLines}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;
+        }
+        return `${headerLines}\n  Tools: all`;
+      }
+      if (activeTools.length === 0) {
+        return `${headerLines}\n  Tools: none`;
+      }
+      return `${headerLines}\n  Tools: ${activeTools.join(', ')}`;
     })
     .join('\n');
 }
@@ -515,6 +610,19 @@ function formatForegroundAgentFailure(
 
 function launchErrorMessage(error: unknown, signal: AbortSignal): string {
   if (isUserCancellation(signal.reason)) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
-  if (isAbortError(error)) return 'The subagent was stopped before it finished.';
+  if (isAbortError(error)) return formatSubagentStoppedMessage(errorMessage(signal.reason));
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatSubagentStoppedMessage(reason: string | undefined): string {
+  const normalized = reason?.trim();
+  if (normalized === userCancellationReason().message) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
+  if (normalized === undefined || normalized.length === 0) return SUBAGENT_STOPPED_MESSAGE;
+  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${normalized}`;
+}
+
+function errorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  return undefined;
 }

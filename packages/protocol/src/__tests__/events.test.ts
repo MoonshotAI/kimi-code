@@ -8,6 +8,7 @@ import {
   agentEventSchema,
   assistantDeltaEventSchema,
   eventSchema,
+  shellCompletedEventSchema,
   toolCallStartedEventSchema,
 } from '../events';
 import type { Event } from '../events';
@@ -77,6 +78,22 @@ describe('events / display re-exports', () => {
         name: 'bash',
         args: { command: 'pwd' },
         display: { kind: 'command', command: 'pwd', language: 'bash' },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      shellCompletedEventSchema.parse({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: false,
+      }),
+    ).toEqual({ type: 'shell.completed', commandId: 'cmd-1', isError: false });
+    expect(
+      agentEventSchema.safeParse({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: true,
+        taskId: 'task-1',
       }).success,
     ).toBe(true);
   });
@@ -154,7 +171,7 @@ describe('events / display re-exports', () => {
         title: 'Created session',
         created_at: '2026-06-11T00:00:00.000Z',
         updated_at: '2026-06-11T00:00:00.000Z',
-        status: 'idle',
+        busy: false,
         metadata: { cwd: '/tmp/project' },
         agent_config: { model: 'kimi-k2' },
         usage: {
@@ -182,8 +199,6 @@ describe('events / display re-exports', () => {
       id: 'wd_project_123456abcdef',
       root: '/tmp/project',
       name: 'project',
-      is_git_repo: true,
-      branch: 'main',
       created_at: '2026-06-11T00:00:00.000Z',
       last_opened_at: '2026-06-11T00:00:00.000Z',
       session_count: 1,
@@ -230,6 +245,23 @@ describe('events / display re-exports', () => {
     expect((parsed as { status: string }).status).toBe('running');
     expect((parsed as { previous_status: string }).previous_status).toBe('idle');
     expect((parsed as { current_prompt_id: string }).current_prompt_id).toBe('prompt_1');
+  });
+
+  it('validates orthogonal session work facts for unsubscribed clients', () => {
+    const parsed = eventSchema.parse({
+      type: 'event.session.work_changed',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      busy: true,
+      main_turn_active: false,
+      pending_interaction: 'question',
+      last_turn_reason: 'completed',
+    });
+
+    expect(parsed).toMatchObject({
+      main_turn_active: false,
+      pending_interaction: 'question',
+    });
   });
 
   it('rejects event.session.status_changed with invalid status', () => {

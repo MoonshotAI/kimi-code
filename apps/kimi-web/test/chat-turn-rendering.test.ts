@@ -25,13 +25,13 @@ function assistantTurn(blocks: TurnBlock[], over: Partial<ChatTurn> = {}): ChatT
 }
 
 describe('formatTokens', () => {
-  it('keeps small counts verbatim and abbreviates at the k / M thresholds', () => {
+  it('keeps counts under 1024 verbatim and uses 1024-based k / M units', () => {
     expect(formatTokens(0)).toBe('0');
     expect(formatTokens(999)).toBe('999');
-    expect(formatTokens(1000)).toBe('1.0k');
+    expect(formatTokens(1000)).toBe('1000');
     expect(formatTokens(1500)).toBe('1.5k');
-    expect(formatTokens(1_000_000)).toBe('1.0M');
-    expect(formatTokens(2_500_000)).toBe('2.5M');
+    expect(formatTokens(1_000_000)).toBe('977k');
+    expect(formatTokens(2_500_000)).toBe('2.4M');
   });
 });
 

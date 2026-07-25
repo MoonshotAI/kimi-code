@@ -6,6 +6,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { ThinkingLevel } from '../../api/types';
+import { formatTokens } from '../../lib/formatTokens';
 import Dialog from '../ui/Dialog.vue';
 
 const { t } = useI18n();
@@ -28,15 +29,18 @@ const emit = defineEmits<{
 // button, which we forward to the parent.
 const open = ref(true);
 
-const pct = computed(() =>
-  props.status.ctxMax > 0 ? Math.round((props.status.ctxUsed / props.status.ctxMax) * 100) : 0,
-);
+// ceil (not round) so sub-0.5% usage still renders a visible bar sliver;
+// clamped to 0–100 — ctxUsed can momentarily exceed ctxMax (estimates).
+const pct = computed(() => {
+  if (props.status.ctxMax <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)));
+});
 
 const contextValue = computed(() =>
   props.status.ctxMax > 0
     ? t('status.statusContextValue', {
-        used: props.status.ctxUsed.toLocaleString(),
-        max: props.status.ctxMax.toLocaleString(),
+        used: formatTokens(props.status.ctxUsed),
+        max: formatTokens(props.status.ctxMax),
         pct: pct.value,
       })
     : t('status.statusNone'),

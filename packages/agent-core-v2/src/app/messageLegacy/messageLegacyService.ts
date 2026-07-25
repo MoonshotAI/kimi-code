@@ -18,7 +18,7 @@
  * (`packages/agent-core/src/services/message/messageService.ts`).
  */
 
-import type { Message } from '#/agent/contextMemory/wireMessage';
+import type { Message } from '#/agent/contextMemory/protocolMessage';
 
 import type { PageResponse } from './messageLegacy';
 

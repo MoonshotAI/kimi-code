@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import {
   createServices,
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { Emitter, Event } from '#/_base/event';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import { telemetryEventDefinitions } from '#/app/telemetry/events';
+import {
+  agentTelemetryContextProperties,
+  telemetryEventDefinitions,
+  type TelemetryEventProperties,
+} from '#/app/telemetry/events';
 
 const NAME_PATTERN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
@@ -23,5 +27,24 @@ describe('telemetry event registry', () => {
         expect(comment.length, `${name}: property comment`).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('declares Agent identity once as ambient context', () => {
+    expect(agentTelemetryContextProperties).toEqual({
+      agent_id: 'Agent id (main or subagent scope id)',
+    });
+    for (const [name, definition] of Object.entries(telemetryEventDefinitions)) {
+      if (definition.context === 'agent') {
+        expect(
+          definition.meta.properties,
+          `${name}: agent-scope events keep agent_id out of the payload`,
+        ).not.toHaveProperty('agent_id');
+      }
+    }
+    expect(telemetryEventDefinitions.goal_created.context).toBe('agent');
+    expect(telemetryEventDefinitions.image_compress.context).toBe('none');
+    expectTypeOf<TelemetryEventProperties<'goal_created'>>().toMatchTypeOf<{
+      agent_id: string;
+    }>();
   });
 });

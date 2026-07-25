@@ -1,10 +1,12 @@
 /**
- * `/api/v2` transport error handling — map internal errors onto the project
+ * `/api/v1/debug` transport error handling — map internal errors onto the project
  * envelope, guard serialization, time-box calls, and gate access.
  */
 
 import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, errEnvelope } from '@moonshot-ai/protocol';
+
+import { errEnvelope } from '../protocol/envelope';
+import { ErrorCode } from '../protocol/error-codes';
 
 /** Thrown by {@link withTimeout} when a call exceeds its deadline. */
 export class TimeoutError extends Error {

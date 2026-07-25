@@ -7,13 +7,27 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { KimiError } from '../../src/errors';
-import { mergeStdioEnv, StdioMcpClient } from '../../src/mcp/client-stdio';
+import { mergeStdioEnv, resolveStdioCwd, StdioMcpClient } from '../../src/mcp/client-stdio';
 
 const here = import.meta.dirname;
 const fixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
+
+describe('stdio MCP working directory resolution', () => {
+  it('preserves the UNC share when resolving a relative server cwd', () => {
+    expect(
+      resolveStdioCwd('tools/mcp server', '\\\\Server\\Share\\Workspace'),
+    ).toBe('//Server/Share/Workspace/tools/mcp server');
+  });
+
+  it('normalizes a drive path containing spaces and non-ASCII segments', () => {
+    expect(
+      resolveStdioCwd('工具\\server', 'C:\\Users\\Example User\\项目'),
+    ).toBe('C:/Users/Example User/项目/工具/server');
+  });
+});
 
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {

@@ -14,6 +14,7 @@ export { LOG_LEVEL_RANK, levelEnabled } from './types';
 export {
   __resetRootLoggerForTest,
   flushDiagnosticLogs,
+  flushDiagnosticLogsSync,
   getRootLogger,
   log,
   redact,

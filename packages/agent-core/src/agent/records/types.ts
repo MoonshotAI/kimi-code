@@ -95,6 +95,7 @@ export interface AgentRecordEvents {
 
   'context.append_message': { message: ContextMessage };
   'context.append_loop_event': { event: LoopRecordedEvent };
+  'context.update_token_count': { tokenCount: number };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
   'context.undo': { count: number };

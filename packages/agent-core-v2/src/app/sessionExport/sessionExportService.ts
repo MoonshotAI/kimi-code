@@ -16,7 +16,7 @@ import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -48,7 +48,7 @@ export class SessionExportService implements ISessionExportService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
-    @IWorkspaceRegistry private readonly workspaces: IWorkspaceRegistry,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -197,9 +197,10 @@ export async function exportSessionDirectory(input: {
       );
     }
     const bundledWebLog = input.webLog !== undefined;
+    const now = new Date();
     const baseManifest = buildExportManifest({
       summary: input.summary,
-      now: new Date(),
+      now,
       version: input.request.version,
       sessionScan,
       sessionLogPath: stableSessionLog === undefined ? undefined : SESSION_LOG_REL,
@@ -210,7 +211,7 @@ export async function exportSessionDirectory(input: {
     const outputPath =
       input.request.outputPath !== undefined
         ? resolve(input.request.outputPath)
-        : resolve(`${input.summary.id}.zip`);
+        : resolve(defaultExportZipName(input.summary.id, now));
     const extras: ExtraZipEntry[] = [];
     if (input.webLog !== undefined) {
       extras.push({ data: Buffer.from(input.webLog, 'utf8'), target: WEB_LOG_REL });
@@ -250,6 +251,12 @@ export async function exportSessionDirectory(input: {
       await globalSource.close().catch(() => {});
     }
   }
+}
+
+function defaultExportZipName(sessionId: string, now: Date): string {
+  const shortId = sessionId.slice(0, 8);
+  const timestamp = now.toISOString().replaceAll(/[-:]/g, '').replace(/T/, '-').slice(0, 15);
+  return `kimi-debug-${shortId}-${timestamp}.zip`;
 }
 
 function sessionZipEntryPath(entry: SessionZipEntry): string {

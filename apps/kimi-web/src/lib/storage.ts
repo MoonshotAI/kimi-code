@@ -10,7 +10,6 @@ export const STORAGE_KEYS = {
   // useKimiWebClient
   permission: 'kimi-web.permission',
   activeWorkspace: 'kimi-active-workspace',
-  thinking: 'kimi-web.thinking',
   planMode: 'kimi-web.plan-mode',
   swarmMode: 'kimi-web.swarm-mode',
   goalMode: 'kimi-web.goal-mode',
@@ -45,6 +44,7 @@ export const STORAGE_KEYS = {
   codeFont: 'kimi-web.code-font',
   contentAlign: 'kimi-web.content-align',
   theme: 'kimi-web.theme',
+  thinking: 'kimi-web.thinking',
 } as const;
 
 /** Per-session composer draft key. */

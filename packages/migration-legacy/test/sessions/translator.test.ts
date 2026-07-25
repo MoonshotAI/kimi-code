@@ -1,9 +1,15 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   translateContextLines,
   containsUsableMessage,
   analyzeContextContent,
 } from '../../src/sessions/translator.js';
+import { extractToolCallDisplays } from '../../src/sessions/tool-call-display.js';
+
+const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url));
 
 describe('translateContextLines', () => {
   it('drops _system_prompt, _checkpoint, _usage markers', () => {
@@ -95,6 +101,19 @@ describe('translateContextLines', () => {
     ]);
     expect(out).toHaveLength(1);
     expect(out[0]!.role).toBe('user');
+  });
+});
+
+describe('extractToolCallDisplays', () => {
+  it('recovers the file diff from a real legacy wire fixture', async () => {
+    const wire = await readFile(join(FIXTURES, 'archived', 'wire.jsonl'), 'utf-8');
+
+    expect(extractToolCallDisplays(wire).get('WriteFile:1')).toEqual({
+      kind: 'diff',
+      path: expect.stringMatching(/translated\.py$/),
+      before: '',
+      after: expect.stringContaining('def main():'),
+    });
   });
 });
 

@@ -1,9 +1,4 @@
 // apps/kimi-web/src/types.ts
-import type { AppSessionStatus } from './api/types';
-
-/** Real session lifecycle status (5 states), surfaced verbatim to the UI so the
-    list can distinguish awaiting / aborted instead of collapsing to running|idle. */
-export type SessionStatus = AppSessionStatus;
 
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
@@ -28,12 +23,16 @@ export interface Session {
   id: string;
   title: string;
   time: string;
-  status: SessionStatus;
-  /** True only when the session should show a "working" spinner: it is
-      `running` AND has a real task in flight. Awaiting-input and aborted are
-      NOT busy, so the spinner no longer spins while the session waits on the
-      user. (Distinct from `status`, which is the lifecycle label.) */
+  /** True while the session shows a "working" indicator — the unified
+      condition shared by the sidebar spinner, the chat moon, and the Stop
+      button: a prompt submitted but not yet terminated, or a main turn in
+      flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;
+  /** List-level fallback for action-required badges on unopened sessions. */
+  pendingInteraction?: 'none' | 'approval' | 'question';
+  /** Main agent's latest turn outcome — drives the "aborted" tag when the
+      session is quiet and the last turn was cancelled/failed. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   /** ISO timestamp for recency-based filtering (e.g. default visible sessions). */
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */
@@ -61,8 +60,6 @@ export interface WorkspaceView {
   root: string;
   /** Home-shortened path for dim display, e.g. `~/code/kimi-code-web`. */
   shortPath: string;
-  /** Current branch, when known. */
-  branch?: string;
   /** Number of sessions in this workspace. */
   sessionCount: number;
 }

@@ -152,6 +152,66 @@ describe('ConfigState model capabilities', () => {
     expect(requestMaxTokens).toBe(131072);
   });
 
+  it('warns and sends when an Anthropic effort is not listed by the model', async () => {
+    let requests = 0;
+    const config: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: {
+        compatible: {
+          provider: 'compatible',
+          model: 'compatible-model',
+          protocol: 'anthropic',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['max'],
+        },
+      },
+    };
+    const ctx = testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: {
+        code: 'anthropic-thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+      },
+    });
+  });
+
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({
@@ -631,5 +691,50 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe('ConfigState.provider memo (reasoning dialect survives turns)', () => {
+  function kimiAgentWithTwoModels() {
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+        'kimi-code-2': { provider: 'kimi', model: 'kimi-code-2', maxContextSize: 128_000 },
+      },
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+    });
+  }
+
+  it('shares the reasoning-dialect cell across repeated accesses with unchanged config', () => {
+    const ctx = kimiAgentWithTwoModels();
+    ctx.agent.config.update({ modelAlias: 'kimi-code' });
+
+    const first = ctx.agent.config.provider;
+    const second = ctx.agent.config.provider;
+
+    // Each access returns a fresh morph clone, but the clones share the
+    // dialect cell learned from inbound responses — without the memo, the
+    // dialect detected on one turn would be lost before the next request.
+    expect(first).not.toBe(second);
+    expect(Reflect.get(first as object, '_reasoningKeyDialect')).toBe(
+      Reflect.get(second as object, '_reasoningKeyDialect'),
+    );
+  });
+
+  it('rebuilds the base provider (fresh dialect cell) when the resolved config changes', () => {
+    const ctx = kimiAgentWithTwoModels();
+    ctx.agent.config.update({ modelAlias: 'kimi-code' });
+    const before = ctx.agent.config.provider;
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code-2' });
+    const after = ctx.agent.config.provider;
+
+    expect(Reflect.get(after as object, '_reasoningKeyDialect')).not.toBe(
+      Reflect.get(before as object, '_reasoningKeyDialect'),
+    );
   });
 });

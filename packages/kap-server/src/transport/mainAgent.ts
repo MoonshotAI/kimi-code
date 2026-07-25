@@ -2,7 +2,7 @@
  * server-v2 — on-demand main-agent resolution.
  *
  * Sessions are created without a main agent; the first request that targets
- * `main` materializes it here. Both the `/api/v1` routes and the `/api/v2`
+ * `main` materializes it here. Both the `/api/v1` routes and the `/api/v1/debug`
  * dispatcher resolve the main agent through {@link ensureMainAgent} so a
  * missing main agent is created instead of reported as `agent.not_found`.
  *

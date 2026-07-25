@@ -9,6 +9,7 @@ export * from './types';
 export { dispatchInput, type SlashCommandHost } from './dispatch';
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
+export { handleCopyCommand } from './copy';
 export {
   handleCompactCommand,
   handleEditorCommand,

@@ -13,12 +13,13 @@ import { describe, expect, it } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { Logger } from '../../src/logging';
-import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolExecution } from '../../src/loop';
+import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolCall, ToolExecution } from '../../src/loop';
 import { PathSecurityError } from '../../src/tools/policies/path-access';
 import {
   makeEndTurnResponse,
   makeResponse,
   makeTextParts,
+  makeThinkingParts,
   makeToolCall,
   makeToolUseResponse,
 } from './fixtures/fake-llm';
@@ -878,3 +879,117 @@ class StopSuccessTool implements ExecutableTool<Record<string, unknown>> {
     };
   }
 }
+
+
+describe('runTurn — unexecuted tool calls (abnormal step end)', () => {
+  it('records and closes a complete tool call when the step ends paused', async () => {
+    const echo = new EchoTool();
+    const { result, context, sink } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeThinkingParts('let me run a tool'), [makeToolCall('echo', { text: 'hi' }, 'tc-1')], 'paused'),
+      ],
+    });
+
+    // The call must not execute, but it is recorded and immediately closed
+    // with a synthetic interrupted result so the exchange stays wire-valid.
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('paused');
+    expect(context.toolCalls().map((e) => [e.toolCallId, e.name, e.args])).toEqual([
+      ['tc-1', 'echo', { text: 'hi' }],
+    ]);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(results[0]?.result.isError).toBe(true);
+    expect(expectTextOutput(results[0]?.result.output)).toContain('not executed');
+    // Events pair up in the live stream too, and the step seals as paused.
+    expect(sink.byType('tool.call').map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(sink.byType('tool.result').map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(context.stepEnds()[0]?.finishReason).toBe('paused');
+  });
+
+  it('sanitizes truncated (unparseable) arguments to {} when recording the call', async () => {
+    // The provider stream was cut mid-arguments: id and name arrived, the JSON
+    // did not. The recorded call must carry sanitized args — the raw fragment
+    // would crash the next request's wire conversion.
+    const partialCall: ToolCall = {
+      type: 'function',
+      id: 'tc-partial',
+      name: 'echo',
+      arguments: '{"text":"unterminated',
+    };
+    const echo = new EchoTool();
+    const { context } = await runTurn({
+      tools: [echo],
+      responses: [
+        // The realistic poison shape: an empty signed thinking block plus the
+        // partial call (what a pause_turn response carries).
+        makeResponse([{ type: 'think', think: '', encrypted: 'sig' }], [partialCall], 'paused'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(context.toolCalls().map((e) => [e.toolCallId, e.args])).toEqual([['tc-partial', {}]]);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-partial']);
+    expect(results[0]?.result.isError).toBe(true);
+  });
+
+  it('records and closes tool calls when the stream fails overloaded (other finish)', async () => {
+    const echo = new EchoTool();
+    const { result, context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeTextParts(''), [makeToolCall('echo', { text: 'hi' }, 'tc-ovl')], 'unknown'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('unknown');
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-ovl']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-ovl']);
+    expect(context.toolResults()[0]?.result.isError).toBe(true);
+  });
+
+  it('records and closes a tool call cut off by max_tokens', async () => {
+    const echo = new EchoTool();
+    const { result, context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeTextParts('partial answer'), [makeToolCall('echo', { text: 'hi' }, 'tc-max')], 'max_tokens'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('max_tokens');
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-max']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-max']);
+    expect(context.toolResults()[0]?.result.isError).toBe(true);
+  });
+
+  it('closes every unexecuted call in provider order', async () => {
+    const echo = new EchoTool();
+    const { context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(
+          makeThinkingParts('two calls'),
+          [makeToolCall('echo', { text: 'a' }, 'tc-a'), makeToolCall('echo', { text: 'b' }, 'tc-b')],
+          'paused',
+        ),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-b']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-b']);
+  });
+
+  it('does not record synthetic results for a normal end_turn without tool calls', async () => {
+    const { context } = await runTurn({
+      responses: [makeEndTurnResponse('done')],
+    });
+    expect(context.toolCalls()).toEqual([]);
+    expect(context.toolResults()).toEqual([]);
+  });
+});

@@ -222,6 +222,16 @@ describe('ReadTool', () => {
     });
   });
 
+  it('stats the resolved target so symlinked files stay readable', async () => {
+    const { fs, stat } = createSpiedFs('alpha\n');
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/a.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(stat).toHaveBeenCalledWith('/tmp/a.txt');
+  });
+
   it('normalizes pure CRLF files to the LF model view', async () => {
     const tool = toolWithContent('alpha\r\nbeta\r\n');
 

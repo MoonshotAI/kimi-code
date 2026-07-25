@@ -122,6 +122,14 @@ describe('resolveKimiEnvThinkingEffort', () => {
     ).toBe('max');
   });
 
+  it('lowercases the force override', () => {
+    expect(
+      resolveKimiEnvThinkingEffort('high', true, {
+        KIMI_MODEL_THINKING_EFFORT: ' MAX ',
+      }),
+    ).toBe('max');
+  });
+
   it('does not override an explicit off effort', () => {
     expect(
       resolveKimiEnvThinkingEffort('off', true, {

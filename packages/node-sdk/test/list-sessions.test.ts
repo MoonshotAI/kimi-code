@@ -1,3 +1,9 @@
+/**
+ * Scenario: Node SDK sessions persist and list through the public harness.
+ * Responsibilities: workDir scoping, index recovery, fork metadata, and native path-safe listing.
+ * Wiring: real in-process harness/session storage; no remote provider calls.
+ * Run: pnpm exec vitest run test/list-sessions.test.ts
+ */
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -359,6 +365,26 @@ describe('KimiHarness.listSessions', () => {
         'ses_harness_all_a',
         'ses_harness_all_b',
       ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('lists a session from a workDir containing spaces and non-ASCII characters', async () => {
+    const homeDir = await makeTempDir();
+    const root = await makeTempDir();
+    const workDir = join(root, 'Workspace With Spaces', '项目');
+    await mkdir(workDir, { recursive: true });
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_unicode_workdir', workDir });
+
+      const sessions = await harness.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual([session.id]);
     } finally {
       await harness.close();
     }

@@ -1,5 +1,5 @@
 import { createDecorator } from '../../di';
-import { effectiveModelAlias, type KimiConfig, type ModelAlias, type ProviderConfig } from '../../config';
+import { effectiveModelAlias, type KimiConfig, type ModelAlias, type ProviderConfig, type ProviderType } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -57,8 +57,9 @@ export class ModelNotFoundError extends Error {
 export function toProtocolModel(
   modelId: string,
   alias: ModelAlias,
+  providerType?: ProviderType,
 ): ModelCatalogItem {
-  const effective = effectiveModelAlias(alias);
+  const effective = effectiveModelAlias(alias, providerType);
   return {
     provider: effective.provider,
     model: modelId,

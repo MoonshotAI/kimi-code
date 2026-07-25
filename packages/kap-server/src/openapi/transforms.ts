@@ -7,15 +7,16 @@
  * session-action dispatcher only serves `::archive` in v2, so this module
  * projects `/sessions/{tail}` into a single `/sessions/{session_id}:archive`
  * operation — unlike v1, which clones it into fork / compact / undo. Wire
- * schemas are re-used from `@moonshot-ai/protocol`; none are re-declared here.
+ * schemas are re-used from the local `protocol/` tree and `@moonshot-ai/agent-core-v2`; none are re-declared here.
  */
 
 import {
-  archiveSessionResponseSchema,
   fsDiffRequestSchema,
   fsDiffResponseSchema,
   fsGitStatusRequestSchema,
   fsGitStatusResponseSchema,
+} from '@moonshot-ai/agent-core-v2/app/git/git';
+import {
   fsGrepRequestSchema,
   fsGrepResponseSchema,
   fsListManyRequestSchema,
@@ -24,30 +25,35 @@ import {
   fsListResponseSchema,
   fsMkdirRequestSchema,
   fsMkdirResponseSchema,
-  fsOpenInRequestSchema,
-  fsOpenInResponseSchema,
-  fsOpenRequestSchema,
-  fsOpenResponseSchema,
   fsReadRequestSchema,
   fsReadResponseSchema,
-  fsRevealRequestSchema,
-  fsRevealResponseSchema,
   fsSearchRequestSchema,
   fsSearchResponseSchema,
   fsStatManyRequestSchema,
   fsStatManyResponseSchema,
   fsStatRequestSchema,
   fsStatResponseSchema,
-  questionDismissResultSchema,
-  questionResolveRequestSchema,
-  questionResolveResultSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
 import { z } from 'zod';
 
 import {
   openApiDocumentEnvelopeJsonSchema,
   openApiDocumentJsonSchema,
 } from '../middleware/schema';
+import {
+  fsOpenInRequestSchema,
+  fsOpenInResponseSchema,
+  fsOpenRequestSchema,
+  fsOpenResponseSchema,
+  fsRevealRequestSchema,
+  fsRevealResponseSchema,
+} from '../protocol/rest-fs';
+import {
+  questionDismissResultSchema,
+  questionResolveRequestSchema,
+  questionResolveResultSchema,
+} from '../protocol/rest-question';
+import { archiveSessionResponseSchema } from '../protocol/rest-session';
 
 const binarySchema = {
   type: 'string',

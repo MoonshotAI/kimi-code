@@ -14,16 +14,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { UNKNOWN_CAPABILITY } from '#/app/llmProtocol/capability';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import {
   APIConnectionError,
   APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
-} from '#/app/llmProtocol/errors';
-import { type Message, type StreamedMessagePart, type ToolCall } from '#/app/llmProtocol/message';
-import { generate as runKosongGenerate } from '#/app/llmProtocol/generate';
-import type { ChatProvider, StreamedMessage } from '#/app/llmProtocol/provider';
+} from '#/kosong/contract/errors';
+import { type Message, type StreamedMessagePart, type ToolCall } from '#/kosong/contract/message';
+import { generate as runKosongGenerate } from '#/kosong/contract/generate';
+import type { ChatProvider, StreamedMessage } from '#/kosong/contract/provider';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -33,13 +33,13 @@ import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHando
 import { makeHookRunner } from '../externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
 import { appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
 import {
   IAgentFullCompactionService,
-  IOAuthService,
+  IModelOAuthTokens,
   IAgentProfileService,
   IAgentToolRegistryService,
   ISessionTodoService,
@@ -51,6 +51,7 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
@@ -298,6 +299,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 39,
         tokens_after: expect.any(Number),
@@ -605,7 +607,7 @@ describe('FullCompaction', () => {
       if (attempts === 1) {
         throw new APIConnectionError('socket hang up');
       }
-      return textResult('Recovered compacted summary.');
+      return textResult('Recovered compacted summary.', 'trace-compact-1');
     };
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
@@ -628,6 +630,7 @@ describe('FullCompaction', () => {
         source: 'manual',
         tokens_before: 25,
         retry_count: 1,
+        trace_id: 'trace-compact-1',
       }),
     });
     await ctx.expectResumeMatches();
@@ -925,8 +928,9 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('cancels retry backoff without issuing another compaction request', async () => {
+  it('cancels retry backoff with the failed compaction request trace', async () => {
     vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
     const generate: GenerateFn = async () => {
@@ -934,9 +938,9 @@ describe('FullCompaction', () => {
       if (attempts === 1) {
         firstAttemptFailed.resolve();
       }
-      throw new APIConnectionError('socket hang up');
+      throw new APIStatusError(429, 'rate limited', null, null, 'trace-compact-retry');
     };
-    const ctx = testAgent({ generate });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
@@ -947,12 +951,25 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
+    const fullCompaction = ctx.get(IAgentFullCompactionService);
+    for (let i = 0; i < 10 && fullCompaction.compacting?.traceId === undefined; i += 1) {
+      await Promise.resolve();
+    }
+    expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');
 
     void ctx.rpc.cancelCompaction({});
     await cancelled;
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(attempts).toBe(1);
+    expect(records).toContainEqual({
+      event: 'cancel',
+      properties: {
+        agent_id: 'main',
+        from: 'compacting',
+        trace_id: 'trace-compact-retry',
+      },
+    });
     vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
@@ -992,6 +1009,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 25,
         duration_ms: expect.any(Number),
@@ -1003,6 +1021,75 @@ describe('FullCompaction', () => {
     expect(
       records.find((record) => record.event === 'compaction_failed')?.properties,
     ).not.toHaveProperty('tokens_after');
+    await ctx.expectResumeMatches();
+  });
+
+  it('attaches the failed request trace id to compaction_failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(400, 'Bad request', null, null, 'trace-compact-fail');
+    };
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        error_type: 'APIStatusError',
+        trace_id: 'trace-compact-fail',
+      }),
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('attributes compaction_failed to the in-flight request trace on a mid-stream failure', async () => {
+    const records: TelemetryRecord[] = [];
+    // The stream delivers response headers (trace id) and one part, then fails
+    // — the error itself carries no trace, so attribution must come from the
+    // trace captured when the headers arrived.
+    const generate = realKosongGenerate(() => {
+      const base = mockStreamedMessage([], 'trace-mid-stream');
+      return {
+        ...base,
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text', text: 'partial summary' } as StreamedMessagePart;
+          throw new Error('stream reset');
+        },
+      };
+    });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.get(IAgentTelemetryContextService).set({ trace_id: 'trace-turn-1' });
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    const apiError = records.find((record) => record.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        trace_id: 'trace-mid-stream',
+      }),
+    });
+    expect(ctx.get(IAgentTelemetryContextService).get().trace_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 
@@ -1037,7 +1124,9 @@ describe('FullCompaction', () => {
         },
       }),
     );
-    const errorEvents = ctx.newEvents();
+    const errorEvents = (ctx.newEvents() as readonly { event?: string }[]).filter(
+      (entry) => entry.event === 'error',
+    );
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0]).toMatchObject({
       event: 'error',
@@ -1047,6 +1136,31 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('aborts an in-flight compaction when the agent is disposed', async () => {
+    const started = deferred<void>();
+    let signal: AbortSignal | undefined;
+    const generate: GenerateFn = async (_chat, _systemPrompt, _tools, _history, _callbacks, options) => {
+      signal = options?.signal;
+      started.resolve();
+      // Never settles — the compaction stays in flight until disposed.
+      return new Promise(() => {});
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+
+    const pending = ctx.rpc.beginCompaction({}).catch(() => {});
+    await started.promise;
+    await ctx.dispose();
+
+    expect(signal?.aborted).toBe(true);
+    await pending;
   });
 
   it('names truncated compaction responses when retries are exhausted', async () => {
@@ -1501,6 +1615,61 @@ describe('FullCompaction', () => {
         tokens_after: 166,
         compacted_count: 7,
         retry_count: 0,
+      }),
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('attributes background auto compaction to the turn that started it', async () => {
+    const compactionRequested = deferred<void>();
+    const releaseCompaction = deferred<void>();
+    const records: TelemetryRecord[] = [];
+    let ctx!: TestAgentContext;
+    let llmCallCount = 0;
+    const generate: GenerateFn = async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) return textResult('Turn response.');
+      if (llmCallCount === 2) {
+        compactionRequested.resolve();
+        await releaseCompaction.promise;
+        return textResult('Background compacted summary.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    };
+    ctx = testAgent({
+      generate,
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.get(IAgentLoopService).hooks.onDidFinishStep.register(
+      'test-auto-compaction',
+      async (_step, next) => {
+        if (!ctx.get(IAgentFullCompactionService).begin({ source: 'auto' })) {
+          throw new Error('Expected auto compaction to start');
+        }
+        await next();
+      },
+    );
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start background compaction' }] });
+    await compactionRequested.promise;
+    await ctx.untilTurnEnd();
+
+    releaseCompaction.resolve();
+    await ctx.once('compaction.completed');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 0,
+        source: 'auto',
       }),
     });
     await ctx.expectResumeMatches();
@@ -2048,6 +2217,98 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('triggers preemptive compaction against the declared input cap, not the total window', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return textResult('Preemptive summary under the input cap.');
+      }
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'Answered after input-cap compaction.' });
+      return textResult('Answered after input-cap compaction.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+        max_input_tokens: 150_000,
+      },
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    // 160k sits between the input-cap trigger (150k × 0.85 = 127.5k) and the
+    // total-window trigger (200k × 0.85 = 170k): compaction must fire only
+    // because the input cap is the prompt budget.
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 160_000);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: 'compaction.started' }),
+    );
+  });
+
+  it('honors the observed provider window over a declared input cap', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-observed-window');
+      }
+      if (callCount === 2) {
+        return textResult('Observed recovery summary.');
+      }
+      if (callCount === 3) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Recovered after observed overflow.',
+        });
+        return textResult('Recovered after observed overflow.');
+      }
+      if (callCount === 4) {
+        return textResult('Observed preemptive summary.');
+      }
+      if (callCount === 5) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Answered after observed-window precompaction.',
+        });
+        return textResult('Answered after observed-window precompaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+        max_input_tokens: 150_000,
+      },
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'learn observed window' }] });
+    await ctx.untilTurnEnd();
+    expect(callCount).toBe(3);
+
+    ctx.appendExchange(2, 'near observed user', 'near observed assistant', 120_000);
+    ctx.newEvents();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use observed window' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(5);
+    expect(eventIndex(events, 'compaction.started')).toBeLessThan(
+      eventIndex(events, 'turn.step.started'),
+    );
+  });
+
   it('recovers from plain 413 when estimated request is over effective max', async () => {
     let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
@@ -2183,10 +2444,12 @@ describe('FullCompaction', () => {
   it('preserves thinking effort when compacting after provider context overflow', async () => {
     let callCount = 0;
     const records: TelemetryRecord[] = [];
-    const providerThinkingEfforts: Array<Parameters<GenerateFn>[0]['thinkingEffort']> = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    // The per-turn thinking intent captured from each generate call — the
+    // replacement for the morph-era provider `thinkingEffort` field.
+    const thinkingEfforts: unknown[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
-      providerThinkingEfforts.push(provider.thinkingEffort);
+      thinkingEfforts.push(options?.thinking?.effort);
       if (callCount === 1) {
         throw new APIContextOverflowError(
           400,
@@ -2219,10 +2482,12 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
+    expect(thinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: expect.any(Number),
         source: 'auto',
         thinking_effort: 'on',
       }),
@@ -2232,13 +2497,13 @@ describe('FullCompaction', () => {
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Unknown window compacted summary.');
       }
       if (callCount === 3) {
@@ -2257,9 +2522,9 @@ describe('FullCompaction', () => {
     });
     const modelResolver = ctx.modelResolver;
     if (modelResolver === undefined) throw new Error('Expected model provider');
-    const resolve = modelResolver.resolve.bind(modelResolver);
-    modelResolver.resolve = (model: string) => {
-      const resolved = resolve(model);
+    const get = modelResolver.get.bind(modelResolver);
+    modelResolver.get = (id: string) => {
+      const resolved = get(id);
       Object.defineProperty(resolved, 'capabilities', { value: UNKNOWN_CAPABILITY });
       return resolved;
     };
@@ -2301,13 +2566,13 @@ describe('FullCompaction', () => {
     vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-hard-cap');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Hard cap compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2337,13 +2602,13 @@ describe('FullCompaction', () => {
       vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', maxCompletionTokens);
       let callCount = 0;
       const compactionMaxCompletionTokens: unknown[] = [];
-      const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
         callCount += 1;
         if (callCount === 1) {
           throw new APIContextOverflowError(400, 'Context length exceeded', 'req-opt-out');
         }
         if (callCount === 2) {
-          compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+          compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
           return textResult('Opt-out compacted summary.');
         }
         await callbacks?.onMessagePart?.({
@@ -2371,13 +2636,13 @@ describe('FullCompaction', () => {
   it('honors maxOutputSize from model config during compaction', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-max-output');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Max output compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2396,6 +2661,9 @@ describe('FullCompaction', () => {
       ...models![CATALOGUED_PROVIDER.model]!,
       maxOutputSize: 64_000,
     };
+    // The config was mutated behind the services' backs — drop the assembled
+    // Model cache by hand or the request keeps the previous maxOutputSize.
+    ctx.notifyModelConfigChanged();
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -2409,13 +2677,13 @@ describe('FullCompaction', () => {
   it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-default-cap');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Default cap compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2653,7 +2921,7 @@ function oauthTestAgentOptions(
       defaultModel: 'kimi-code',
       providers: {
         'managed:kimi-code': {
-          type: 'vertexai',
+          type: 'google-genai',
           baseUrl: 'https://api.example/v1',
           oauth: { storage: 'file', key: 'oauth/kimi-code' },
         },
@@ -2667,9 +2935,15 @@ function oauthTestAgentOptions(
       },
     },
     services: appServices((reg) => {
-      reg.definePartialInstance(IOAuthService, {
-        resolveTokenProvider: () => ({ getAccessToken }),
-      });
+      // The catalog's OAuth port is `IModelOAuthTokens` (the app/kosongConfig
+      // adapter delegates it to IOAuthService in production); stub the port
+      // directly, mirroring the adapter's force-flag normalization.
+      reg.defineInstance(IModelOAuthTokens, {
+        _serviceBrand: undefined,
+        hasCachedAccessToken: () => Promise.resolve(true),
+        getAccessToken: (_provider, _oauthRef, options) =>
+          getAccessToken(options?.force === true ? { force: true } : undefined),
+      } satisfies IModelOAuthTokens);
     }),
   };
 }
@@ -2680,15 +2954,7 @@ type MutableKimiConfig = {
   };
 };
 
-function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unknown {
-  return (
-    provider as {
-      readonly modelParameters?: Record<string, unknown>;
-    }
-  ).modelParameters?.['max_completion_tokens'];
-}
-
-function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
+function textResult(text: string, traceId: string | null = null): Awaited<ReturnType<GenerateFn>> {
   return {
     id: 'mock-compaction-oauth-retry',
     message: {
@@ -2704,10 +2970,14 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId,
   };
 }
 
-function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMessage {
+function mockStreamedMessage(
+  parts: readonly StreamedMessagePart[],
+  traceId: string | null = null,
+): StreamedMessage {
   return {
     get id(): string | null {
       return 'mock-stream';
@@ -2717,6 +2987,7 @@ function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMes
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -2737,9 +3008,6 @@ function realKosongGenerate(
       modelName: chat.modelName,
       thinkingEffort: chat.thinkingEffort,
       generate: () => Promise.resolve(script(currentAttempt, history)),
-      withThinking() {
-        return provider;
-      },
     };
     return runKosongGenerate(provider, systemPrompt, tools, history, callbacks, options);
   };

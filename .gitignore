@@ -20,6 +20,9 @@ plugins/cdn/
 .kimi-code/local.toml
 .kimi-sandbox/
 .vscode/
+!apps/vscode/.vscode/
+!apps/vscode/.vscode/*.json
+apps/vscode/artifacts/
 
 Dockerfile
 docker-compose.yml

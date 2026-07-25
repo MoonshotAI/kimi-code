@@ -16,7 +16,6 @@ import {
   WorkspaceFsNotFoundError,
   WorkspaceFsPermissionError,
 } from './workspaceFs';
-import { detectGit } from './workspaceRegistryService';
 
 export class WorkspaceFsService extends Disposable implements IWorkspaceFsService {
   readonly _serviceBrand: undefined;
@@ -46,22 +45,11 @@ export class WorkspaceFsService extends Disposable implements IWorkspaceFsServic
     }
     const dirOnly = dirents.filter((d) => d.isDirectory());
 
-    const entries: FsBrowseEntry[] = await Promise.all(
-      dirOnly.map(async (d) => {
-        const childAbs = join(realTarget, d.name);
-        const git = await detectGit(childAbs);
-        const base: FsBrowseEntry = {
-          name: d.name,
-          path: childAbs,
-          is_dir: true,
-          is_git_repo: git.is_git_repo,
-        };
-        if (git.branch !== null) {
-          return { ...base, branch: git.branch };
-        }
-        return base;
-      }),
-    );
+    const entries: FsBrowseEntry[] = dirOnly.map((d) => ({
+      name: d.name,
+      path: join(realTarget, d.name),
+      is_dir: true,
+    }));
 
     entries.sort(compareBrowseEntries);
 

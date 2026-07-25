@@ -7,7 +7,7 @@
  * already drive runtime validation — no second source of truth.
  */
 
-import { envelopeSchema } from '@moonshot-ai/protocol';
+import { envelopeSchema } from '../protocol/envelope';
 import { z } from 'zod';
 
 /**

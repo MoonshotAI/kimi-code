@@ -23,23 +23,22 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
-  ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   toProtocolMessage,
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { Message } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
   sessionSnapshotResponseSchema,
   type InFlightTurn,
-  type Message,
   type SessionSnapshotResponse,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-snapshot';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -53,7 +52,7 @@ import type { ISnapshotReader } from '../services/snapshot';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
 import { toWireQuestion } from './questions';
-import { toWireSession } from './sessions';
+import { resolveSessionFacts, toWireSession } from './sessions';
 
 /** Most-recent messages included in the snapshot page. */
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
@@ -162,13 +161,13 @@ async function readViaLegacyAssembly(
   // `version` → ISO-string timestamps → epoch ms, id backfilled), so the
   // metadata read here is always v2-shaped and safe to project.
   const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
-  const workspace = await core.accessor.get(IWorkspaceRegistry).get(workspaceId);
+  const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
   const cwd = workspace?.root ?? '';
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const session = toWireSession(
     { ...meta, workspaceId },
     cwd,
-    handle.accessor.get(ISessionActivity).status(),
+    resolveSessionFacts(core, sessionId),
   );
 
   // Messages — most recent page of the main agent's live history.

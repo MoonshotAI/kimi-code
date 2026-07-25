@@ -8,12 +8,12 @@
  * The handler is a thin adapter over `IAuthLegacyService`, which projects the
  * v2 provider / model / credential state into the v1 `AuthSummary` wire shape
  * (`{ ready, providers_count, default_model, managed_provider }`). The native
- * `IAuthSummaryService` (which serves `/api/v2`) is intentionally not used here
+ * `IAuthSummaryService` (which serves the RPC surface) is intentionally not used here
  * — its `AuthStatus[]` model is the v2 shape, not the v1 contract.
  */
 
 import { IAuthLegacyService, type Scope } from '@moonshot-ai/agent-core-v2';
-import { authSummarySchema } from '@moonshot-ai/protocol';
+import { authSummarySchema } from '@moonshot-ai/agent-core-v2/app/authLegacy/authLegacy';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

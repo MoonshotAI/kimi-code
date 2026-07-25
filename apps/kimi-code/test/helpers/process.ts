@@ -6,7 +6,7 @@ export class ExitCalled extends Error {
   }
 }
 
-export function mockProcessExit(): { mockRestore(): void } {
+export function mockProcessExit() {
   return vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
     throw new ExitCalled(Number(code ?? 0));
   }) as never);

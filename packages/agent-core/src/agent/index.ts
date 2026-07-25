@@ -6,7 +6,7 @@ import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate } from '@moonshot-ai/kosong';
+import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
@@ -63,7 +63,13 @@ import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { SwarmModeTrigger } from './swarm';
-export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
+export type {
+  BuiltinTool,
+  ToolDisclosure,
+  ToolInfo,
+  ToolSource,
+  UserToolRegistration,
+} from './tool';
 export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';
@@ -162,6 +168,15 @@ export class Agent {
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
+  private readonly pendingThinkingEffortWarnings: Array<{
+    readonly code: string;
+    readonly message: string;
+    readonly modelAlias: string | undefined;
+    readonly model: string;
+    readonly effort: string;
+    readonly knownEfforts: string | undefined;
+  }> = [];
   private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
@@ -269,6 +284,7 @@ export class Agent {
         // before dispatching), so it must not leave a request trace or a
         // diagnostic log line claiming a request was sent.
         if (requestOptions?.signal?.aborted !== true) {
+          this.warnAboutAnthropicThinkingEffort(provider, modelAlias);
           this.llmRequestLogger.logRequest({
             provider,
             modelAlias,
@@ -301,6 +317,99 @@ export class Agent {
         return run({ ...generateOptions, auth });
       });
     };
+  }
+
+  private warnAboutAnthropicThinkingEffort(
+    provider: ChatProvider,
+    modelAlias: string | undefined,
+  ): void {
+    if (provider.name !== 'anthropic') return;
+    const effort = provider.thinkingEffort;
+    if (effort === null || effort === 'on' || effort === 'off') return;
+
+    let warning:
+      | { readonly code: string; readonly message: string; readonly knownEfforts?: string }
+      | undefined;
+    try {
+      const resolved =
+        modelAlias === undefined
+          ? undefined
+          : this.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return;
+
+      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
+      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      if (supportEfforts.includes(effort)) return;
+      warning = {
+        code: 'anthropic-thinking-effort-not-listed',
+        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
+        knownEfforts: supportEfforts.join(','),
+      };
+    } catch {
+      // Capability diagnostics must never turn an otherwise sendable request
+      // into a client-side failure.
+      return;
+    }
+
+    if (warning === undefined) return;
+    const key = [warning.code, modelAlias, provider.modelName, effort, warning.knownEfforts].join(
+      '\u0000',
+    );
+    if (this.emittedThinkingEffortWarnings.has(key)) return;
+    this.emittedThinkingEffortWarnings.add(key);
+    const pending = {
+      code: warning.code,
+      message: warning.message,
+      modelAlias,
+      model: provider.modelName,
+      effort,
+      knownEfforts: warning.knownEfforts,
+    };
+    if (this.records.restoring) {
+      this.pendingThinkingEffortWarnings.push(pending);
+      return;
+    }
+    this.publishAnthropicThinkingEffortWarning(pending);
+  }
+
+  private publishAnthropicThinkingEffortWarning(
+    warning: (typeof this.pendingThinkingEffortWarnings)[number],
+  ): void {
+    try {
+      this.log.warn(warning.message, {
+        modelAlias: warning.modelAlias,
+        model: warning.model,
+        effort: warning.effort,
+        knownEfforts: warning.knownEfforts,
+      });
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+    try {
+      const delivery = this.rpc?.emitEvent?.({
+        type: 'warning',
+        code: warning.code,
+        message: warning.message,
+      });
+      void delivery?.catch(() => {});
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+  }
+
+  private flushPendingAnthropicThinkingEffortWarnings(): void {
+    for (const warning of this.pendingThinkingEffortWarnings.splice(0)) {
+      this.publishAnthropicThinkingEffortWarning(warning);
+    }
+  }
+
+  warnAboutCurrentAnthropicThinkingEffort(): void {
+    try {
+      if (!this.config.hasProvider) return;
+      this.warnAboutAnthropicThinkingEffort(this.config.provider, this.config.modelAlias);
+    } catch {
+      // A capability warning must never make config replay or session resume fail.
+    }
   }
 
   get llm(): KosongLLM {
@@ -370,6 +479,7 @@ export class Agent {
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
+    this.flushPendingAnthropicThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
       this.goal.normalizeAfterReplay();
@@ -397,7 +507,10 @@ export class Agent {
       },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {
-          this.telemetry.track('cancel', { from: 'streaming' });
+          this.telemetry.track('cancel', {
+            from: 'streaming',
+            trace_id: this.turn.activeRequestTraceId(),
+          });
         }
         this.turn.cancel(payload.turnId);
       },
@@ -468,7 +581,10 @@ export class Agent {
       },
       cancelCompaction: () => {
         if (this.fullCompaction.isCompacting) {
-          this.telemetry.track('cancel', { from: 'compacting' });
+          this.telemetry.track('cancel', {
+            from: 'compacting',
+            trace_id: this.fullCompaction.lastTraceId,
+          });
         }
         this.fullCompaction.cancel();
       },
@@ -487,6 +603,15 @@ export class Agent {
       detachBackground: (payload) => this.background.detach(payload.taskId),
       clearContext: () => {
         this.context.clear();
+      },
+      importContext: (payload) => {
+        if (this.turn.hasActiveTurn || this.fullCompaction.isCompacting) {
+          throw new KimiError(
+            ErrorCodes.TURN_AGENT_BUSY,
+            'Cannot import context while the agent is busy',
+          );
+        }
+        this.context.importContext(payload.content, payload.source);
       },
       activateSkill: (payload) => {
         if (this.skills === null) {
@@ -554,7 +679,8 @@ export class Agent {
     if (!this.config.hasModel) return;
 
     const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
+    const capability = this.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens

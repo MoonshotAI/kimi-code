@@ -121,31 +121,32 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     sessions,
   };
 
-  // Marker persistence is best-effort: the data migration and the target
-  // report are already complete, so a marker write failure (e.g. a read-only
-  // legacy home) must not turn a finished migration into a reported failure.
-  // The only consequence is that detection re-prompts on a later launch.
-  try {
-    const existingMarker = await readMarker(input.source);
-    if (existingMarker === undefined) {
-      await writeMarker(input.source, {
-        startedAt,
-        completedAt,
-        migratorVersion: version,
-        summary: markerSummary,
-        targetPath: input.target,
-      });
-    } else {
-      await appendMarkerRun(input.source, {
-        startedAt,
-        completedAt,
-        migratorVersion: version,
-        summary: markerSummary,
-        targetPath: input.target,
-      });
+  // Do not suppress a later retry when session data could not be inspected or
+  // migrated. Successful marker persistence remains best-effort: the data and
+  // report are already complete, so a marker write failure must not reject.
+  if (sessions.sessionsFailed.length === 0) {
+    try {
+      const existingMarker = await readMarker(input.source);
+      if (existingMarker === undefined) {
+        await writeMarker(input.source, {
+          startedAt,
+          completedAt,
+          migratorVersion: version,
+          summary: markerSummary,
+          targetPath: input.target,
+        });
+      } else {
+        await appendMarkerRun(input.source, {
+          startedAt,
+          completedAt,
+          migratorVersion: version,
+          summary: markerSummary,
+          targetPath: input.target,
+        });
+      }
+    } catch {
+      // best-effort — see comment above
     }
-  } catch {
-    // best-effort — see comment above
   }
 
   return report;

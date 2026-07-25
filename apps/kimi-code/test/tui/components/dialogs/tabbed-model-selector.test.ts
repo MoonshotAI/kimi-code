@@ -131,4 +131,26 @@ describe('TabbedModelSelectorComponent', () => {
     // It comes first, before the navigation hint.
     expect(hint!.indexOf('Tab toggle provider')).toBeLessThan(hint!.indexOf('↑↓ navigate'));
   });
+
+  it('keeps the tab strip between hint and list when a warning line is present', () => {
+    const component = new TabbedModelSelectorComponent({
+      models: {
+        k2: model('Kimi K2', 'managed:kimi-code'),
+        gpt: model('GPT-5', 'openai'),
+      },
+      currentValue: 'k2',
+      currentThinkingEffort: 'off',
+      warning: 'Switching may increase token usage.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = component.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('navigate') && l.includes('Esc cancel'));
+    expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
+    expect(lines[hintIdx + 2]).toBe(''); // blank between warning and tabs
+    const stripIdx = lines.findIndex((l) => l.includes('All') && l.includes('openai'));
+    expect(stripIdx).toBe(hintIdx + 3);
+    expect(lines[stripIdx + 1]).toBe(''); // blank between tabs and list
+    expect(lines.findIndex((l) => l.includes('Kimi K2'))).toBeGreaterThan(stripIdx);
+  });
 });

@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 const webPort = Number(process.env.WEB_PORT) || 5175;
 // Dev-proxy backend presets: `default` is the kap-server started by the root
 // `pnpm dev:server` (port 58627); `multi` is a second kap-server instance
-// started with `pnpm dev:v2` (KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1, port
-// 58628) for multi-instance debugging. Override with KIMI_BACKEND_DEFAULT_URL
-// / KIMI_BACKEND_MULTI_URL.
+// started with `pnpm dev:v2` (port 58628 — instances share the home dir, so
+// both can run at once) for multi-instance debugging. Override with
+// KIMI_BACKEND_DEFAULT_URL / KIMI_BACKEND_MULTI_URL.
 const backendPresets = {
   default: process.env.KIMI_BACKEND_DEFAULT_URL || 'http://127.0.0.1:58627',
   multi: process.env.KIMI_BACKEND_MULTI_URL || 'http://127.0.0.1:58628',

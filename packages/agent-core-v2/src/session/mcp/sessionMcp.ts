@@ -1,13 +1,8 @@
 /**
- * `mcp` domain (L5), Session scope — the session's shared MCP subsystem.
+ * `mcp` domain (L5) — session-scoped MCP subsystem contract.
  *
- * Owns the session-wide `McpConnectionManager` (one per session, shared by
- * every agent, matching v1's session-scoped MCP and avoiding a reconnect
- * storm per agent), the initial connect attempt (`ensureMcpReady`), and its
- * telemetry. Split out of `agentLifecycle`: agent existence and MCP
- * connections are independent concerns — the lifecycle only needs to await
- * the initial connect before an agent's first turn and to seed the shared
- * manager into each agent scope. Bound at Session scope.
+ * Defines `ISessionMcpService` for connecting the session's servers and
+ * exposing their shared connection manager. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -19,15 +14,21 @@ export interface ISessionMcpService {
 
   /**
    * Resolve the session/plugin MCP config and wait for the initial connection
-   * attempt to finish. Per-server failures are reflected in MCP status entries
-   * rather than rejecting this promise; an outright failure is logged.
-   * `callerServers` (caller-supplied servers from session create) merge into
-   * the initial connect between file config and plugin servers; the first
-   * call wins — the initial load is cached and later calls ignore the arg.
+   * attempt to finish. The initial connect waits for `config.ready` so global
+   * timeout preferences apply deterministically. Per-server failures are
+   * reflected in MCP status entries rather than rejecting this promise; an
+   * outright failure is logged. `callerServers` (caller-supplied servers from
+   * session create) merge into the initial connect between file config and
+   * plugin servers; the first call wins — the initial load is cached and
+   * later calls ignore the arg.
    */
   ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void>;
 
-  /** The session's shared connection manager (built lazily, cached). */
+  /**
+   * The session's shared connection manager. Built lazily on first call and
+   * always available, independent of the initial connect's progress; global
+   * timeout defaults are read from `config` at each (re)connect.
+   */
   connectionManager(): McpConnectionManager;
 }
 

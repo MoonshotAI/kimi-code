@@ -276,6 +276,16 @@ export function flushDiagnosticLogs(): Promise<boolean> {
   return getRootInternal().flush();
 }
 
+/**
+ * Synchronous variant for crash / emergency-exit paths that call
+ * `process.exit()` on the same tick: pending entries are appended with
+ * `appendFileSync`, so they survive the immediate exit that would otherwise
+ * drop everything still sitting in the async queue.
+ */
+export function flushDiagnosticLogsSync(): void {
+  getRootInternal().flushSync();
+}
+
 class LoggerImpl implements Logger {
   constructor(private readonly boundCtx: LogContext) {}
 

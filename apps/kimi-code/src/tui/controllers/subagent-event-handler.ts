@@ -552,8 +552,9 @@ export class SubAgentEventHandler {
     const children = this.host.state.transcriptContainer.children;
     const index = children.indexOf(progress);
     if (index >= 0) {
+      // Structural removal only: GutterContainer's ref-checked render cache
+      // detects the child-list change; no tree-wide invalidate needed.
       children.splice(index, 1);
-      this.host.state.transcriptContainer.invalidate();
     }
     this.host.updateActivityPane();
   }

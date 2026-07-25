@@ -2,6 +2,10 @@
 
 export * from './types.js';
 export { detectMigration } from './detect.js';
+export {
+  shouldSuppressMigration,
+  type MigrationSuppressionInput,
+} from './marker.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
   resolveMigrationScope,

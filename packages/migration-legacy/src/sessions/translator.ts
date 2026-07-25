@@ -1,3 +1,5 @@
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core';
+
 import { normalizeContentPart, type NormalizedContentPart } from './content-part.js';
 
 export interface NormalizedMessage {
@@ -9,6 +11,8 @@ export interface NormalizedMessage {
     readonly function: { readonly name: string; readonly arguments: string };
   }>;
   readonly toolCallId?: string;
+  /** UI-only display metadata recovered from legacy wire.jsonl. */
+  readonly toolCallDisplays?: Record<string, ToolInputDisplay>;
 }
 
 const DROPPED_ROLES = new Set(['_system_prompt', '_checkpoint', '_usage']);
@@ -66,7 +70,10 @@ export function containsUsableMessage(lines: readonly string[]): boolean {
   return analyzeContextContent(lines) === 'real';
 }
 
-export function translateContextLines(lines: readonly string[]): NormalizedMessage[] {
+export function translateContextLines(
+  lines: readonly string[],
+  displaysByToolCallId: ReadonlyMap<string, ToolInputDisplay> = new Map(),
+): NormalizedMessage[] {
   const out: NormalizedMessage[] = [];
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -88,7 +95,7 @@ export function translateContextLines(lines: readonly string[]): NormalizedMessa
     if (role === 'user') {
       out.push(buildUser(obj));
     } else if (role === 'assistant') {
-      out.push(buildAssistant(obj));
+      out.push(buildAssistant(obj, displaysByToolCallId));
     } else if (role === 'tool') {
       out.push(buildTool(obj));
     }
@@ -122,14 +129,25 @@ function buildUser(obj: Record<string, unknown>): NormalizedMessage {
   };
 }
 
-function buildAssistant(obj: Record<string, unknown>): NormalizedMessage {
+function buildAssistant(
+  obj: Record<string, unknown>,
+  displaysByToolCallId: ReadonlyMap<string, ToolInputDisplay>,
+): NormalizedMessage {
   const toolCalls = Array.isArray(obj['tool_calls'])
     ? (obj['tool_calls'] as unknown[]).map(parseToolCall).filter(isNonNull)
     : [];
+  const toolCallDisplays = Object.fromEntries(
+    toolCalls.flatMap((call) => {
+      const display = displaysByToolCallId.get(call.id);
+      return display === undefined ? [] : [[call.id, display] as const];
+    }),
+  );
   return {
     role: 'assistant',
     content: normalizeContent(obj['content']),
     toolCalls,
+    toolCallDisplays:
+      Object.keys(toolCallDisplays).length === 0 ? undefined : toolCallDisplays,
   };
 }
 

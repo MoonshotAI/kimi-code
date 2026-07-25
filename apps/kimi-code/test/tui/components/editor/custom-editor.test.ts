@@ -587,6 +587,34 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput('x');
     expect(editor.getText()).toContain('x');
   });
+
+  it('falls back to the text paste path when the image paste handler rejects', async () => {
+    const editor = makeEditor();
+    const onTextPaste = vi.fn();
+    editor.onTextPaste = onTextPaste;
+    editor.onPasteImage = vi.fn(async () => {
+      throw new Error('clipboard backend broken');
+    });
+
+    // Regression: a rejecting onPasteImage must not leak an unhandled
+    // rejection — the CLI's crash path turns those into a silent exit.
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+
+      expect(onTextPaste).toHaveBeenCalledOnce();
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {

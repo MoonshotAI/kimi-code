@@ -92,7 +92,7 @@ pass `ConfigTarget.Memory` for a per-run override that is never written to disk.
 - `src/profile/thinking.ts` (owner domain, not `config`) — the `resolveThinkingEffort` helper; uses the authoritative `ThinkingConfig` from `configSection.ts`.
 - `src/config/configPure.ts` — `isPlainObject`, `deepMerge`, `omitUndefined`, `describeUnknownError`.
 
-A domain that owns a section keeps the schema in its own `configSection.ts` (e.g. `src/flag/flag.ts` for `experimental`, `src/profile/configSection.ts` for `thinking`, `src/loop/configSection.ts` for `loopControl`). A cross-section env overlay (e.g. the `KIMI_MODEL_*` synthesis) lives in the owning domain too (`src/provider/envOverlay.ts`) and is registered via `IConfigRegistry.registerEffectiveOverlay`.
+A domain that owns a section keeps the schema in its own `configSection.ts` (e.g. `src/flag/flag.ts` for `experimental`, `src/loop/configSection.ts` for `loopControl`). Exception: kosong-owned sections (`providers`, `models`, `thinking`) — kosong is a pure, persistence-free abstraction layer that defines only the types (`src/kosong/{provider,model}`); the section constants, the zod schemas (re-derived from those types and compile-time pinned via `AssertExact<Equal<z.infer<typeof Schema>, Type>>`, see `_base/utils/typeEquality.ts`), the registrations, env bindings, and TOML transforms all live in the persistence wrapper `src/app/kosongConfig/configSection.ts`. (`modelCatalog` and `secondaryModel` have no kosong-side type at all — their sections are fully self-contained in `app/kosongConfig`, types derived from the schemas.) A cross-section env overlay (e.g. the `KIMI_MODEL_*` synthesis) lives in the wrapper too (`src/app/kosongConfig/envOverlay.ts`; the `[secondary_model]` derived-entry synthesis in `secondaryModelOverlay.ts`) and is registered via `IConfigRegistry.registerEffectiveOverlay`. The two-way sync between config sections and kosong's in-memory registries is owned by `IKosongConfigService` (`src/app/kosongConfig/kosongConfigService.ts`).
 
 ## Scope
 
@@ -150,8 +150,18 @@ Each field is an `EnvBinding` — a string (env var name) or
 section. Empty nested entries (no field resolved) are omitted, so a synthetic
 entry like `__kimi_env__` only appears when at least one of its env vars is set.
 
-`stripEnv(value, rawSnake?)` removes env-derived fields before `set`/`replace`
-persists, so env overrides never leak into `config.toml`.
+`stripEnv(value, raw?, getEnv?)` removes env-derived fields before `set`/`replace`
+persists, so env overrides never leak into `config.toml`. `raw` is the section's
+env-free camelCase base (already `fromToml`-normalized, so legacy key renames
+are honored), and `getEnv` reads the live env bag. For fields that are **both
+user-persistable and env-overridable**, register
+`stripEnv: stripEnvBoundFields(sectionEnvBindings)` (from `#/app/config/config`)
+— it derives the guard from the same bindings the read path uses: while a
+field's env var resolves to a value, writes restore the field's raw-base value
+(or drop it) instead of persisting an echoed env value; an env value that
+fails the binding's `parse` owns nothing, so writes pass through. Env-only
+fields/sections need no env check — strip them unconditionally (e.g. thinking's
+`forcedEffort`, cron's whole-section `() => undefined`).
 
 Business domains read `config.get('section')`; they never read env directly, and
 never write their own env-merge logic.
@@ -217,34 +227,27 @@ This means registration order is never a correctness concern — you do not need
 - **Read**: `transformTomlData(fileData, registry)` maps each top-level key to a domain and applies that domain's `fromToml` hook (or a plain key-casing pass when none is registered). Owner domains register their own normalization — e.g. provider `oauth`/`env`/`customHeaders`, permission `deny/allow/ask` → `rules`, `loop_control.max_steps_per_run` → `maxStepsPerTurn`, `experimental` keys preserved verbatim. When a section registers after the initial load, `ConfigService` re-applies its `fromToml` against the preserved snake_case raw value (see "Late registration"), so registration order is never a correctness concern.
 - **Write**: `applySectionToToml(rawSnake, domain, value, registry)` applies the domain's `toToml` hook (or a plain camelCase→snake_case mapping) into a raw clone of the file, preserving unknown top-level keys and unknown sub-fields (lossless round-trip).
 
-`ConfigService` keeps three views:
+`ConfigService` keeps four views:
 
 - `rawSnake` — snake_case clone of the file; the write base, never carries the env overlay.
 - `raw` — camelCase, env-free; the read/set/replace base.
-- `effective` — validated `raw` plus the env overlay; what `get()` returns.
+- `validated` — validated `raw`, env-free; the base every live env re-application starts from, so a degraded or removed env value falls back to the file instead of a stale overlay.
+- `effective` — `validated` plus the env overlay, recomputed on load/set; `get()`/`getAll()` re-apply the overlay on a fresh `validated` copy per read rather than caching it.
 
 ### `KIMI_MODEL_*` env overlay
 
-When `KIMI_MODEL_NAME` is set, the `provider` domain's `kimiModelEnvOverlay` (`src/provider/envOverlay.ts`) injects a reserved model alias (`__kimi_env_model__`) into `effective`, points `defaultModel` at it, and merges the request `modelOverrides`; the reserved provider (`__kimi_env__`) comes from the `providers` section env bindings. The overlay is registered via `IConfigRegistry.registerEffectiveOverlay` and applied **only to `effective`**, never to `rawSnake`, so it is never persisted. Its `strip` (plus the providers section `stripEnv`) is the final guard so a caller that read `effective` (with the overlay) cannot write the reserved entries or the shell API key back to disk. `config` itself only runs registered overlays — it does not know the `KIMI_MODEL_*` semantics.
+When `KIMI_MODEL_NAME` is set, the `kosongConfig` wrapper's `kimiModelEnvOverlay` (`src/app/kosongConfig/envOverlay.ts`) injects a reserved model alias (`__kimi_env_model__`) into `effective`, points `defaultModel` at it, and merges the request `modelOverrides`; the reserved provider (`__kimi_env__`) comes from the `providers` section env bindings. The overlay is registered via `IConfigRegistry.registerEffectiveOverlay` and applied **only to `effective`**, never to `rawSnake`, so it is never persisted. Its `strip` (plus the providers section `stripEnv`) is the final guard so a caller that read `effective` (with the overlay) cannot write the reserved entries or the shell API key back to disk. `config` itself only runs registered overlays — it does not know the `KIMI_MODEL_*` semantics.
 
 ## Owner-owned sections
 
 `config` holds no monolithic config schema and no whole-config object. Every section is owned by the domain that consumes it: the schema (and any `fromToml` / `toToml` normalization and `stripEnv`) lives in that domain's `configSection.ts`, and the domain registers it via `IConfigRegistry.registerSection`. Cross-section env behavior (e.g. `KIMI_MODEL_*`) lives in an owner-registered `ConfigEffectiveOverlay`. To add a section, follow "Add a config section" above in the owning domain — never add schema or normalization to `config` itself.
 
-## Ownership map (current)
+## Ownership map (generated)
 
-| Section | Owner | Layer | Status |
-|---|---|---|---|
-| `providers` | `provider` | L2 | owner-owned (`IProviderService` CRUD) |
-| `experimental` | `flag` | L3 | owner-owned |
-| `thinking` | `profile` | L4 | owner-owned |
-| `loopControl` | `loop` | L4 | owner-owned (read by `loop` + `profile`) |
-| `McpServerConfig` (type) | `mcp` | L5 | owner-owned (type only; not a registered section) |
-| `session` | `config` | L2 | in config |
-| `models` / `defaultModel` / `defaultProvider` | `kosong` | L1 | owner-owned (read by `ProviderManager`) |
-| `hooks` | `externalHooks` | L4 | owner-owned |
-| `permission` | `permissionRules` | L3 | owner-owned |
-| `background` | `background` | L5 | owner-owned |
+The authoritative, always-current list of registered sections — rendered in the on-disk `config.toml` shape, with owner file, scope, defaults, env bindings, and schema fields — is generated from the live registry:
+
+- `packages/agent-core-v2/docs/config-manifest.toml` (checked in; do not edit by hand).
+- Regenerate with `pnpm --filter @moonshot-ai/agent-core-v2 gen:config-manifest` (add `--check` for a freshness check; `test/app/config/configManifest.test.ts` enforces it in CI).
 
 `config` must not import from any of these owner domains; that is the whole reason the schemas, TOML normalization, and env overlays live with their owners.
 

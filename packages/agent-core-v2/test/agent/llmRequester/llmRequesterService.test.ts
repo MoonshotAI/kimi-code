@@ -11,8 +11,11 @@
  * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
  */
 
+import { createControlledPromise } from '@antfu/utils';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -29,20 +32,34 @@ import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
+import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
-import { emptyUsage } from '#/app/llmProtocol/usage';
-import type { Message } from '#/app/llmProtocol/message';
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
+import {
+  APIConnectionError,
+  APIEmptyResponseError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/kosong/contract/errors';
+import { emptyUsage } from '#/kosong/contract/usage';
+import type { Message } from '#/kosong/contract/message';
+import type { ThinkingEffort } from '#/kosong/contract/provider';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import {
+  type ModelRequestEvent,
+  type ModelRequestInput,
+  type ModelRequester,
+} from '#/kosong/model/modelRequester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
@@ -59,13 +76,13 @@ const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
 ];
 
-function createModel(
+function createRequester(
   calls: { value: number },
   firstCallError?: Error | null,
   subsequentCallErrors: readonly Error[] = [],
-  capturedInputs?: LLMRequestInput[],
-): Model {
-  const build = (): Model => ({
+  capturedInputs?: ModelRequestInput[],
+): ModelRequester {
+  const model: Model = {
     id: 'm',
     name: 'wire-model',
     aliases: [],
@@ -74,15 +91,12 @@ function createModel(
     headers: {},
     capabilities,
     maxContextSize: 1000,
-    thinkingEffort: null,
     alwaysThinking: false,
     providerName: 'p',
     authProvider: { getAuth: async () => undefined },
-    withThinking: () => build(),
-    withMaxCompletionTokens: () => build(),
-    withGenerationKwargs: () => build(),
-    withProviderOptions: () => build(),
-    withThinkingKeep: () => build(),
+  };
+  return {
+    model,
     request: async function* (input) {
       calls.value += 1;
       capturedInputs?.push(input);
@@ -102,8 +116,7 @@ function createModel(
         id: 'resp-1',
       };
     },
-  });
-  return build();
+  };
 }
 
 let disposables: DisposableStore;
@@ -115,7 +128,7 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 function createService(
-  model: Model,
+  requester: ModelRequester,
   projector:
     | (Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
         Partial<
@@ -127,29 +140,32 @@ function createService(
           >
         >)
     | undefined,
-  options: { readonly flagEnabled?: boolean } = {},
+  options: {
+    readonly flagEnabled?: boolean;
+    readonly thinkingLevel?: ThinkingEffort;
+  } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
+  const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
-      thinkingLevel: 'off',
+      thinkingLevel,
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
     }),
-    getProvider: () => model,
+    resolveRequestParams: () => ({}),
     getSystemPrompt: () => 'system',
     data: () => ({
       cwd: '',
       modelAlias: 'm',
       modelCapabilities: capabilities,
-      thinkingLevel: 'off',
+      thinkingLevel,
       systemPrompt: 'system',
     }),
-    isToolActive: () => true,
   };
   const contextSize = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
@@ -162,7 +178,8 @@ function createService(
     get: (() => undefined) as IConfigService['get'],
   };
   const log = { info: () => undefined, warn: () => undefined };
-  const telemetry = { track: () => undefined, track2: () => undefined };
+  const telemetryRecords: TelemetryRecord[] = [];
+  const telemetry = recordingTelemetry(telemetryRecords);
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
     shapeTools: (entries) => entries,
@@ -170,9 +187,16 @@ function createService(
   };
   const flagEnabled = options.flagEnabled ?? true;
   const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
+  const events: DomainEvent[] = [];
+  const eventBus: IEventBus = {
+    _serviceBrand: undefined,
+    publish: (event) => events.push(event),
+    subscribe: () => toDisposable(() => {}),
+  };
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
+  ix.stub(IAgentVideoResolverService, { resolve: async (messages) => messages });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,
@@ -194,8 +218,20 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
+  ix.stub(IModelCatalog, {
+    _serviceBrand: undefined,
+    get: () => requester.model,
+    getRequester: () => requester,
+    findByName: () => [],
+  });
+  ix.stub(IModelService, {
+    get: () => undefined,
+  });
   const records: WireRecord[] = [];
-  registerTestAgentWire(ix, 'wire/llm-requester', { log: recordingWireLog(records) });
+  registerTestAgentWire(ix, 'wire/llm-requester', {
+    log: recordingWireLog(records),
+    eventBus,
+  });
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
@@ -204,15 +240,39 @@ function createService(
     faultInjection: ix.get(IFaultInjectionService),
     wire: ix.get(IWireService),
     records,
+    events,
+    telemetryRecords,
   };
 }
+
+describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
+  it('warns and sends when the effort is not listed by the model', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'supportEfforts', { value: ['max'] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'high' });
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(1);
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      {
+        type: 'warning',
+        code: 'anthropic-thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "wire-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+      },
+    ]);
+  });
+});
 
 describe('AgentLLMRequesterService strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {
     const calls = { value: 0 };
     let projectCalls = 0;
     let strictCalls = 0;
-    const { service } = createService(createModel(calls), {
+    const { service } = createService(createRequester(calls), {
       project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
@@ -233,19 +293,16 @@ describe('AgentLLMRequesterService strict resend', () => {
   });
 
   it('does not resend for non-recoverable errors', async () => {
-    const model = createModel({ value: 0 });
-    Object.defineProperty(model, 'request', {
+    const requester = createRequester({ value: 0 });
+    Object.defineProperty(requester, 'request', {
       value: async function* () {
-        const events: LLMEvent[] = [];
+        const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         throw new APIStatusError(401, 'unauthorized');
       },
     });
-    Object.defineProperty(model, 'withMaxCompletionTokens', {
-      value: () => model,
-    });
     let strictCalls = 0;
-    const { service } = createService(model, {
+    const { service } = createService(requester, {
       project: (messages: readonly ContextMessage[]) => messages,
       projectStrict: (messages: readonly ContextMessage[]) => {
         strictCalls += 1;
@@ -271,7 +328,7 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     let projectCalls = 0;
     let strictCalls = 0;
     let strippedCalls = 0;
-    const { service } = createService(createModel(calls, IMAGE_FORMAT_400), {
+    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), {
       project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
@@ -299,7 +356,7 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     const calls = { value: 0 };
     let projectCalls = 0;
     let strippedCalls = 0;
-    const { service } = createService(createModel(calls, IMAGE_FORMAT_400), {
+    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), {
       project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
@@ -326,7 +383,7 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     const calls = { value: 0 };
     let strippedCalls = 0;
     const { service } = createService(
-      createModel(calls, new APIStatusError(400, 'some other validation problem')),
+      createRequester(calls, new APIStatusError(400, 'some other validation problem')),
       {
         project: (messages: readonly ContextMessage[]) => messages,
         projectStrict: (messages: readonly ContextMessage[]) => messages,
@@ -352,7 +409,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     let degradedCalls = 0;
     let strippedCalls = 0;
     const { service } = createService(
-      createModel(
+      createRequester(
         calls,
         new Error2(ErrorCodes.PROVIDER_API_ERROR, 'Provider request failed', {
           cause: BODY_TOO_LARGE_413,
@@ -390,7 +447,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     let degradedCalls = 0;
     let strippedCalls = 0;
     const { service } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
         project: (messages: readonly ContextMessage[]) => {
           projectCalls += 1;
@@ -420,7 +477,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   it('records repeated-413 recovery projections on the sticky later request', async () => {
     const calls = { value: 0 };
     const { service, wire, records } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
         project: (messages: readonly ContextMessage[]) => messages,
         projectStrict: (messages: readonly ContextMessage[]) => messages,
@@ -442,7 +499,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('keeps new recovery media visible on later snapshot-stripped steps', async () => {
     const calls = { value: 0 };
-    const capturedInputs: LLMRequestInput[] = [];
+    const capturedInputs: ModelRequestInput[] = [];
     const oldUrl = 'data:image/png;base64,REJECTED';
     const newUrl = 'data:image/png;base64,SMALL';
     const imageMessage = (url: string, id: string): Message => ({
@@ -451,7 +508,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       toolCalls: [],
     });
     const { service } = createService(
-      createModel(
+      createRequester(
         calls,
         BODY_TOO_LARGE_413,
         [BODY_TOO_LARGE_413],
@@ -486,7 +543,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     let degradedCalls = 0;
     let strippedCalls = 0;
     const { service } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
       {
         project: (messages: readonly ContextMessage[]) => {
           projectCalls += 1;
@@ -517,7 +574,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const calls = { value: 0 };
     let projectCalls = 0;
     let degradedCalls = 0;
-    const { service } = createService(createModel(calls, BODY_TOO_LARGE_413), {
+    const { service } = createService(createRequester(calls, BODY_TOO_LARGE_413), {
       project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
@@ -547,7 +604,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     ]) {
       const calls = { value: 0 };
       let degradedCalls = 0;
-      const { service } = createService(createModel(calls, error), {
+      const { service } = createService(createRequester(calls, error), {
         project: (messages: readonly ContextMessage[]) => messages,
         projectStrict: (messages: readonly ContextMessage[]) => messages,
         projectMediaDegraded: (messages: readonly ContextMessage[]) => {
@@ -568,7 +625,7 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
     const calls = { value: 0 };
     let projectCalls = 0;
     let degradedCalls = 0;
-    const { service, faultInjection } = createService(createModel(calls, null), {
+    const { service, faultInjection } = createService(createRequester(calls, null), {
       project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
@@ -598,7 +655,7 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
   it('raises an armed image-format fault and recovers via the stripped resend, one-shot only', async () => {
     const calls = { value: 0 };
     let strippedCalls = 0;
-    const { service, faultInjection } = createService(createModel(calls, null), {
+    const { service, faultInjection } = createService(createRequester(calls, null), {
       project: (messages: readonly ContextMessage[]) => messages,
       projectStrict: (messages: readonly ContextMessage[]) => messages,
       projectMediaStripped: (messages: readonly ContextMessage[]) => {
@@ -618,12 +675,169 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
   });
 
   it('refuses to arm when the fault-injection flag is disabled', () => {
-    const { faultInjection } = createService(createModel({ value: 0 }, null), {
+    const { faultInjection } = createService(createRequester({ value: 0 }, null), {
       project: (messages: readonly ContextMessage[]) => messages,
       projectStrict: (messages: readonly ContextMessage[]) => messages,
     }, { flagEnabled: false });
 
     expect(() => faultInjection.arm('request-too-large')).toThrow(/disabled/);
     expect(faultInjection.status()).toEqual({ armed: undefined, fired: [] });
+  });
+});
+
+describe('AgentLLMRequesterService trace id', () => {
+  const passthroughProjector = {
+    project: (messages: readonly ContextMessage[]) => messages,
+    projectStrict: (messages: readonly ContextMessage[]) => messages,
+  };
+
+  function createTracedRequester(traceId: string | null): ModelRequester {
+    const model: Model = {
+      id: 'm',
+      name: 'wire-model',
+      aliases: [],
+      protocol: 'openai',
+      baseUrl: 'https://example.test',
+      headers: {},
+      capabilities,
+      maxContextSize: 1000,
+      alwaysThinking: false,
+      providerName: 'p',
+      authProvider: { getAuth: async () => undefined },
+    };
+    return {
+      model,
+      request: async function* (_input, _signal, requestOptions) {
+        requestOptions?.onTraceId?.(traceId);
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: traceId ?? undefined,
+        };
+      },
+    };
+  }
+
+  it('exposes the request trace and returns it on finish', async () => {
+    const requester = createTracedRequester('trace-req-1');
+    const headersArrived = createControlledPromise<void>();
+    const releaseStream = createControlledPromise<void>();
+    Object.defineProperty(requester, 'request', {
+      value: async function* (_input: unknown, _signal: unknown, requestOptions: {
+        onTraceId?: (traceId: string | null) => void;
+      }) {
+        requestOptions.onTraceId?.('trace-req-1');
+        headersArrived.resolve();
+        await releaseStream;
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: 'trace-req-1',
+        } satisfies ModelRequestEvent;
+      },
+    });
+    const { service } = createService(requester, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 1, step: 1 } });
+    await headersArrived;
+    expect(request.trace.traceId).toBe('trace-req-1');
+    releaseStream.resolve();
+    const finish = await request.result;
+
+    expect(finish.traceId).toBe('trace-req-1');
+    expect(request.trace.traceId).toBe('trace-req-1');
+  });
+
+  it('reports an absent trace before a request that returns none', async () => {
+    const { service } = createService(createTracedRequester(null), passthroughProjector);
+    const request = service.start();
+    const finish = await request.result;
+
+    expect(finish.traceId).toBeUndefined();
+    expect(request.trace.traceId).toBeUndefined();
+  });
+
+  it('attaches trace_id, turn_id and step_no to api_error from the failed request', async () => {
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* () {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-1');
+      },
+    });
+    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 3, step: 2 } });
+    await expect(request.result).rejects.toMatchObject({ statusCode: 500 });
+
+    expect(telemetryRecords).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        error_type: '5xx_server',
+        trace_id: 'trace-fail-1',
+        turn_id: 3,
+        step_no: 2,
+      }),
+    });
+    expect(request.trace.traceId).toBe('trace-fail-1');
+  });
+
+  it('keeps the header-captured trace when the request fails after headers arrived', async () => {
+    // A failure after the response headers arrived (empty response, mid-stream
+    // decode error) carries no trace on the error itself; the trace captured
+    // through the provider callback must remain on the request trace.
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* (...args: unknown[]) {
+        const requestOptions = args[2] as
+          | { onTraceId?: (traceId: string | null) => void }
+          | undefined;
+        requestOptions?.onTraceId?.('trace-mid-stream');
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIEmptyResponseError('no content, no tool calls');
+      },
+    });
+    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 4, step: 1 } });
+    await expect(request.result).rejects.toThrow();
+
+    const apiError = telemetryRecords.find((record) => record.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
+    expect(request.trace.traceId).toBe('trace-mid-stream');
+  });
+
+  it('clears the previous physical request trace before a projection retry', async () => {
+    const requester = createTracedRequester(null);
+    let attempts = 0;
+    Object.defineProperty(requester, 'request', {
+      value: async function* (...args: unknown[]) {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        attempts += 1;
+        const requestOptions = args[2] as
+          | { onTraceId?: (traceId: string | null) => void }
+          | undefined;
+        if (attempts === 1) {
+          requestOptions?.onTraceId?.('trace-first-projection');
+          throw new APIRequestTooLargeError(413, 'retry with degraded media');
+        }
+        throw new APIConnectionError('socket hang up');
+      },
+    });
+    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const request = service.start();
+    await expect(request.result).rejects.toThrow('socket hang up');
+
+    expect(attempts).toBe(2);
+    expect(request.trace.traceId).toBeUndefined();
+    expect(
+      telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
+    ).toBeUndefined();
   });
 });

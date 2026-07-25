@@ -13,7 +13,12 @@ import {
   sourceSessionsDir,
   sourceKimiJson,
 } from './paths.js';
-import type { MigrationPlan, SessionEntry, WorkDirEntry } from './types.js';
+import type {
+  MigrationPlan,
+  SessionEntry,
+  SessionMigrationFailure,
+  WorkDirEntry,
+} from './types.js';
 import { classifySessionDir } from './sessions/classify.js';
 import { oldMd5BucketName } from './sessions/workdir-bucket.js';
 
@@ -51,22 +56,43 @@ export async function detectMigration(opts: { sourcePath: string }): Promise<Mig
 
   const workdirs: WorkDirEntry[] = [];
   let totalSessions = 0;
+  const sessionScanFailures: SessionMigrationFailure[] = [];
 
+  const sessionsRoot = sourceSessionsDir(src);
   try {
-    const sessionsRoot = sourceSessionsDir(src);
     const bucketNames = await readdir(sessionsRoot);
     for (const bucketName of bucketNames) {
-      // Skip non-local-kaos buckets (`<kaos>_<md5>`) and unknown formats.
-      if (!MD5_HEX_RE.test(bucketName)) continue;
+      const bucketPath = join(sessionsRoot, bucketName);
+      // Skip non-local-kaos buckets (`<kaos>_<md5>`), which cannot be
+      // represented by the local Kimi Code runtime. Every other unknown
+      // bucket is user data we failed to map and must remain visible.
+      if (!MD5_HEX_RE.test(bucketName)) {
+        const separator = bucketName.lastIndexOf('_');
+        if (separator > 0 && MD5_HEX_RE.test(bucketName.slice(separator + 1))) continue;
+        sessionScanFailures.push({
+          sourcePath: bucketPath,
+          reason: unknownWorkdirReason(),
+        });
+        continue;
+      }
       const wd = workdirMap.get(bucketName);
-      if (wd === undefined) continue;
+      if (wd === undefined) {
+        sessionScanFailures.push({
+          sourcePath: bucketPath,
+          reason: unknownWorkdirReason(),
+        });
+        continue;
+      }
       if (wd.kaos !== 'local') continue;
 
-      const bucketPath = join(sessionsRoot, bucketName);
       let uuids: string[];
       try {
         uuids = await readdir(bucketPath);
-      } catch {
+      } catch (error) {
+        sessionScanFailures.push({
+          sourcePath: bucketPath,
+          reason: `Legacy session bucket could not be read: ${formatError(error)}`,
+        });
         continue;
       }
 
@@ -74,6 +100,13 @@ export async function detectMigration(opts: { sourcePath: string }): Promise<Mig
       for (const uuid of uuids) {
         const sessionDir = join(bucketPath, uuid);
         const cls = await classifySessionDir(sessionDir);
+        if (cls === 'malformed') {
+          sessionScanFailures.push({
+            sourcePath: sessionDir,
+            reason: unreadableSessionReason(),
+          });
+          continue;
+        }
         if (cls !== 'real') continue;
         const wireMtime = await readWireMtime(sessionDir);
         sessions.push({ uuid, oldDir: sessionDir, wireMtime });
@@ -84,8 +117,13 @@ export async function detectMigration(opts: { sourcePath: string }): Promise<Mig
         workdirs.push({ oldHashDir: bucketPath, workdirPath: wd.path, sessions });
       }
     }
-  } catch {
-    // sessions dir missing — leave workdirs empty
+  } catch (error) {
+    if (!isMissingError(error)) {
+      sessionScanFailures.push({
+        sourcePath: sessionsRoot,
+        reason: `Legacy sessions directory could not be read: ${formatError(error)}`,
+      });
+    }
   }
 
   return {
@@ -98,7 +136,29 @@ export async function detectMigration(opts: { sourcePath: string }): Promise<Mig
     detectedPlugins,
     detectedMcpOauthServers,
     totalSessions,
+    sessionScanFailures,
   };
+}
+
+function unknownWorkdirReason(): string {
+  return 'No local workdir mapping was found for this legacy session bucket; kimi.json may be missing, unreadable, or not list the workdir.';
+}
+
+function unreadableSessionReason(): string {
+  return 'Legacy session could not be inspected because context.jsonl is missing or unreadable.';
+}
+
+function isMissingError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { readonly code?: unknown }).code === 'ENOENT'
+  );
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function listDirSafe(

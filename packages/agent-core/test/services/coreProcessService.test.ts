@@ -25,6 +25,7 @@ import {
   ILogService,
   ICoreProcessService,
   IQuestionService,
+  IWorkspaceRegistry,
 } from '../../src/services';
 
 class RecordingEventService implements IEventService {
@@ -93,6 +94,33 @@ class NoopLogService implements ILogService {
   }
 }
 
+class NoopWorkspaceRegistry implements IWorkspaceRegistry {
+  readonly _serviceBrand: undefined;
+
+  async list(): ReturnType<IWorkspaceRegistry['list']> {
+    return [];
+  }
+  async get(): ReturnType<IWorkspaceRegistry['get']> {
+    throw new Error('not implemented');
+  }
+  async createOrTouch(): ReturnType<IWorkspaceRegistry['createOrTouch']> {
+    throw new Error('not implemented');
+  }
+  async update(): ReturnType<IWorkspaceRegistry['update']> {
+    throw new Error('not implemented');
+  }
+  async delete(): Promise<void> {}
+  async resolveRoot(): Promise<string> {
+    throw new Error('not implemented');
+  }
+  async findWorkspaceIdByRoot(): Promise<string | undefined> {
+    return undefined;
+  }
+  async resolveAliasWorkDirs(): Promise<readonly string[]> {
+    return [];
+  }
+}
+
 let tmpHome: string;
 let prevHome: string | undefined;
 
@@ -120,6 +148,7 @@ function makePeers() {
     approvalService: new RecordingApprovalService(),
     questionService: new RecordingQuestionService(),
     logService: new NoopLogService(),
+    workspaceRegistry: new NoopWorkspaceRegistry(),
   };
 }
 
@@ -179,7 +208,7 @@ describe('BridgeClientAPI', () => {
 
 describe('CoreProcessService direct construction', () => {
   it('constructs, exposes a callable rpc proxy, and ready() resolves', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -187,6 +216,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     try {
       await expect(core.ready()).resolves.toBeUndefined();
@@ -197,7 +227,7 @@ describe('CoreProcessService direct construction', () => {
   });
 
   it('rpc round-trip through createRPC reaches KimiCore (getCoreInfo smoke)', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -205,6 +235,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     try {
       await core.ready();
@@ -217,7 +248,7 @@ describe('CoreProcessService direct construction', () => {
   });
 
   it('dispose is idempotent and short-circuits subsequent rpc calls', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -225,6 +256,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     await core.ready();
     core.dispose();
@@ -288,6 +320,7 @@ describe('singleton registry composition', () => {
     ix.stub(IQuestionService, questionService);
     ix.stub(IEnvironmentService, makeEnv(tmpHome));
     ix.stub(ILogService, new NoopLogService());
+    ix.stub(IWorkspaceRegistry, new NoopWorkspaceRegistry());
 
     try {
       const core = ix.createInstance(CoreProcessService, {});

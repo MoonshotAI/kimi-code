@@ -62,6 +62,7 @@ function makeAgent(input: {
       requestApproval: vi.fn(async () => input.approval ?? { decision: 'approved' }),
     },
     telemetry: { track: telemetryTrack },
+    turn: { traceIdForTurn: () => undefined },
   } as unknown as Agent;
   return { agent, telemetryTrack, exitPlanMode };
 }

@@ -192,6 +192,125 @@ describe('loop-event fold parity', () => {
     expect(context.get()).toEqual([]);
   });
 
+  it('drops an assistant whose only recorded part is an empty thinking block at step.end', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: '' },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+
+    expect(context.get()).toEqual([]);
+  });
+
+  it('drops a vacuous partial assistant left by a failed attempt when the retry begins', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: '   ' },
+    });
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's2',
+      part: { type: 'text', text: 'recovered' },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
+
+    expect(shapes(context.get())).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'recovered' }],
+        toolCalls: [],
+        toolCallId: undefined,
+        isError: undefined,
+        partial: undefined,
+      },
+    ]);
+  });
+
+  it('seals a step whose thinking block has real content', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: 'real reasoning' },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+
+    expect(context.get().at(-1)?.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
+  });
+
+  it('seals a step whose empty thinking block carries a provider signature', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: '', encrypted: 'sig' },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+
+    expect(context.get().at(-1)?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+  });
+
+  it('seals a step that pairs an empty thinking block with real text', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: '' },
+    });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'text', text: 'answer' },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+
+    expect(context.get().at(-1)?.content).toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'answer' },
+    ]);
+  });
+
+  it('seals an assistant with tool calls even when its thinking block is empty', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    context.appendLoopEvent({
+      type: 'content.part',
+      stepUuid: 's1',
+      part: { type: 'think', think: '' },
+    });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 's1',
+      toolCallId: 'c1',
+      name: 'Lookup',
+      args: {},
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+
+    expect(shapes(context.get())).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '' }],
+        toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{}' }],
+        toolCallId: undefined,
+        isError: undefined,
+        partial: undefined,
+      },
+      {
+        role: 'tool',
+        content: expect.any(Array),
+        toolCalls: [],
+        toolCallId: 'c1',
+        isError: true,
+        partial: undefined,
+      },
+    ]);
+  });
+
   it('folds a tool-result note as structured model-only metadata', () => {
     context.append(
       {

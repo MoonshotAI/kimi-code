@@ -90,8 +90,8 @@ export interface CronSchedulerOptions {
    * Optional. Called after a recurring task fires successfully, with
    * the wall-clock timestamp of the last ideal occurrence whose
    * jittered delivery has just been delivered. The manager wires this
-   * to `store.markFired(id, ts)` + a per-id JSON write so a
-   * `kimi resume` does not replay the fire.
+   * to `store.markFired(id, ts)` + a per-id JSON write so resuming the
+   * session does not replay the fire.
    *
    * Fire-and-forget: the scheduler does not wait for persistence to
    * settle. One-shot tasks do not invoke this callback (the
@@ -172,7 +172,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   const parsedCache = new Map<string, ParsedCronExpression>();
 
   // Per-task wall-clock baseline for "where did we last look from".
-  // Now persisted across `kimi resume` via `task.lastFiredAt`: when
+  // Now persisted across session resumes via `task.lastFiredAt`: when
   // the scheduler first sees a task whose `lastFiredAt` is set and
   // not in the future, that timestamp seeds this map so resume does
   // not coalesce-replay already-delivered recurring fires. A bogus

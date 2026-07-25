@@ -26,6 +26,8 @@ Written in **TypeScript**, with strict types and zero runtime dependencies.
   backed by a Redis-style **skip list** with O(log N) rank/range; unique and
   sparse supported; array fields indexed per element.
 - **RESP server** (optional): talk to it with `redis-cli` / `ioredis`.
+- **ClusterDb** (optional sharding layer): multi-process concurrent read/write
+  over N sharded MiniDb directories, scaling write throughput with shard count.
 - **Value codecs**: `buffer`, `string`, or `json`.
 - **Zero dependencies**, pure `node:*` built-ins.
 
@@ -261,6 +263,14 @@ bound the metadata/index footprint; it does not delete value bytes from disk
 because values are already stored outside RAM. `db.stats.evictions` and
 `db.stats.maxMemoryRejections` track the behavior.
 
+The budget is tracked in **approximate logical bytes** (key + value + dt
+metadata), not real JS heap usage. Actual per-key overhead is higher — on the
+order of several hundred bytes per key for the Map entry, the ordered index
+node, and bookkeeping — so a database of many small keys needs far more RAM
+than `store.bytes` suggests. (Measured: ~0.6 KB of heap per key for tiny
+records, so 1M small keys ≈ 600 MB of heap.) For millions of small keys,
+prefer `valueMode: 'disk'` and/or budget accordingly.
+
 ### Online backup / restore
 
 ```js
@@ -350,6 +360,14 @@ sorting in memory. On 10k sessions in one workspace, paginating with
 `compoundRange` is ~20–40× faster than "fetch-all + sort", and stays
 sub-millisecond at any offset.
 
+Multi-process `ClusterDb` scaling across process counts × shard counts (the
+headline: shard-affinity writes scale ~linearly until the single-shard speed
+is reached; uniform cross-shard traffic pays lock handoffs):
+
+```bash
+pnpm bench:cluster   # bench/cluster.ts — spawns real writer/reader processes
+```
+
 ## Testing
 
 Three layers of tests, run with the built-in `node:test` runner (no deps):
@@ -377,6 +395,13 @@ long-run behavior:
 | `durability.test.js` | `always`/`everysec`/`no` close-durability + many open/close cycles |
 | `boundary.test.js` | key-length limits, large values, many keys, empty db |
 | `soak.test.js` | sustained ops + heap stability (opt-in: `SOAK=30 npm run test:e2e`) |
+
+The **cluster suite** (`test/cluster/*.test.ts`) covers the `ClusterDb`
+sharding layer: topology/routing, merged scans, lock contention and lease
+renewal in-process, cross-shard indexes/compaction, true multi-process
+scenarios (concurrent writers on disjoint and shared shards, live cross-process
+read visibility, read/write storms) and crash takeovers (`kill -9` → contiguous
+recovery + stale-lock handoff).
 
 ## Design in one paragraph
 
@@ -414,6 +439,49 @@ const r = await MiniDb.open({ dir: './data', readOnly: true });
 For many clients, run the **RESP server** (single minidb process, many TCP
 clients) — that is the intended concurrent-access model, like Redis.
 
+### ClusterDb: multi-process sharding
+
+When several **processes** must read and write the same logical database
+without a server, `ClusterDb` shards the key space over N ordinary minidb
+directories (each with its own WAL, snapshot, and `db.lock`):
+
+```js
+import { ClusterDb } from '@moonshot-ai/minidb/cluster';
+
+const db = await ClusterDb.open({ dir: './data', shardCount: 16, valueCodec: 'json' });
+await db.set('user:1', { name: 'alice' });      // routed by hash to one shard
+await db.mset([['a:1', v1], ['b:2', v2]]);      // grouped per shard, atomic per shard
+const all = await db.scan({ prefix: 'user:' }); // merged over all shards
+await db.close();
+```
+
+- **Writes** never meet a single global writer: each process acquires shard
+  write locks on demand (with retry up to `lockAcquireTimeoutMs`), caches them
+  briefly (`lockPoolMaxShards`, LRU), and yields a held shard after
+  `lockHoldMs` (default 250ms) so other processes are never starved. Throughput
+  scales with the number of distinct shards being written — up to the
+  single-shard speed of MiniDb per shard.
+- **Reads** never take locks: they use the cached writer when the local
+  process holds the shard, else a read-only instance that is revalidated
+  against the shard files on every use, so a read that starts after another
+  process's commit always observes it.
+- **Consistency**: single-key and same-shard batch ops are strongly
+  consistent (single writer per shard, atomic WAL frames). Cross-shard
+  `mset`/`mdel`/`batch` are best-effort (atomic per shard, not globally;
+  `crossShard: 'none'` rejects them instead). Scans merge per-shard snapshots,
+  so entries from different shards may reflect different points in time.
+- **Indexes** (`createIndex`/`createTextIndex`) are recorded in a cluster-wide
+  registry and applied by every shard writer on open; `findEq`/`findRange`/
+  `search` merge per-shard results (text scores are per-shard). Index
+  management acquires every shard writer — run it from one process, off the
+  hot path.
+- Crash recovery is per shard: a lock left by a dead PID is taken over by the
+  next opener, exactly like single MiniDb.
+
+`crossShard: '2pc'` is reserved for a future two-phase commit and is rejected
+today. Performance numbers across process/shard counts: run
+`pnpm bench:cluster` (see `bench/cluster.ts`).
+
 For a **rebuildable cache**, use `openOrRebuild`: a corrupt cache is discarded
 and reopened empty, while a live-locked db is never destroyed:
 
@@ -435,11 +503,20 @@ const db = await MiniDb.openOrRebuild(
   cold, very large postings list can briefly block the event loop.
 - Compaction is **non-blocking for writes**: the WAL itself acts as a
   `BGREWRITEAOF`-style rewrite buffer, so the (slow) snapshot is written while
-  writers keep appending. Writes pause only for a brief final rotation (a
-  flush, a small tail copy, and two atomic renames).
+  writers keep appending. Writes pause only for the final rotation (a flush, a
+  tail copy, and two atomic renames). A pre-copy drains most of the tail
+  beforehand when writes are slow enough; under sustained writes that outrun
+  the pre-copy, the rotation absorbs a larger tail — the same bounded
+  end-of-rewrite pause Redis accepts for its AOF diff flush — so compaction
+  always terminates. Mid-compaction crashes leave `db.*.tmp` files behind,
+  which the next writer open removes automatically.
 - Snapshot encoding runs on the main thread (chunked + yielding); offloading to
   a `worker_thread` is a planned optimization.
-- Single process / single writer.
+- Single minidb directory = single process / single writer. For multi-process
+  access use `ClusterDb` (above): sharding scales writes, but hash routing
+  means whole-range scans fan out to all shards, and uniform cross-shard write
+  patterns pay shard-lock handoff costs (`lockHoldMs` per yield) — workloads
+  with per-process shard affinity scale best.
 
 ## Credits
 

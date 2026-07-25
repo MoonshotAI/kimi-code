@@ -7,12 +7,23 @@
  * tool re-throws aborts so the executor can classify user cancellation.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { lookup } from 'node:dns/promises';
+
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 import { FetchURLTool } from '#/app/web/tools/fetch-url';
 import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types';
+
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
+
+// LocalFetchURLProvider resolves hostnames before fetching; keep DNS
+// hermetic so provider-level tests never touch the real resolver.
+beforeEach(() => {
+  (lookup as unknown as Mock).mockReset();
+  (lookup as unknown as Mock).mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';

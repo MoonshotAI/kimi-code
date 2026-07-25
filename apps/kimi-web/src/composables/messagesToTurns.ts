@@ -471,12 +471,13 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
 
 
 /**
- * Whether a USER-role message should be shown. Mirrors the TUI's
- * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
- * user-typed slash command) is displayed; system-injected user turns
- * (compaction summaries, injections, hook results, retries, system triggers,
- * background tasks, cron) are hidden. The origin arrives via message metadata
- * (see toProtocolMessage in @moonshot-ai/agent-core).
+ * Whether a USER-role message should be shown. Mirrors agent-core's
+ * isAgentReplayUserTurnRecord (agent/replay/turns.ts): only real user input
+ * (origin `user`/absent, or a user-typed slash command) is displayed;
+ * system-injected user turns (compaction summaries, injections, hook results,
+ * retries, system triggers, background tasks, cron) are hidden. The origin
+ * arrives via message metadata (see toProtocolMessage in
+ * @moonshot-ai/agent-core).
  */
 function isDisplayableUserMessage(msg: AppMessage): boolean {
   const origin = msg.metadata?.['origin'] as { kind?: string; trigger?: string } | undefined;

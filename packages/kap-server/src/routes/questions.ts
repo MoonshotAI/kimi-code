@@ -53,19 +53,21 @@ import {
   type QuestionResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
-  listPendingQuestionsQuerySchema,
-  listPendingQuestionsResponseSchema,
   type QuestionItem as ProtocolQuestionItem,
   type QuestionOption as ProtocolQuestionOption,
   type QuestionRequest as ProtocolQuestionRequest,
   type QuestionResponse as ProtocolQuestionResponse,
+} from '../protocol/question';
+import {
+  listPendingQuestionsQuerySchema,
+  listPendingQuestionsResponseSchema,
   questionAlreadyResolvedDataSchema,
   questionDismissResultSchema,
   questionResolveRequestSchema,
   questionResolveResultSchema,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-question';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

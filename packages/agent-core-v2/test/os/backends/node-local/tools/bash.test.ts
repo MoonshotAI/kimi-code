@@ -28,10 +28,11 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
+import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
@@ -313,7 +314,6 @@ const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'lost',
 ]);
 const SIGTERM_GRACE_MS = 5_000;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 interface ForegroundRelease {
@@ -542,7 +542,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
         const signal = registerOptions.signal;
         const abortFromSignal = (): void => {
           if (entry.foregroundRelease === undefined) return;
-          void stopEntry(entry, USER_INTERRUPT_REASON);
+          void stopEntry(entry, userCancellationReason().message);
         };
         if (signal.aborted) {
           abortFromSignal();
@@ -610,6 +610,10 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       const entry = tasks.get(taskId);
       if (entry === undefined) return undefined;
       return stopEntry(entry, reason);
+    },
+
+    async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+      return service.stop(taskId, userCancellationReason().message);
     },
 
     async stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {
@@ -692,11 +696,13 @@ async function executeTool(
   return execution.execute(executionContext as ExecutableToolContext);
 }
 
-function stubProfile(isToolActive: (name: string) => boolean = () => true): IAgentProfileService {
+function stubToolPolicy(
+  isToolActive: (name: string) => boolean = () => true,
+): IAgentToolPolicyService {
   return {
     _serviceBrand: undefined,
     isToolActive,
-  } as unknown as IAgentProfileService;
+  } as unknown as IAgentToolPolicyService;
 }
 
 function stubConfig(values: Record<string, unknown> = {}): IConfigService {
@@ -711,10 +717,10 @@ function bashTool(
   env: IHostEnvironment = createTestEnv(),
   ctx: ISessionContext = createTestCtx(),
   background: IAgentTaskService = createFakeTaskService().service,
-  profile: IAgentProfileService = stubProfile(),
+  toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
 ): BashTool {
-  return new BashTool(runner, env, ctx, background, profile, config);
+  return new BashTool(runner, env, ctx, background, toolPolicy, config);
 }
 
 
@@ -1006,7 +1012,7 @@ describe('BashTool', () => {
         createTestEnv(),
         createTestCtx(),
         createFakeTaskService().service,
-        stubProfile(),
+        stubToolPolicy(),
         stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
       );
 
@@ -1032,7 +1038,7 @@ describe('BashTool', () => {
         createTestEnv(),
         createTestCtx(),
         createFakeTaskService().service,
-        stubProfile(),
+        stubToolPolicy(),
         stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
       );
 
@@ -1163,7 +1169,7 @@ describe('BashTool', () => {
     const fullOutput = 'short line\n'.repeat(6_000);
     const { runner } = createTestRunner(processWithOutput({ stdout: fullOutput }));
     const { service } = createFakeTaskService();
-    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubProfile(() => false));
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubToolPolicy(() => false));
 
     const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
     const output = result.output as string;
@@ -1235,7 +1241,7 @@ describe('BashTool', () => {
       createTestEnv(),
       createTestCtx(),
       createFakeTaskService().service,
-      stubProfile((name) => name !== 'TaskList'),
+      stubToolPolicy((name) => name !== 'TaskList'),
     );
 
     expect(tool.description).toContain('Background execution is disabled for this agent');
@@ -1260,7 +1266,7 @@ describe('BashTool', () => {
       createTestEnv(),
       createTestCtx(),
       createFakeTaskService().service,
-      stubProfile(),
+      stubToolPolicy(),
       stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
     );
     expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
@@ -1271,7 +1277,7 @@ describe('BashTool', () => {
       createTestEnv(),
       createTestCtx(),
       createFakeTaskService().service,
-      stubProfile(),
+      stubToolPolicy(),
       stubConfig({ background: { bashAutoBackgroundOnTimeout: false } }),
     );
     expect(legacyKillOnTimeout.description).toContain('hits its timeout is killed');
@@ -1281,10 +1287,43 @@ describe('BashTool', () => {
       createTestEnv(),
       createTestCtx(),
       createFakeTaskService().service,
-      stubProfile(() => false),
+      stubToolPolicy(() => false),
     );
     expect(noBackground.description).not.toContain('moved to the background instead of being killed');
     expect(noBackground.description).toContain('hits its timeout is killed');
+  });
+
+  it('resolves the detach timeout from the bashTaskTimeoutS config', async () => {
+    async function detachTimeoutMsFor(
+      configValues: Record<string, unknown>,
+    ): Promise<number | undefined> {
+      const { runner } = createTestRunner(processWithOutput());
+      const { service, tasks } = createFakeTaskService();
+      const tool = bashTool(
+        runner,
+        createTestEnv(),
+        createTestCtx(),
+        service,
+        stubToolPolicy(),
+        stubConfig(configValues),
+      );
+
+      const result = await executeTool(
+        tool,
+        context({ command: 'watch', run_in_background: true, description: 'watch files' }),
+      );
+      expect(result).toMatchObject({ isError: false });
+
+      const taskId = service.list(false)[0]!.taskId;
+      return tasks.get(taskId)?.options.detachTimeoutMs;
+    }
+
+    await expect(detachTimeoutMsFor({})).resolves.toBe(600_000);
+    await expect(detachTimeoutMsFor({ task: { bashTaskTimeoutS: 30 } })).resolves.toBe(30_000);
+    await expect(detachTimeoutMsFor({ background: { bashTaskTimeoutS: 45 } })).resolves.toBe(
+      45_000,
+    );
+    await expect(detachTimeoutMsFor({ task: { bashTaskTimeoutS: 0 } })).resolves.toBe(0);
   });
 });
 
@@ -1414,7 +1453,7 @@ describe('BashTool background mode', () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeTaskService();
-    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubProfile(() => false));
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubToolPolicy(() => false));
 
     const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
     await vi.waitFor(() => {
@@ -1485,7 +1524,7 @@ describe('BashTool background mode', () => {
       runner,
       createTestEnv(), createTestCtx(),
       createFakeTaskService().service,
-      stubProfile(() => false),
+      stubToolPolicy(() => false),
     );
 
     const unavailable = await executeTool(
@@ -1762,7 +1801,7 @@ describe('BashTool prompt / runtime consistency', () => {
       [...enabledTool.description.matchAll(/`(Task[A-Za-z]+)`/g)].map((match) => match[1]),
     );
 
-    const tool = bashTool(runner, createTestEnv(), createTestCtx(), createFakeTaskService().service, stubProfile(() => false));
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), createFakeTaskService().service, stubToolPolicy(() => false));
     const result = await executeTool(
       tool,
       context({ command: 'sleep 10', run_in_background: true, description: 'watch' }),

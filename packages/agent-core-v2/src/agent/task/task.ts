@@ -92,6 +92,7 @@ export interface IAgentTaskService {
   suppressTerminalNotification(taskId: string): Promise<void>;
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
+  stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]>;
   stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]>;
   wait(

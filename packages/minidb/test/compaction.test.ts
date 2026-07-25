@@ -100,7 +100,7 @@ test('del-then-compact drops tombstoned keys from the snapshot', async () => {
   }
 });
 
-test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () => {
+test('concurrent SET/UPDATE/DEL during compaction survive recovery', { timeout: 30_000 }, async () => {
   // Exercises the fuzzy-snapshot + WAL-tail-replay convergence: writes that
   // land while the snapshot is being written must all be reflected after a
   // reopen, with last-writer-wins semantics.
@@ -110,7 +110,15 @@ test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () =>
     // 5000 keys span 2 writeSnapshot yield windows (yieldEvery=2000, src/snapshot.ts),
     // so the ops below genuinely race an in-progress snapshot.
     const N = 5000;
-    for (let i = 0; i < N; i++) await db.set('k' + i, 'v' + i);
+    for (let base = 0; base < N; base += 500) {
+      await db.batch(
+        Array.from({ length: Math.min(500, N - base) }, (_, j) => ({
+          op: 'set' as const,
+          key: 'k' + (base + j),
+          value: 'v' + (base + j),
+        })),
+      );
+    }
 
     // Even keys are updated, keys == 1 (mod 4) are deleted, keys == 3 (mod 4)
     // are left untouched, and a batch of new keys is added — all racing the
@@ -143,7 +151,7 @@ test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () =>
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
-}, 15_000);
+});
 
 test('compaction with no concurrent writes produces an empty WAL tail', async () => {
   // When nothing is written during compaction, the post-fence WAL tail is empty

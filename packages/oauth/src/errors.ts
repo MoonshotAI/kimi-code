@@ -16,8 +16,8 @@
  */
 
 export class OAuthError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'OAuthError';
   }
 }
@@ -30,8 +30,8 @@ export class OAuthUnauthorizedError extends OAuthError {
 }
 
 export class OAuthConnectionError extends OAuthError {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'OAuthConnectionError';
   }
 }

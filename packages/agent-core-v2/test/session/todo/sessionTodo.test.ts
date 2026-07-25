@@ -146,6 +146,7 @@ function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): Lifecycl
     onDidDispose: onDidDispose.event,
     get: (id: string) => byId.get(id),
     list: () => [...byId.values()],
+    broadcastPermissionMode: () => {},
     create: async () => {
       throw new Error('not implemented');
     },

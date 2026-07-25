@@ -19,7 +19,7 @@
  *   - `message.not_found`  → 40403
  */
 
-import type { Message, MessageRole } from '#/agent/contextMemory/wireMessage';
+import type { Message, MessageRole } from '#/agent/contextMemory/protocolMessage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

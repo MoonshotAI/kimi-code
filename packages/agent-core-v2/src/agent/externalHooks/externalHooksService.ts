@@ -32,16 +32,14 @@ import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 import {
-  IAgentPermissionGate,
-} from '#/agent/permissionGate/permissionGate';
-import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt/prompt';
 import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -100,12 +98,10 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   }
 
   private registerListeners(): void {
+    this.registerPermissionHooks();
+
     this.registerToolHooks(
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
-    );
-
-    this.registerPermissionHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPermissionGate)),
     );
 
     this.registerPromptHooks(
@@ -129,13 +125,11 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register('externalHooks', async (ctx, next) => {
-        const reason = await this.runPreToolUse(ctx);
+      toolExecutor.onBeforeExecuteTool(async (event) => {
+        const reason = await this.runPreToolUse(event);
         if (reason !== undefined) {
-          ctx.decision = { block: true, reason };
-          return;
+          event.veto(denyToolExecution(reason));
         }
-        await next();
       }),
     );
     this._register(
@@ -146,7 +140,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     );
   }
 
-  private registerPermissionHooks(_permission: IAgentPermissionGate): void {
+  private registerPermissionHooks(): void {
     this._register(
       this.eventBus.subscribe('permission.approval.requested', (e) => {
         const { type: _type, ...inputData } = e;
@@ -233,7 +227,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     );
   }
 
-  private async runPreToolUse(ctx: ToolBeforeExecuteContext): Promise<string | undefined> {
+  private async runPreToolUse(ctx: ResolvedToolExecutionHookContext): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
     const toolInput = isPlainRecord(ctx.args) ? ctx.args : {};
     const block = await this.runner.triggerBlock('PreToolUse', {

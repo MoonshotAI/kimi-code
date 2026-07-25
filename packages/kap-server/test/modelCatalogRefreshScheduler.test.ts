@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   IConfigService,
-  IModelCatalogService,
+  IProviderDiscoveryService,
   ModelCatalogConfig,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -12,7 +12,7 @@ import type { ServerLogger } from '../src/services/pinoLoggerService';
 const EMPTY_RESULT = { changed: [], unchanged: [], failed: [] };
 
 function makeCatalog(refreshProviderModels = vi.fn(async () => EMPTY_RESULT)) {
-  return { refreshProviderModels } as unknown as IModelCatalogService;
+  return { refreshProviderModels } as unknown as IProviderDiscoveryService;
 }
 
 function makeConfig(catalogConfig?: ModelCatalogConfig): IConfigService {

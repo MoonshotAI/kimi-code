@@ -102,7 +102,12 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
         execute: (context) => this.executeUserTool(context, name, args),
       }),
     };
-    this.registrations.set(name, this._register(this.registry.register(tool, { source: 'user' })));
+    this.registrations.set(
+      name,
+      this._register(
+        this.registry.register(tool, { source: 'user', disclosure: input.disclosure }),
+      ),
+    );
     if (options?.activate === false) return;
     this.profile.addActiveTool(name);
   }

@@ -13,8 +13,6 @@ const sampleWorkspace: Workspace = {
   id: 'wd_kimi-code_0123456789ab',
   root: '/Users/foo/code/kimi-code',
   name: 'kimi-code',
-  is_git_repo: true,
-  branch: 'main',
   created_at: '2026-06-08T09:00:00.000Z',
   last_opened_at: '2026-06-08T09:30:00.000Z',
   session_count: 3,
@@ -47,11 +45,6 @@ describe('workspaceIdSchema', () => {
 describe('workspaceSchema', () => {
   it('round-trips a fully populated Workspace', () => {
     expect(workspaceSchema.parse(sampleWorkspace)).toEqual(sampleWorkspace);
-  });
-
-  it('accepts branch=null (detached HEAD / no git)', () => {
-    const detached = { ...sampleWorkspace, is_git_repo: true, branch: null };
-    expect(workspaceSchema.parse(detached).branch).toBeNull();
   });
 
   it('rejects name longer than 100 chars', () => {

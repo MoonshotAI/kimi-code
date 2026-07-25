@@ -785,6 +785,16 @@ describe('context-projector', () => {
     expect(proj.contextTokens).toBe(20); // 10+5+2+3, absolute (not summed across usage.record)
   });
 
+  it('uses context.update_token_count as the latest absolute context-token snapshot', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.update_token_count' as const, tokenCount: 42 }, raw: {} },
+    ];
+
+    const proj = projectContext(entries as any);
+
+    expect(proj.contextTokens).toBe(42);
+  });
+
   // ---- Fix ②: contextTokens updates on clear / compaction lifecycle events ---
   // agent-core ContextMemory sets _tokenCount on clear() (→ 0) and
   // applyCompaction(result) (→ result.tokensAfter), not only on step.end. These

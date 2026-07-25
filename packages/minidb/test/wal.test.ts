@@ -113,3 +113,26 @@ test('recovery truncates a torn/corrupt tail at the error offset', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('seal(): rejects new appends with WAL_SEALED, queued frames stay flushable', async () => {
+  const { dir, file } = await tmpWalPath();
+  try {
+    const wal = new WAL(file, { fsyncPolicy: 'no' });
+    await wal.open();
+    await wal.append(encodeFrame({ type: TYPE_SET, key: B('a'), value: B('1') }));
+    wal.seal();
+    wal.seal(); // idempotent
+    await assert.rejects(wal.append(encodeFrame({ type: TYPE_SET, key: B('b'), value: B('2') })), (err) => {
+      assert.equal(err.code, 'WAL_SEALED');
+      return true;
+    });
+    await wal.close(); // flushes the pre-seal frame
+    const frames = parseAll(await fs.readFile(file));
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].key.toString(), 'a');
+    // after close the legacy "WAL is closed" rejection is preserved
+    await assert.rejects(wal.append(encodeFrame({ type: TYPE_SET, key: B('c'), value: B('3') })), /WAL is closed/);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

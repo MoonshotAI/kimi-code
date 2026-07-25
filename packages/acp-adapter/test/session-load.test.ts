@@ -63,6 +63,7 @@ function makeInMemoryStreamPair(): {
 function makeSessionWithHistory(
   sessionId: string,
   history: ReadonlyArray<unknown>,
+  statusThinkingEffort?: string,
 ): Session {
   return {
     id: sessionId,
@@ -77,6 +78,10 @@ function makeSessionWithHistory(
         },
       },
     }),
+    getStatus:
+      statusThinkingEffort === undefined
+        ? undefined
+        : async () => ({ thinkingEffort: statusThinkingEffort }),
   } as unknown as Session;
 }
 
@@ -318,5 +323,25 @@ describe('AcpServer session/load replay', () => {
     expect(modelOpt!.currentValue).toBe('kimi-coder');
     // Phase 15: model dropdown holds N rows (no `,thinking` variants).
     expect(modelOpt!.options).toHaveLength(2);
+  });
+
+  it('advertises thinking on when resume state omits effort and live status is high', async () => {
+    const sessionId = 'sess-status-thinking-high';
+    const session = makeSessionWithHistory(sessionId, [], 'high');
+    const harness = makeHarness({ hasUsableToken: true, session });
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    void new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const clientConn = new ClientSideConnection((_a) => new CapturingClient(), clientStream);
+
+    const response = await clientConn.loadSession({
+      sessionId,
+      cwd: '/tmp/x',
+      mcpServers: [],
+    });
+
+    const thinking = response.configOptions?.find((option) => option.id === 'thinking');
+    if (thinking?.type !== 'select') throw new Error('thinking option must be a select');
+    expect(thinking.currentValue).toBe('on');
   });
 });

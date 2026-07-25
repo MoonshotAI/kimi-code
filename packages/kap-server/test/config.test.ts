@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { configResponseSchema, type ConfigResponse } from '@moonshot-ai/protocol';
+import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
