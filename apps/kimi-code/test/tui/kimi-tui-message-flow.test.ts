@@ -68,7 +68,7 @@ vi.mock('../../src/feedback/codebase', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/feedback/codebase')>();
   return {
     ...actual,
-    scanCodebase: vi.fn().mockResolvedValue(),
+    scanCodebase: vi.fn(async () => {}),
     packageCodebase: vi.fn(),
   };
 });
@@ -99,9 +99,7 @@ const { enLocale, resolveKey, interpolate } = vi.hoisted(() => {
           | Record<string, unknown>
           | undefined;
         if (msgs) {
-          const msgObj = (msgs)['messages'] as
-            | Record<string, unknown>
-            | undefined;
+          const msgObj = msgs['messages'] as Record<string, unknown> | undefined;
           if (msgObj && typeof msgObj[lastName] === 'string') return msgObj[lastName];
         }
         return undefined;

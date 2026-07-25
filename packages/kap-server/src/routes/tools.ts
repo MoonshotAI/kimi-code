@@ -217,7 +217,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 // callers translate that into an empty list (GETs) or 40408 (restart).
 // ---------------------------------------------------------------------------
 
-async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
+async function resolveEffectiveAgent(core: Scope, sessionId?: string) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
   if (sid === undefined) return;
   const session = core.accessor.get(ISessionLifecycleService).get(sid);

@@ -1059,7 +1059,9 @@ export class KimiTUI {
       renderMode: 'plain',
       content: '',
     };
-    const outputComponent = new ShellRunComponent(() =>{  this.state.ui.requestRender(); });
+    const outputComponent = new ShellRunComponent(() => {
+      this.state.ui.requestRender();
+    });
     this.shellOutputStreams.set(commandId, { entry: outputEntry, component: outputComponent });
     this.state.transcriptEntries.push(outputEntry);
     markTranscriptComponent(outputComponent, outputEntry);
@@ -2745,7 +2747,7 @@ export class KimiTUI {
     );
   }
 
-  private syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
+  private syncAgentSwarmActivitySpinner(spinner?: MoonLoader): void {
     this.sessionEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 

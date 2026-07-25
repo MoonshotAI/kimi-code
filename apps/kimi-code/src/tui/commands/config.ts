@@ -373,7 +373,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
       promise,
       new Promise<undefined>((resolve) => {
         timeout = setTimeout(() => {
-          resolve();
+          resolve(void 0);
         }, timeoutMs);
       }),
     ]);

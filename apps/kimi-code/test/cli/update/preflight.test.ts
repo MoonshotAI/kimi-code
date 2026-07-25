@@ -246,13 +246,13 @@ describe('runUpdatePreflight', () => {
     // Tests that exercise the bypass opt back in with `vi.stubEnv(..., '1')`.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
-    mocks.writeUpdateInstallState.mockResolvedValue();
+    mocks.writeUpdateInstallState.mockImplementation(async () => {});
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());
     mocks.resolveUpdateDeviceId.mockReturnValue('test-device');
-    mocks.appendRolloutDecisionLog.mockResolvedValue();
+    mocks.appendRolloutDecisionLog.mockImplementation(async () => {});
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue({
       filePath: '/tmp/kimi-update-install.lock',
-      release: vi.fn().mockResolvedValue(),
+      release: vi.fn(async () => {}),
     });
   });
 
@@ -726,7 +726,7 @@ describe('runUpdatePreflight', () => {
       acquired = true;
       return {
         filePath: '/tmp/kimi-update-install.lock',
-        release: vi.fn().mockResolvedValue(),
+        release: vi.fn(async () => {}),
       };
     });
     mockSpawnExit(0);
