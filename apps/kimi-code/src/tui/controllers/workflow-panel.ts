@@ -34,7 +34,7 @@ export class WorkflowPanelController {
   /** Subscribe to the session's event stream. */
   subscribe(session: Session): void {
     this.unsubscribeFn?.();
-    this.unsubscribeFn = session.on('event', (event: Event) => {
+    this.unsubscribeFn = session.onEvent((event: Event) => {
       this.handleEvent(event);
     });
   }
