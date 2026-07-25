@@ -196,7 +196,7 @@ export async function runV2Print(
       throw cleanupOutcome.error;
     }
   };
-  removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup, streams);
+  removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
   try {
     // Install the appender BEFORE resolving the session: `session_started` and

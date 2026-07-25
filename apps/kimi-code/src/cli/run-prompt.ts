@@ -184,7 +184,6 @@ export async function runPrompt(
   removeTerminationCleanup = installPromptTerminationCleanup(
     promptProcess,
     cleanupPromptRun,
-    streams,
   );
 
   try {
@@ -450,7 +449,6 @@ function installHeadlessHandlers(session: PromptSession): void {
 export function installPromptTerminationCleanup(
   promptProcess: PromptProcess,
   cleanup: () => Promise<void>,
-  streams: readonly Writable[],
 ): () => void {
   let terminating = false;
   const exitAfterCleanup = async (signal: NodeJS.Signals): Promise<void> => {
@@ -459,7 +457,6 @@ export function installPromptTerminationCleanup(
     try {
       await cleanup();
     } finally {
-      await drainStdio(streams);
       promptProcess.exit(signalExitCode(signal));
     }
   };
