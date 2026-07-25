@@ -7,6 +7,7 @@ Read media content from a file.
 - If automatic compression cannot safely produce an image within model limits, the tool returns an error and does not send the original image. Follow the error: use Bash or an available image-processing tool to create a smaller copy, then read that copy. Do not retry the unchanged file.
 - The system will notify you when there is anything wrong when reading the file.
 - This tool is a tool that you typically want to use in parallel. Always read multiple files in one response when possible.
+- For video files, this is the preferred way to analyze video content. Do not write Python scripts or ffmpeg commands to extract frames manually — use this tool to read the video directly.
 - This tool can only read image or video files. To read text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.
 - If the file doesn't exist or path is invalid, an error will be returned.
 - The maximum size that can be read is {{ MAX_MEDIA_MEGABYTES }}MB. An error will be returned if the file is larger than this limit.
