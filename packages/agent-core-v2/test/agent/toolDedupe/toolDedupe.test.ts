@@ -13,6 +13,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
+import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
@@ -465,6 +466,31 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, 3);
       expect((last.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
+    });
+
+    it('keeps the reminder visible through the real ToolResultTruncationService (composition)', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
+      h.registry.register(tool);
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      // Compose with the actual truncation service — the exact chain that used
+      // to drop tail-appended reminders in production.
+      const truncation = new ToolResultTruncationService(
+        { homeDir: '/home/user' } as never,
+        { scope: (s: string) => s } as never,
+        { write: async () => undefined } as never,
+      );
+      const modelResult = await truncation.truncateForModel({
+        toolName: 'Read',
+        toolCallId: 'c2',
+        result: last!,
+      });
+      expect(modelResult.output as string).toContain('<system-reminder>');
+      expect((modelResult.output as string).indexOf('<system-reminder>')).toBeLessThan(2_000);
     });
   });
 

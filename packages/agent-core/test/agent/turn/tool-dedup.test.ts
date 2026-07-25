@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ExecutableToolResult } from '../../../src/loop/types';
 import type {
   TelemetryClient,
   TelemetryProperties,
 } from '../../../src/telemetry';
 import { ToolCallDeduplicator, __testing } from '../../../src/agent/turn/tool-dedup';
+import { budgetToolResultForModel } from '../../../src/agent/turn/tool-result-budget';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = __testing;
 
@@ -264,6 +269,29 @@ describe('ToolCallDeduplicator', () => {
       }
       expect((last!.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
       expect((last!.output as string).endsWith('R')).toBe(true);
+    });
+
+    it('keeps the reminder visible through the real budgetToolResultForModel offload (composition)', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const big = 'x'.repeat(60_000);
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult(big));
+        dedup.endStep();
+      }
+      // Compose with the actual oversized-result offload — the exact chain that
+      // used to drop tail-appended reminders in production.
+      const homedir = await mkdtemp(join(tmpdir(), 'dedupe-budget-'));
+      const modelResult = await budgetToolResultForModel({
+        homedir,
+        toolName: 'Read',
+        toolCallId: 'c2',
+        result: last!,
+      });
+      expect(typeof modelResult.output).toBe('string');
+      expect(modelResult.output as string).toContain('<system-reminder>');
+      expect((modelResult.output as string).indexOf('<system-reminder>')).toBeLessThan(2_000);
     });
   });
 
