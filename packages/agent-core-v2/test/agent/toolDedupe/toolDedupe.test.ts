@@ -441,8 +441,35 @@ describe('AgentToolDedupeService', () => {
     });
   });
 
+  describe('reminder survives oversized-result truncation (regression)', () => {
+    // Oversized text results are later replaced by a head-only 2K preview
+    // (agent/toolResultTruncation). Reminders used to be appended at the tail
+    // and were silently cut off there — the model looped 12 times with no
+    // reminder ever visible. They must now sit at the head.
+    it('keeps the reminder inside the first 2K chars of an oversized result', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
+      h.registry.register(tool);
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      const headPreview = (last!.output as string).slice(0, 2_000);
+      expect(headPreview).toContain('<system-reminder>');
+      expect(headPreview).toContain('what new information you expect');
+    });
+
+    it('prepends the reminder ahead of the original output', async () => {
+      const h = createHarness();
+      registerRead(h);
+      const last = await runStreak(h, 3);
+      expect((last.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
+    });
+  });
+
   describe('reminder injection into ContentPart[] outputs', () => {
-    it('appends reminder1 to a trailing text part at streak 3', async () => {
+    it('prepends reminder1 to the leading text part at streak 3', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({ output: [{ type: 'text', text: 'hello' }] }));
       h.registry.register(tool);
@@ -450,10 +477,10 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
       }
       const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
-      expect(final!.result.output).toBe('hello' + REMINDER_TEXT_1);
+      expect(final!.result.output).toBe(REMINDER_TEXT_1 + 'hello');
     });
 
-    it('appends reminder2 to a trailing text part at streak 5', async () => {
+    it('prepends reminder2 to the leading text part at streak 5', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({ output: [{ type: 'text', text: 'hello' }] }));
       h.registry.register(tool);
@@ -461,10 +488,10 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', { a: 1 })]);
       }
       const [final] = await runStep(h, 1, 5, [toolCall('final', 'X', { a: 1 })]);
-      expect(final!.result.output).toBe('hello' + makeReminderText2(5));
+      expect(final!.result.output).toBe(makeReminderText2(5) + 'hello');
     });
 
-    it('pushes a new text part when trailing part is non-text', async () => {
+    it('prepends a new text part when leading part is non-text', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({
         output: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
@@ -476,7 +503,7 @@ describe('AgentToolDedupeService', () => {
       const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
       const arr = final!.result.output as Array<{ type: string; text?: string }>;
       expect(arr.some((part) => part.type === 'image_url')).toBe(true);
-      expect(arr.at(-1)).toEqual({ type: 'text', text: REMINDER_TEXT_1 });
+      expect(arr[0]).toEqual({ type: 'text', text: REMINDER_TEXT_1 });
     });
 
     it('preserves isError flag when injecting reminder', async () => {

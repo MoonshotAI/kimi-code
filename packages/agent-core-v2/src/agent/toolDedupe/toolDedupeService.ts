@@ -80,18 +80,27 @@ interface CheckedToolCall {
   readonly syntheticResult: ToolDedupeResult | null;
 }
 
+/**
+ * Prepends the reminder to the tool result output.
+ *
+ * The reminder MUST be at the head, not the tail: oversized text results are
+ * later replaced by a head-only preview (`toolResultTruncation` keeps only the
+ * first 2000 chars after `onDidExecuteTool` hooks run). A tail-appended
+ * reminder is silently cut off there, so the model never sees it exactly in
+ * the large-output scenarios where repeat loops are most likely.
+ */
 function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
   if (typeof output === 'string') {
-    newOutput = output + reminderText;
+    newOutput = reminderText + output;
   } else {
-    const arr: ContentPart[] = [...output];
-    const last = arr.at(-1);
-    if (last !== undefined && last.type === 'text') {
-      arr[arr.length - 1] = { type: 'text', text: last.text + reminderText };
+    const arr = [...output];
+    const first = arr[0];
+    if (first !== undefined && first.type === 'text') {
+      arr[0] = { type: 'text', text: reminderText + first.text };
     } else {
-      arr.push({ type: 'text', text: reminderText });
+      arr.unshift({ type: 'text', text: reminderText });
     }
     newOutput = arr;
   }
