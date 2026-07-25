@@ -24,6 +24,50 @@ const MOCK_PROVIDER = {
 } as const;
 
 describe('Agent resume', () => {
+  it('omits an assistant step interrupted after non-empty thinking from the next request', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Write a plan' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'interrupted-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'interrupted-thinking',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          part: { type: 'think', think: 'The plan is written. I should request approval.' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.messages).toHaveLength(1);
+    expect(ctx.agent.context.messages[0]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: 'Write a plan' }],
+      toolCalls: [],
+    });
+  });
+
   it('does not append metadata when resuming records that include legacy app version', async () => {
     const persistence = new RecordingAgentPersistence([
       {
