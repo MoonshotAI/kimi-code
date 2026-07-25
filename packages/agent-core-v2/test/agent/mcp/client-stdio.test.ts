@@ -324,4 +324,14 @@ describe('mergeStdioEnv', () => {
     await rm(dir, { recursive: true, force: true });
     expect(mergeStdioEnv(undefined, { PATH: dir })['PATH']).toBe(dir);
   });
+
+  it('preserves bracketed [::1] in NO_PROXY for a Node child command', () => {
+    const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' }, 'node');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+  });
+
+  it('omits bracketed [::1] in NO_PROXY for a non-Node child command', () => {
+    const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' }, 'python');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
+  });
 });
