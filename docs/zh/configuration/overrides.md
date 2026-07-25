@@ -59,7 +59,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | `--auto` | 以 auto 权限模式启动：完全自主，Agent 不会向用户提问 |
 | `--plan` | 以 Plan 模式启动 |
 | `-m, --model <model>` | 指定本次使用的模型别名 |
-| `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出。以 auto 权限模式运行，工具调用会被自动批准，不受 `default_permission_mode` 影响 |
+| `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出。以 auto 权限模式运行，工具调用会被自动批准，不受 `default_permission_mode` 影响；`[[permission.rules]]` 中的 `deny` 规则仍然生效 |
 | `--output-format <format>` | `-p` 模式的输出格式：`text` 或 `stream-json` |
 | `--skills-dir <dir>` | 替换自动发现的 Skills 目录（可重复，仅本次生效） |
 
