@@ -941,6 +941,92 @@ describe('parseToolCallArguments', () => {
   });
 });
 
+describe('tool args normalization at the parse boundary', () => {
+  const READ_LIKE_SCHEMA = {
+    type: 'object',
+    properties: {
+      path: { type: 'string' },
+      line_offset: {
+        anyOf: [
+          { type: 'integer', minimum: 1 },
+          { type: 'integer', minimum: -1000, maximum: -1 },
+        ],
+      },
+    },
+    required: ['path'],
+    additionalProperties: false,
+  };
+
+  it('coerces schema-violating string primitives and warns via the note channel', async () => {
+    const tool = new TestTool('read_like', { parameters: READ_LIKE_SCHEMA });
+    registry.register(tool);
+
+    const results = await execute([
+      toolCall('call_coerced', 'read_like', { path: 'a.ts', line_offset: '3' }),
+    ]);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).not.toMatchObject({ isError: true });
+    expect(tool.calls[0]?.args).toEqual({ path: 'a.ts', line_offset: 3 });
+    expect(results[0]?.note).toContain(
+      'tool "read_like" received argument type(s) that did not match its schema',
+    );
+    expect(results[0]?.note).toContain('/line_offset: string "3" -> integer');
+    expect(results[0]?.note).toContain('coerced to the declared types before validation');
+    expect(results[0]?.note).not.toContain('call succeeded');
+  });
+
+  it('keeps the coercion warning ahead of the tool own note', async () => {
+    const tool = new TestTool('read_like', {
+      parameters: READ_LIKE_SCHEMA,
+      result: { output: 'contents', note: '<system>tool status.</system>' },
+    });
+    registry.register(tool);
+
+    const results = await execute([
+      toolCall('call_notes', 'read_like', { path: 'a.ts', line_offset: '-5' }),
+    ]);
+
+    const note = results[0]?.note ?? '';
+    expect(note).toContain('did not match its schema');
+    expect(note).toContain('<system>tool status.</system>');
+    expect(note.indexOf('did not match its schema')).toBeLessThan(
+      note.indexOf('<system>tool status.</system>'),
+    );
+  });
+
+  it('rejects with an honest received-type message when coercion cannot fix the args', async () => {
+    const tool = new TestTool('read_like', { parameters: READ_LIKE_SCHEMA });
+    registry.register(tool);
+
+    const results = await execute([
+      toolCall('call_rejected', 'read_like', { path: 'a.ts', line_offset: 'three' }),
+    ]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: true,
+        output:
+          'Invalid args for tool "read_like": /line_offset must be integer (received string "three"); /line_offset must match a schema in anyOf',
+      }),
+    ]);
+    expect(tool.calls).toEqual([]);
+  });
+
+  it('passes conforming args through without a note', async () => {
+    const tool = new TestTool('read_like', { parameters: READ_LIKE_SCHEMA });
+    registry.register(tool);
+
+    const results = await execute([
+      toolCall('call_clean', 'read_like', { path: 'a.ts', line_offset: 3 }),
+    ]);
+
+    expect(results[0]).not.toMatchObject({ isError: true });
+    expect(results[0]?.note).toBeUndefined();
+    expect(tool.calls[0]?.args).toEqual({ path: 'a.ts', line_offset: 3 });
+  });
+});
+
 async function execute(
   calls: ToolCall[],
   signal?: AbortSignal,

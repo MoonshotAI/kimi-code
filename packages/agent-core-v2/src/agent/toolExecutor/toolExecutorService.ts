@@ -7,7 +7,10 @@
  * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
  * events through `event`, records telemetry through `telemetry`, truncates
  * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. Bound at Agent scope.
+ * diagnostics through `log`. Non-conforming argument types are normalized
+ * through the `tool` domain's args normalization before validation, with
+ * coercions surfaced as model-visible notes on the tool result. Bound at
+ * Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -23,6 +26,7 @@ import {
   type JsonType,
   type ToolArgsValidator,
 } from '#/tool/args-validator';
+import { normalizeToolArgs, type ArgCoercion } from '#/tool/args-normalize';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
@@ -600,7 +604,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     const coercedResult = coerceToolResult(didCtx.result, call.toolName);
     const effectiveResult = normalizeToolResult(coercedResult);
-    const finalResult: ToolResult = {
+    const mergedNote = [call.normalizationNote, effectiveResult.note]
+      .filter((part): part is string => typeof part === 'string' && part.length > 0)
+      .join('\n');
+    const baseResult = {
       ...effectiveResult,
       description: result.description,
       display: result.display,
@@ -612,6 +619,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       stopBatchAfterThis: result.stopBatchAfterThis,
       delivery: coercedResult.delivery,
     };
+    const finalResult: ToolResult =
+      mergedNote.length > 0 ? { ...baseResult, note: mergedNote } : baseResult;
     return this.resultTruncation.truncateForModel({
       toolName: call.toolName,
       toolCallId: call.toolCall.id,
@@ -626,6 +635,7 @@ interface RunnableToolCall {
   readonly toolName: string;
   readonly tool: ExecutableTool;
   readonly args: unknown;
+  readonly normalizationNote?: string;
 }
 
 interface RejectedToolCall {
@@ -715,17 +725,37 @@ function preflightToolCall(
       output: unavailable,
     };
   }
-  const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
+  const normalization = normalizeToolArgs(tool.parameters, parsedArgs.data);
+  if (normalization.coercions.length > 0) {
+    log?.debug('tool args coerced to match schema', {
+      toolName,
+      toolCallId: toolCall.id,
+      coercions: normalization.coercions
+        .map((coercion) => `${coercion.path}: ${coercion.received} -> ${coercion.expected}`)
+        .join('; '),
+    });
+  }
+  const validationError = validateExecutableToolArgs(tool, normalization.args);
   if (validationError !== null) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args: parsedArgs.data,
+      args: normalization.args,
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
+  return {
+    kind: 'runnable',
+    toolCall,
+    toolName,
+    tool,
+    args: normalization.args,
+    normalizationNote:
+      normalization.coercions.length > 0
+        ? coercionNote(toolName, normalization.coercions)
+        : undefined,
+  };
 }
 
 export function parseToolCallArguments(raw: unknown): {
@@ -744,6 +774,13 @@ export function parseToolCallArguments(raw: unknown): {
   } catch (error) {
     return { data: {}, parseFailed: true, error: errorMessage(error) };
   }
+}
+
+function coercionNote(toolName: string, coercions: readonly ArgCoercion[]): string {
+  const details = coercions
+    .map((coercion) => `${coercion.path}: ${coercion.received} -> ${coercion.expected}`)
+    .join('; ');
+  return `<system>Note: tool "${toolName}" received argument type(s) that did not match its schema (${details}). They were coerced to the declared types before validation. Emit argument types exactly as the tool schema declares.</system>`;
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

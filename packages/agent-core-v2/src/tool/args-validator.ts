@@ -3,15 +3,18 @@
  *
  * Compiles tool-parameter JSON Schemas into AJV validators (draft-07 /
  * 2019-09 / 2020-12 detected per schema) and formats validation failures
- * into model-readable messages. Only the executor path loads this module,
- * so the AJV instances are paid for once, at execution time. Pure helper;
- * no scoped service.
+ * into model-readable messages — type failures report the value that was
+ * actually received, deduplicated across union branches. Only the executor
+ * path loads this module, so the AJV instances are paid for once, at
+ * execution time. Pure helper; no scoped service.
  */
 
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import Ajv2019 from 'ajv/dist/2019';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
+
+import { describeReceivedValue } from '#/tool/args-normalize';
 
 const DRAFT_07_AJV = new Ajv({ strict: false, allErrors: true });
 addFormats(DRAFT_07_AJV);
@@ -67,7 +70,18 @@ export interface JsonObject extends Record<string, JsonType> {}
 
 export type ToolArgsValidator = ValidateFunction<JsonType>;
 
-function formatValidationError(error: ErrorObject): string {
+function valueAtInstancePath(root: JsonType, instancePath: string): unknown {
+  if (instancePath.length === 0) return root;
+  let current: unknown = root;
+  for (const segment of instancePath.split('/').slice(1)) {
+    const key = segment.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function formatValidationError(error: ErrorObject, args: JsonType): string {
   if (error.keyword === 'required' && 'missingProperty' in error.params) {
     return `must have required property '${String(error.params['missingProperty'])}'`;
   }
@@ -77,7 +91,11 @@ function formatValidationError(error: ErrorObject): string {
   }
 
   const path = error.instancePath ? `${error.instancePath} ` : '';
-  return `${path}${error.message ?? 'is invalid'}`;
+  const received =
+    error.keyword === 'type'
+      ? ` (received ${describeReceivedValue(valueAtInstancePath(args, error.instancePath))})`
+      : '';
+  return `${path}${error.message ?? 'is invalid'}${received}`;
 }
 
 export function compileToolArgsValidator(schema: Record<string, unknown>): ToolArgsValidator {
@@ -95,5 +113,5 @@ export function validateToolArgs(validator: ToolArgsValidator, args: JsonType): 
     return 'Tool parameter validation failed';
   }
 
-  return errors.map((error) => formatValidationError(error)).join('; ');
+  return [...new Set(errors.map((error) => formatValidationError(error, args)))].join('; ');
 }
