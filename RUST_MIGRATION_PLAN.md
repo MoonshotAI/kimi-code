@@ -108,14 +108,23 @@
 **端到端验证**：`kimi -p` dev 冒烟经 Rust 引擎驱动（host llm_chat 回调 ×2 步、
 真实 Read 工具、答案正确渲染）；napi/rust-loop 桥接测试 33 个全绿。
 
-### 4.2 v2 路径：待完成（剩余的唯一大项）
+### 4.2 v2 路径：已接通 ✅（2026-07-27，commit `3051a2de1`）
 
-**现状**: v2 (`runV2Print` / `kimi web`) 使用纯 JS DI 服务，`agent-core-v2` 对
-`kimi-agent` 引用为 0。v2 的 turn 由 `IAgentPromptService.enqueue()` →
-`AgentLoopService.run()` 驱动，与 llmRequester / toolExecutor / stepRequestQueue /
-loopContinuation 等服务深度耦合——桥接需要给 `run()` 增加 override 接缝，并写
-v2 服务 → RunTurnOverride 输入的适配层（对应 v1 的 rust-loop 适配器）。
-预估 1-2 周，是迁移收尾的最后一块。
+桥接三件套已落地并端到端验证（`KIMI_CODE_EXPERIMENTAL_FLAG=1` 冒烟：Rust 驱动
+2 步、经 v2 executor 管线执行真实 Read、答案正确渲染）：
+
+1. **接缝**：`IAgentLoopService.setTurnOverride`；`run()` 先经 `materializeBatch`
+   把队列里的 prompt/injection 投递进 context，再整轮委托给外部引擎。
+2. **适配器**：`apps/kimi-code/src/cli/v2/rust-engine-v2.ts` —— 复用 v1 的
+   `createRunTurnOverride`，llm→llmRequester（保留系统提示词/画像/用量记录）、
+   消息→contextMemory、录制事件→appendLoopEvent、工具→toolRegistry +
+   toolExecutor（审批/策略/去重/hooks 全保留）、流式 delta→事件总线；
+   v1 `{stopReason}` 结果映射为 v2 `LoopRunResult` 判别联合。
+3. **布线**：`runV2Print` 在 enqueue 前 `installRustEngineV2`，任何加载失败
+   静默回退 JS loop（与 v1 路径同策略）。
+
+剩余加固项（非缺口）：TUI / `kimi web` 面的接入验证、override 下 mid-turn
+steer 请求的投递语义。
 
 ---
 
