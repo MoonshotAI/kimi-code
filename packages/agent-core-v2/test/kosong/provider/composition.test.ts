@@ -701,9 +701,6 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
   });
 
   it('omits prompt_cache_key on OpenAI-compatible custom endpoints (chat completions + responses)', async () => {
-    // Strictly-validating OpenAI-compatible servers reject the unknown
-    // `prompt_cache_key` field with a 400, so the bare fallback stays
-    // official-endpoint only (#2166).
     const legacy = registry.createChatProvider({
       protocol: 'openai',
       modelName: 'gpt-4o',

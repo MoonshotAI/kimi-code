@@ -4,9 +4,10 @@
  * Speaks the Responses wire format: `input` items, `instructions`,
  * `reasoning` blocks with encrypted content, and the native
  * `prompt_cache_key` field (a cache key is encoded directly — no hook
- * needed). This base carries no hook surface today; per-turn intents are
- * encoded inline in the fixed contract order. The developer-role model
- * detection lives here.
+ * needed — and only for official `api.openai.com` hosts, via
+ * `isOfficialOpenAIBaseUrl`). This base carries no hook surface today;
+ * per-turn intents are encoded inline in the fixed contract order. The
+ * developer-role model detection lives here.
  */
 
 import OpenAI from 'openai';
@@ -1060,9 +1061,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order. The
-    // `prompt_cache_key` overlay is official-OpenAI only: strictly-validating
-    // compatible endpoints reject unknown fields with a 400 (#2166).
+    // Per-turn intent overlays in the fixed contract order.
     if (options?.cacheKey !== undefined && isOfficialOpenAIBaseUrl(this._baseUrl)) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
