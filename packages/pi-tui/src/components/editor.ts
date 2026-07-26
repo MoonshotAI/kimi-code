@@ -253,6 +253,8 @@ interface RenderedEditorLayout {
 	paddingX: number;
 	contentWidth: number;
 	lines: LayoutLine[];
+	allLines: LayoutLine[];
+	scrollOffset: number;
 }
 
 export interface EditorTheme {
@@ -609,22 +611,25 @@ export class Editor implements Component, Focusable {
 		this.renderedLayout = undefined;
 	}
 
-	private selectionOffsets(line: LayoutLine): { start: number; end: number } | undefined {
+	private selectionOffsets(
+		line: LayoutLine,
+	): { start: number; end: number; lineBreakSelected: boolean } | undefined {
 		const range = this.getSelectionRange();
 		if (!range || line.logicalLine < range.start.line || line.logicalLine > range.end.line) {
 			return undefined;
 		}
+		const logicalText = this.state.lines[line.logicalLine] || "";
 		const startCol = line.logicalLine === range.start.line ? range.start.col : 0;
-		const endCol =
-			line.logicalLine === range.end.line
-				? range.end.col
-				: (this.state.lines[line.logicalLine] || "").length;
+		const endCol = line.logicalLine === range.end.line ? range.end.col : logicalText.length;
 		const start = Math.max(line.startCol, startCol);
 		const end = Math.min(line.endCol, endCol);
-		return end > start ? { start: start - line.startCol, end: end - line.startCol } : undefined;
+		const lineBreakSelected = line.logicalLine < range.end.line && line.endCol === logicalText.length;
+		return end > start || lineBreakSelected
+			? { start: start - line.startCol, end: end - line.startCol, lineBreakSelected }
+			: undefined;
 	}
 
-	private renderLayoutText(line: LayoutLine, emitCursorMarker: boolean): { text: string; cursorAtEnd: boolean } {
+	private renderLayoutText(line: LayoutLine, emitCursorMarker: boolean): { text: string; endCellVisible: boolean } {
 		const selected = this.selectionOffsets(line);
 		const cursorPos = line.hasCursor ? line.cursorPos : undefined;
 		const cursorAtEnd = cursorPos === line.text.length;
@@ -663,8 +668,17 @@ export class Editor implements Component, Focusable {
 		}
 
 		if (cursorAtEnd && emitCursorMarker) rendered += CURSOR_MARKER;
-		if (cursorAtEnd) rendered += "\x1b[7m \x1b[0m";
-		return { text: rendered, cursorAtEnd };
+		if (cursorAtEnd) {
+			rendered += "\x1b[7m \x1b[0m";
+		} else if (selected?.lineBreakSelected === true) {
+			const inverseEnd = "\x1b[27m";
+			if (selected.end === line.text.length && selected.end > selected.start && rendered.endsWith(inverseEnd)) {
+				rendered = `${rendered.slice(0, -inverseEnd.length)} ${inverseEnd}`;
+			} else {
+				rendered += inverse(" ");
+			}
+		}
+		return { text: rendered, endCellVisible: cursorAtEnd || selected?.lineBreakSelected === true };
 	}
 
 	render(width: number): string[] {
@@ -710,6 +724,8 @@ export class Editor implements Component, Focusable {
 			paddingX,
 			contentWidth,
 			lines: visibleLines,
+			allLines: layoutLines,
+			scrollOffset: this.scrollOffset,
 		};
 
 		const result: string[] = [];
@@ -739,7 +755,7 @@ export class Editor implements Component, Focusable {
 			const rendered = this.renderLayoutText(layoutLine, emitCursorMarker);
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
-			if (rendered.cursorAtEnd) {
+			if (rendered.endCellVisible) {
 				lineVisibleWidth++;
 				if (lineVisibleWidth > contentWidth && paddingX > 0) cursorInPadding = true;
 			}
@@ -1240,8 +1256,15 @@ export class Editor implements Component, Focusable {
 			return undefined;
 		}
 
-		const contentRow = Math.max(0, Math.min(layout.lines.length - 1, row - 1));
-		const line = layout.lines[contentRow];
+		let line: LayoutLine | undefined;
+		if (clamp && row < 1) {
+			line = layout.allLines[Math.max(0, layout.scrollOffset - 1)];
+		} else if (clamp && row > layout.lines.length) {
+			line = layout.allLines[Math.min(layout.allLines.length - 1, layout.scrollOffset + layout.lines.length)];
+		} else {
+			const contentRow = Math.max(0, Math.min(layout.lines.length - 1, row - 1));
+			line = layout.lines[contentRow];
+		}
 		if (!line) return undefined;
 		const contentCol = Math.max(0, Math.min(layout.contentWidth, col - layout.paddingX));
 		const logicalText = this.state.lines[line.logicalLine] || "";

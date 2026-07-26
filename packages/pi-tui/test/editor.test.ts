@@ -4474,6 +4474,20 @@ describe("Editor mouse selection", () => {
 		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 0), { line: 5, col: 0 });
 	});
 
+	it("maps clamped edge drags to adjacent hidden visual rows", () => {
+		const editor = new Editor(createTestTUI(80, 10), defaultEditorTheme);
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line-${index}`).join("\n"));
+		editor.render(80);
+
+		const firstHidden = editor.positionAtRenderedCell(0, 0, true);
+		assert.deepStrictEqual(firstHidden, { line: 4, col: 0 });
+		editor.beginSelection({ line: 9, col: 6 });
+		editor.updateSelection(firstHidden!);
+		editor.render(80);
+
+		assert.deepStrictEqual(editor.positionAtRenderedCell(0, 0, true), { line: 3, col: 0 });
+	});
+
 	it("replaces a selection with a yank as one undo unit", () => {
 		const editor = new Editor(createTestTUI(), defaultEditorTheme);
 		editor.setText("replace me");
@@ -4526,6 +4540,18 @@ describe("Editor mouse selection", () => {
 		const rendered = editor.render(20).join("\n");
 		assert.match(rendered, /\x1b\[7mell\x1b\[27m/);
 		assert.doesNotMatch(rendered, /\x1b\[7me\x1b\[27m\x1b\[7ml/);
+	});
+
+	it("renders selected line breaks and empty lines as inverse cells", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("a\n\nb");
+		editor.beginSelection({ line: 0, col: 1 });
+		editor.updateSelection({ line: 2, col: 0 });
+		editor.finishSelection();
+
+		const rendered = editor.render(20).join("\n");
+		const selectedBreaks = rendered.match(/\x1b\[7m \x1b\[27m/g)?.length ?? 0;
+		assert.strictEqual(selectedBreaks, 2);
 	});
 
 	it("keeps inverse control sequences proportional to visual lines", () => {
