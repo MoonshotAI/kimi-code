@@ -1,89 +1,182 @@
-/// FaultInjection — conditionally injects faults for testing.
+/// `faultInjection` — deterministic provider-failure simulation.
 ///
-/// Corresponds to `packages/agent-core-v2/src/agent/faultInjection/`.
+/// Faithful port of `packages/agent-core-v2/src/agent/faultInjection/`.
+///
+/// The turn-loop recovery resends (media-degraded after an HTTP 413 body-size
+/// rejection, media-stripped after an image-format rejection) are
+/// deterministic given a provider error, but a real provider cannot be asked
+/// to produce one on demand. Arming a one-shot fault makes the next LLM
+/// request attempt raise the chosen error BEFORE the provider is contacted,
+/// so the recovery path — projection rebuild, per-turn stickiness, wire
+/// records — runs end-to-end while the (successful) resend still goes to the
+/// real provider.
+///
+/// `arm` is refused unless the `fault-injection` experimental flag is enabled;
+/// `take` is the requester's consumption point and stays inert otherwise.
+use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
+pub const FAULT_INJECTION_FLAG_ID: &str = "fault-injection";
+pub const FAULT_INJECTION_FLAG_ENV: &str = "KIMI_CODE_EXPERIMENTAL_FAULT_INJECTION";
 
-/// Configuration for a fault injection rule.
-#[derive(Debug, Clone)]
-pub struct FaultRule {
-    /// Probability of failure (0.0 - 1.0).
-    pub probability: f64,
-    /// Optional delay in milliseconds to inject before the operation.
-    pub delay_ms: Option<u64>,
-    /// Error message to return on failure.
-    pub error_message: Option<String>,
+pub const FAULT_INJECTION_DISABLED_MESSAGE: &str =
+    "Fault injection is disabled; enable the fault-injection experimental flag \
+     (KIMI_CODE_EXPERIMENTAL_FAULT_INJECTION=1, the master flag, or the \
+     [experimental] config section).";
+
+/// The two injectable provider failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FaultKind {
+    /// HTTP 413 body-size rejection → the media-degraded resend path.
+    #[serde(rename = "request-too-large")]
+    RequestTooLarge,
+    /// Image-format rejection → the media-stripped resend path.
+    #[serde(rename = "image-format")]
+    ImageFormat,
 }
 
-/// Fault injection controller — enabled only in test/dev builds.
-pub struct FaultInjection {
-    rules: HashMap<String, FaultRule>,
-    enabled: bool,
+impl FaultKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FaultKind::RequestTooLarge => "request-too-large",
+            FaultKind::ImageFormat => "image-format",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "request-too-large" => Some(FaultKind::RequestTooLarge),
+            "image-format" => Some(FaultKind::ImageFormat),
+            _ => None,
+        }
+    }
 }
 
-impl FaultInjection {
+/// Snapshot of the latch (TS `FaultInjectionStatus`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FaultInjectionStatus {
+    pub armed: Option<FaultKind>,
+    pub fired: Vec<FaultKind>,
+}
+
+/// Agent-scope one-shot latch: `arm` (flag-gated) stores the next fault,
+/// `take` consumes and records it.
+#[derive(Debug, Default)]
+pub struct FaultInjectionService {
+    armed: Option<FaultKind>,
+    fired: Vec<FaultKind>,
+}
+
+impl FaultInjectionService {
     pub fn new() -> Self {
-        Self { rules: HashMap::new(), enabled: false }
+        Self::default()
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-
-    pub fn add_rule(&mut self, operation: &str, rule: FaultRule) {
-        self.rules.insert(operation.to_string(), rule);
+    /// Arm the next fault. Refused (with the TS error string) unless the
+    /// experimental flag is enabled — injection must never be reachable in a
+    /// session that did not opt in.
+    pub fn arm(&mut self, kind: FaultKind, flag_enabled: bool) -> Result<(), String> {
+        if !flag_enabled {
+            return Err(FAULT_INJECTION_DISABLED_MESSAGE.to_string());
+        }
+        self.armed = Some(kind);
+        Ok(())
     }
 
-    pub fn should_fail(&self, operation: &str) -> bool {
-        if !self.enabled { return false; }
-        self.rules.get(operation).map_or(false, |r| {
-            if r.probability >= 1.0 { return true; }
-            if r.probability <= 0.0 { return false; }
-            // Simple deterministic check based on operation name hash
-            let hash: u64 = operation.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-            (hash % 100) < (r.probability * 100.0) as u64
-        })
+    pub fn status(&self) -> FaultInjectionStatus {
+        FaultInjectionStatus { armed: self.armed, fired: self.fired.clone() }
     }
 
-    pub fn get_delay_ms(&self, operation: &str) -> Option<u64> {
-        if !self.enabled { return None; }
-        self.rules.get(operation).and_then(|r| r.delay_ms)
+    pub fn clear(&mut self) {
+        self.armed = None;
+        self.fired.clear();
     }
 
-    pub fn get_error_message(&self, operation: &str) -> Option<String> {
-        if !self.enabled { return None; }
-        self.rules.get(operation).and_then(|r| r.error_message.clone())
+    /// The requester's per-attempt consumption point: consume the armed fault,
+    /// record it as fired. Inert when nothing is armed.
+    pub fn take(&mut self) -> Option<FaultKind> {
+        let kind = self.armed.take()?;
+        self.fired.push(kind);
+        Some(kind)
     }
-
-    pub fn clear(&mut self) { self.rules.clear(); }
 }
-
-impl Default for FaultInjection { fn default() -> Self { Self::new() } }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn test_disabled_by_default() {
-        let fi = FaultInjection::new();
-        assert!(!fi.should_fail("any"));
+    fn arming_requires_the_flag() {
+        let mut service = FaultInjectionService::new();
+        let error = service.arm(FaultKind::RequestTooLarge, false).unwrap_err();
+        assert_eq!(error, FAULT_INJECTION_DISABLED_MESSAGE);
+        assert_eq!(service.status().armed, None, "a refused arm stores nothing");
     }
+
     #[test]
-    fn test_enabled_rule() {
-        let mut fi = FaultInjection::new();
-        fi.set_enabled(true);
-        fi.add_rule("read", FaultRule { probability: 1.0, delay_ms: None, error_message: None });
-        assert!(fi.should_fail("read"));
+    fn arming_with_the_flag_stores_the_fault() {
+        let mut service = FaultInjectionService::new();
+        service.arm(FaultKind::ImageFormat, true).unwrap();
+        assert_eq!(service.status().armed, Some(FaultKind::ImageFormat));
+        assert!(service.status().fired.is_empty());
     }
+
     #[test]
-    fn test_delay() {
-        let mut fi = FaultInjection::new();
-        fi.set_enabled(true);
-        fi.add_rule("slow", FaultRule { probability: 1.0, delay_ms: Some(100), error_message: None });
-        assert_eq!(fi.get_delay_ms("slow"), Some(100));
+    fn re_arming_replaces_the_previous_fault() {
+        let mut service = FaultInjectionService::new();
+        service.arm(FaultKind::ImageFormat, true).unwrap();
+        service.arm(FaultKind::RequestTooLarge, true).unwrap();
+        assert_eq!(service.status().armed, Some(FaultKind::RequestTooLarge));
     }
+
     #[test]
-    fn test_disabled_returns_no_fault() {
-        let mut fi = FaultInjection::new();
-        fi.add_rule("read", FaultRule { probability: 1.0, delay_ms: None, error_message: None });
-        assert!(!fi.should_fail("read")); // disabled
+    fn take_is_a_one_shot() {
+        let mut service = FaultInjectionService::new();
+        service.arm(FaultKind::RequestTooLarge, true).unwrap();
+        assert_eq!(service.take(), Some(FaultKind::RequestTooLarge));
+        assert_eq!(service.take(), None, "the latch is consumed");
+        assert_eq!(service.status().armed, None);
+        assert_eq!(service.status().fired, vec![FaultKind::RequestTooLarge]);
+    }
+
+    #[test]
+    fn take_when_nothing_is_armed_is_inert() {
+        let mut service = FaultInjectionService::new();
+        assert_eq!(service.take(), None);
+        assert!(service.status().fired.is_empty());
+    }
+
+    #[test]
+    fn fired_faults_accumulate_across_rounds() {
+        let mut service = FaultInjectionService::new();
+        service.arm(FaultKind::RequestTooLarge, true).unwrap();
+        service.take();
+        service.arm(FaultKind::ImageFormat, true).unwrap();
+        service.take();
+        assert_eq!(
+            service.status().fired,
+            vec![FaultKind::RequestTooLarge, FaultKind::ImageFormat]
+        );
+    }
+
+    #[test]
+    fn clear_resets_both_the_latch_and_the_history() {
+        let mut service = FaultInjectionService::new();
+        service.arm(FaultKind::RequestTooLarge, true).unwrap();
+        service.take();
+        service.arm(FaultKind::ImageFormat, true).unwrap();
+        service.clear();
+        assert_eq!(service.status(), FaultInjectionStatus { armed: None, fired: vec![] });
+    }
+
+    #[test]
+    fn kinds_serialise_to_the_wire_spelling() {
+        assert_eq!(
+            serde_json::to_string(&FaultKind::RequestTooLarge).unwrap(),
+            "\"request-too-large\""
+        );
+        assert_eq!(serde_json::to_string(&FaultKind::ImageFormat).unwrap(), "\"image-format\"");
+        assert_eq!(FaultKind::parse("request-too-large"), Some(FaultKind::RequestTooLarge));
+        assert_eq!(FaultKind::parse("image-format"), Some(FaultKind::ImageFormat));
+        assert_eq!(FaultKind::parse("other"), None);
     }
 }
