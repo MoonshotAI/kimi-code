@@ -31,9 +31,16 @@ interface NativeLlmDef {
 }
 
 interface RustEngineConfig {
+  defaultModel?: string;
   providers?: Record<
     string,
-    { defaultModel?: string; type?: string; apiKey?: string; baseUrl?: string }
+    {
+      defaultModel?: string;
+      type?: string;
+      apiKey?: string;
+      baseUrl?: string;
+      env?: Record<string, string>;
+    }
   >;
   models?: Record<string, { provider?: string; model?: string; systemPrompt?: string }>;
   agent?: {
@@ -95,11 +102,37 @@ function extractMultiLlmProviders(
  * are supported; anything else falls back to the host proxy.
  */
 function extractNativeLlm(config: RustEngineConfig): NativeLlmDef | undefined {
-  const name = config.agent?.nativeLlmProvider;
-  if (!name) return undefined;
+  const explicit = config.agent?.nativeLlmProvider;
+  if (explicit !== undefined && explicit.length > 0) {
+    return resolveNativeLlm(config, explicit, /* announce */ true);
+  }
+  // Full-replacement default: when no provider is named, derive it from the
+  // session's default model. A provider that does not qualify (dynamic
+  // credentials, unsupported type) falls back to the host proxy silently —
+  // the Rust engine still drives the turn either way.
+  const alias =
+    config.defaultModel !== undefined ? config.models?.[config.defaultModel] : undefined;
+  const derived = alias?.provider;
+  if (derived === undefined) return undefined;
+  // A provider carrying an `env` block (proxies, runtime environment) relies
+  // on host-side request semantics the native transport does not replicate;
+  // auto-derivation skips it. Naming it explicitly still opts in.
+  if (config.providers?.[derived]?.env !== undefined) return undefined;
+  return resolveNativeLlm(config, derived, /* announce */ false, alias.model);
+}
+
+function resolveNativeLlm(
+  config: RustEngineConfig,
+  name: string,
+  announce: boolean,
+  aliasModel?: string,
+): NativeLlmDef | undefined {
+  const warn = (message: string): void => {
+    if (announce) console.warn(message);
+  };
   const provider = config.providers?.[name];
   if (!provider) {
-    console.warn(`[kimi-agent] agent.nativeLlmProvider "${name}" not found in providers.`);
+    warn(`[kimi-agent] agent.nativeLlmProvider "${name}" not found in providers.`);
     return undefined;
   }
 
@@ -110,28 +143,27 @@ function extractNativeLlm(config: RustEngineConfig): NativeLlmDef | undefined {
         ? 'openai'
         : undefined;
   if (protocol === undefined) {
-    console.warn(
+    warn(
       `[kimi-agent] provider "${name}" type "${provider.type ?? 'unknown'}" is not supported by the native transport — falling back to host proxy.`,
     );
     return undefined;
   }
   if (!provider.baseUrl || !provider.apiKey) {
-    console.warn(
+    warn(
       `[kimi-agent] provider "${name}" needs a static baseUrl + apiKey for the native transport — falling back to host proxy.`,
     );
     return undefined;
   }
 
-  // Resolve the model the same way MultiLLM extraction does.
-  let model = provider.defaultModel;
+  // Resolve the model: the invoking alias first (auto-derivation), then the
+  // provider default, then any alias pointing at this provider.
+  let model = aliasModel ?? provider.defaultModel;
   if (!model && config.models) {
     const alias = Object.entries(config.models).find(([, m]) => m.provider === name);
     if (alias) model = alias[1].model;
   }
   if (!model) {
-    console.warn(
-      `[kimi-agent] provider "${name}" has no resolvable model — falling back to host proxy.`,
-    );
+    warn(`[kimi-agent] provider "${name}" has no resolvable model — falling back to host proxy.`);
     return undefined;
   }
 
