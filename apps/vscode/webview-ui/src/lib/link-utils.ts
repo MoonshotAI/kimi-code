@@ -35,11 +35,13 @@ export function parseFileLink(href: string | undefined): FileLinkTarget | null {
     raw = raw.replace(VSCODE_FILE_URI, "");
   } else if (EXTERNAL_SCHEME.test(raw)) {
     return null;
-  } else if (OTHER_SCHEME.test(raw) && !WINDOWS_DRIVE.test(raw)) {
-    // Any other scheme (except a Windows drive prefix) is not a file link.
-    return null;
   } else if (raw.startsWith("//")) {
     // Protocol-relative URL; a UNC path arrives with backslashes instead.
+    return null;
+  } else if (OTHER_SCHEME.test(raw.replace(LINE_SUFFIX, "")) && !WINDOWS_DRIVE.test(raw)) {
+    // Any other scheme is not a file link — but strip a trailing `:line`
+    // suffix before the test, or a root-level path like `README.md:5` would
+    // read as a protocol. Windows drive prefixes are paths, never schemes.
     return null;
   }
 
@@ -52,20 +54,26 @@ export function parseFileLink(href: string | undefined): FileLinkTarget | null {
   }
 
   const lineMatch = LINE_SUFFIX.exec(raw);
-  const path = lineMatch === null ? raw : raw.slice(0, lineMatch.index);
-  if (!path) return null;
-  return lineMatch === null ? { path } : { path, line: Number.parseInt(lineMatch[1], 10) };
+  if (lineMatch !== null) {
+    const line = Number.parseInt(lineMatch[1], 10);
+    const path = raw.slice(0, lineMatch.index);
+    // Line references are 1-based; a `:0` suffix is kept as part of the path.
+    if (line >= 1) {
+      return path ? { path, line } : null;
+    }
+  }
+  return raw ? { path: raw } : null;
 }
 
 /**
- * react-markdown's default sanitizer empties every href outside its
- * http(s)/mailto allow-list, which would drop `file://` and `vscode://file/`
- * links before the anchor renderer can route them — pass those through
- * verbatim and defer to the default transform for everything else.
+ * react-markdown's default sanitizer empties every URL it reads as an
+ * unknown protocol — which covers `file://`, `vscode://file/`, Windows drive
+ * prefixes, and even root-level relative paths with a `:line` suffix
+ * (`README.md:5`), all before the anchor renderer could route them. Preserve
+ * exactly what `parseFileLink` accepts, and only for anchor hrefs: other URL
+ * attributes (image/media `src`) keep the default sanitizer behavior.
  */
-export function fileAwareUrlTransform(url: string): string {
-  // A native Windows drive prefix would also be read as an unknown protocol
-  // by the default transform and emptied — preserve it alongside the URIs.
-  if (FILE_URI.test(url) || VSCODE_FILE_URI.test(url) || WINDOWS_DRIVE.test(url)) return url;
+export function fileAwareUrlTransform(url: string, key = "href"): string {
+  if (key === "href" && parseFileLink(url) !== null) return url;
   return defaultUrlTransform(url);
 }

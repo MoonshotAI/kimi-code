@@ -22,6 +22,15 @@ describe("parseFileLink", () => {
     expect(parseFileLink("src/app.ts:12:5")).toEqual({ path: "src/app.ts", line: 12 });
   });
 
+  it("parses a root-level relative path with a line suffix", () => {
+    expect(parseFileLink("README.md:5")).toEqual({ path: "README.md", line: 5 });
+    expect(parseFileLink("app.ts:12")).toEqual({ path: "app.ts", line: 12 });
+  });
+
+  it("keeps a :0 suffix as part of the path instead of a line reference", () => {
+    expect(parseFileLink("app.ts:0")).toEqual({ path: "app.ts:0" });
+  });
+
   it("parses a file URI with a line suffix", () => {
     expect(parseFileLink("file:///abs/path/report.md:33")).toEqual({ path: "/abs/path/report.md", line: 33 });
   });
@@ -63,6 +72,17 @@ describe("fileAwareUrlTransform", () => {
     expect(fileAwareUrlTransform("src/app.ts:12")).toBe("src/app.ts:12");
     expect(fileAwareUrlTransform("/abs/path.md:3")).toBe("/abs/path.md:3");
     expect(fileAwareUrlTransform("C:\\proj\\file.ts:7")).toBe("C:\\proj\\file.ts:7");
+  });
+
+  it("preserves root-level relative paths with a line suffix the sanitizer reads as a protocol", () => {
+    expect(fileAwareUrlTransform("README.md:5")).toBe("README.md:5");
+    expect(fileAwareUrlTransform("app.ts:12")).toBe("app.ts:12");
+  });
+
+  it("keeps the default sanitizer for non-href attributes such as image src", () => {
+    expect(fileAwareUrlTransform("file:///abs/img.png", "src")).toBe("");
+    expect(fileAwareUrlTransform("media/pic.png", "src")).toBe("media/pic.png");
+    expect(fileAwareUrlTransform("https://example.com/pic.png", "src")).toBe("https://example.com/pic.png");
   });
 
   it("still drops javascript URLs", () => {
