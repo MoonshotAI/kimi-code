@@ -9,6 +9,7 @@ import { useRequest } from "ahooks";
 import { IconVideo } from "@tabler/icons-react";
 import type { Components } from "react-markdown";
 import { parseSegments, parseColorSegments, extractPaths, checkFilesExist, hasColors, isLocalPath } from "@/lib/text-enrichment";
+import { parseFileLink, fileAwareUrlTransform } from "@/lib/link-utils";
 import { CopyButton } from "@/components/CopyButton";
 import { MediaPreviewModal, StreamImagePreview, ImageLoadFail } from "@/components/MediaPreviewModal";
 import { getMediaTypeFromSrc } from "@/lib/media-utils";
@@ -37,13 +38,13 @@ function ColorSwatch({ color }: { color: string }) {
   return <span className="inline-block size-2.75 rounded-sm align-middle mr-0.5 mb-0.5" style={{ backgroundColor: color }} />;
 }
 
-export function FileLink({ path, display }: { path: string; display: string }) {
+export function FileLink({ path, line, display }: { path: string; line?: number; display: React.ReactNode }) {
   const onClick = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      void bridge.openFile(path);
+      void bridge.openFile(path, line);
     },
-    [path],
+    [path, line],
   );
   return (
     <button type="button" className="hover:text-zinc-900 dark:hover:text-white hover:underline cursor-pointer break-all text-left" onClick={onClick}>
@@ -221,11 +222,19 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
       h3: ({ children }) => <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3>,
       ul: ({ children }) => <ul className="list-disc list-outside pl-5 mb-2 space-y-1">{children}</ul>,
       ol: ({ children }) => <ol className="list-decimal list-outside pl-5 mb-2 space-y-1">{children}</ol>,
-      a: ({ href, children }) => (
-        <a href={href} className="text-blue-600 dark:text-blue-400 underline hover:no-underline" target="_blank" rel="noopener noreferrer">
-          {children}
-        </a>
-      ),
+      a: ({ href, children }) => {
+        // The webview only follows external anchors; local-file hrefs must be
+        // routed through the extension host to open in the editor (#2194).
+        const fileLink = parseFileLink(href);
+        if (fileLink !== null) {
+          return <FileLink path={fileLink.path} line={fileLink.line} display={children} />;
+        }
+        return (
+          <a href={href} className="text-blue-600 dark:text-blue-400 underline hover:no-underline" target="_blank" rel="noopener noreferrer">
+            {children}
+          </a>
+        );
+      },
       blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/50 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>,
       table: ({ children }) => (
         <div className="overflow-x-auto my-2">
@@ -267,7 +276,7 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
 
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components} urlTransform={fileAwareUrlTransform}>
         {content}
       </ReactMarkdown>
       <MediaPreviewModal src={previewSrc} onClose={() => setPreviewSrc(null)} />
