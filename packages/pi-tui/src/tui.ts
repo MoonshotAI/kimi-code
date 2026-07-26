@@ -336,6 +336,7 @@ export class TUI extends Container {
 	private clearOnShrink = process.env['PI_CLEAR_ON_SHRINK'] === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	private aboveViewportStaleTop: number | null = null; // Lowest row whose repaint was skipped above the viewport
 	private fullRedrawCount = 0;
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
@@ -1287,6 +1288,24 @@ export class TUI extends Container {
 		let prevViewportTop = heightChanged ? Math.max(0, previousBufferLength - height) : this.previousViewportTop;
 		let viewportTop = prevViewportTop;
 		let hardwareCursorRow = this.hardwareCursorRow;
+
+		// A height increase can pull rows whose repaint was skipped (the
+		// above-viewport in-place path below) back into the viewport. On the
+		// Termux path, which deliberately avoids the destructive height-change
+		// redraw, invalidate the exposed rows in the caches so the diff
+		// repaints them; every other height change full-renders anyway.
+		if (heightChanged && this.aboveViewportStaleTop !== null && prevViewportTop < this.previousViewportTop) {
+			const exposedEnd = Math.min(this.previousViewportTop, this.previousLines.length);
+			for (let i = prevViewportTop; i < exposedEnd; i++) {
+				// NUL can never equal a rendered raw line or processed output, so
+				// both the reuse fast path and the diff see these rows as changed.
+				this.previousLines[i] = "\u0000";
+				this.previousRawLines[i] = "\u0000";
+			}
+			if (prevViewportTop <= this.aboveViewportStaleTop) {
+				this.aboveViewportStaleTop = null;
+			}
+		}
 		const computeLineDiff = (targetRow: number): number => {
 			const currentScreenRow = hardwareCursorRow - prevViewportTop;
 			const targetScreenRow = targetRow - viewportTop;
@@ -1346,6 +1365,7 @@ export class TUI extends Container {
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
+			this.aboveViewportStaleTop = null;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
@@ -1547,6 +1567,12 @@ export class TUI extends Container {
 				fullRender(true);
 				return;
 			}
+			// Remember the lowest skipped row: a later Termux height increase
+			// re-exposes such rows and must invalidate them (see doRender top).
+			this.aboveViewportStaleTop =
+				this.aboveViewportStaleTop === null
+					? firstChanged
+					: Math.min(this.aboveViewportStaleTop, firstChanged);
 			if (lastChanged < prevViewportTop) {
 				// Entirely above the viewport: scrollback keeps a stale frame
 				// of those rows (invisible from the live viewport), so only

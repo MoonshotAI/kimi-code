@@ -1064,6 +1064,41 @@ describe("TUI above-viewport in-place changes", () => {
 		tui.stop();
 	});
 
+	it("repaints skipped rows that a Termux height increase re-exposes", async () => {
+		await withEnv({ TERMUX_VERSION: "1" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = makeLines(30);
+			tui.start();
+			await terminal.waitForRender();
+			const initialRedraws = tui.fullRedraws;
+
+			// An in-place tick above the viewport takes the skip path, leaving
+			// the on-screen scrollback row stale.
+			const lines = makeLines(30);
+			lines[15] = "spinner frame 0";
+			component.lines = lines;
+			tui.requestRender();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			// Growing the terminal re-exposes rows 6-19. Termux height changes
+			// skip the destructive redraw, so the stale row must be repainted
+			// by the differential path instead.
+			terminal.resize(40, 24);
+			await terminal.waitForRender();
+
+			assert.strictEqual(tui.fullRedraws, initialRedraws, "Termux height change must not full-redraw");
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "must not clear the screen");
+			assert.ok(!terminal.getWrites().includes("\x1b[3J"), "must not clear scrollback");
+			const viewport = terminal.getViewport();
+			assert.ok(viewport.join("\n").includes("spinner frame 0"), "re-exposed row shows the current content");
+			tui.stop();
+		});
+	});
+
 	it("keeps the full redraw when the line count changes above the viewport", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui = new TUI(terminal);
