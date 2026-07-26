@@ -1001,7 +1001,11 @@ describe('ProviderManager prompt cache key', () => {
   });
 
   it('keeps the prompt cache key when the base URL targets the official OpenAI API', () => {
-    for (const type of ['openai', 'openai_responses'] as const) {
+    for (const [type, baseUrl] of [
+      ['openai', 'https://api.openai.com/v1'],
+      ['openai_responses', 'https://api.openai.com/v1'],
+      ['openai', 'https://eu.api.openai.com/v1'],
+    ] as const) {
       const manager = new ProviderManager({
         promptCacheKey: 'session-test',
         config: {
@@ -1010,7 +1014,7 @@ describe('ProviderManager prompt cache key', () => {
             openai: {
               type,
               apiKey: 'sk-openai',
-              baseUrl: 'https://api.openai.com/v1',
+              baseUrl,
             },
           },
           models: {

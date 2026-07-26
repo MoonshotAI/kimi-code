@@ -481,14 +481,16 @@ function vertexAILocation(
  * `prompt_cache_key` is an official-OpenAI request field: strictly-validating
  * OpenAI-compatible endpoints reject unknown parameters with a 400, so session
  * cache affinity is only requested when the effective base URL targets
- * `api.openai.com` (or is unset, which the transport defaults there).
+ * `api.openai.com` or a regional variant like `eu.api.openai.com` (or is
+ * unset, which the transport defaults there).
  */
 function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
   if (baseUrl === undefined) {
     return true;
   }
   try {
-    return new URL(baseUrl).hostname === 'api.openai.com';
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === 'api.openai.com' || hostname.endsWith('.api.openai.com');
   } catch {
     return false;
   }
