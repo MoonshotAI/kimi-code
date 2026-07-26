@@ -13,9 +13,9 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -211,10 +211,9 @@ function waitForEvent(event: Event<unknown>): Promise<void> {
 
 describe('SessionAgentProfileCatalogService', () => {
   beforeEach(() => {
-    // Scope creation now eagerly instantiates every service registered for
-    // that tier. `import '#/index'` fills the registry with the whole
-    // product graph (much of which has unstubbed dependencies), so clear it
-    // and re-register only the real services this suite constructs; their
+    // `import '#/index'` fills the registry with the whole product graph,
+    // including OnScopeCreated services with unstubbed dependencies, so clear
+    // it and re-register only the real services this suite constructs; their
     // other dependencies are seeded as stubs by `makeSession`. Builtin agent
     // profile contributions accumulate in a separate module-level list at
     // import time and are unaffected by the clear.
@@ -223,7 +222,7 @@ describe('SessionAgentProfileCatalogService', () => {
       LifecycleScope.Session,
       ISessionStateService,
       SessionStateService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'state',
     );
     registerScopedService(

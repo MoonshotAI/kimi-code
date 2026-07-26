@@ -2,7 +2,7 @@
  * `agentProfileCatalog` domain (L3) — module-level profile contribution registry.
  *
  * Profiles contribute themselves at module load via `registerAgentProfile(def)`,
- * the same "import = register" pattern used by `registerAgentTool` for tools
+ * the same "import = register" pattern used by `registerAgentToolService` for tools
  * and `registerScopedService` for DI. `AgentProfileCatalogService` consumes the
  * accumulated list on construction. Uniqueness is enforced by `name`:
  * later-registered profiles with the same name replace earlier ones, so tests

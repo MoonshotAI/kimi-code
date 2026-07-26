@@ -26,8 +26,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
@@ -629,6 +628,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextProjectorService,
   AgentContextProjectorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextProjector',
 );

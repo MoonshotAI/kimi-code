@@ -18,8 +18,12 @@
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -137,6 +141,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionTodoService,
   SessionTodoService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'todo',
 );

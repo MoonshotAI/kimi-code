@@ -13,7 +13,7 @@
  * `SkillTool.execution`; the public contract (schemas, anti-loop constants,
  * `ISkillTool`) lives in `./skill`.
  *
- * Registered via the module-level `registerAgentTool(ISkillTool, SkillTool)`
+ * Registered via the module-level `registerAgentToolService(ISkillTool, SkillTool)`
  * at the bottom of this file — the same "import = register" pattern used by
  * every agent tool. Collaborators: `ISessionSkillCatalog`,
  * `IAgentSkillService`, `ISessionContext`. Bound at Agent scope.
@@ -25,7 +25,7 @@ import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { renderModelToolSkillPrompt } from '#/agent/skill/prompt';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { isInlineSkillType } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -85,7 +85,7 @@ export class SkillTool implements ISkillTool {
   }
 }
 
-registerAgentTool(ISkillTool, SkillTool, { name: 'Skill', domain: 'skill' });
+registerAgentToolService(ISkillTool, SkillTool, { name: 'Skill', domain: 'skill' });
 
 export async function executeModelSkill(
   catalog: ISessionSkillCatalog,

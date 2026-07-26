@@ -9,8 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentPart } from '#/kosong/contract/message';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
@@ -173,6 +172,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentBlobService,
   AgentBlobServiceImpl,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'agentBlob',
 );

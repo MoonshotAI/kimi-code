@@ -42,9 +42,8 @@ import { randomUUID } from 'node:crypto';
 
 import { createControlledPromise } from '@antfu/utils';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
@@ -1103,6 +1102,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentLoopService,
   AgentLoopService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'loop',
 );

@@ -12,8 +12,12 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService, type ScopeSeed } from '#/_base/di/scope';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+  type ScopeSeed,
+} from '#/_base/di/scope';
 
 export interface IHostRequestHeaders {
   readonly headers: Readonly<Record<string, string>>;
@@ -33,6 +37,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostRequestHeaders,
   HostRequestHeaders,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'model',
 );

@@ -8,8 +8,7 @@
 
 import { join, resolve } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
@@ -289,6 +288,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionExportService,
   SessionExportService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionExport',
 );

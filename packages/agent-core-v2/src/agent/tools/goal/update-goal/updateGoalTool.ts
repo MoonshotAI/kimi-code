@@ -13,7 +13,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import {
@@ -106,7 +106,7 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
   return 'Goal not blocked: the current goal changed.';
 }
 
-registerAgentTool(IUpdateGoalTool, UpdateGoalTool, {
+registerAgentToolService(IUpdateGoalTool, UpdateGoalTool, {
   name: 'UpdateGoal',
   domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',

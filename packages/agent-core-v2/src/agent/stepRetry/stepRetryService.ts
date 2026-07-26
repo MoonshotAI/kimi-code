@@ -11,13 +11,13 @@
  * counted per failed driver and reset when any step succeeds (`onDidFinishStep`)
  * or a new turn starts. The mutable retry state (`lastFailedDriverId`,
  * `failedAttempts`) is registered into `agentState` (`IAgentStateService`) and
- * read/written through it. Bound at Agent scope; Eager so the handler registers
- * before the first turn runs (same rationale as `fullCompaction`).
+ * read/written through it. Bound at Agent scope and constructed with the scope
+ * so the handler registers before the first turn runs (same rationale as
+ * `fullCompaction`).
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
@@ -163,6 +163,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentStepRetryService,
   AgentStepRetryService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'stepRetry',
 );

@@ -8,7 +8,7 @@
  * provider errors into model-readable output. The public contract (schemas,
  * provider types, `IWebSearchTool`) lives in `./web-search`.
  *
- * Registered via the module-level `registerAgentTool(IWebSearchTool,
+ * Registered via the module-level `registerAgentToolService(IWebSearchTool,
  * WebSearchTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. Bound at Agent scope.
  */
@@ -22,7 +22,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ToolResultBuilder } from '#/tool/result-builder';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 
 import {
@@ -130,7 +130,7 @@ function classifySearchError(error: unknown): string {
   return `Search failed: ${message}`;
 }
 
-registerAgentTool(IWebSearchTool, WebSearchTool, {
+registerAgentToolService(IWebSearchTool, WebSearchTool, {
   name: 'WebSearch',
   domain: 'auth',
   when: (accessor) => accessor.get(IWebSearchProviderService).getWebSearchProvider() !== undefined,

@@ -38,8 +38,7 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -1359,6 +1358,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTaskService,
   AgentTaskService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'task',
 );

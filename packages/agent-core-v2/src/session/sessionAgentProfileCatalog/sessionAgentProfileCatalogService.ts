@@ -24,10 +24,9 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { isError2 } from '#/_base/errors/errors';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
@@ -232,6 +231,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionAgentProfileCatalog,
   SessionAgentProfileCatalogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionAgentProfileCatalog',
 );

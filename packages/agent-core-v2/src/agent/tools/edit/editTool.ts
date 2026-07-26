@@ -15,7 +15,7 @@
  * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/edit.ts`).
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -35,7 +35,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { EditInputSchema, IEditTool, type EditInput } from './edit';
 import editDescriptionTemplate from './edit.md?raw';
@@ -114,4 +114,4 @@ export class EditTool implements IEditTool {
   }
 }
 
-registerAgentTool(IEditTool, EditTool, { name: 'Edit', domain: 'edit' });
+registerAgentToolService(IEditTool, EditTool, { name: 'Edit', domain: 'edit' });

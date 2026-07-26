@@ -4,11 +4,11 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   type IAgentScopeHandle,
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -433,21 +433,21 @@ describe('SessionLifecycleService', () => {
       LifecycleScope.App,
       ISessionLifecycleService,
       SessionLifecycleService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'sessionLifecycle',
     );
     registerScopedService(
       LifecycleScope.Session,
       ISessionExternalHooksService,
       NoopSessionExternalHooksService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'externalHooks',
     );
     registerScopedService(
       LifecycleScope.App,
       IHostFileSystem,
       HostFileSystem,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'hostFs',
     );
   });
@@ -899,7 +899,7 @@ describe('SessionLifecycleService', () => {
       LifecycleScope.Session,
       ISessionExternalHooksService,
       RecordingSessionExternalHooksService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'externalHooks',
     );
     const svc = build();
@@ -988,14 +988,14 @@ describe('SessionLifecycleService', () => {
         LifecycleScope.Session,
         ISessionStateService,
         SessionStateService,
-        InstantiationType.Eager,
+        ScopeActivation.OnScopeCreated,
         'state',
       );
       registerScopedService(
         LifecycleScope.Session,
         ISessionWorkspaceContext,
         SessionWorkspaceContextService,
-        InstantiationType.Delayed,
+        ScopeActivation.OnDemand,
         'workspaceContext',
       );
     });

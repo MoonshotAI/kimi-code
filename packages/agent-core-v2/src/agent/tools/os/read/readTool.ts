@@ -16,7 +16,7 @@
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/read.ts`). The
  * optional `scanTextFile` / `readLineRange` / `readTailLines` fast-paths are
  * intentionally dropped: `IHostFileSystem` streams through `readLines` only.
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -30,7 +30,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
@@ -487,4 +487,4 @@ export class ReadTool implements IReadTool {
   }
 }
 
-registerAgentTool(IReadTool, ReadTool, { name: 'Read', domain: 'os/backends' });
+registerAgentToolService(IReadTool, ReadTool, { name: 'Read', domain: 'os/backends' });

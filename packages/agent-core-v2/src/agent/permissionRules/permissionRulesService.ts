@@ -8,8 +8,7 @@
  * consumers read the getters instead. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IWireService } from '#/wire/wire';
 import {
@@ -50,6 +49,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionRulesService,
   AgentPermissionRulesService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'permissionRules',
 );

@@ -26,8 +26,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -296,6 +295,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'plan',
 );

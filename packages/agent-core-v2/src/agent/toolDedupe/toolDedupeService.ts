@@ -17,9 +17,8 @@
 
 import { createHash } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
@@ -404,6 +403,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolDedupeService,
   AgentToolDedupeService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolDedupe',
 );

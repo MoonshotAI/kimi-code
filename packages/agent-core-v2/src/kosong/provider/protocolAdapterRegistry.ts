@@ -24,8 +24,7 @@
  * Bound at App scope, eager.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { ChatProviderError } from '#/kosong/contract/errors';
@@ -157,6 +156,6 @@ registerScopedService(
   LifecycleScope.App,
   IProtocolAdapterRegistry,
   ProtocolAdapterRegistry,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'provider',
 );

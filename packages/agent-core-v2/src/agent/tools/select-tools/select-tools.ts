@@ -5,7 +5,7 @@
  * progressive tool disclosure: the model-facing `SelectToolsInputSchema` /
  * `SelectToolsInput` and the `ISelectToolsTool` DI decorator that the
  * implementation (`selectToolsTool.ts`) registers against via
- * `registerAgentTool`. The tool name itself stays with the `toolSelect`
+ * `registerAgentToolService`. The tool name itself stays with the `toolSelect`
  * domain (`SELECT_TOOLS_TOOL_NAME`). Bound at Agent scope.
  */
 

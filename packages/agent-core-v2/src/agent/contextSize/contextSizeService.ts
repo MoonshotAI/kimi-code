@@ -21,8 +21,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -123,6 +122,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextSize',
 );

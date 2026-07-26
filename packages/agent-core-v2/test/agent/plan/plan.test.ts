@@ -2,11 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
-// Imported first on purpose: scope creation now eagerly instantiates every
-// registered service in registry (module evaluation) order, and
-// `onBeforeExecuteTool` veto listeners fire in construction order. The plan
-// guard must register before the permission gate (reached via `#/index` in
-// the harness) so plan-file writes are allowed before deny rules adjudicate.
+// Imported first on purpose: OnScopeCreated services activate in registry
+// (module evaluation) order, and `onBeforeExecuteTool` veto listeners fire in
+// construction order. The plan guard must register before the permission gate
+// (reached via `#/index` in the harness) so plan-file writes are allowed before
+// deny rules adjudicate.
 import '#/agent/plan/planService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, isAbsolute, join } from 'pathe';

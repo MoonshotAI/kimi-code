@@ -23,9 +23,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
@@ -77,6 +76,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolActivationService,
   AgentToolActivationService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolActivation',
 );

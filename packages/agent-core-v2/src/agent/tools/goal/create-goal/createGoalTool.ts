@@ -15,7 +15,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { goalForModel } from '#/agent/goal/tools/serialize';
@@ -77,7 +77,7 @@ export class CreateGoalTool implements ICreateGoalTool {
   }
 }
 
-registerAgentTool(ICreateGoalTool, CreateGoalTool, {
+registerAgentToolService(ICreateGoalTool, CreateGoalTool, {
   name: 'CreateGoal',
   domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',

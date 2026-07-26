@@ -12,9 +12,13 @@
  * scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService, type IAgentScopeHandle } from '#/_base/di/scope';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+  type IAgentScopeHandle,
+} from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
@@ -197,6 +201,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionActivityView,
   SessionActivityView,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'sessionActivity',
 );

@@ -21,7 +21,6 @@
  * service awaits during creation.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
@@ -29,6 +28,7 @@ import {
   createScopedChildHandle,
   type IAgentScopeHandle,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -303,6 +303,6 @@ registerScopedService(
   LifecycleScope.Session,
   IAgentLifecycleService,
   AgentLifecycleService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'agentLifecycle',
 );

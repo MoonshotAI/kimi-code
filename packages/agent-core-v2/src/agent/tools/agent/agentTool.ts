@@ -19,7 +19,7 @@
  * models there is no "child follows the parent's current model" invariant to
  * enforce.
  *
- * Registered via the module-level `registerAgentTool(ISubagentTool,
+ * Registered via the module-level `registerAgentToolService(ISubagentTool,
  * SubagentTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. The per-profile tool listings in the
  * description read the full contribution table (not the runtime registry,
@@ -57,7 +57,7 @@ import {
 } from '#/tool/toolContract';
 import {
   getAgentToolContributions,
-  registerAgentTool,
+  registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -457,7 +457,7 @@ export class SubagentTool implements ISubagentTool {
   }
 }
 
-registerAgentTool(ISubagentTool, SubagentTool, { name: 'Agent', domain: 'subagent' });
+registerAgentToolService(ISubagentTool, SubagentTool, { name: 'Agent', domain: 'subagent' });
 
 
 function buildProfileDescriptions(

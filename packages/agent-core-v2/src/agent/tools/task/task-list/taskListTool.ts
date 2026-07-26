@@ -6,7 +6,7 @@
  * `formatPlainObject` (`task/tools/format`). The public contract (input
  * schema, `ITaskListTool`) lives in `./task-list`.
  *
- * Registered via the module-level `registerAgentTool(ITaskListTool,
+ * Registered via the module-level `registerAgentToolService(ITaskListTool,
  * TaskListTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. Bound at Agent scope.
  */
@@ -14,7 +14,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -56,4 +56,4 @@ export class TaskListTool implements ITaskListTool {
   }
 }
 
-registerAgentTool(ITaskListTool, TaskListTool, { name: 'TaskList', domain: 'agentTask' });
+registerAgentToolService(ITaskListTool, TaskListTool, { name: 'TaskList', domain: 'agentTask' });

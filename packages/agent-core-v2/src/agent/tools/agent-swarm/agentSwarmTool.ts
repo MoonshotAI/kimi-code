@@ -17,7 +17,7 @@
  * The public contract (input schema, constants, `IAgentSwarmTool`) lives in
  * `./agent-swarm`.
  *
- * Registered via the module-level `registerAgentTool(IAgentSwarmTool,
+ * Registered via the module-level `registerAgentToolService(IAgentSwarmTool,
  * AgentSwarmTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. Bound at Agent scope.
  */
@@ -28,7 +28,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -214,7 +214,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   }
 }
 
-registerAgentTool(IAgentSwarmTool, AgentSwarmTool, { name: 'AgentSwarm', domain: 'swarm' });
+registerAgentToolService(IAgentSwarmTool, AgentSwarmTool, { name: 'AgentSwarm', domain: 'swarm' });
 
 async function createAgentSwarmSpecs(
   args: AgentSwarmToolInput,

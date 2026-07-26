@@ -4,7 +4,7 @@
  * Public contract of the `TaskOutput` tool (read output from a managed
  * task): the input zod schema the model-facing parameters are derived from
  * and the `ITaskOutputTool` DI decorator that the implementation
- * (`taskOutputTool.ts`) registers against via `registerAgentTool`. Bound at
+ * (`taskOutputTool.ts`) registers against via `registerAgentToolService`. Bound at
  * Agent scope.
  */
 

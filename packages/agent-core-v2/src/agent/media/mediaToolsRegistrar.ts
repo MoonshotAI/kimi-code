@@ -1,8 +1,8 @@
 /**
- * Media tool production registration — the Eager Agent-scope service that
- * keeps `ReadMediaFile` in the tool registry in sync with the bound model.
+ * Media tool production registration — the Agent-scope service that keeps
+ * `ReadMediaFile` in the tool registry in sync with the bound model.
  *
- * Media tools cannot ride the module-level `registerAgentTool(...)`
+ * Media tools cannot ride the module-level `registerAgentToolService(...)`
  * contribution table: its activation runs when the Agent is created, and at
  * that point no model is bound yet — the capabilities are still
  * `UNKNOWN_CAPABILITY`, so a capability gate would permanently skip the
@@ -27,8 +27,7 @@
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
@@ -137,6 +136,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMediaToolsRegistrar,
   AgentMediaToolsRegistrar,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'media',
 );

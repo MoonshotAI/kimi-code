@@ -14,7 +14,7 @@
  * The public contract (input schema, `ITaskOutputTool`) lives in
  * `./task-output`.
  *
- * Registered via the module-level `registerAgentTool(ITaskOutputTool,
+ * Registered via the module-level `registerAgentToolService(ITaskOutputTool,
  * TaskOutputTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. Bound at Agent scope.
  */
@@ -22,7 +22,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import type {
@@ -146,4 +146,4 @@ export class TaskOutputTool implements ITaskOutputTool {
   }
 }
 
-registerAgentTool(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask' });
+registerAgentToolService(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask' });

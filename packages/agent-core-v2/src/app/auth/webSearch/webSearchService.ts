@@ -14,7 +14,7 @@
  * mirroring v1's `kimiRequestHeaders`) as default headers. When neither source
  * is configured it yields `undefined` so the contributed `WebSearch` tool
  * stays hidden. Owns no tool registration — the `WebSearch` tool contributes
- * itself via `registerAgentTool(...)` and reads this service from the
+ * itself via `registerAgentToolService(...)` and reads this service from the
  * Agent-scope accessor.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
@@ -25,8 +25,7 @@ import {
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
@@ -101,6 +100,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebSearchProviderService,
   WebSearchProviderService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'auth',
 );

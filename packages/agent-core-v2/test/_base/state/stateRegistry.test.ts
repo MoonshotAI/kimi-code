@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -168,19 +168,19 @@ describe('state services (scoped)', () => {
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.App, IStateService, StateService, InstantiationType.Eager, 'state');
+    registerScopedService(LifecycleScope.App, IStateService, StateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(
       LifecycleScope.Session,
       ISessionStateService,
       SessionStateService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'state',
     );
     registerScopedService(
       LifecycleScope.Agent,
       IAgentStateService,
       AgentStateService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'state',
     );
     host = createScopedTestHost();

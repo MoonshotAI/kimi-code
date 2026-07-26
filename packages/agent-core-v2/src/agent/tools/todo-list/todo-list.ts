@@ -10,7 +10,7 @@
  *
  * Exports the model-facing `TodoListInputSchema` / `TodoListInput` and the
  * `ITodoListTool` DI decorator that the implementation (`todoListTool.ts`)
- * registers against via `registerAgentTool`. The tool name and item types
+ * registers against via `registerAgentToolService`. The tool name and item types
  * stay with the `todo` domain (`TODO_LIST_TOOL_NAME`, `TodoItem`,
  * `TodoStatus`). Bound at Agent scope.
  */

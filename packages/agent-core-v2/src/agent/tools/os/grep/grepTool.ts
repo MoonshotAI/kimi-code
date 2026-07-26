@@ -31,7 +31,7 @@
  *   - parsed path records are filtered again after rg returns, using the active
  *     backend path class.
  *
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -44,7 +44,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -362,7 +362,7 @@ export class GrepTool implements IGrepTool {
   }
 }
 
-registerAgentTool(IGrepTool, GrepTool, { name: 'Grep', domain: 'os/backends' });
+registerAgentToolService(IGrepTool, GrepTool, { name: 'Grep', domain: 'os/backends' });
 
 function formatSpawnError(error: unknown): string {
   return errorCode(error) === 'ENOENT'

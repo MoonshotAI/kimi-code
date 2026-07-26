@@ -31,9 +31,7 @@
  * instead of poisoning the session cache (the skill catalog, by contrast, is
  * kicked fire-and-forget). The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
- * secondary-model startup warning) are constructed with the scope itself —
- * Session scope creation eagerly instantiates every service registered at
- * this tier.
+ * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -41,13 +39,13 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 import { ulid } from 'ulid';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
@@ -614,7 +612,7 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLifecycleService,
   SessionLifecycleService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionLifecycle',
 );
 

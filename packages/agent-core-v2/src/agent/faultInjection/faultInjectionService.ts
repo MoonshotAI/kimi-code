@@ -8,8 +8,7 @@
  * Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
@@ -85,6 +84,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IFaultInjectionService,
   FaultInjectionService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'faultInjection',
 );

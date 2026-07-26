@@ -1,7 +1,7 @@
 /**
  * `toolActivation` domain (L4) — `IAgentToolActivationService` contract.
  *
- * Owns the activation pass that turns the module-level `registerAgentTool`
+ * Owns the activation pass that turns the module-level `registerAgentToolService`
  * contributions (`toolRegistry`, L3) into entries of the per-agent runtime
  * registry: a contribution activates only when its `when` predicate holds
  * and its declared `name` is allowed by the bound Profile's tool policy

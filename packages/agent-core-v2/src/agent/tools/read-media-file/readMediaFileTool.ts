@@ -48,7 +48,7 @@
  * Registration is capability-gated by `registerMediaTools`: this tool is
  * only registered when the active model supports image or video input.
  *
- * This tool is a deliberate exception to the `registerAgentTool` contribution
+ * This tool is a deliberate exception to the `registerAgentToolService` contribution
  * table: its constructor depends on runtime model capabilities (capability
  * profile, video uploader, protocol flags), so it cannot be a static
  * Agent-scope Service and is instead `new`ed by `AgentMediaToolsRegistrar`

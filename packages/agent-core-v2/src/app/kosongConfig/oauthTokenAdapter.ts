@@ -6,8 +6,7 @@
  * `app/auth/errors`): kosong's model catalog only sees the port.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import { IOAuthService } from '#/app/auth/auth';
@@ -56,6 +55,6 @@ registerScopedService(
 LifecycleScope.App,
   IModelOAuthTokens,
   ModelOAuthTokenAdapter,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'kosongConfig',
 );

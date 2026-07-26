@@ -39,7 +39,7 @@
  * already overlays the per-call `env` on `process.env`, so only the
  * noninteractive knobs are passed here.
  *
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -55,7 +55,7 @@ import {
   type ExecutableToolResultBuilderResult,
   ToolResultBuilder,
 } from '#/tool/result-builder';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -454,7 +454,7 @@ export class BashTool implements IBashTool {
   }
 }
 
-registerAgentTool(IBashTool, BashTool, { name: 'Bash', domain: 'os/backends' });
+registerAgentToolService(IBashTool, BashTool, { name: 'Bash', domain: 'os/backends' });
 
 function formatTimeoutLabel(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;

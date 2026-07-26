@@ -5,7 +5,7 @@
  * schemas the model-facing parameters are derived from, the tool-owned
  * constants (default profile name, resumed-agent label, fixed output
  * messages), and the `ISubagentTool` DI decorator that the implementation
- * (`agentTool.ts`) registers against via `registerAgentTool`. Bound at
+ * (`agentTool.ts`) registers against via `registerAgentToolService`. Bound at
  * Agent scope.
  */
 

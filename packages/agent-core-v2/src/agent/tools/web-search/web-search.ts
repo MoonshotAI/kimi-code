@@ -6,7 +6,7 @@
  * `WebSearchProvider` interface (plus `WebSearchResult`) the tool delegates
  * the actual search to, and the `IWebSearchTool` DI decorator that the
  * implementation (`webSearchTool.ts`) registers against via
- * `registerAgentTool`. Web search needs an authenticated Moonshot backend, so
+ * `registerAgentToolService`. Web search needs an authenticated Moonshot backend, so
  * the provider is wired in from the App-scope `IWebSearchProviderService`
  * (`auth` domain) at activation time. Bound at Agent scope.
  */

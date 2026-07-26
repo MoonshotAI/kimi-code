@@ -1,19 +1,11 @@
 /**
  * `di` domain (L0) — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
  *
- * Creating a scope eagerly instantiates every service registered for it:
- * registration plus scope creation construct a side-effect service, nobody
- * has to `get()` it first. Each `get` runs a DFS over the static dependency
- * graph, so dependencies are always constructed before their dependents and
- * cycles still throw `CyclicDependencyError`; `Delayed` descriptors only
- * materialize their lazy proxy at scope creation — the real constructor
- * still defers to first property access. Registrations with an explicit
- * activation pass (e.g. agent tools) opt out of this sweep via
- * `SyncDescriptor.instantiateWithScope = false`.
+ * Scoped services are resolved when their scope is created by default;
+ * registrations that defer construction until first resolution use `OnDemand`.
  */
 
 import { SyncDescriptor } from './descriptors';
-import { InstantiationType } from './extensions';
 import type { ServiceIdentifier, ServicesAccessor, IInstantiationService } from './instantiation';
 import { InstantiationService } from './instantiationService';
 import { DisposableStore, type IDisposable } from './lifecycle';
@@ -25,11 +17,17 @@ export enum LifecycleScope {
   Agent = 2,
 }
 
+export enum ScopeActivation {
+  OnScopeCreated = 0,
+  OnDemand = 1,
+}
+
 export interface ScopedEntry {
   readonly scope: LifecycleScope;
   readonly id: ServiceIdentifier<unknown>;
   readonly descriptor: SyncDescriptor<unknown>;
   readonly domain: string;
+  readonly activation: ScopeActivation;
 }
 
 const _scopedRegistry: ScopedEntry[] = [];
@@ -39,21 +37,16 @@ export function registerScopedService<T>(
   id: ServiceIdentifier<T>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
-  type: InstantiationType = InstantiationType.Eager,
+  activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
-  instantiateWithScope: boolean = true,
 ): void {
-  const descriptor = new SyncDescriptor<T>(
-    ctor,
-    [],
-    type === InstantiationType.Delayed,
-  );
-  descriptor.instantiateWithScope = instantiateWithScope;
+  const descriptor = new SyncDescriptor<T>(ctor);
   _scopedRegistry.push({
     scope,
     id: id as ServiceIdentifier<unknown>,
     descriptor: descriptor as SyncDescriptor<unknown>,
     domain,
+    activation,
   });
 }
 
@@ -101,17 +94,21 @@ function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollec
   return collection;
 }
 
-function instantiateAll(
+function activateScopeServices(
   instantiation: IInstantiationService,
+  kind: LifecycleScope,
   collection: ServiceCollection,
 ): void {
-  collection.forEach((id, value) => {
-    // Registrations that own an explicit activation pass (e.g. agent tools)
-    // opt out via `instantiateWithScope: false`; scope creation must not run
-    // their constructors. Seeds are plain instances, not descriptors.
-    if (value instanceof SyncDescriptor && !value.instantiateWithScope) return;
-    instantiation.invokeFunction((accessor) => accessor.get(id));
-  });
+  for (const entry of _scopedRegistry) {
+    if (
+      entry.scope !== kind ||
+      entry.activation !== ScopeActivation.OnScopeCreated ||
+      collection.get(entry.id) !== entry.descriptor
+    ) {
+      continue;
+    }
+    instantiation.invokeFunction((accessor) => accessor.get(entry.id));
+  }
 }
 
 export function createScopedChildHandle(
@@ -123,7 +120,7 @@ export function createScopedChildHandle(
   const collection = buildCollection(kind, options.extra);
   const child = parent.createChild(collection);
   try {
-    instantiateAll(child, collection);
+    activateScopeServices(child, kind, collection);
   } catch (error) {
     child.dispose();
     throw error;
@@ -159,7 +156,7 @@ export class Scope implements IDisposable {
     const collection = buildCollection(kind, options.extra);
     const instantiation = new InstantiationService(collection, true);
     try {
-      instantiateAll(instantiation, collection);
+      activateScopeServices(instantiation, kind, collection);
     } catch (error) {
       instantiation.dispose();
       throw error;
@@ -186,7 +183,7 @@ export class Scope implements IDisposable {
     const collection = buildCollection(kind, options.extra);
     const childInstantiation = this.instantiation.createChild(collection);
     try {
-      instantiateAll(childInstantiation, collection);
+      activateScopeServices(childInstantiation, kind, collection);
     } catch (error) {
       childInstantiation.dispose();
       throw error;

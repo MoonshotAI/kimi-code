@@ -5,7 +5,6 @@
 
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
-export * from '#/_base/di/extensions';
 export * from '#/_base/di/graph';
 export * from '#/_base/di/instantiation';
 export * from '#/_base/di/instantiationService';
@@ -554,7 +553,7 @@ import '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolRegistry/toolRegistryService';
 export { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 export { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-export { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+export { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 export type { AgentToolContribution, AgentToolContributionOptions } from '#/agent/toolRegistry/toolContribution';
 export * from '#/agent/userTool/userTool';
 export * from '#/agent/userTool/userToolOps';

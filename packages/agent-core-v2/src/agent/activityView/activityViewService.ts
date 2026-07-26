@@ -17,8 +17,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -423,6 +422,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentActivityView,
   AgentActivityView,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'activityView',
 );

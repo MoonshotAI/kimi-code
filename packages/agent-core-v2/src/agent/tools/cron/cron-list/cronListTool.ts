@@ -47,8 +47,7 @@
  * Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -139,4 +138,10 @@ export class CronListTool implements ICronListTool {
   }
 }
 
-registerScopedService(LifecycleScope.Agent, ICronListTool, CronListTool, InstantiationType.Eager, 'cron');
+registerScopedService(
+  LifecycleScope.Agent,
+  ICronListTool,
+  CronListTool,
+  ScopeActivation.OnScopeCreated,
+  'cron',
+);

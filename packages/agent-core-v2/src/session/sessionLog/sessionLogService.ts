@@ -11,8 +11,7 @@
  * (`ISessionStateService`) and read/written through it.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -87,6 +86,6 @@ registerScopedService(
   LifecycleScope.Session,
   ILogService,
   SessionLogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'log',
 );

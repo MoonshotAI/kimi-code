@@ -6,7 +6,7 @@
  * (`key: 'todo'`) wire record on the main agent. The public contract (input
  * schema, `ITodoListTool`) lives in `./todo-list`.
  *
- * Registered via the module-level `registerAgentTool(ITodoListTool,
+ * Registered via the module-level `registerAgentToolService(ITodoListTool,
  * TodoListTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. `AgentToolActivationService` activates it
  * per agent when the profile allows (resolving the Session-scope
@@ -16,7 +16,7 @@
  */
 
 import type { ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
@@ -73,4 +73,4 @@ export class TodoListTool implements ITodoListTool {
   }
 }
 
-registerAgentTool(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });
+registerAgentToolService(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });

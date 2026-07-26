@@ -52,9 +52,8 @@
  * Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
@@ -887,6 +886,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentProfileService,
   AgentProfileService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'profile',
 );

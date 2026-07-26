@@ -8,9 +8,8 @@
  * read/written through it. Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -100,6 +99,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionToolPolicy,
   SessionToolPolicyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionToolPolicy',
 );

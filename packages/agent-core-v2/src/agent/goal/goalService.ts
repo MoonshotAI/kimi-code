@@ -45,8 +45,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { TurnEndedEvent, TurnStartedEvent } from '#/agent/loop/turnEvents';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
@@ -1313,6 +1312,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentGoalService,
   AgentGoalService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'goal',
 );

@@ -40,8 +40,7 @@ import {
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
@@ -377,6 +376,6 @@ registerScopedService(
   LifecycleScope.App,
   IProviderDiscoveryService,
   ProviderDiscoveryService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'kosongConfig',
 );

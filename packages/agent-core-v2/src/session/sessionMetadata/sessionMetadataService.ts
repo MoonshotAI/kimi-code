@@ -26,9 +26,8 @@
  * read-model miss that `FileSessionIndex` backfills on first read.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
@@ -240,6 +239,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionMetadata,
   SessionMetadata,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionMetadata',
 );

@@ -137,8 +137,7 @@ Holds the concrete class(es) and the top-level registration. A typical impl:
  * … collaborators as roles ("logs through `log`") … Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/log';
 
 import { type Greeting, IGreeter } from './greet';
@@ -154,12 +153,12 @@ export class Greeter implements IGreeter {
   }
 }
 
-registerScopedService(LifecycleScope.App, IGreeter, Greeter, InstantiationType.Eager, 'greet');
+registerScopedService(LifecycleScope.App, IGreeter, Greeter, ScopeActivation.OnScopeCreated, 'greet');
 ```
 
 What belongs here:
 
-- **Imports** — `InstantiationType` from `'#/_base/di/extensions'`; `LifecycleScope` + `registerScopedService` from `'#/_base/di/scope'`; collaborators via the `#/<domain>` alias; the contract's types + decorator via a relative `./<domain>` import.
+- **Imports** — `LifecycleScope` + `ScopeActivation` + `registerScopedService` from `'#/_base/di/scope'`; collaborators via the `#/<domain>` alias; the contract's types + decorator via a relative `./<domain>` import.
 - **Class** — `XxxService implements IXxxService`, with `declare readonly _serviceBrand: undefined`.
 - **Helper classes / functions** used only by this impl (e.g. a built-in writer, an `extractError` helper) — co-located in the same file.
 - **Top-level `registerScopedService(...)`** — one per Service the file owns; importing the impl file runs the registration.
@@ -245,7 +244,7 @@ Conventions:
 
 - Back the public `Event<T>` with a private `Emitter<T>`, registered with `this._register(...)` so it disposes with the Service.
 - Naming: `onDid…` for "happened" (past tense, after the fact); `onWill…` for "about to happen" (may allow `waitUntil` participation / veto — see `AsyncEmitter` / `IWaitUntil` in `'#/_base/event'`).
-- The Delayed-instantiation Proxy preserves early `onDid…` / `onWill…` subscriptions (implement.md §5).
+- A service must be constructed before consumers can subscribe to its events. Use the default `OnScopeCreated` activation when subscriptions must be available as soon as the scope is ready.
 
 ### `IEventService` — global pub-sub bus
 
@@ -318,8 +317,7 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { type Greeting, IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -327,7 +325,7 @@ export class Greeter implements IGreeter {
   hello(): Greeting { return { message: 'hi' }; }
 }
 
-registerScopedService(LifecycleScope.App, IGreeter, Greeter, InstantiationType.Eager, 'greet');
+registerScopedService(LifecycleScope.App, IGreeter, Greeter, ScopeActivation.OnScopeCreated, 'greet');
 ```
 
 ```ts

@@ -15,8 +15,7 @@
 
 import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 
@@ -103,6 +102,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUsageService,
   AgentUsageService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'usage',
 );

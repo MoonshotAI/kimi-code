@@ -10,9 +10,8 @@
  * through `log`. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -157,6 +156,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPluginService,
   AgentPluginService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'agentPlugin',
 );

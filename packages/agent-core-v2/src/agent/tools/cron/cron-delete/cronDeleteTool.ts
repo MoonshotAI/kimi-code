@@ -41,8 +41,7 @@
  * id. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -101,4 +100,10 @@ export class CronDeleteTool implements ICronDeleteTool {
   }
 }
 
-registerScopedService(LifecycleScope.Agent, ICronDeleteTool, CronDeleteTool, InstantiationType.Eager, 'cron');
+registerScopedService(
+  LifecycleScope.Agent,
+  ICronDeleteTool,
+  CronDeleteTool,
+  ScopeActivation.OnScopeCreated,
+  'cron',
+);

@@ -9,8 +9,12 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService, type ScopeSeed } from '#/_base/di/scope';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+  type ScopeSeed,
+} from '#/_base/di/scope';
 
 export interface IAgentCatalogRuntimeOptions {
   readonly _serviceBrand: undefined;
@@ -42,6 +46,6 @@ registerScopedService(
   LifecycleScope.App,
   IAgentCatalogRuntimeOptions,
   AgentCatalogRuntimeOptions,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'agentFileCatalog',
 );

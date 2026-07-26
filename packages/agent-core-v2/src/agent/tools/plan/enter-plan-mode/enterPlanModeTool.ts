@@ -9,7 +9,7 @@
  */
 
 import type { ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -62,7 +62,7 @@ export class EnterPlanModeTool implements IEnterPlanModeTool {
   }
 }
 
-registerAgentTool(IEnterPlanModeTool, EnterPlanModeTool, { name: 'EnterPlanMode', domain: 'plan' });
+registerAgentToolService(IEnterPlanModeTool, EnterPlanModeTool, { name: 'EnterPlanMode', domain: 'plan' });
 
 function enteredPlanModeMessage(planPath: string | null): string {
   if (planPath === null) {

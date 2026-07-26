@@ -6,8 +6,7 @@
  * at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { StateRegistry } from '#/_base/state/stateRegistry';
 
 import { IAgentStateService } from './agentState';
@@ -20,6 +19,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentStateService,
   AgentStateService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'state',
 );

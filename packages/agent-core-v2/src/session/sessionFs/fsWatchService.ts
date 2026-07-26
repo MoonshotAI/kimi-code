@@ -18,8 +18,7 @@ import ignore, { type Ignore } from 'ignore';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -283,6 +282,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsWatchService,
   SessionFsWatchService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionFsWatch',
 );

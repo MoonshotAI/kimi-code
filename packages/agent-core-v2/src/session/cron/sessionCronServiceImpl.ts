@@ -23,8 +23,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 import type { CronJobOrigin, CronMissedOrigin } from '#/agent/contextMemory/types';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IntervalTimer } from '#/_base/utils/timer';
 
@@ -720,6 +719,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionCronService,
   SessionCronServiceImpl,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'cron',
 );

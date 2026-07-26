@@ -21,8 +21,7 @@
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -416,6 +415,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentExternalHooksService,
   AgentExternalHooksService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'externalHooks',
 );

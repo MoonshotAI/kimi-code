@@ -14,9 +14,8 @@
  * at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
@@ -960,6 +959,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolExecutorService,
   AgentToolExecutorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolExecutor',
 );

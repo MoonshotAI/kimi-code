@@ -10,8 +10,7 @@
  */
 
 import { Disposable, toDisposable } from "#/_base/di/lifecycle";
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -196,6 +195,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextInjectorService,
   AgentContextInjectorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextInjector',
 );

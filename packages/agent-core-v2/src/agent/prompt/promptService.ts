@@ -12,9 +12,8 @@
  * reference and the `hooks` slot. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -262,4 +261,10 @@ export class AgentPromptService implements IAgentPromptService {
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
-registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Eager, 'prompt');
+registerScopedService(
+  LifecycleScope.Agent,
+  IAgentPromptService,
+  AgentPromptService,
+  ScopeActivation.OnScopeCreated,
+  'prompt',
+);

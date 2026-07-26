@@ -11,9 +11,8 @@
  * (`IAgentStateService`) and read/written through it. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -78,6 +77,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolSelectAnnouncementsService,
   AgentToolSelectAnnouncementsService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolSelect',
 );

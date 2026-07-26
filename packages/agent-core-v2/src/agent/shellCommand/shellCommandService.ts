@@ -21,8 +21,7 @@
  * stays an instance field (per-command `AbortController`s, not plain data).
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
@@ -253,6 +252,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentShellCommandService,
   AgentShellCommandService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'shellCommand',
 );

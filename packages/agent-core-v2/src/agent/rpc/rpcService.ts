@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -236,6 +235,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'rpc',
 );

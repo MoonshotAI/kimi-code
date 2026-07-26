@@ -8,14 +8,14 @@
  * view only while the disclosure gate is open. The public contract (input
  * schema, `ISelectToolsTool`) lives in `./select-tools`.
  *
- * Registered via the module-level `registerAgentTool(ISelectToolsTool,
+ * Registered via the module-level `registerAgentToolService(ISelectToolsTool,
  * SelectToolsTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. Bound at Agent scope.
  */
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 
 import {
@@ -69,4 +69,4 @@ export class SelectToolsTool implements ISelectToolsTool {
   }
 }
 
-registerAgentTool(ISelectToolsTool, SelectToolsTool, { name: SELECT_TOOLS_TOOL_NAME, domain: 'toolSelect' });
+registerAgentToolService(ISelectToolsTool, SelectToolsTool, { name: SELECT_TOOLS_TOOL_NAME, domain: 'toolSelect' });

@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
-import { ILogService } from '#/_base/log/log';
 import {
   IBootstrapService,
   bootstrap,
@@ -15,18 +12,15 @@ import { BootstrapService } from '#/app/bootstrap/bootstrapService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import { stubLog } from '../../_base/log/stubs';
-
 describe('BootstrapService (scoped)', () => {
   beforeEach(() => {
-    // Scope creation eagerly instantiates every registered service of the
-    // tier, so keep the registry minimal: only what this file needs.
+    // Keep the registry minimal so unrelated OnScopeCreated services do not run.
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,
       IBootstrapService,
       BootstrapService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'bootstrap',
     );
   });
@@ -59,12 +53,7 @@ describe('resolveBootstrapOptions', () => {
 
 describe('bootstrap() storage seeding', () => {
   it('seeds IFileSystemStorageService as a FileStorageService instance', () => {
-    // Scope creation eagerly instantiates everything in the collection,
-    // including the seeded `ISkillDiscovery` (FileSkillDiscovery), whose
-    // constructor needs `ILogService` — seed a stub for it.
-    const { app } = bootstrap({ homeDir: '/tmp/kimi-home' }, [
-      [ILogService as ServiceIdentifier<unknown>, stubLog()],
-    ]);
+    const { app } = bootstrap({ homeDir: '/tmp/kimi-home' });
     try {
       const storage = app.accessor.get(IFileSystemStorageService);
       expect(storage).toBeInstanceOf(FileStorageService);

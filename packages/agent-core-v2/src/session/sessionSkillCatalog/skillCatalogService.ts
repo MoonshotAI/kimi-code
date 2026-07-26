@@ -10,9 +10,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -155,6 +154,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSkillCatalog,
   SessionSkillCatalogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionSkillCatalog',
 );

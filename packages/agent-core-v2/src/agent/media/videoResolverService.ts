@@ -25,8 +25,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
@@ -241,6 +240,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentVideoResolverService,
   AgentVideoResolverService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'media',
 );

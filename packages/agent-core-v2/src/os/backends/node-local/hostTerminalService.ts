@@ -13,9 +13,8 @@
 
 import type { IPty } from 'node-pty';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IHostTerminalService, type TerminalProcess, type TerminalSpawnOptions } from '#/os/interface/terminal';
 
@@ -60,6 +59,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   HostTerminalService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'terminal',
 );

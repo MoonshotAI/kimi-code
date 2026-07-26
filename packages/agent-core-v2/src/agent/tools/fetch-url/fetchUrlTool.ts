@@ -5,7 +5,7 @@
  * host-injected `UrlFetcher` (contract in
  * `#/app/web/tools/fetch-url-types`). The default service falls back to the
  * built-in `LocalFetchURLProvider`, so `FetchURL` is always available without
- * OAuth. Bound at Agent scope; self-registers via `registerAgentTool(...)` at
+ * OAuth. Bound at Agent scope; self-registers via `registerAgentToolService(...)` at
  * module load.
  */
 
@@ -18,7 +18,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ToolResultBuilder } from '#/tool/result-builder';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebFetchService } from '#/app/web/web';
 import { HttpFetchError, type UrlFetcher } from '#/app/web/tools/fetch-url-types';
@@ -89,4 +89,4 @@ export class FetchURLTool implements IFetchURLTool {
   }
 }
 
-registerAgentTool(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web' });
+registerAgentToolService(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web' });

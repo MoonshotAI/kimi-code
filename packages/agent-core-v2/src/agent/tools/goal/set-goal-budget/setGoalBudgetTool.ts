@@ -12,7 +12,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/agent/goal/types';
@@ -97,7 +97,7 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
   }
 }
 
-registerAgentTool(ISetGoalBudgetTool, SetGoalBudgetTool, {
+registerAgentToolService(ISetGoalBudgetTool, SetGoalBudgetTool, {
   name: 'SetGoalBudget',
   domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',

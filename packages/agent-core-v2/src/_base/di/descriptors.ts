@@ -1,25 +1,16 @@
 /**
- * `di` domain (L0) — `SyncDescriptor` packaging a constructor + static args for lazy instantiation.
+ * `di` domain (L0) — `SyncDescriptor` packaging a constructor and its static arguments.
  */
 
 export class SyncDescriptor<T> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public readonly ctor: any;
 
-  /**
-   * Whether scope creation's `instantiateAll` should resolve this service.
-   * Defaults to true; registrations that own an explicit activation pass
-   * (e.g. agent tools) opt out so their constructors never run at scope
-   * creation.
-   */
-  public instantiateWithScope: boolean = true;
-
   constructor(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctor: new (...args: any[]) => T,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public readonly staticArguments: ReadonlyArray<any> = [],
-    public readonly supportsDelayedInstantiation: boolean = false,
   ) {
     this.ctor = ctor;
   }

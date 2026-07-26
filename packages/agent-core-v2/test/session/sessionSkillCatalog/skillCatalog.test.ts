@@ -14,10 +14,10 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   _clearScopedRegistryForTests,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
@@ -210,16 +210,15 @@ async function withSkillCatalogWorkspace(
 
 describe('SessionSkillCatalogService', () => {
   beforeEach(() => {
-    // Scope creation now eagerly instantiates every service registered for
-    // that scope tier, so keep the scoped registry limited to the catalog
-    // chain these tests exercise; every other dependency arrives as a seeded
-    // stub via `createScopedTestHost`.
+    // Keep the scoped registry limited to the catalog chain these tests
+    // exercise so unrelated OnScopeCreated registrations do not run; every
+    // other dependency arrives as a seeded stub via `createScopedTestHost`.
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.Session,
       ISessionStateService,
       SessionStateService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'state',
     );
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);

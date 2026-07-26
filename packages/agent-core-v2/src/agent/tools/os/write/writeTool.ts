@@ -14,7 +14,7 @@
  * / `ISessionSkillCatalog`.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/write.ts`).
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -30,7 +30,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
@@ -141,4 +141,4 @@ export class WriteTool implements IWriteTool {
   }
 }
 
-registerAgentTool(IWriteTool, WriteTool, { name: 'Write', domain: 'os/backends' });
+registerAgentToolService(IWriteTool, WriteTool, { name: 'Write', domain: 'os/backends' });

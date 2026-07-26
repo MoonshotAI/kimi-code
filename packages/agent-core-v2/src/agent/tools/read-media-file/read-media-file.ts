@@ -6,7 +6,7 @@
  * and the `VideoUploader` channel type (consumed by
  * `#/agent/media/registerMediaTools`, which binds the provider's upload
  * hook). This tool has no DI decorator — it is a deliberate exception to
- * the `registerAgentTool` contribution table, `new`ed by
+ * the `registerAgentToolService` contribution table, `new`ed by
  * `AgentMediaToolsRegistrar` at Agent scope whenever the bound model
  * changes (see `readMediaFileTool.ts`).
  */

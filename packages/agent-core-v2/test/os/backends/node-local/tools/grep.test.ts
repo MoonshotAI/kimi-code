@@ -16,7 +16,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import {
   _clearAgentToolContributionsForTests,
   getAgentToolContributions,
-  registerAgentTool,
+  registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -288,7 +288,7 @@ describe('GrepTool', () => {
     const disposables = new DisposableStore();
     try {
       _clearAgentToolContributionsForTests();
-      registerAgentTool(IGrepTool, ProductionGrepTool, {
+      registerAgentToolService(IGrepTool, ProductionGrepTool, {
         name: 'Grep',
         source: 'user',
         disclosure: 'deferred',
@@ -331,7 +331,7 @@ describe('GrepTool', () => {
       disposables.dispose();
       _clearAgentToolContributionsForTests();
       for (const contribution of savedContributions) {
-        registerAgentTool(contribution.id, contribution.ctor, contribution.options);
+        registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }
     }
   });

@@ -16,9 +16,8 @@
  * live in the runner. Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import {
   ISessionLifecycleService,
@@ -120,6 +119,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionExternalHooksService,
   SessionExternalHooksService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'externalHooks',
 );

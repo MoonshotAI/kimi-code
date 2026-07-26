@@ -3,9 +3,9 @@ import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -302,14 +302,14 @@ beforeEach(() => {
     LifecycleScope.Session,
     ISessionStateService,
     SessionStateService,
-    InstantiationType.Eager,
+    ScopeActivation.OnScopeCreated,
     'state',
   );
   registerScopedService(
     LifecycleScope.Session,
     ISessionFsService,
     SessionFsService,
-    InstantiationType.Delayed,
+    ScopeActivation.OnDemand,
     'sessionFs',
   );
 });

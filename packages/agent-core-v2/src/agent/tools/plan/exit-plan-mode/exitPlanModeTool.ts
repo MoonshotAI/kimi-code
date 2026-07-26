@@ -20,7 +20,7 @@
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -176,7 +176,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
   }
 }
 
-registerAgentTool(IExitPlanModeTool, ExitPlanModeTool, { name: 'ExitPlanMode', domain: 'plan' });
+registerAgentToolService(IExitPlanModeTool, ExitPlanModeTool, { name: 'ExitPlanMode', domain: 'plan' });
 
 function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
   const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';

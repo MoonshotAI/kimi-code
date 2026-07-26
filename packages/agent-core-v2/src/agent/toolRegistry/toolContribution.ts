@@ -2,14 +2,14 @@
  * `toolRegistry` domain (L3) — module-level agent-tool contribution registry.
  *
  * Tools contribute themselves at module load via
- * `registerAgentTool(identifier, ctor, options?)` — a double registration:
+ * `registerAgentToolService(identifier, ctor, options?)` — a double registration:
  * the tool is registered as an Agent-scope DI service
  * (`registerScopedService`) and recorded in this contribution table. The DI
- * registration opts out of scope creation's `instantiateAll` sweep
- * (`instantiateWithScope: false`), so no tool constructor runs at scope
- * creation — constructors may legitimately throw when their host capability
- * is absent (e.g. `WebSearchTool` without a configured provider), and the
- * runtime registry always holds real instances, never proxies.
+ * registration explicitly uses `OnDemand` scope activation, so no tool
+ * constructor runs at scope creation — constructors may legitimately throw
+ * when their host capability is absent (e.g. `WebSearchTool` without a
+ * configured provider), and the runtime registry always holds real instances,
+ * never proxies.
  * `AgentToolActivationService` (`toolActivation`, L4) consumes the table when
  * an Agent is created: for each contribution whose `when` predicate holds and
  * whose `name` the bound Profile's tool policy allows, it resolves the
@@ -17,7 +17,7 @@
  * registers it into the per-agent runtime registry. The
  * declared `name` is what lets activation filter without instantiating.
  *
- * `registerAgentTool` is deliberately not "builtin"-scoped: the same API is
+ * `registerAgentToolService` is deliberately not "builtin"-scoped: the same API is
  * what external contributors (plugins, SDK consumers) will use once the
  * surface is public. The tool's origin is carried by `options.source`
  * (`'builtin'` / `'user'` / `'mcp'` / …), not by the registration API.
@@ -29,8 +29,7 @@
  */
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type {
   AgentTool,
   ToolDisclosure,
@@ -60,7 +59,7 @@ export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {
 
 const _agentToolContributions: AgentToolContribution[] = [];
 
-export function registerAgentTool<T extends AnyAgentTool>(
+export function registerAgentToolService<T extends AnyAgentTool>(
   id: ServiceIdentifier<T>,
   ctor: AgentToolCtor<T>,
   options: AgentToolContributionOptions,
@@ -69,11 +68,8 @@ export function registerAgentTool<T extends AnyAgentTool>(
     LifecycleScope.Agent,
     id,
     ctor,
-    InstantiationType.Eager,
+    ScopeActivation.OnDemand,
     options.domain ?? 'unknown',
-    // Activation (`AgentToolActivationService.activate`) is the only
-    // resolution path — scope creation must not construct tools.
-    false,
   );
   _agentToolContributions.push({ id, ctor, options });
 }

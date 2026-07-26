@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -44,7 +44,7 @@ describe('FileSessionIndex (legacy)', () => {
       LifecycleScope.App,
       ISessionIndex,
       FileSessionIndex,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'sessionIndex',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-sessions-'));
@@ -248,14 +248,14 @@ describe('FileSessionIndex (read model)', () => {
       LifecycleScope.App,
       ISessionIndex,
       FileSessionIndex,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'sessionIndex',
     );
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
       MiniDbQueryStore,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'storage',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-sessions-rm-'));

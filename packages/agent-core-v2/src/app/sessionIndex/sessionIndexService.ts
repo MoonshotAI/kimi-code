@@ -40,8 +40,7 @@
  * would substitute a database-backed `DbSessionIndex`. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -335,6 +334,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionIndex,
   FileSessionIndex,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionIndex',
 );

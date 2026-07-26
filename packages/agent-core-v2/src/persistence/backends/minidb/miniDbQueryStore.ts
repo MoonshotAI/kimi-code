@@ -49,9 +49,8 @@ import { join } from 'pathe';
 import { type QueryOptions } from '@moonshot-ai/minidb';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -284,6 +283,6 @@ registerScopedService(
   LifecycleScope.App,
   IQueryStore,
   MiniDbQueryStore,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'storage',
 );

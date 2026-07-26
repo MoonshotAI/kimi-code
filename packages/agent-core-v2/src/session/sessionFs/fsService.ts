@@ -62,8 +62,7 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
   buildEtag,
@@ -1031,6 +1030,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsService,
   SessionFsService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionFs',
 );

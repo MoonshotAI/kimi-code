@@ -8,7 +8,7 @@
  * that re-invokes itself (or chains into another) cannot recurse without
  * bound, and `NestedSkillTooDeepError` is raised when a chain exceeds it —
  * and the `ISkillTool` DI decorator that the implementation (`skillTool.ts`)
- * registers against via `registerAgentTool`. Bound at Agent scope.
+ * registers against via `registerAgentToolService`. Bound at Agent scope.
  */
 
 import { z } from 'zod';

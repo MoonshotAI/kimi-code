@@ -6,8 +6,7 @@
  * at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { StateRegistry } from '#/_base/state/stateRegistry';
 
 import { ISessionStateService } from './sessionState';
@@ -20,6 +19,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionStateService,
   SessionStateService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'state',
 );

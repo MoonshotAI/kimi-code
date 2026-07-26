@@ -60,7 +60,7 @@
  * base only when that base sits inside the primary workspace. External roots
  * stay absolute so downstream Read/Edit calls keep targeting the same file.
  *
- * Bound at Agent scope; self-registers via `registerAgentTool(...)` at module
+ * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */
 
@@ -85,7 +85,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   isWithinDirectory,
@@ -325,7 +325,7 @@ export class GlobTool implements IGlobTool {
   }
 }
 
-registerAgentTool(IGlobTool, GlobTool, { name: 'Glob', domain: 'os/backends' });
+registerAgentToolService(IGlobTool, GlobTool, { name: 'Glob', domain: 'os/backends' });
 
 function createRgProbe(processService: IHostProcessService): RgProbe {
   return {

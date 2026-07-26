@@ -16,7 +16,7 @@
  * public contract (input schemas, uniqueness validation,
  * `IAskUserQuestionTool`) lives in `./ask-user-question`.
  *
- * Registered via the module-level `registerAgentTool(IAskUserQuestionTool,
+ * Registered via the module-level `registerAgentToolService(IAskUserQuestionTool,
  * AskUserQuestionTool)` at the bottom of this file — the same "import =
  * register" pattern used by every agent tool. Bound at Agent scope.
  */
@@ -36,7 +36,7 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { ISessionQuestionService } from '#/session/question/question';
 import type {
@@ -215,7 +215,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   }
 }
 
-registerAgentTool(IAskUserQuestionTool, AskUserQuestionTool, {
+registerAgentToolService(IAskUserQuestionTool, AskUserQuestionTool, {
   name: 'AskUserQuestion',
   domain: 'questionTools',
 });

@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createDecorator } from '#/_base/di/instantiation';
+import {
+  LifecycleScope,
+  _clearScopedRegistryForTests,
+  createAppScope,
+} from '#/_base/di/scope';
 import { createServices } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
@@ -10,7 +15,7 @@ import { AgentToolActivationService } from '#/agent/toolActivation/toolActivatio
 import {
   _clearAgentToolContributionsForTests,
   getAgentToolContributions,
-  registerAgentTool,
+  registerAgentToolService,
   type AgentToolContribution,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -31,21 +36,28 @@ const IAlphaTool = createDecorator<AgentTool>('activationTestAlphaTool');
 const IBetaTool = createDecorator<AgentTool>('activationTestBetaTool');
 const IGammaTool = createDecorator<AgentTool>('activationTestGammaTool');
 
+let alphaConstructions = 0;
+let betaConstructions = 0;
+let gammaConstructions = 0;
+
 class AlphaTool extends StubTool {
   constructor() {
     super('Alpha');
+    alphaConstructions += 1;
   }
 }
 
 class BetaTool extends StubTool {
   constructor() {
     super('Beta');
+    betaConstructions += 1;
   }
 }
 
 class GammaTool extends StubTool {
   constructor() {
     super('Gamma');
+    gammaConstructions += 1;
   }
 }
 
@@ -79,6 +91,10 @@ describe('AgentToolActivationService', () => {
 
   beforeEach(() => {
     savedContributions = [...getAgentToolContributions()];
+    disposables = new DisposableStore();
+    alphaConstructions = 0;
+    betaConstructions = 0;
+    gammaConstructions = 0;
     _clearAgentToolContributionsForTests();
     delete profileData.activeToolNames;
     delete profileData.disallowedTools;
@@ -88,13 +104,28 @@ describe('AgentToolActivationService', () => {
     disposables.dispose();
     _clearAgentToolContributionsForTests();
     for (const contribution of savedContributions) {
-      registerAgentTool(contribution.id, contribution.ctor, contribution.options);
+      registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
     }
   });
 
+  it('keeps an AgentTool unconstructed during scope creation and resolves a real instance', () => {
+    _clearScopedRegistryForTests();
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+
+    const app = createAppScope();
+    const session = app.createChild(LifecycleScope.Session, 'session');
+    const agent = session.createChild(LifecycleScope.Agent, 'agent');
+
+    expect(alphaConstructions).toBe(0);
+    const tool = agent.accessor.get(IAlphaTool);
+    expect(tool).toBeInstanceOf(AlphaTool);
+    expect(alphaConstructions).toBe(1);
+    app.dispose();
+  });
+
   it('activates every contribution when the profile has no allowlist', async () => {
-    registerAgentTool(IAlphaTool, AlphaTool, { name: 'Alpha' });
-    registerAgentTool(IBetaTool, BetaTool, { name: 'Beta' });
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
     const ix = createActivationHost();
 
     await ix.get(IAgentToolActivationService).activate();
@@ -106,8 +137,8 @@ describe('AgentToolActivationService', () => {
 
   it('activates only the tools allowed by the profile allowlist', async () => {
     profileData.activeToolNames = ['Alpha'];
-    registerAgentTool(IAlphaTool, AlphaTool, { name: 'Alpha' });
-    registerAgentTool(IBetaTool, BetaTool, { name: 'Beta' });
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
     const ix = createActivationHost();
 
     await ix.get(IAgentToolActivationService).activate();
@@ -115,12 +146,13 @@ describe('AgentToolActivationService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeUndefined();
+    expect(betaConstructions).toBe(0);
   });
 
   it('honors the profile disallowedTools', async () => {
     profileData.disallowedTools = ['Beta'];
-    registerAgentTool(IAlphaTool, AlphaTool, { name: 'Alpha' });
-    registerAgentTool(IBetaTool, BetaTool, { name: 'Beta' });
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
     const ix = createActivationHost();
 
     await ix.get(IAgentToolActivationService).activate();
@@ -128,21 +160,23 @@ describe('AgentToolActivationService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeUndefined();
+    expect(betaConstructions).toBe(0);
   });
 
   it('skips contributions whose when predicate fails', async () => {
-    registerAgentTool(IGammaTool, GammaTool, { name: 'Gamma', when: () => false });
+    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma', when: () => false });
     const ix = createActivationHost();
 
     await ix.get(IAgentToolActivationService).activate();
 
     expect(ix.get(IAgentToolRegistryService).resolve('Gamma')).toBeUndefined();
+    expect(gammaConstructions).toBe(0);
   });
 
   it('is idempotent and picks up newly allowed tools on re-activation', async () => {
     profileData.activeToolNames = ['Alpha'];
-    registerAgentTool(IAlphaTool, AlphaTool, { name: 'Alpha' });
-    registerAgentTool(IBetaTool, BetaTool, { name: 'Beta' });
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
     const ix = createActivationHost();
     const activation = ix.get(IAgentToolActivationService);
     const registry = ix.get(IAgentToolRegistryService);
