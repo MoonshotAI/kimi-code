@@ -782,7 +782,7 @@ describe('registerMediaTools', () => {
   const env = createTestEnv();
 
   it('registers ReadMediaFile when the model supports image input', () => {
-    const registry = new AgentToolRegistryService(new AgentStateService());
+    const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
       fs,
       env,
@@ -795,7 +795,7 @@ describe('registerMediaTools', () => {
   });
 
   it('registers ReadMediaFile when the model supports video input', () => {
-    const registry = new AgentToolRegistryService(new AgentStateService());
+    const registry = new AgentToolRegistryService();
     registerMediaTools(registry, {
       fs,
       env,
@@ -806,7 +806,7 @@ describe('registerMediaTools', () => {
   });
 
   it('does not register anything when the model lacks media capability', () => {
-    const registry = new AgentToolRegistryService(new AgentStateService());
+    const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
       fs,
       env,
@@ -825,7 +825,7 @@ describe('AgentMediaToolsRegistrar', () => {
   }
 
   function createRegistrarHarness() {
-    const registry = new AgentToolRegistryService(new AgentStateService());
+    const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
     const state: ProfileState = {
       alias: '',

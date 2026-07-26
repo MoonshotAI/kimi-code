@@ -43,10 +43,13 @@
  * typo in one agent file cannot legitimize the same typo in another, and
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
- * The mutable plain-data state (`optionsValue` / `activeToolNamesOverlay` /
- * `agentsMdWarning` / the two emitted-warning dedupe sets / `activeProfile`)
- * is registered into `agentState` (`IAgentStateService`) and read/written
- * through it. Bound at Agent scope.
+ * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
+ * / the two emitted-warning dedupe sets) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
+ * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
+ * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
+ * fields because the container only holds pure data structures. Bound at
+ * Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -144,10 +147,6 @@ function describeInactiveToolPattern(
   }
 }
 
-export const profileOptionsValueKey = defineState<ProfileServiceOptions>(
-  'profile.optionsValue',
-  () => ({}),
-);
 export const profileActiveToolNamesOverlayKey = defineState<readonly string[] | undefined>(
   'profile.activeToolNamesOverlay',
   () => undefined as readonly string[] | undefined,
@@ -164,13 +163,11 @@ export const profileEmittedToolPatternWarningsKey = defineState<Set<string>>(
   'profile.emittedToolPatternWarnings',
   () => new Set(),
 );
-export const profileActiveProfileKey = defineState<ResolvedAgentProfile | undefined>(
-  'profile.activeProfile',
-  () => undefined as ResolvedAgentProfile | undefined,
-);
 
 export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
+
+  private optionsValue: ProfileServiceOptions = {};
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -178,6 +175,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       (this.wire.getModel(ActiveToolsModel) as ActiveToolsState)
     );
   }
+
+  private activeProfile: ResolvedAgentProfile | undefined;
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -200,12 +199,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(profileOptionsValueKey);
     this.states.register(profileActiveToolNamesOverlayKey);
     this.states.register(profileAgentsMdWarningKey);
     this.states.register(profileEmittedThinkingEffortWarningsKey);
     this.states.register(profileEmittedToolPatternWarningsKey);
-    this.states.register(profileActiveProfileKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
@@ -220,14 +217,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
-  }
-
-  private get optionsValue(): ProfileServiceOptions {
-    return this.states.get(profileOptionsValueKey);
-  }
-
-  private set optionsValue(value: ProfileServiceOptions) {
-    this.states.set(profileOptionsValueKey, value);
   }
 
   private get activeToolNamesOverlay(): readonly string[] | undefined {
@@ -252,14 +241,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private get emittedToolPatternWarnings(): Set<string> {
     return this.states.get(profileEmittedToolPatternWarningsKey);
-  }
-
-  private get activeProfile(): ResolvedAgentProfile | undefined {
-    return this.states.get(profileActiveProfileKey);
-  }
-
-  private set activeProfile(value: ResolvedAgentProfile | undefined) {
-    this.states.set(profileActiveProfileKey, value);
   }
 
   configure(options: ProfileServiceOptions): void {

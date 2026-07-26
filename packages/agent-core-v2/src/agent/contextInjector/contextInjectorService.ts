@@ -3,9 +3,10 @@
  *
  * Injects registered context providers through `loop` and `systemReminder`,
  * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. The mutable injection-tracking
- * state (`entries`, `isNewTurn`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it. Bound at Agent scope.
+ * those positions after `wire` restoration. The plain-data `isNewTurn` flag is
+ * registered into `agentState` (`IAgentStateService`) and read/written through
+ * it; `entries` stays a plain instance field (its values hold provider
+ * functions, not plain data). Bound at Agent scope.
  */
 
 import { Disposable, toDisposable } from "#/_base/di/lifecycle";
@@ -31,10 +32,6 @@ interface ContextInjectionEntry {
   readonly positions: number[];
 }
 
-export const contextInjectorEntriesKey = defineState<Set<ContextInjectionEntry>>(
-  'contextInjector.entries',
-  () => new Set(),
-);
 export const contextInjectorIsNewTurnKey = defineState<boolean>(
   'contextInjector.isNewTurn',
   () => true,
@@ -42,6 +39,7 @@ export const contextInjectorIsNewTurnKey = defineState<boolean>(
 
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
+  private readonly entries = new Set<ContextInjectionEntry>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -52,7 +50,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(contextInjectorEntriesKey);
     this.states.register(contextInjectorIsNewTurnKey);
     this._register(
       loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
@@ -76,10 +73,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         await next();
       }),
     );
-  }
-
-  private get entries(): Set<ContextInjectionEntry> {
-    return this.states.get(contextInjectorEntriesKey);
   }
 
   private get isNewTurn(): boolean {

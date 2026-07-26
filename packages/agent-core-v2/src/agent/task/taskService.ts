@@ -26,10 +26,12 @@
  * remain governed by the Session lifecycle. Scope disposal paths that bypass
  * graceful close synchronously cancel/abort work and immediately attempt a
  * best-effort force-stop to reduce the risk of surviving child processes.
- * The mutable task state (`tasks`, `ghosts`, `scheduledNotificationKeys`,
+ * The plain-data task state (`ghosts`, `scheduledNotificationKeys`,
  * `deliveredNotificationKeys`, `activeTaskReminderPending`) is registered
  * into `agentState` (`IAgentStateService`) and read/written through it; the
- * `persistence` construction-time helper stays a plain field.
+ * live `tasks` registry stays a plain field because a `ManagedTask` holds
+ * resources (promise chains, an `AbortController`, task handles) that must
+ * not be snapshotted, as does the `persistence` construction-time helper.
  * Bound at Agent scope.
  */
 
@@ -219,7 +221,6 @@ export class TaskNotificationStepRequest extends MessageStepRequest {
   }
 }
 
-export const taskTasksKey = defineState<Map<string, ManagedTask>>('task.tasks', () => new Map());
 export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
   'task.ghosts',
   () => new Map(),
@@ -240,6 +241,7 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly tasks = new Map<string, ManagedTask>();
   private readonly persistence: AgentTaskPersistence;
 
   constructor(
@@ -258,7 +260,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(taskTasksKey);
     this.states.register(taskGhostsKey);
     this.states.register(taskScheduledNotificationKeysKey);
     this.states.register(taskDeliveredNotificationKeysKey);
@@ -300,10 +301,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         this.activeBackgroundTaskReminder(),
       ),
     );
-  }
-
-  private get tasks(): Map<string, ManagedTask> {
-    return this.states.get(taskTasksKey);
   }
 
   private get ghosts(): Map<string, AgentTaskInfo> {

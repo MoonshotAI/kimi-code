@@ -4,11 +4,12 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. The mutable scheduler state (`active`, `pending`,
- * `steered`, `launching`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the lazily-resolved
- * `fullCompactionService` reference and the `hooks` slot stay plain fields.
- * Bound at Agent scope.
+ * resource model. The pure-data `launching` flag is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it; the
+ * `active` / `pending` / `steered` records stay plain fields because their
+ * `Record` values carry Deferred promise handles (the container only holds
+ * pure data structures), as do the lazily-resolved `fullCompactionService`
+ * reference and the `hooks` slot. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -63,16 +64,13 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
-export const promptActiveKey = defineState<(Record & { turn: Turn }) | undefined>(
-  'prompt.active',
-  () => undefined as (Record & { turn: Turn }) | undefined,
-);
-export const promptPendingKey = defineState<Record[]>('prompt.pending', () => []);
-export const promptSteeredKey = defineState<Map<string, Record[]>>('prompt.steered', () => new Map());
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
 export class AgentPromptService implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
+  private active: (Record & { turn: Turn }) | undefined;
+  private readonly pending: Record[] = [];
+  private readonly steered = new Map<string, Record[]>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -86,30 +84,11 @@ export class AgentPromptService implements IAgentPromptService {
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
-    this.states.register(promptActiveKey);
-    this.states.register(promptPendingKey);
-    this.states.register(promptSteeredKey);
     this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
     });
-  }
-
-  private get active(): (Record & { turn: Turn }) | undefined {
-    return this.states.get(promptActiveKey);
-  }
-
-  private set active(value: (Record & { turn: Turn }) | undefined) {
-    this.states.set(promptActiveKey, value);
-  }
-
-  private get pending(): Record[] {
-    return this.states.get(promptPendingKey);
-  }
-
-  private get steered(): Map<string, Record[]> {
-    return this.states.get(promptSteeredKey);
   }
 
   private get launching(): boolean {

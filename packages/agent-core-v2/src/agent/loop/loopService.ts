@@ -26,11 +26,13 @@
  * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
  * reads the step budget from `config`. The plain-data loop state
- * (`pendingTurns`, `activeTurnJob`, `nextReservedTurnId`,
- * `lastRequestTraceId`, `disposing`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the mechanism resources
- * (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
- * `settleWaiters`, `activeRequestTrace`) stay plain fields. Bound at Agent
+ * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it;
+ * `pendingTurns` and `activeTurnJob` stay plain fields because a `TurnJob`
+ * holds resources (`AbortController`, controlled promises, a
+ * `StepRequestQueue`) that must not be snapshotted, alongside the mechanism
+ * resources (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
+ * `settleWaiters`, `activeRequestTrace`). Bound at Agent
  * scope. The `turnEvents` import is load-bearing beyond the prompt-text
  * helper: it loads the `DomainEventMap` augmentation for the `turn.*` / delta
  * events published here, which lives with the event definitions.
@@ -96,11 +98,6 @@ import { cancelTurn, promptTurn, TurnModel } from './turnOps';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
-export const loopPendingTurnsKey = defineState<TurnJob[]>('loop.pendingTurns', () => []);
-export const loopActiveTurnJobKey = defineState<TurnJob | undefined>(
-  'loop.activeTurnJob',
-  () => undefined as TurnJob | undefined,
-);
 export const loopNextReservedTurnIdKey = defineState<number | undefined>(
   'loop.nextReservedTurnId',
   () => undefined as number | undefined,
@@ -122,6 +119,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly standaloneStepQueue = new StepRequestQueue();
   private readonly pendingAssignments = new Map<StepRequest, ReturnType<typeof createControlledPromise<import('./loop').StepAssignment>>>();
   private readonly errorHandlers: LoopErrorHandler[] = [];
+  private readonly pendingTurns: TurnJob[] = [];
+  private activeTurnJob: TurnJob | undefined;
   private readonly settleWaiters: Array<() => void> = [];
   private activeRequestTrace: LLMRequestTrace | undefined;
 
@@ -137,23 +136,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(loopPendingTurnsKey);
-    this.states.register(loopActiveTurnJobKey);
     this.states.register(loopNextReservedTurnIdKey);
     this.states.register(loopLastRequestTraceIdKey);
     this.states.register(loopDisposingKey);
-  }
-
-  private get pendingTurns(): TurnJob[] {
-    return this.states.get(loopPendingTurnsKey);
-  }
-
-  private get activeTurnJob(): TurnJob | undefined {
-    return this.states.get(loopActiveTurnJobKey);
-  }
-
-  private set activeTurnJob(value: TurnJob | undefined) {
-    this.states.set(loopActiveTurnJobKey, value);
   }
 
   private get nextReservedTurnId(): number | undefined {

@@ -6,11 +6,11 @@
  * keeps them registered across reconnects, swaps in the OAuth tool for
  * `needs-auth` servers, journals tool discoveries on the wire (queued until
  * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
- * events. The plain-data state (`mcpTools`, `mcpToolsByServer`,
- * `discoveryWritesReady`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; `pendingDiscoveries`
- * stays an instance field (a closure queue of deferred discovery writes, not
- * plain data). Bound at Agent scope.
+ * events. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
+ * is registered into `agentState` (`IAgentStateService`) and read/written
+ * through it; `mcpTools` stays a plain instance field (its values hold
+ * disposable resource handles, not plain data), as does `pendingDiscoveries`
+ * (a closure queue of deferred discovery writes). Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
@@ -83,10 +83,6 @@ interface McpToolRegistration {
   readonly serverName: string;
 }
 
-export const mcpMcpToolsKey = defineState<Map<string, McpToolRegistration>>(
-  'mcp.mcpTools',
-  () => new Map(),
-);
 export const mcpMcpToolsByServerKey = defineState<Map<string, string[]>>(
   'mcp.mcpToolsByServer',
   () => new Map(),
@@ -98,6 +94,7 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
 
 export class AgentMcpService extends Disposable implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
+  private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
 
   constructor(
@@ -111,7 +108,6 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(mcpMcpToolsKey);
     this.states.register(mcpMcpToolsByServerKey);
     this.states.register(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
@@ -126,10 +122,6 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         await next();
       }),
     );
-  }
-
-  private get mcpTools(): Map<string, McpToolRegistration> {
-    return this.states.get(mcpMcpToolsKey);
   }
 
   private get mcpToolsByServer(): Map<string, string[]> {
