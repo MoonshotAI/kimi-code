@@ -1,7 +1,7 @@
 # Rust Agent 引擎 — v1/v2 迁移 Gap Analysis
 
-生成日期: 2026-07-26（末次更新：activity_view / profile 补齐）
-数据来源: `packages/kimi-agent/src/` (37,445 行 Rust) vs `packages/agent-core/src/` (72,546 行 TS) vs `packages/agent-core-v2/src/` (96,735 行 TS)
+生成日期: 2026-07-26（末次更新：全量补齐 — fullCompaction / toolSelect / questionTools / swarm / faultInjection / knowledge / plan / goal / mcp）
+数据来源: `packages/kimi-agent/src/` (50,113 行 Rust, 133 文件, 1,406 单元测试) vs `packages/agent-core/src/` (72,546 行 TS) vs `packages/agent-core-v2/src/` (96,735 行 TS)
 
 ---
 
@@ -52,25 +52,25 @@
 | activityView | 472 | 1,053 | `activity_view/` | ✅ 完整（2026-07-26 重写：事件折叠视图 + 发布去重，24 测试） |
 | contextSize | 193 | 内置 | `context/size.rs` | ✅ 完整 |
 | scopeContext | 39 | 内置 | `context/scope.rs` | ✅ 完整 |
-| faultInjection | 171 | 88 | `fault_injection/` | 🟡 简化 |
+| faultInjection | 171 | 182 | `fault_injection/` | ✅ 完整（2026-07-26 重写：一次性闩锁 arm/take/status/clear，8 测试） |
 | contextMemory | 1,984 | 3,312 | `context/` | ✅ 完整（2026-07-26 重写：fold + ops + compaction handoff，167 测试） |
 | contextProjector | 651 | 882 | `context/projector.rs` | ✅ 超越 |
-| goal | 3,029 | 921 | `goal/` | 🟡 核心完整 |
-| knowledge | 722 | 115 | `knowledge/` | 🟡 大幅简化 |
+| goal | 3,029 | 2,196 | `goal/` | ✅ 完整（2026-07-26 补齐：judge 提示词 + JSON 裁决解析 + 分状态 reminder，29 新测试） |
+| knowledge | 722 | 1,285 | `knowledge/` | ✅ 完整（2026-07-26 补齐：注入信号提取 CJK bigram + 自动学习器，38 新测试） |
 | llmRequester | 959 | 2,578 | `llm/` | ✅ 超越（含原生 HTTP/多 provider） |
-| mcp | 3,815 | 762 | `mcp/` | 🟡 简化（无 OAuth/Discovery） |
+| mcp | 3,815 | 2,453 | `mcp/` | ✅ 核心完整（2026-07-26 补齐：output 管线 + 连接状态机 + SSRF URL 门，54 新测试；OAuth/SDK 客户端留 host） |
 | media | 2,649 | 58 | `media/` | 🟡 委托 JS host |
 | permission (4 个) | 1,334 | 1,502 | `permission/` | ✅ 超越（统一引擎） |
-| plan | 1,167 | 301 | `plan/` | 🟡 简化 |
+| plan | 1,167 | 846 | `plan/` | ✅ 完整（2026-07-26 补齐：wire ops + revision 计数 + 提醒注入状态机，22 新测试） |
 | profile | 1,532 | 2,568 | `profile/` | ✅ 完整（2026-07-26 重写：ops + thinking 决议 + 服务状态机，62 测试） |
-| prompt | 440 | 83 | `prompt/` | 🟡 大幅简化 |
-| questionTools | 399 | 76 | `question_tools/` | 🟡 简化 |
+| prompt | 440 | 589 | `prompt/` | ✅ 完整（完整队列/异步，39 测试） |
+| questionTools | 399 | 625 | `question_tools/` | ✅ 完整（2026-07-26 重写：校验/归一化/后台任务流，23 测试） |
 | rpc | 776 | 1,727 | `rpc/` | ✅ 超越（含 JSON-RPC server） |
 | skill | 465 | 330 | `skill/` | ✅ 完整 |
-| swarm | 208 | 150 | `swarm/` | ✅ 完整（原 587 行统计误含 tools/agent-swarm.ts 工具层，非模式状态机缺口） |
+| swarm | 587 | 526 | `swarm/` | ✅ 完整（2026-07-26 补齐：进出提醒副作用 + 批次互斥 veto，16 新测试） |
 | task | 2,440 | 3,277 | `task/` | ✅ 完整（2026-07-26 重写：ghosts + 通知去重 + 输出环，137 测试） |
 | usage | 277 | 321 | `usage/` | ✅ 完整 |
-| fullCompaction | 1,386 | 362 | `compaction/` | 🟡 大幅简化 |
+| fullCompaction | 1,386 | 2,162 | `compaction/` | ✅ 完整（2026-07-26 重写：strategy/utils/ops + 溢出重试收缩，68 测试） |
 | loop | 1,890 | 6,081 | `turn_loop/` + `t_flow` | ✅ 超越 |
 | stepRetry | 148 | 322+ | `turn_loop/retry.rs` | ✅ 完整 |
 | toolDedupe | 436 | 内置 | `turn_loop/tool_dedup.rs` | ✅ 完整 |
@@ -78,17 +78,17 @@
 | toolPolicy | 292 | 内置 | `permission/policies/` | ✅ 完整 |
 | toolRegistry | 251 | 633 | `tools/manager.rs` | ✅ 超越 |
 | toolResultTruncation | 152 | 内置 | `turn_loop/tool_result_budget.rs` | ✅ 完整 |
-| toolSelect | 676 | 内置 | `context/dynamic_tools.rs` | 🟡 简化 |
+| toolSelect | 676 | 1,112 | `tool_select/` | ✅ 完整（2026-07-26 新增：渐进披露服务状态机，41 测试） |
 | toolApproval | 313 | 内置 | `permission/` | ✅ 完整 |
-| **shellCommand** | **273** | **0** | **—** | **❌ 未迁移** |
-| **userTool** | **248** | **0** | **—** | **❌ 未迁移** |
-| **contextInjector** | **212** | **0** | **—** | **❌ 未迁移** |
-| **systemReminder** | **52** | **0** | **—** | **❌ 未迁移** |
-| **externalHooks** | **828** | **0** | **—** | **❌ 未迁移** |
-| **blob** | **263** | **0** | **—** | **❌ 未迁移** |
-| **plugin** | **179** | **0** | **—** | **❌ 未迁移** |
+| shellCommand | 273 | 231 | `shell_command/` | ✅ 完整（事件/取消/context 记录，5 测试） |
+| userTool | 248 | 270 | `user_tool/` | ✅ 完整（ToolManager 集成 + 继承 + 恢复，7 测试） |
+| contextInjector | 212 | 443 | `context_injector/` | ✅ 完整（位置跟踪 + splice + resync，9 测试） |
+| systemReminder | 52 | 内置 | `context/context_memory.rs` | ✅ 完整（`append_system_reminder`） |
+| blob | 263 | 632 | `blob/` | ✅ 超越（ByteLruCache + data URI，16 测试） |
+| externalHooks | 828 | — | — | ⚪ 设计上留 JS（child_process + JS 服务编排） |
+| plugin | 179 | — | — | ⚪ 设计上留 JS（IPluginService 仅 JS） |
 
-**v2 统计: 36/43 功能域已覆盖（84%），7 个未迁移**
+**v2 统计: 40/43 功能域达到语义对等（media / externalHooks / plugin 设计上留在 JS host，经 HostCallbacks 桥接）**
 
 ---
 
@@ -203,34 +203,28 @@ kimi -p <prompt>
 - **Rust 引擎当前角色**: v1 的可选加速器，不是 v2 的默认引擎
 - **要成为默认引擎需要**: v2 路径也接入 Rust 引擎，或替换 v1 默认路径
 
-### 迁移进度总结
+### 迁移进度总结（2026-07-26 全量补齐后）
 
 | 维度 | 数值 |
 |------|------|
-| v1 模块覆盖率 | **93%**（14/15） |
-| v2 功能域覆盖率 | **84%**（36/43） |
+| v1 模块覆盖率 | **100%**（17/17，含 discussion） |
+| v2 功能域覆盖率 | **100% 可迁移域**（40/43；media / externalHooks / plugin 设计上留 host） |
 | 核心执行路径 | **100%** |
-| TS → Rust 精简率 | **~72%**（37,445 / 136,066） |
-| 功能等价度 | **~70%**（核心完整，部分简化） |
+| 单元测试 | **1,406**（+10 集成），基线 883 |
+| 引擎规模 | 50,113 行 / 133 文件 |
 
 ### Rust 引擎的实际角色
 
 Rust 引擎不是"把全部 TS 翻译成 Rust"，而是**选择性重写**：
 
-1. **核心性能路径** → Rust（turn loop、LLM、工具、权限）— 100% 完成
-2. **状态机** → Rust 核心 + TS 持久化（goal、plan、swarm）— 核心完成
-3. **宿主服务** → 留在 TS，通过回调桥接（media、blob、plugin）— 合理不迁移
-4. **低优先级** → 未处理（discussion、shellCommand、userTool）— 可选迁移
+1. **核心性能路径** → Rust（turn loop、LLM、工具、权限）— 完成
+2. **状态机与决策核心** → Rust（goal、plan、swarm、compaction、task、mcp 连接、toolSelect 披露）— 完成；持久化/定时器/进程 I/O 经 HostCallbacks 委托
+3. **宿主服务** → 留在 TS，通过回调桥接（media、externalHooks、plugin、MCP OAuth/SDK 客户端）— 设计决定，非缺口
 
-### 如果把 Rust 作为默认引擎
+### 剩余工作（代码之外）
 
-当前缺少的关键能力：
-- Blob 存储 / 持久化
-- 媒体处理管线
-- Shell 命令执行
-- 用户注册工具
-- Context 注入器
-
-### 如果 Rust 只作为核心加速器
-
-当前功能缺口较小，核心 turn loop、LLM、工具执行、权限均在 Rust 中。
+代码覆盖已到位；未完成的是**接入**：
+- v1 默认路径的 `nativeTools` / `nativeLlmProvider` 仍是 opt-in
+- v2 路径对 kimi-agent 的引用为 0（KapServer RPC 桥接未实施）
+- cron/background 的 RPC 面（`rust-loop.ts` 已导出）无 TS 调用方
+- 三份 compaction 切分算法实现待收敛（TS / kimi-native-tools / kimi-agent）
