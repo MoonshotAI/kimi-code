@@ -49,9 +49,9 @@ import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 
-import { ICronCreateTool } from './tools/cron-create';
-import { ICronListTool } from './tools/cron-list';
-import { ICronDeleteTool } from './tools/cron-delete';
+import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
+import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
+import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
 
 import { CronModel, cronAdd, cronDelete, cronCursor } from './cronOps';
 import { ISessionCronService, type CronLoadOptions } from './sessionCronService';

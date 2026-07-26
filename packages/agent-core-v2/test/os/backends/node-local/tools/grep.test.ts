@@ -36,9 +36,9 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import {
   type GrepInput,
   GrepInputSchema,
-  GrepTool as ProductionGrepTool,
   IGrepTool,
-} from '#/os/backends/node-local/tools/grep';
+} from '#/agent/tools/os/grep/grep';
+import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';

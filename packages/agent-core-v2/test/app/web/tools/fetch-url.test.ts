@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
-import { FetchURLTool } from '#/app/web/tools/fetch-url';
+import { FetchURLTool } from '#/agent/tools/fetch-url/fetchUrlTool';
 import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types';
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));

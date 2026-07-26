@@ -52,7 +52,7 @@ import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSel
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
 import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
-import { SelectToolsTool } from '#/agent/toolSelect/tools/select-tools';
+import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';

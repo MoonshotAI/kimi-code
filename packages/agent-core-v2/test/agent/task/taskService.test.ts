@@ -26,7 +26,7 @@ import {
 } from '#/agent/task/task';
 import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService } from '#/agent/task/taskService';
-import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
+import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IProcess } from '#/session/process/processRunner';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

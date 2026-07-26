@@ -35,7 +35,7 @@ import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
-import type { WebSearchProvider } from './tools/web-search';
+import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { IWebSearchProviderService } from './webSearch';
 
 export class WebSearchProviderService implements IWebSearchProviderService {

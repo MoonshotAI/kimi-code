@@ -23,7 +23,8 @@ import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ReadMediaFileTool, type VideoUploader } from '#/agent/media/tools/read-media';
+import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
 
 export interface RegisterMediaToolsDeps {
   readonly fs: IHostFileSystem;

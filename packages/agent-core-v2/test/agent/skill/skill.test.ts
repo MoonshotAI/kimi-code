@@ -14,9 +14,9 @@ import { AgentSkillService } from '#/agent/skill/skillService';
 import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
-  SkillTool,
   SkillToolInputSchema,
-} from '#/agent/skill/tools/skill';
+} from '#/agent/tools/skill/skill';
+import { SkillTool } from '#/agent/tools/skill/skillTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';

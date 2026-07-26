@@ -29,7 +29,7 @@ import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import '#/agent/toolSelect/tools/select-tools';
+import '#/agent/tools/select-tools/selectToolsTool';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 

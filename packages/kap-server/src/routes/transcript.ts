@@ -681,7 +681,7 @@ function readPlanReviewDisplay(display: unknown): PlanReviewDisplayInfo | undefi
 }
 
 // The wording mirrors `formatPlanForOutput` / `formatAutoApprovedPlanForOutput`
-// in `agent-core-v2/src/agent/plan/tools/exit-plan-mode.ts` — the approved
+// in `agent-core-v2/src/agent/tools/plan/exit-plan-mode/exitPlanModeTool.ts` — the approved
 // tool result embeds the full plan body after one of these markers, and the
 // plan file path on a `Plan saved to: <path>` line.
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';

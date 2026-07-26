@@ -30,12 +30,13 @@ import {
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
-import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
+import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
-import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
+import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
+import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {

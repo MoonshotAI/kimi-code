@@ -35,11 +35,11 @@ import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTo
 import {
   AgentSwarmToolInputSchema,
   type AgentSwarmToolInput,
-} from '#/agent/swarm/tools/agent-swarm';
+} from '#/agent/tools/agent-swarm/agent-swarm';
 import {
   SubagentToolInputSchema,
   type SubagentToolInput,
-} from '#/session/subagent/tools/agent';
+} from '#/agent/tools/agent/agent';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';

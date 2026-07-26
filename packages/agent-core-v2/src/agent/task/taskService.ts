@@ -89,9 +89,9 @@ import {
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { TaskModel, taskStarted, taskTerminated } from './taskOps';
-import { formatTaskList } from '#/agent/task/tools/task-list';
-import '#/agent/task/tools/task-output';
-import '#/agent/task/tools/task-stop';
+import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
+import '#/agent/tools/task/task-output/taskOutputTool';
+import '#/agent/tools/task/task-stop/taskStopTool';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;

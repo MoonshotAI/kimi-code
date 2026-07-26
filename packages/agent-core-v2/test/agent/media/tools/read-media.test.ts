@@ -18,10 +18,10 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
-  ReadMediaFileTool,
   type ReadMediaFileInput,
   type VideoUploader,
-} from '#/agent/media/tools/read-media';
+} from '#/agent/tools/read-media-file/read-media-file';
+import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,

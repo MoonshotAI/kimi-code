@@ -20,12 +20,14 @@ import {
   oneShotJitteredNextCronRunMs,
 } from '#/app/cron/jitter';
 import {
-  CronCreateTool,
   MAX_CRON_JOBS_PER_SESSION,
   type CronCreateInput,
-} from '#/session/cron/tools/cron-create';
-import { CronDeleteTool, type CronDeleteInput } from '#/session/cron/tools/cron-delete';
-import { CronListTool, type CronListInput } from '#/session/cron/tools/cron-list';
+} from '#/agent/tools/cron/cron-create/cron-create';
+import { CronCreateTool } from '#/agent/tools/cron/cron-create/cronCreateTool';
+import type { CronDeleteInput } from '#/agent/tools/cron/cron-delete/cron-delete';
+import { CronDeleteTool } from '#/agent/tools/cron/cron-delete/cronDeleteTool';
+import type { CronListInput } from '#/agent/tools/cron/cron-list/cron-list';
+import { CronListTool } from '#/agent/tools/cron/cron-list/cronListTool';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 const WALL_ANCHOR = 1_700_000_000_000;
