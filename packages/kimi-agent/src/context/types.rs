@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A content part in a message (text, image, audio, video, thinking).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentPart {
     #[serde(rename = "text")]
@@ -49,7 +49,7 @@ pub enum ContentPart {
 }
 
 /// Media container (image/audio/video URL).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaContainer {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
