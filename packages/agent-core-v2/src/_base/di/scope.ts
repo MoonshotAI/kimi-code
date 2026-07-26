@@ -1,5 +1,13 @@
 /**
  * `di` domain (L0) — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
+ *
+ * Creating a scope eagerly instantiates every service registered for it:
+ * registration plus scope creation construct a side-effect service, nobody
+ * has to `get()` it first. Each `get` runs a DFS over the static dependency
+ * graph, so dependencies are always constructed before their dependents and
+ * cycles still throw `CyclicDependencyError`; `Delayed` descriptors only
+ * materialize their lazy proxy at scope creation — the real constructor
+ * still defers to first property access.
  */
 
 import { SyncDescriptor } from './descriptors';
@@ -89,13 +97,6 @@ function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollec
   return collection;
 }
 
-// Eagerly instantiate every service registered for this scope: importing a
-// service module is enough — registration plus scope creation construct it,
-// nobody has to `get()` it first. Iteration order is irrelevant because each
-// `get` runs a DFS over the static dependency graph, so dependencies are
-// always constructed before their dependents and cycles still throw
-// `CyclicDependencyError`. `Delayed` descriptors only materialize their lazy
-// proxy — the real constructor still defers to first property access.
 function instantiateAll(
   instantiation: IInstantiationService,
   collection: ServiceCollection,
