@@ -181,7 +181,10 @@ export async function maybeLoadRustEngine(
   // Extract MultiLLM providers and native execution options when configured
   const providers = extractMultiLlmProviders(loaded.config);
   const nativeLlm = extractNativeLlm(loaded.config);
-  const nativeTools = agentConfig.nativeTools === true;
+  // Default-on for the Rust engine: in-process Read/Grep/Glob are sandboxed to
+  // the workspace root and fall back to the JS host for anything outside it,
+  // so opting out (`nativeTools = false`) is the exception, not the rule.
+  const nativeTools = agentConfig.nativeTools !== false;
 
   // Dynamic import of the Rust adapter via the workspace package.
   try {

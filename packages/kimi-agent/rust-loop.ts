@@ -17,7 +17,15 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+
+// A bare `require` only exists under CJS interop (vitest); in the ESM
+// runtimes that actually ship — tsx dev mode and the tsdown bundle — it is a
+// ReferenceError, which used to escape `isAvailable()` and silently demote
+// every `engine = "rust"` session to the JS engine. createRequire works in
+// all of them, and is also what loads the native addon.
+const nodeRequire = createRequire(import.meta.url);
 
 import {
   tryNativeWorkspaceIndexPredictRead,
@@ -280,7 +288,7 @@ class NapiEngine {
 
   static findModule(): string | null {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('node:fs') as typeof import('node:fs');
+    const fs = nodeRequire('node:fs') as typeof import('node:fs');
     const candidates = [
       // Development: alongside rust-loop.ts in the package directory
       resolve(import.meta.dirname, 'kimi_agent.node'),
@@ -310,7 +318,7 @@ class NapiEngine {
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      this.nativeModule = require(modulePath) as KimiAgentNativeModule;
+      this.nativeModule = nodeRequire(modulePath) as KimiAgentNativeModule;
       this.loaded = true;
       return true;
     } catch (error) {
@@ -516,7 +524,7 @@ class AgentProcess {
       resolve(projectRoot, 'dist-native', 'bin', arch, 'kimi-agent-cli' + ext),
     ];
     try {
-      const fs = require('node:fs');
+      const fs = nodeRequire('node:fs');
       for (const candidate of candidates) {
         if (fs.existsSync(candidate)) {
           return candidate;
@@ -905,14 +913,24 @@ export function createRunTurnOverride(
         }
         case 'llm.delta': {
           if (openStep === undefined) break;
+          const part = event['part'] as { type?: string; text?: string; think?: string };
           await input.dispatchEvent({
             type: 'content.part',
             uuid: randomUUID(),
             turnId: input.turnId,
             step: openStep.step,
             stepUuid: openStep.uuid,
-            part: event['part'] as never,
+            part: part as never,
           });
+          // `content.part` only records into the context; the UI stream is the
+          // separate `text.delta`/`thinking.delta` channel (mapped to
+          // `assistant.delta` by the session-event projector). Without this,
+          // print mode and the TUI render nothing for Rust-driven turns.
+          if (part.type === 'text' && part.text !== undefined && part.text.length > 0) {
+            input.dispatchEvent({ type: 'text.delta', delta: part.text });
+          } else if (part.type === 'think' && part.think !== undefined && part.think.length > 0) {
+            input.dispatchEvent({ type: 'thinking.delta', delta: part.think });
+          }
           break;
         }
         case 'llm.step.end': {
@@ -1046,6 +1064,10 @@ export function createRunTurnOverride(
             stepUuid,
             part,
           });
+          // Mirror to the UI stream — see the llm.delta handler.
+          if (part.type === 'text' && part.text.length > 0) {
+            input.dispatchEvent({ type: 'text.delta', delta: part.text });
+          }
         },
         onThinkPart: async (part) => {
           await input.dispatchEvent({
@@ -1056,6 +1078,9 @@ export function createRunTurnOverride(
             stepUuid,
             part,
           });
+          if (part.type === 'think' && part.think.length > 0) {
+            input.dispatchEvent({ type: 'thinking.delta', delta: part.think });
+          }
         },
       });
       if (openStep !== undefined) openStep.usage = response.usage;
@@ -1783,7 +1808,7 @@ export class WorkspacePredictor {
   private predictReadViaFs(path: string): string | null {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
+      const fs = nodeRequire('node:fs') as typeof import('node:fs');
 
       const resolved = this.resolvePath(path);
       if (resolved === null) return null;
@@ -1830,7 +1855,7 @@ export class WorkspacePredictor {
   private resolvePath(path: string): string | null {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pathMod = require('node:path') as typeof import('node:path');
+      const pathMod = nodeRequire('node:path') as typeof import('node:path');
       const resolved = pathMod.isAbsolute(path) ? path : pathMod.resolve(this.root, path);
       return resolved;
     } catch {
@@ -1845,7 +1870,7 @@ export class WorkspacePredictor {
   private estimateLineCount(filePath: string, fileSize: number): number {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
+      const fs = nodeRequire('node:fs') as typeof import('node:fs');
       const fd = fs.openSync(filePath, 'r');
       try {
         const buf = Buffer.alloc(Math.min(fileSize, 8192));

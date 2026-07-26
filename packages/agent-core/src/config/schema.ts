@@ -43,6 +43,11 @@ export const ProviderConfigSchema = z.object({
   temperature: z.number().optional(),
   maxTokens: z.number().int().min(1).optional(),
   searchDisable: z.boolean().optional(),
+  // Stateful OpenAI Responses mode (`store: true` + `previous_response_id`
+  // chaining): each request uploads only the new input items; the server
+  // reconstructs the shared prefix from the stored previous response.
+  // Official OpenAI Responses API only; ignored by other provider types.
+  statefulResponses: z.boolean().optional(),
 });
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
@@ -79,6 +84,11 @@ const ModelAliasBaseSchema = z.object({
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.
   betaApi: z.boolean().optional(),
+  // Prompt-cache entry lifetime for Anthropic-transport models. '1h' doubles
+  // the cache-write price but keeps the prefix warm across human think-time
+  // gaps between turns (default '5m' expires during longer pauses and forces
+  // a full re-prefill). Ignored by non-Anthropic transports.
+  cacheTtl: z.enum(['5m', '1h']).optional(),
   // Per-model endpoint override, paired with `protocol`. Catalog imports set
   // it when a gateway provider serves this model over a different endpoint
   // than the provider default.
@@ -145,6 +155,13 @@ export const LoopControlSchema = z.object({
   maxRalphIterations: z.number().int().min(-1).optional(), // -1 means unlimited
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+  /**
+   * Cache-aware early compaction trigger ratio. When the context has grown
+   * past this fraction of the model window and the provider prompt cache has
+   * been idle longer than the configured cache TTL, auto-compaction runs
+   * before the normal trigger to avoid paying two cold prefills.
+   */
+  earlyCompactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
 });
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
@@ -188,7 +205,7 @@ export const AgentConfigSchema = z.object({
    * - `"js"` (default): the existing TypeScript agent engine
    * - `"rust"`: the Rust agent engine (kimi-agent binary via stdio JSON-RPC)
    */
-  engine: z.enum(['js', 'rust']).default('js'),
+  engine: z.enum(['js', 'rust']).default('rust'),
   /**
    * MultiLLM: list of provider names to use for concurrent execution.
    * When set and `engine === "rust"`, the Rust engine sends the same prompt
@@ -220,11 +237,14 @@ export const AgentConfigSchema = z.object({
    */
   nativeLlmProvider: z.string().optional(),
   /**
-   * Native tool execution (Rust engine only). When true, read-only tools
+   * Native tool execution (Rust engine only). When enabled, read-only tools
    * (Read/Grep/Glob) execute inside the Rust engine process, sandboxed to
    * the workspace root — skipping the host round-trip. Anything outside
    * the sandbox or not natively supported still executes on the JS host
    * under the full permission system.
+   *
+   * Defaults to ON when `engine = "rust"`; set `nativeTools = false` to
+   * route every tool call back through the JS host.
    */
   nativeTools: z.boolean().optional(),
 });
@@ -249,6 +269,15 @@ export const McpConfigSchema = z.object({
    * the client built-in default when unset.
    */
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  /**
+   * When `true`, MCP servers declared in project-local config files
+   * (`.mcp.json` and `.kimi-code/mcp.json`) are loaded and started at
+   * session open. These files can declare arbitrary stdio commands, so
+   * they should only be trusted in repos you control.
+   *
+   * Defaults to `false`. Set this to `true` only for projects you trust.
+   */
+  trustProjectMcpConfig: z.boolean().optional(),
 });
 
 export type McpConfig = z.infer<typeof McpConfigSchema>;
