@@ -1,16 +1,21 @@
-import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { describe, expect, it } from 'vitest';
+import type {
+  OAuthClientInformationFull,
+  OAuthTokens,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
+import { describe, expect, it, vi } from 'vitest';
 
 import { McpOAuthClientProvider } from '#/agent/mcp/oauth/provider';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
-import {
-  createMcpOAuthStore,
-  mcpOAuthStoreKey,
-  sanitizeStoreKey,
-} from '#/agent/mcp/oauth/store';
+import { createMcpOAuthStore, mcpOAuthStoreKey, sanitizeStoreKey } from '#/agent/mcp/oauth/store';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import { createMemoryMcpOAuthStore } from '../stubs';
+
+interface EncryptedBlob {
+  iv: string;
+  tag: string;
+  data: string;
+}
 
 describe('sanitizeStoreKey', () => {
   it('strips path traversal segments', () => {
@@ -49,33 +54,55 @@ describe('sanitizeStoreKey', () => {
 
 describe('createMcpOAuthStore', () => {
   it('round-trips JSON data through the credentials/mcp scope', async () => {
-    const calls: Array<{ op: string; scope: string; key: string; value?: unknown }> = [];
+    const calls: Array<{ op: string; scope: string; key: string }> = [];
+    let stored: unknown;
     const docs: Pick<IAtomicDocumentStore, 'get' | 'set' | 'delete'> = {
       async get<T>(scope: string, key: string): Promise<T | undefined> {
         calls.push({ op: 'get', scope, key });
-        return { hello: 'world' } as T;
+        return stored as T | undefined;
       },
       async set(scope, key, value) {
-        calls.push({ op: 'set', scope, key, value });
+        calls.push({ op: 'set', scope, key });
+        stored = value;
       },
       async delete(scope, key) {
         calls.push({ op: 'delete', scope, key });
+        stored = undefined;
       },
     };
     const store = createMcpOAuthStore(docs as unknown as IAtomicDocumentStore);
 
-    await expect(store.read('foo.json')).resolves.toEqual({ hello: 'world' });
     await store.write('foo.json', { token: 'abc' });
+    // Tokens are encrypted at rest: the raw document is an iv/tag/data blob,
+    // never the plain JSON payload.
+    expect(stored).toMatchObject({
+      iv: expect.any(String),
+      tag: expect.any(String),
+      data: expect.any(String),
+    });
+    expect(JSON.stringify(stored)).not.toContain('abc');
+    await expect(store.read('foo.json')).resolves.toEqual({ token: 'abc' });
     await store.remove('foo.json');
 
     expect(calls).toEqual([
+      { op: 'set', scope: 'credentials/mcp', key: 'foo.json' },
       { op: 'get', scope: 'credentials/mcp', key: 'foo.json' },
-      { op: 'set', scope: 'credentials/mcp', key: 'foo.json', value: { token: 'abc' } },
       { op: 'delete', scope: 'credentials/mcp', key: 'foo.json' },
     ]);
   });
 
+  it('still reads legacy plain-text records', async () => {
+    const store = createMcpOAuthStore({
+      get: async () => ({ hello: 'world' }),
+      set: async () => {},
+      delete: async () => {},
+    } as unknown as IAtomicDocumentStore);
+
+    await expect(store.read('legacy.json')).resolves.toEqual({ hello: 'world' });
+  });
+
   it('returns undefined when the underlying document store read fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const store = createMcpOAuthStore({
       get: async () => {
         throw new Error('corrupt json');
@@ -85,11 +112,50 @@ describe('createMcpOAuthStore', () => {
     } as unknown as IAtomicDocumentStore);
 
     await expect(store.read('bad.json')).resolves.toBeUndefined();
+    // C2: I/O and parse failures must be observable via console.warn, not silent.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('read(bad.json) failed'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('corrupt json'));
+    warnSpy.mockRestore();
+  });
+
+  it('logs a warning when AES-GCM authentication tag is tampered (C2)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const docs: Pick<IAtomicDocumentStore, 'get' | 'set' | 'delete'> = {
+      get: async () => {},
+      set: async () => {},
+      delete: async () => {},
+    };
+    const store = createMcpOAuthStore(docs as unknown as IAtomicDocumentStore);
+
+    // Write a legitimate record, then corrupt its auth tag in place.
+    await store.write('tampered.json', { token: 'secret' });
+    const stored = (docs.get as unknown as () => undefined)();
+    void stored; // not used; we re-fetch via the same docs instance
+    // Replace docs.get to return the stored blob with a flipped tag.
+    let captured: unknown;
+    (docs as { get: (...args: unknown[]) => Promise<unknown> }).get = async () =>
+      captured;
+    (docs as { set: (...args: unknown[]) => Promise<void> }).set = async (_scope, _key, value) => {
+      captured = value;
+    };
+    await store.write('tampered.json', { token: 'secret' });
+    // Flip one hex char of the tag to invalidate GCM auth.
+    const blob = captured as EncryptedBlob;
+    const flippedTag = blob.tag.startsWith('0') ? '1' + blob.tag.slice(1) : '0' + blob.tag.slice(1);
+    (docs as { get: (...args: unknown[]) => Promise<unknown> }).get = async () => ({
+      ...blob,
+      tag: flippedTag,
+    });
+
+    await expect(store.read('tampered.json')).resolves.toBeUndefined();
+    // C2: tampering (GCM tag mismatch) must surface as a warn log, not silence.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('read(tampered.json) failed'));
+    warnSpy.mockRestore();
   });
 
   it('returns undefined when the underlying document store read returns undefined', async () => {
     const store = createMcpOAuthStore({
-      get: async () => undefined,
+      get: async () => {},
       set: async () => {},
       delete: async () => {},
     } as unknown as IAtomicDocumentStore);
@@ -100,9 +166,15 @@ describe('createMcpOAuthStore', () => {
   it('write and remove operations are idempotent', async () => {
     const calls: Array<{ op: string }> = [];
     const docs: Pick<IAtomicDocumentStore, 'get' | 'set' | 'delete'> = {
-      async get() { return undefined; },
-      async set() { calls.push({ op: 'set' }); },
-      async delete() { calls.push({ op: 'delete' }); },
+      async get() {
+        return;
+      },
+      async set() {
+        calls.push({ op: 'set' });
+      },
+      async delete() {
+        calls.push({ op: 'delete' });
+      },
     };
     const store = createMcpOAuthStore(docs as unknown as IAtomicDocumentStore);
 
@@ -167,7 +239,9 @@ describe('MCP OAuth credential identity', () => {
     await provider.saveTokens(token('first-token'));
 
     await expect(service.hasTokens('linear', 'https://first.example.com/mcp')).resolves.toBe(true);
-    await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
+    await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(
+      false,
+    );
   });
 
   it('uses stored client redirect URI when no active OAuth callback is running', async () => {
