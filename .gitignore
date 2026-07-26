@@ -58,10 +58,14 @@ GOAL.md
 apps/kimi-desktop/
 clippy_output.txt
 
-# Local knowledge stores — per-machine SQLite, not shared state
-.kimi-code/knowledge.db
-.kimi-code/knowledge.db-shm
-.kimi-code/knowledge.db-wal
+# Local knowledge stores — per-machine SQLite, not shared state.
+# Unanchored so nested package-level stores match too.
+**/.kimi-code/knowledge.db
+**/.kimi-code/knowledge.db-shm
+**/.kimi-code/knowledge.db-wal
+
+# Agent scratch memory
+.workbuddy/
 
 # Debug session dumps — may carry transcript content
 kimi-debug-*.zip
