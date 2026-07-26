@@ -1,0 +1,336 @@
+/// Core configuration model types for Kimi Code CLI.
+///
+/// Mirrors the TS types in `packages/agent-core/src/config/schema.ts`.
+/// Uses serde for direct TOML deserialization.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+// ── Provider types ────────────────────────────────────────────────────────────
+
+/// Supported provider types.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProviderType {
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "openai")]
+    OpenAI,
+    #[serde(rename = "kimi")]
+    Kimi,
+    #[serde(rename = "google-genai")]
+    GoogleGenAI,
+    #[serde(rename = "openai_responses")]
+    OpenAIResponses,
+    #[serde(rename = "vertexai")]
+    VertexAI,
+    #[serde(rename = "astron")]
+    Astron,
+}
+
+/// OAuth reference configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OAuthRef {
+    pub storage: OAuthStorage,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_host: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OAuthStorage {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "keyring")]
+    Keyring,
+}
+
+/// Provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderType>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthRef>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+// ── Model alias ───────────────────────────────────────────────────────────────
+
+/// A model alias mapping.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelAlias {
+    pub provider: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+// ── Model catalog ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelCatalogConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_interval_minutes: Option<u32>,
+}
+
+// ── MCP config ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servers: Option<HashMap<String, McpServerConfig>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
+}
+
+// ── Hook config ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookDefConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_tool_call: Option<Vec<String>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_tool_call: Option<Vec<String>>,
+}
+
+// ── Permission config ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+// ── Agent config ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_uses: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<PermissionConfig>,
+}
+
+// ── Background task config ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackgroundConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_running_tasks: Option<u32>,
+}
+
+// ── Subagent config ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubagentConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+}
+
+// ── Services config ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServicesConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moonshot: Option<MoonshotServiceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MoonshotServiceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+// ── Top-level KimiConfig ──────────────────────────────────────────────────────
+
+/// The top-level Kimi Code CLI configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KimiConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<HashMap<String, ProviderConfig>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_aliases: Option<HashMap<String, ModelAlias>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_catalog: Option<ModelCatalogConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HookDefConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<BackgroundConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<SubagentConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<ServicesConfig>,
+}
+
+impl KimiConfig {
+    /// Create an empty default configuration.
+    pub fn empty() -> Self {
+        Self {
+            agent: None,
+            providers: None,
+            model_aliases: None,
+            model_catalog: None,
+            mcp: None,
+            hooks: None,
+            background: None,
+            subagent: None,
+            services: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_config() {
+        let config = KimiConfig::empty();
+        assert!(config.agent.is_none());
+        assert!(config.providers.is_none());
+    }
+
+    #[test]
+    fn test_provider_config_serialize() {
+        let config = ProviderConfig {
+            provider: Some(ProviderType::OpenAI),
+            api_key: Some("sk-test".into()),
+            base_url: Some("https://api.openai.com/v1".into()),
+            model: Some("gpt-4".into()),
+            max_tokens: Some(4096),
+            oauth: None,
+            custom_headers: None,
+        };
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(toml_str.contains("provider = \"openai\""));
+        assert!(toml_str.contains("api_key = \"sk-test\""));
+
+        // Deserialize back
+        let deserialized: ProviderConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(deserialized.provider, Some(ProviderType::OpenAI));
+        assert_eq!(deserialized.api_key, Some("sk-test".into()));
+    }
+
+    #[test]
+    fn test_kimi_config_toml_roundtrip() {
+        let config = KimiConfig {
+            agent: Some(AgentConfig {
+                engine: Some("rust".into()),
+                max_turns: Some(100),
+                max_steps: Some(10),
+                max_tool_uses: None,
+                permission: None,
+            }),
+            providers: Some(HashMap::from([(
+                "openai".into(),
+                ProviderConfig {
+                    provider: Some(ProviderType::OpenAI),
+                    api_key: Some("sk-test".into()),
+                    base_url: None,
+                    model: Some("gpt-4".into()),
+                    max_tokens: None,
+                    oauth: None,
+                    custom_headers: None,
+                },
+            )])),
+            model_aliases: None,
+            model_catalog: None,
+            mcp: None,
+            hooks: None,
+            background: None,
+            subagent: None,
+            services: None,
+        };
+
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(toml_str.contains("engine = \"rust\""));
+        assert!(toml_str.contains("max_turns = 100"));
+
+        // Deserialize back
+        let deserialized: KimiConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(deserialized.agent.as_ref().unwrap().engine, Some("rust".into()));
+        assert_eq!(
+            deserialized.providers.as_ref().unwrap().get("openai").unwrap().model,
+            Some("gpt-4".into())
+        );
+    }
+
+    #[test]
+    fn test_provider_type_variants() {
+        let variants = vec![
+            ("anthropic", ProviderType::Anthropic),
+            ("openai", ProviderType::OpenAI),
+            ("kimi", ProviderType::Kimi),
+            ("google-genai", ProviderType::GoogleGenAI),
+            ("openai_responses", ProviderType::OpenAIResponses),
+            ("vertexai", ProviderType::VertexAI),
+            ("astron", ProviderType::Astron),
+        ];
+        for (name, expected) in variants {
+            let toml_str = format!("provider = \"{}\"", name);
+            let config: ProviderConfig = toml::from_str(&toml_str).unwrap();
+            assert_eq!(config.provider, Some(expected));
+        }
+    }
+}

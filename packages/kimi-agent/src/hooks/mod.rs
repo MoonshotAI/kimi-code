@@ -40,6 +40,7 @@ where
     LoopHooks {
         before_step: Some(Box::new(f)),
         after_step: None,
+        ..Default::default()
     }
 }
 
@@ -54,6 +55,7 @@ where
     LoopHooks {
         before_step: None,
         after_step: Some(Box::new(f)),
+        ..Default::default()
     }
 }
 
@@ -92,6 +94,7 @@ pub fn chain(left: LoopHooks, right: LoopHooks) -> LoopHooks {
                 }))
             }
         },
+        ..Default::default()
     }
 }
 

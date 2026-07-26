@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Kimi Agent engine (Rust) — stateless turn loop, napi-rs native addon"
 
+[features]
+default = []
+napi = ["dep:napi", "dep:napi-derive"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "kimi_agent"
@@ -13,8 +17,8 @@ name = "kimi-agent-cli"
 path = "src/main.rs"
 
 [dependencies]
-napi = { version = "2", features = ["async", "tokio_rt", "napi8", "serde"] }
-napi-derive = "2"
+napi = { version = "2", features = ["async", "tokio_rt", "napi8", "serde"], optional = true }
+napi-derive = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -26,7 +30,11 @@ reqwest = { version = "0.12", default-features = false, features = ["stream", "r
 eventsource-stream = "0.2"
 regex = "1"
 globset = "0.4"
+hex = "0.4"
 ignore = "0.4"
+sha2 = "0.10"
+base64 = "0.22"
+toml = "0.8"
 
 [build-dependencies]
 napi-build = "2"
@@ -34,6 +42,7 @@ napi-build = "2"
 [dev-dependencies]
 serde_json = "1"
 tempfile = "3"
+futures = "0.3"
 
 [profile.release]
 lto = true

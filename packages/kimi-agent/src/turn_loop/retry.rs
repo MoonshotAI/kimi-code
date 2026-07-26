@@ -1,6 +1,12 @@
 /// Retry logic for LLM calls and tool executions.
 ///
 /// Corresponds to `packages/agent-core/src/loop/retry.ts`.
+///
+/// Layered backoff strategy:
+/// - Rate limit errors (429): 15s base, 60s max
+/// - Overload errors (503): 5s base, 30s max
+/// - Transient errors (timeout, connection): 500ms base, 32s max
+/// - Default: 1s base, 30s max
 
 use std::time::Duration;
 
@@ -15,6 +21,19 @@ pub struct RetryConfig {
     pub max_delay_ms: u64,
 }
 
+/// Error classification for layered backoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorClass {
+    /// Rate limit (HTTP 429, provider rate limit).
+    RateLimit,
+    /// Overload (HTTP 503, server overloaded).
+    Overload,
+    /// Transient (timeout, connection error, etc.).
+    Transient,
+    /// Default (other retryable errors).
+    Default,
+}
+
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
@@ -22,6 +41,42 @@ impl Default for RetryConfig {
             base_delay_ms: 1000,
             max_delay_ms: 30000,
         }
+    }
+}
+
+/// Get retry config per error class.
+pub fn retry_config_for(error_class: ErrorClass) -> RetryConfig {
+    match error_class {
+        ErrorClass::RateLimit => RetryConfig {
+            max_attempts: 5,
+            base_delay_ms: 15000,
+            max_delay_ms: 60000,
+        },
+        ErrorClass::Overload => RetryConfig {
+            max_attempts: 3,
+            base_delay_ms: 5000,
+            max_delay_ms: 30000,
+        },
+        ErrorClass::Transient => RetryConfig {
+            max_attempts: 3,
+            base_delay_ms: 500,
+            max_delay_ms: 32000,
+        },
+        ErrorClass::Default => RetryConfig::default(),
+    }
+}
+
+/// Classify an error string.
+pub fn classify_error(error: &str) -> ErrorClass {
+    let lower = error.to_lowercase();
+    if lower.contains("rate limit") || lower.contains("429") || lower.contains("too many requests") {
+        ErrorClass::RateLimit
+    } else if lower.contains("overload") || lower.contains("503") || lower.contains("service unavailable") {
+        ErrorClass::Overload
+    } else if lower.contains("timeout") || lower.contains("connection") || lower.contains("eof") || lower.contains("reset") {
+        ErrorClass::Transient
+    } else {
+        ErrorClass::Default
     }
 }
 
@@ -44,6 +99,53 @@ mod tests {
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.base_delay_ms, 1000);
         assert_eq!(config.max_delay_ms, 30000);
+    }
+
+    #[test]
+    fn test_retry_config_for_rate_limit() {
+        let config = retry_config_for(ErrorClass::RateLimit);
+        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.base_delay_ms, 15000);
+        assert_eq!(config.max_delay_ms, 60000);
+    }
+
+    #[test]
+    fn test_retry_config_for_overload() {
+        let config = retry_config_for(ErrorClass::Overload);
+        assert_eq!(config.max_attempts, 3);
+        assert_eq!(config.base_delay_ms, 5000);
+    }
+
+    #[test]
+    fn test_retry_config_for_transient() {
+        let config = retry_config_for(ErrorClass::Transient);
+        assert_eq!(config.base_delay_ms, 500);
+    }
+
+    #[test]
+    fn test_classify_rate_limit() {
+        assert_eq!(classify_error("rate limit exceeded"), ErrorClass::RateLimit);
+        assert_eq!(classify_error("HTTP 429 Too Many Requests"), ErrorClass::RateLimit);
+        assert_eq!(classify_error("too many requests"), ErrorClass::RateLimit);
+    }
+
+    #[test]
+    fn test_classify_overload() {
+        assert_eq!(classify_error("server overloaded"), ErrorClass::Overload);
+        assert_eq!(classify_error("HTTP 503 Service Unavailable"), ErrorClass::Overload);
+    }
+
+    #[test]
+    fn test_classify_transient() {
+        assert_eq!(classify_error("timeout"), ErrorClass::Transient);
+        assert_eq!(classify_error("connection reset"), ErrorClass::Transient);
+        assert_eq!(classify_error("eof"), ErrorClass::Transient);
+    }
+
+    #[test]
+    fn test_classify_default() {
+        assert_eq!(classify_error("unknown error"), ErrorClass::Default);
+        assert_eq!(classify_error("internal error"), ErrorClass::Default);
     }
 
     #[test]

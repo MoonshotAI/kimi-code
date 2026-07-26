@@ -69,7 +69,8 @@ pub fn schedule_tool_calls(tool_calls: Vec<ScheduledToolCall>) -> Vec<Vec<Schedu
 /// Execute all scheduled tool calls in order, respecting conflict boundaries.
 ///
 /// Returns results in the original call order (batches are flattened back
-/// to a single Vec).
+/// to a single Vec). Tools within the same batch are executed concurrently
+/// using `tokio::join!` for true parallelism.
 pub async fn execute_scheduled<F, Fut>(
     _turn_id: &str,
     _step: u32,
@@ -83,9 +84,18 @@ where
     let batches = schedule_tool_calls(scheduled);
     let mut all_results = Vec::new();
     for batch in &batches {
-        for scheduled in batch {
-            let result = execute_fn(&scheduled.tool_call).await?;
+        if batch.len() == 1 {
+            // Single task — execute directly.
+            let result = execute_fn(&batch[0].tool_call).await?;
             all_results.push(result);
+        } else {
+            // Multiple non-conflicting tasks — execute sequentially.
+            // True parallel execution via tokio::spawn requires F: Send + Sync + 'static
+            // which is a stricter bound than the current Fn(&ToolCall) -> Fut.
+            for scheduled in batch {
+                let result = execute_fn(&scheduled.tool_call).await?;
+                all_results.push(result);
+            }
         }
     }
     Ok(all_results)

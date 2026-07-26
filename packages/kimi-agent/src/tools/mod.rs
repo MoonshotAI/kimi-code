@@ -7,6 +7,8 @@
 //! caller fall back to the host path — the host then applies its full
 //! permission system. Write-capable tools are never handled here.
 
+pub mod manager;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -24,6 +26,113 @@ const GREP_MAX_FILES: usize = 5000;
 const GREP_TIME_BUDGET: Duration = Duration::from_secs(3);
 /// Maximum number of Glob results returned.
 const GLOB_MAX_RESULTS: usize = 500;
+
+/// File names that are considered sensitive and should never be served by
+/// native tools. Matches the `isSensitiveFile` logic in TS.
+const SENSITIVE_FILE_NAMES: &[&str] = &[
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.development",
+    ".env.staging",
+    ".env.test",
+    ".env.example",
+    ".env.sample",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_xmss",
+    "config",
+    "authorized_keys",
+    "known_hosts",
+    "google-credentials.json",
+    "service-account.json",
+    "service-account-key.json",
+    "credentials.json",
+    "credential.json",
+    "credentials",
+    "secret.key",
+    "secret.json",
+    "secrets.json",
+    "private.key",
+    "private-key.pem",
+    "key.pem",
+    "cert.pem",
+    "chain.pem",
+    "fullchain.pem",
+    "ssl.key",
+    "ssl.crt",
+    "keystore.jks",
+    "keystore",
+    ".npmrc",
+    ".netrc",
+    ".dockercfg",
+    ".dockerconfigjson",
+    ".aws/credentials",
+    ".aws/config",
+    ".gcp/credentials",
+    ".azure/credentials",
+    ".kube/config",
+    "kubeconfig",
+    "kube-config",
+    "token",
+    "tokens",
+    ".token",
+    "oauth",
+    "oauth-token",
+    "oauth_token",
+    "api_key",
+    "api-key",
+    "apikey",
+    "apikey.json",
+    "api_key.json",
+    "session.key",
+    "cookie.key",
+    "master.key",
+    "database.yml",
+    "database.json",
+    "db-credentials",
+    ".pgpass",
+    "id_rsa.pub",
+    "id_dsa.pub",
+    "config.json",
+    "config.yaml",
+    "config.yml",
+    ".gitconfig",
+    ".git-credentials",
+];
+
+/// Check if a file name is sensitive (e.g. .env, credentials, SSH keys).
+/// Uses case-insensitive comparison on the file name (not the full path).
+fn is_sensitive_file(path: &Path) -> bool {
+    let file_name = match path.file_name() {
+        Some(n) => n.to_string_lossy().to_lowercase(),
+        None => return false,
+    };
+    // Exact match against the sensitive list
+    if SENSITIVE_FILE_NAMES.iter().any(|&name| name.eq_ignore_ascii_case(&file_name)) {
+        return true;
+    }
+    // Extension-based checks: .pem, .key files anywhere
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
+    if let Some(ext) = ext {
+        if matches!(ext.as_str(), "pem" | "key" | "p12" | "pfx" | "keystore") {
+            return true;
+        }
+    }
+    // Path-based checks: .aws/, .gcp/, .azure/, .kube/ credentials
+    let path_lower = path.to_string_lossy().to_lowercase();
+    if path_lower.contains("\\.aws\\") || path_lower.contains("/.aws/")
+        || path_lower.contains("\\.gcp\\") || path_lower.contains("/.gcp/")
+        || path_lower.contains("\\.azure\\") || path_lower.contains("/.azure/")
+        || path_lower.contains("\\.kube\\") || path_lower.contains("/.kube/")
+        || path_lower.contains("\\.ssh\\") || path_lower.contains("/.ssh/")
+    {
+        return true;
+    }
+    false
+}
 
 /// Sandboxed native executor for read-only tools.
 pub struct NativeToolset {
@@ -54,7 +163,7 @@ impl NativeToolset {
     }
 
     /// Resolve a path argument inside the workspace. `None` when the path
-    /// escapes the sandbox or does not exist.
+    /// escapes the sandbox, is a sensitive file, or does not exist.
     fn resolve(&self, path: &str) -> Option<PathBuf> {
         let candidate = if Path::new(path).is_absolute() {
             PathBuf::from(path)
@@ -62,7 +171,32 @@ impl NativeToolset {
             self.root.join(path)
         };
         let resolved = std::fs::canonicalize(&candidate).ok()?;
-        resolved.starts_with(&self.root).then_some(resolved)
+        // Sandbox check: resolved path must be within the workspace root.
+        if !resolved.starts_with(&self.root) {
+            return None;
+        }
+        // Symlink escape check: verify the original path (before canonicalize)
+        // didn't use symlinks to redirect outside the workspace.
+        if let Ok(metadata) = std::fs::metadata(&candidate) {
+            if metadata.file_type().is_symlink() {
+                let link_target = std::fs::read_link(&candidate).ok()?;
+                let target_abs = if link_target.is_absolute() {
+                    link_target
+                } else if let Some(parent) = candidate.parent() {
+                    parent.join(&link_target)
+                } else {
+                    link_target
+                };
+                if !target_abs.starts_with(&self.root) {
+                    return None;
+                }
+            }
+        }
+        // Sensitive file check
+        if is_sensitive_file(&resolved) {
+            return None;
+        }
+        Some(resolved)
     }
 
     // ── Read ───────────────────────────────────────────────────────────
@@ -363,5 +497,57 @@ mod tests {
         assert!(ts.execute("Write", &json!({ "path": "a.txt", "content": "x" })).is_none());
         assert!(ts.execute("Edit", &json!({ "path": "a.txt" })).is_none());
         assert!(ts.execute("Bash", &json!({ "command": "rm -rf /" })).is_none());
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_sensitive_dot_env() {
+        assert!(is_sensitive_file(Path::new("/project/.env")));
+    }
+
+    #[test]
+    fn test_sensitive_ssh_key() {
+        assert!(is_sensitive_file(Path::new("/home/user/.ssh/id_rsa")));
+        assert!(is_sensitive_file(Path::new("/root/.ssh/authorized_keys")));
+    }
+
+    #[test]
+    fn test_sensitive_aws_credentials() {
+        assert!(is_sensitive_file(Path::new("/home/user/.aws/credentials")));
+    }
+
+    #[test]
+    fn test_sensitive_kube_config() {
+        assert!(is_sensitive_file(Path::new("/home/user/.kube/config")));
+    }
+
+    #[test]
+    fn test_sensitive_pem_file() {
+        assert!(is_sensitive_file(Path::new("/project/private-key.pem")));
+    }
+
+    #[test]
+    fn test_normal_source_file_not_sensitive() {
+        assert!(!is_sensitive_file(Path::new("/project/src/main.rs")));
+        assert!(!is_sensitive_file(Path::new("/project/index.ts")));
+        assert!(!is_sensitive_file(Path::new("/project/package.json")));
+        assert!(!is_sensitive_file(Path::new("/project/README.md")));
+    }
+
+    #[test]
+    fn test_sensitive_file_in_subdirectory() {
+        assert!(is_sensitive_file(Path::new("/project/config/.env")));
+        assert!(is_sensitive_file(Path::new("/project/deploy/.env.production")));
+    }
+
+    #[test]
+    fn test_normal_json_config_not_sensitive() {
+        assert!(!is_sensitive_file(Path::new("/project/tsconfig.json")));
+        assert!(!is_sensitive_file(Path::new("/project/.eslintrc.json")));
     }
 }

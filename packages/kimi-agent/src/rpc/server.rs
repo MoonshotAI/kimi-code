@@ -271,7 +271,7 @@ impl RpcServer {
         }
 
         let response = {
-            let handler = server.methods.lock().unwrap().get(&request.method).cloned();
+            let handler = server.methods.lock().unwrap_or_else(|e| e.into_inner()).get(&request.method).cloned();
             match handler {
                 Some(handler) => {
                     match handler(request.params.clone()).await {

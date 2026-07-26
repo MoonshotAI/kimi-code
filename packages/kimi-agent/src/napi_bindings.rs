@@ -66,7 +66,7 @@ static NEXT_CALLBACK_ID: AtomicU32 = AtomicU32::new(1);
 /// Returns the JSON-serialized request payload, or null if not found.
 #[napi]
 pub fn get_callback_payload(id: u32) -> napi::Result<Option<String>> {
-    let payload = PAYLOAD_REGISTRY.lock().unwrap().remove(&id);
+    let payload = PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     Ok(payload)
 }
 
@@ -79,7 +79,7 @@ pub fn get_callback_payload(id: u32) -> napi::Result<Option<String>> {
 pub fn resolve_callback(id: u32, error: Option<String>, result: Option<String>) -> napi::Result<()> {
     eprintln!("[RUST] resolve_callback: id={id}, has_error={}, has_result={}",
         error.is_some(), result.is_some());
-    if let Some(tx) = CALLBACK_REGISTRY.lock().unwrap().remove(&id) {
+    if let Some(tx) = CALLBACK_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
         let outcome = match (error, result) {
             (Some(err), _) => Err(err),
             (_, Some(res)) => Ok(res),
@@ -139,10 +139,10 @@ impl HostCallbacks for NapiHostCallbacks {
         let Ok(payload) = serde_json::to_string(&event) else { return };
         let id = NEXT_CALLBACK_ID.fetch_add(1, Ordering::SeqCst);
         // Payload-only registration: no oneshot — JS fetches and forgets.
-        PAYLOAD_REGISTRY.lock().unwrap().insert(id, payload);
+        PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).insert(id, payload);
         let status = tsfn.call(id, ThreadsafeFunctionCallMode::NonBlocking);
         if status != napi::Status::Ok {
-            PAYLOAD_REGISTRY.lock().unwrap().remove(&id);
+            PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         }
     }
 }
@@ -163,18 +163,18 @@ async fn invoke_via_registry(
     eprintln!("[RUST] {label}: assigned callback_id={id}, input_len={}", input.len());
 
     // Store the payload so JS can fetch it via getCallbackPayload(id).
-    PAYLOAD_REGISTRY.lock().unwrap().insert(id, input);
+    PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).insert(id, input);
 
     // Register the sender so resolve_callback can find it.
-    CALLBACK_REGISTRY.lock().unwrap().insert(id, tx);
+    CALLBACK_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
 
     // Fire the JS function with just the callback ID (a number).
     // ErrorStrategy::Fatal: no error-first null prepended, JS receives the id directly.
     let status = tsfn.call(id, ThreadsafeFunctionCallMode::NonBlocking);
     if status != napi::Status::Ok {
         // Clean up on failure.
-        PAYLOAD_REGISTRY.lock().unwrap().remove(&id);
-        CALLBACK_REGISTRY.lock().unwrap().remove(&id);
+        PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        CALLBACK_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         eprintln!("[RUST] {label}: tsfn.call failed: {status:?}");
         return Err(format!("{label} call: {status:?}"));
     }

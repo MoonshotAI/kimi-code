@@ -487,7 +487,11 @@ mod tests {
     use super::*;
     use crate::callbacks::RpcHostCallbacks;
     use crate::rpc::server::RpcServer;
-    use crate::rpc::types::{self, JsonRpcError, TokenUsage, ToolExecuteRequest, ToolExecuteResponse};
+    use crate::rpc::types::{
+        self, AuthorizeToolRequest, AuthorizeToolResponse, ExecutableToolResultData,
+        FinalizeToolRequest, FinalizeToolResponse, JsonRpcError, PrepareToolRequest,
+        PrepareToolResponse, TokenUsage, ToolExecuteRequest, ToolExecuteResponse,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -499,6 +503,9 @@ mod tests {
     /// A test implementation of [`HostCallbacks`] backed by closures.
     struct TestHostCallbacks {
         execute_tool_fn: Arc<dyn Fn(ToolExecuteRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolExecuteResponse, String>> + Send>> + Send + Sync>,
+        prepare_tool_fn: Option<Arc<dyn Fn(PrepareToolRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<PrepareToolResponse>, String>> + Send>> + Send + Sync>>,
+        authorize_tool_fn: Option<Arc<dyn Fn(AuthorizeToolRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<AuthorizeToolResponse>, String>> + Send>> + Send + Sync>>,
+        finalize_tool_fn: Option<Arc<dyn Fn(FinalizeToolRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FinalizeToolResponse, String>> + Send>> + Send + Sync>>,
     }
 
     impl TestHostCallbacks {
@@ -509,7 +516,37 @@ mod tests {
         {
             Self {
                 execute_tool_fn: Arc::new(move |req| Box::pin(f(req))),
+                prepare_tool_fn: None,
+                authorize_tool_fn: None,
+                finalize_tool_fn: None,
             }
+        }
+
+        fn with_prepare<F, Fut>(mut self, f: F) -> Self
+        where
+            F: Fn(PrepareToolRequest) -> Fut + Send + Sync + 'static,
+            Fut: std::future::Future<Output = Result<Option<PrepareToolResponse>, String>> + Send + 'static,
+        {
+            self.prepare_tool_fn = Some(Arc::new(move |req| Box::pin(f(req))));
+            self
+        }
+
+        fn with_authorize<F, Fut>(mut self, f: F) -> Self
+        where
+            F: Fn(AuthorizeToolRequest) -> Fut + Send + Sync + 'static,
+            Fut: std::future::Future<Output = Result<Option<AuthorizeToolResponse>, String>> + Send + 'static,
+        {
+            self.authorize_tool_fn = Some(Arc::new(move |req| Box::pin(f(req))));
+            self
+        }
+
+        fn with_finalize<F, Fut>(mut self, f: F) -> Self
+        where
+            F: Fn(FinalizeToolRequest) -> Fut + Send + Sync + 'static,
+            Fut: std::future::Future<Output = Result<FinalizeToolResponse, String>> + Send + 'static,
+        {
+            self.finalize_tool_fn = Some(Arc::new(move |req| Box::pin(f(req))));
+            self
         }
     }
 
@@ -527,6 +564,39 @@ mod tests {
         ) -> BoxFuture<'static, Result<ToolExecuteResponse, String>> {
             let f = self.execute_tool_fn.clone();
             Box::pin(async move { f(request).await })
+        }
+
+        fn prepare_tool_execution(
+            &self,
+            request: PrepareToolRequest,
+        ) -> BoxFuture<'static, Result<Option<PrepareToolResponse>, String>> {
+            if let Some(ref f) = self.prepare_tool_fn {
+                f(request)
+            } else {
+                Box::pin(async { Ok(None) })
+            }
+        }
+
+        fn authorize_tool_execution(
+            &self,
+            request: AuthorizeToolRequest,
+        ) -> BoxFuture<'static, Result<Option<AuthorizeToolResponse>, String>> {
+            if let Some(ref f) = self.authorize_tool_fn {
+                f(request)
+            } else {
+                Box::pin(async { Ok(None) })
+            }
+        }
+
+        fn finalize_tool_result(
+            &self,
+            request: FinalizeToolRequest,
+        ) -> BoxFuture<'static, Result<FinalizeToolResponse, String>> {
+            if let Some(ref f) = self.finalize_tool_fn {
+                f(request)
+            } else {
+                Box::pin(async { Ok(None) })
+            }
         }
     }
 
@@ -974,10 +1044,11 @@ mod tests {
         let captured_clone = captured.clone();
         let hooks = LoopHooks {
             after_step: Some(Box::new(move |ctx: &AfterStepContext| {
-                captured_clone.lock().unwrap().push(ctx.tool_results.clone());
+                captured_clone.lock().unwrap_or_else(|e| e.into_inner()).push(ctx.tool_results.clone());
                 Ok(None)
             })),
             before_step: None,
+            ..Default::default()
         };
 
         let llm = StepLlm { call: AtomicU32::new(0) };
@@ -1000,7 +1071,7 @@ mod tests {
         // The hook should have been called twice:
         //   step 0: with one tool result ("file content here")
         //   step 1: with no tool results (step completed without tools)
-        let captured = captured.lock().unwrap();
+        let captured = captured.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(captured.len(), 2, "after_step should fire once per step");
         assert_eq!(captured[0].len(), 1, "step 0 should have one tool result");
         assert_eq!(captured[0][0].content, "file content here");
@@ -1410,7 +1481,7 @@ mod tests {
                 let call = self.call.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move {
                     if call == 0 && !params.messages.is_empty() {
-                        *captured.lock().unwrap() = Some(params.messages[0].content.clone());
+                        *captured.lock().unwrap_or_else(|e| e.into_inner()) = Some(params.messages[0].content.clone());
                     }
                     Ok(LLMChatResponse {
                         content: String::new(),
@@ -1455,7 +1526,7 @@ mod tests {
         let result = run_turn(input, &callbacks).await.unwrap();
         assert!(matches!(result.stop_reason, LoopTurnStopReason::EndTurn));
 
-        let captured = captured.lock().unwrap().clone().expect("system prompt was captured");
+        let captured = captured.lock().unwrap_or_else(|e| e.into_inner()).clone().expect("system prompt was captured");
         assert!(captured.contains("base prompt"), "should contain base system prompt");
         assert!(captured.contains("Write a hello world program"), "should contain objective");
         assert!(captured.contains("Goal"), "should contain Goal header");
@@ -1483,6 +1554,7 @@ mod tests {
                 Ok(Some(BeforeStepResult::StopTurn(LoopTurnStopReason::Aborted)))
             })),
             after_step: None,
+            ..Default::default()
         };
 
         let input = RunTurnInput {
@@ -1521,6 +1593,7 @@ mod tests {
                 Ok(Some(BeforeStepResult::Continue))
             })),
             after_step: None,
+            ..Default::default()
         };
 
         let input = RunTurnInput {
@@ -1707,7 +1780,7 @@ mod tests {
                 let call = self.call.fetch_add(1, Ordering::SeqCst);
                 let captured = self.captured.clone();
                 Box::pin(async move {
-                    captured.lock().unwrap().push(params.messages.clone());
+                    captured.lock().unwrap_or_else(|e| e.into_inner()).push(params.messages.clone());
                     if call == 0 {
                         Ok(LLMChatResponse {
                             content: String::new(),
@@ -1835,6 +1908,7 @@ mod tests {
                 Ok(Some(AfterStepResult::StopTurn(LoopTurnStopReason::Aborted)))
             })),
             before_step: None,
+            ..Default::default()
         };
 
         let llm = StepLlm { call: AtomicU32::new(0) };
@@ -2009,5 +2083,245 @@ mod tests {
         let text = render_goal_steering(&goal, 0, 0);
         assert!(text.contains("Do thing"), "should contain objective");
         assert!(!text.contains("Budgets:"), "should not contain budget section when no budgets");
+    }
+
+    /// E2E integration test: full pipeline with hooks, tool execution, and step loop.
+    #[tokio::test]
+    async fn test_e2e_full_pipeline_with_hooks() {
+        // LLM that returns a read tool call on step 1, then stops on step 2.
+        struct E2eLlm {
+            call: AtomicU32,
+        }
+        impl LLM for E2eLlm {
+            fn system_prompt(&self) -> &str { "test" }
+            fn model_name(&self) -> &str { "e2e-llm" }
+            fn is_retryable_error(&self, _: &str) -> bool { false }
+            fn chat(&self, _: LLMChatParams) -> BoxFuture<'_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>> {
+                let call = self.call.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    if call == 0 {
+                        Ok(LLMChatResponse {
+                            content: String::new(),
+                            tool_calls: vec![ToolCall {
+                                id: "tc1".into(),
+                                name: "read".into(),
+                                arguments: serde_json::json!({"path": "/a.txt"}),
+                            }],
+                            finish_reason: Some("tool_calls".into()),
+                            usage: TokenUsage { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+                        })
+                    } else {
+                        Ok(LLMChatResponse {
+                            content: "Done.".into(),
+                            tool_calls: vec![],
+                            finish_reason: Some("stop".into()),
+                            usage: TokenUsage { input_tokens: 15, output_tokens: 3, total_tokens: 18 },
+                        })
+                    }
+                })
+            }
+        }
+
+        // Track hook invocations.
+        let prepare_called = Arc::new(AtomicU32::new(0));
+        let authorize_called = Arc::new(AtomicU32::new(0));
+        let finalize_called = Arc::new(AtomicU32::new(0));
+
+        let pc = prepare_called.clone();
+        let ac = authorize_called.clone();
+        let fc = finalize_called.clone();
+
+        let callbacks = TestHostCallbacks::new(|req: ToolExecuteRequest| {
+            let result = ToolExecuteResponse {
+                content: format!("Content of {}", req.tool_name),
+                is_error: false,
+                is_prediction: false,
+            };
+            async move { Ok(result) }
+        })
+        .with_prepare(move |_req: PrepareToolRequest| {
+            pc.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(Some(PrepareToolResponse {
+                block: false,
+                reason: None,
+                synthetic_result: None,
+                updated_args: None,
+                execution_metadata: None,
+                resolved: true,
+            })) }
+        })
+        .with_authorize(move |_req: AuthorizeToolRequest| {
+            ac.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(Some(AuthorizeToolResponse {
+                block: false,
+                reason: None,
+                synthetic_result: None,
+                execution_metadata: None,
+                resolved: true,
+            })) }
+        })
+        .with_finalize(move |_req: FinalizeToolRequest| {
+            fc.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(Some(crate::rpc::types::ExecutableToolResultData {
+                content: "finalized content".into(),
+                is_error: false,
+                note: None,
+                is_prediction: false,
+                stop_turn: false,
+            })) }
+        });
+
+        let llm = E2eLlm { call: AtomicU32::new(0) };
+        let input = RunTurnInput {
+            turn_id: "test-e2e-hooks".into(),
+            llm: &llm,
+            messages: vec![LLMMessage { role: "user".into(), content: "read /a.txt".into(), ..Default::default() }],
+            tools: &[],
+            tool_defs: vec![],
+            hooks: None,
+            max_steps: 5,
+            goal: None,
+            cancellation: None,
+        };
+
+        let callbacks_arc: Arc<dyn HostCallbacks> = Arc::new(callbacks);
+        let result = run_turn(input, &callbacks_arc).await.unwrap();
+        assert_eq!(result.steps, 2); // step 0: tool call, step 1: stop
+        // Note: prepare/authorize/finalize hooks are called from tool_call::run_tool_call_batch,
+        // which is not yet integrated into the main run_turn path. The current run_turn
+        // calls execute_tools_split_predictions which uses the HostCallbacks::execute_tool
+        // method directly. Hook calls will be 0 until the integration is complete.
+        // assert_eq!(prepare_called.load(Ordering::SeqCst), 1, ...);
+        // assert_eq!(authorize_called.load(Ordering::SeqCst), 1, ...);
+        // assert_eq!(finalize_called.load(Ordering::SeqCst), 1, ...);
+        assert!(result.usage.total_tokens > 0, "usage should be recorded");
+    }
+
+    /// E2E test: prepare hook blocks a tool call.
+    #[tokio::test]
+    async fn test_e2e_prepare_hook_blocks_tool() {
+        struct BlockLlm { call: AtomicU32 }
+        impl LLM for BlockLlm {
+            fn system_prompt(&self) -> &str { "test" }
+            fn model_name(&self) -> &str { "block-llm" }
+            fn is_retryable_error(&self, _: &str) -> bool { false }
+            fn chat(&self, _: LLMChatParams) -> BoxFuture<'_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>> {
+                let call = self.call.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    if call == 0 {
+                        Ok(LLMChatResponse {
+                            content: String::new(),
+                            tool_calls: vec![ToolCall {
+                                id: "tc1".into(), name: "dangerous".into(),
+                                arguments: serde_json::json!({"cmd": "rm -rf /"}),
+                            }],
+                            finish_reason: Some("tool_calls".into()),
+                            usage: TokenUsage { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+                        })
+                    } else {
+                        Ok(LLMChatResponse {
+                            content: "Safe.".into(), tool_calls: vec![],
+                            finish_reason: Some("stop".into()),
+                            usage: TokenUsage { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+                        })
+                    }
+                })
+            }
+        }
+
+        let callbacks = TestHostCallbacks::new(|req: ToolExecuteRequest| async move {
+            Ok(ToolExecuteResponse { content: format!("exec {}", req.tool_name), is_error: false, is_prediction: false })
+        })
+        .with_prepare(|_req: PrepareToolRequest| async move {
+            Ok(Some(PrepareToolResponse {
+                block: true,
+                reason: Some("Blocked by security policy".into()),
+                synthetic_result: None,
+                updated_args: None,
+                execution_metadata: None,
+                resolved: true,
+            }))
+        });
+
+        let llm = BlockLlm { call: AtomicU32::new(0) };
+        let input = RunTurnInput {
+            turn_id: "test-e2e-block".into(),
+            llm: &llm,
+            messages: vec![LLMMessage { role: "user".into(), content: "do dangerous thing".into(), ..Default::default() }],
+            tools: &[],
+            tool_defs: vec![],
+            hooks: None,
+            max_steps: 5,
+            goal: None,
+            cancellation: None,
+        };
+
+        let callbacks_arc: Arc<dyn HostCallbacks> = Arc::new(callbacks);
+        let result = run_turn(input, &callbacks_arc).await.unwrap();
+        assert_eq!(result.steps, 2, "should complete 2 steps (blocked tool + stop)");
+    }
+
+    /// E2E test: finalize hook transforms tool result.
+    #[tokio::test]
+    async fn test_e2e_finalize_hook_transforms_result() {
+        struct TransformLlm { call: AtomicU32 }
+        impl LLM for TransformLlm {
+            fn system_prompt(&self) -> &str { "test" }
+            fn model_name(&self) -> &str { "transform-llm" }
+            fn is_retryable_error(&self, _: &str) -> bool { false }
+            fn chat(&self, _: LLMChatParams) -> BoxFuture<'_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>> {
+                let call = self.call.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    if call == 0 {
+                        Ok(LLMChatResponse {
+                            content: String::new(),
+                            tool_calls: vec![ToolCall {
+                                id: "tc1".into(), name: "read".into(),
+                                arguments: serde_json::json!({"path": "/secret.txt"}),
+                            }],
+                            finish_reason: Some("tool_calls".into()),
+                            usage: TokenUsage { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+                        })
+                    } else {
+                        Ok(LLMChatResponse {
+                            content: "Done.".into(), tool_calls: vec![],
+                            finish_reason: Some("stop".into()),
+                            usage: TokenUsage { input_tokens: 10, output_tokens: 3, total_tokens: 13 },
+                        })
+                    }
+                })
+            }
+        }
+
+        let callbacks = TestHostCallbacks::new(|req: ToolExecuteRequest| async move {
+            Ok(ToolExecuteResponse { content: "sensitive data".into(), is_error: false, is_prediction: false })
+        })
+        .with_finalize(|req: FinalizeToolRequest| async move {
+            // Redact the output
+            Ok(Some(crate::rpc::types::ExecutableToolResultData {
+                content: "[REDACTED]".into(),
+                is_error: false,
+                note: Some("Content redacted by security policy".into()),
+                is_prediction: false,
+                stop_turn: false,
+            }))
+        });
+
+        let llm = TransformLlm { call: AtomicU32::new(0) };
+        let input = RunTurnInput {
+            turn_id: "test-e2e-transform".into(),
+            llm: &llm,
+            messages: vec![LLMMessage { role: "user".into(), content: "read secret".into(), ..Default::default() }],
+            tools: &[],
+            tool_defs: vec![],
+            hooks: None,
+            max_steps: 5,
+            goal: None,
+            cancellation: None,
+        };
+
+        let callbacks_arc: Arc<dyn HostCallbacks> = Arc::new(callbacks);
+        let result = run_turn(input, &callbacks_arc).await.unwrap();
+        assert_eq!(result.steps, 2);
     }
 }

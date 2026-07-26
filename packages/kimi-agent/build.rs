@@ -20,7 +20,10 @@ fn main() {
             let lib_path = std::path::Path::new(&node_dir).join("libnode.dll");
             if lib_path.exists() {
                 println!("cargo:rustc-link-lib=dylib=node");
-                println!("cargo:rustc-link-search=native={}", node_dir.to_string_lossy());
+                println!(
+                    "cargo:rustc-link-search=native={}",
+                    node_dir.to_string_lossy()
+                );
             }
         }
     }

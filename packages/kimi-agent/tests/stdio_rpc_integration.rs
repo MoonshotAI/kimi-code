@@ -28,8 +28,11 @@ fn find_binary() -> Option<std::path::PathBuf> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let ext = if cfg!(windows) { ".exe" } else { "" };
     let candidates = [
-        std::path::PathBuf::from(manifest_dir).join("target/release/kimi-agent-cli").with_extension(""),
-        std::path::PathBuf::from(manifest_dir).join(format!("target/release/kimi-agent-cli{}", ext)),
+        std::path::PathBuf::from(manifest_dir)
+            .join("target/release/kimi-agent-cli")
+            .with_extension(""),
+        std::path::PathBuf::from(manifest_dir)
+            .join(format!("target/release/kimi-agent-cli{}", ext)),
         std::path::PathBuf::from(manifest_dir).join(format!("target/debug/kimi-agent-cli{}", ext)),
     ];
     for c in &candidates {
@@ -173,10 +176,12 @@ fn unknown_method_returns_error() {
     assert_eq!(resp["jsonrpc"], "2.0");
     let err = resp.get("error").expect("expected error field");
     assert_eq!(err["code"], -32601);
-    assert!(err["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("Method not found"));
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Method not found")
+    );
 
     client.shutdown();
 }
@@ -362,9 +367,7 @@ fn run_turn_with_host_callbacks() {
         result_obj["steps"].as_u64() >= Some(2),
         "expected at least 2 steps, got: {result_obj}"
     );
-    let stop_reason = result_obj["stop_reason"]
-        .as_str()
-        .unwrap_or("");
+    let stop_reason = result_obj["stop_reason"].as_str().unwrap_or("");
     assert!(
         stop_reason.contains("EndTurn") || stop_reason.contains("End"),
         "expected EndTurn stop reason, got: {stop_reason}"
@@ -423,6 +426,232 @@ fn notification_does_not_get_response() {
     let resp = client.request("agent/health", serde_json::json!({}));
     let resp = resp.expect("health response");
     assert_eq!(resp["result"]["status"], "ok");
+
+    client.shutdown();
+}
+
+// ── Cron integration tests ────────────────────────────────────────────────────
+
+/// Test cron/create → cron/list → cron/delete lifecycle.
+#[test]
+fn cron_create_list_delete() {
+    let mut client = RpcClient::start();
+    require_binary!(client);
+    let client = client.as_mut().unwrap();
+
+    // Create a cron task
+    let create_resp = client.request(
+        "cron/create",
+        serde_json::json!({
+            "cron": "0 9 * * *",
+            "prompt": "morning reminder",
+            "recurring": true
+        }),
+    );
+    let create_resp = create_resp.expect("cron/create response");
+    let task_id = create_resp["result"]["id"].as_str().unwrap().to_string();
+    assert_eq!(create_resp["result"]["cron"], "0 9 * * *");
+    assert_eq!(create_resp["result"]["recurring"], true);
+
+    // List tasks
+    let list_resp = client.request("cron/list", serde_json::json!({}));
+    let list_resp = list_resp.expect("cron/list response");
+    let tasks = list_resp["result"]["tasks"].as_array().unwrap();
+    assert!(
+        tasks.iter().any(|t| t["id"] == task_id),
+        "task should be in list"
+    );
+
+    // Delete the task
+    let del_resp = client.request(
+        "cron/delete",
+        serde_json::json!({
+            "ids": [task_id]
+        }),
+    );
+    let del_resp = del_resp.expect("cron/delete response");
+    assert!(
+        del_resp["result"]["removed"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(task_id))
+    );
+
+    // Verify it's gone
+    let list_resp2 = client.request("cron/list", serde_json::json!({}));
+    let list_resp2 = list_resp2.expect("cron/list response");
+    let tasks2 = list_resp2["result"]["tasks"].as_array().unwrap();
+    assert!(
+        !tasks2.iter().any(|t| t["id"] == task_id),
+        "deleted task should not be in list"
+    );
+
+    client.shutdown();
+}
+
+/// Test cron/get_next_fire returns a valid time.
+#[test]
+fn cron_get_next_fire() {
+    let mut client = RpcClient::start();
+    require_binary!(client);
+    let client = client.as_mut().unwrap();
+
+    // Create a daily-at-9 task
+    let create_resp = client.request(
+        "cron/create",
+        serde_json::json!({
+            "cron": "0 9 * * *",
+            "prompt": "daily standup"
+        }),
+    );
+    let create_resp = create_resp.expect("cron/create response");
+
+    // Get next fire time
+    let next_resp = client.request(
+        "cron/get_next_fire",
+        serde_json::json!({
+            "task_id": create_resp["result"]["id"]
+        }),
+    );
+    let next_resp = next_resp.expect("cron/get_next_fire response");
+    let next_fire = next_resp["result"]["next_fire_at"].as_u64();
+    assert!(next_fire.is_some(), "should have a next fire time");
+    assert!(next_fire.unwrap() > 0, "next fire time should be positive");
+
+    client.shutdown();
+}
+
+// ── Background task integration tests ─────────────────────────────────────────
+
+/// Test bg/register → bg/list → bg/get → bg/stop lifecycle.
+#[test]
+fn bg_register_list_stop() {
+    let mut client = RpcClient::start();
+    require_binary!(client);
+    let client = client.as_mut().unwrap();
+
+    // Register a background task
+    let reg_resp = client.request(
+        "bg/register",
+        serde_json::json!({
+            "prefix": "bash",
+            "kind": "process",
+            "description": "echo hello",
+            "detached": true
+        }),
+    );
+    let reg_resp = reg_resp.expect("bg/register response");
+    let task_id = reg_resp["result"]["task_id"].as_str().unwrap().to_string();
+    assert!(
+        task_id.starts_with("bash-"),
+        "task_id should start with bash-"
+    );
+
+    // List tasks
+    let list_resp = client.request("bg/list", serde_json::json!({}));
+    let list_resp = list_resp.expect("bg/list response");
+    let tasks = list_resp["result"].as_array().unwrap();
+    assert!(
+        tasks.iter().any(|t| t["base"]["task_id"] == task_id),
+        "task should be in list"
+    );
+
+    // Get specific task
+    let get_resp = client.request(
+        "bg/get",
+        serde_json::json!({
+            "task_id": task_id
+        }),
+    );
+    let get_resp = get_resp.expect("bg/get response");
+    assert_eq!(get_resp["result"]["base"]["task_id"], task_id);
+
+    // Stop the task
+    let stop_resp = client.request(
+        "bg/stop",
+        serde_json::json!({
+            "task_id": task_id,
+            "reason": "test complete"
+        }),
+    );
+    let stop_resp = stop_resp.expect("bg/stop response");
+    assert_eq!(stop_resp["result"]["ok"], true);
+
+    client.shutdown();
+}
+
+/// Test bg/register → bg/append_output → bg/output → bg/settle lifecycle.
+#[test]
+fn bg_append_output_settle() {
+    let mut client = RpcClient::start();
+    require_binary!(client);
+    let client = client.as_mut().unwrap();
+
+    // Register a task
+    let reg_resp = client.request(
+        "bg/register",
+        serde_json::json!({
+            "prefix": "bash",
+            "kind": "process",
+            "description": "long running task"
+        }),
+    );
+    let reg_resp = reg_resp.expect("bg/register response");
+    let task_id = reg_resp["result"]["task_id"].as_str().unwrap().to_string();
+
+    // Append output
+    let append_resp = client.request(
+        "bg/append_output",
+        serde_json::json!({
+            "task_id": task_id,
+            "chunk": "hello world\n"
+        }),
+    );
+    let append_resp = append_resp.expect("bg/append_output response");
+    assert_eq!(append_resp["result"]["ok"], true);
+
+    // Get output snapshot
+    let output_resp = client.request(
+        "bg/output",
+        serde_json::json!({
+            "task_id": task_id
+        }),
+    );
+    let output_resp = output_resp.expect("bg/output response");
+    assert!(
+        output_resp["result"]["output_size_bytes"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+    assert!(
+        output_resp["result"]["preview"]
+            .as_str()
+            .unwrap()
+            .contains("hello world")
+    );
+
+    // Settle the task
+    let settle_resp = client.request(
+        "bg/settle",
+        serde_json::json!({
+            "task_id": task_id,
+            "status": "completed",
+            "stop_reason": "task finished"
+        }),
+    );
+    let settle_resp = settle_resp.expect("bg/settle response");
+    assert_eq!(settle_resp["result"]["ok"], true);
+
+    // Verify terminal status
+    let get_resp = client.request(
+        "bg/get",
+        serde_json::json!({
+            "task_id": task_id
+        }),
+    );
+    let get_resp = get_resp.expect("bg/get response");
+    assert_eq!(get_resp["result"]["base"]["status"], "completed");
 
     client.shutdown();
 }

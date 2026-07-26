@@ -600,12 +600,121 @@ pub struct AfterStepContext {
     pub tool_results: Vec<ExecutableToolResult>,
 }
 
+// ── Tool-level hook types (analogous to TS tool-call.ts hooks) ────────────
+
+/// Context for tool execution hooks (prepare, authorize).
+#[derive(Debug, Clone)]
+pub struct ToolExecutionHookContext {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call: ToolCall,
+    /// All tool calls in the current batch (provider order).
+    pub tool_calls: Vec<ToolCall>,
+    pub args: serde_json::Value,
+    pub trace_id: Option<String>,
+}
+
+/// Extended context for resolved tool execution (with RunnableToolExecution).
+#[derive(Debug, Clone)]
+pub struct ResolvedToolExecutionHookContext {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call: ToolCall,
+    pub tool_calls: Vec<ToolCall>,
+    pub args: serde_json::Value,
+    pub trace_id: Option<String>,
+    /// The resolved execution (never an error result at this point).
+    pub execution: RunnableToolExecutionInfo,
+}
+
+/// Serializable info about a `RunnableToolExecution` for hook contexts.
+#[derive(Debug, Clone)]
+pub struct RunnableToolExecutionInfo {
+    pub approval_rule: String,
+    pub stop_batch_after_this: bool,
+}
+
+/// Result from the authorize_tool_execution hook.
+#[derive(Debug, Clone)]
+pub struct AuthorizeToolExecutionResult {
+    pub block: bool,
+    pub reason: Option<String>,
+    pub synthetic_result: Option<ExecutableToolResult>,
+    pub execution_metadata: Option<serde_json::Value>,
+}
+
+/// Result from the prepare_tool_execution hook.
+#[derive(Debug, Clone)]
+pub struct PrepareToolExecutionResult {
+    pub block: bool,
+    pub reason: Option<String>,
+    pub synthetic_result: Option<ExecutableToolResult>,
+    pub updated_args: Option<serde_json::Value>,
+    pub execution_metadata: Option<serde_json::Value>,
+}
+
+/// Context for the finalize_tool_result hook.
+#[derive(Debug, Clone)]
+pub struct FinalizeToolResultContext {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call: ToolCall,
+    pub tool_calls: Vec<ToolCall>,
+    pub args: serde_json::Value,
+    pub result: ExecutableToolResult,
+    pub trace_id: Option<String>,
+}
+
+/// Context for the should_continue_after_stop hook.
+#[derive(Debug, Clone)]
+pub struct LoopStoppedStepContext {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub usage: TokenUsage,
+    pub stop_reason: LoopStepStopReason,
+}
+
+/// Result from the should_continue_after_stop hook.
+#[derive(Debug, Clone)]
+pub struct ShouldContinueAfterStopResult {
+    pub continue_turn: bool,
+}
+
 /// The hook system for the turn loop.
 /// Each hook is optional.
 #[derive(Default)]
 pub struct LoopHooks {
     pub before_step: Option<Box<dyn Fn(&StepContext) -> Result<Option<BeforeStepResult>, Box<dyn std::error::Error>> + Send + Sync>>,
     pub after_step: Option<Box<dyn Fn(&AfterStepContext) -> Result<Option<AfterStepResult>, Box<dyn std::error::Error>> + Send + Sync>>,
+    /// Prepare tool execution hook — analogous to TS `prepareToolExecution`.
+    /// Receives the tool call context and may block, return a synthetic result,
+    /// or modify arguments. Return `None` to allow the call unchanged.
+    pub prepare_tool_execution:
+        Option<Box<dyn Fn(&ToolExecutionHookContext) -> Result<Option<PrepareToolExecutionResult>, Box<dyn std::error::Error>> + Send + Sync>>,
+    /// Authorize tool execution hook — analogous to TS `authorizeToolExecution`.
+    /// Runs after execution resolution, may block or return a synthetic result.
+    /// Return `None` to allow the call.
+    pub authorize_tool_execution:
+        Option<
+            Box<
+                dyn Fn(&ResolvedToolExecutionHookContext) -> Result<Option<AuthorizeToolExecutionResult>, Box<dyn std::error::Error>>
+                    + Send
+                    + Sync,
+            >,
+        >,
+    /// Finalize tool result hook — analogous to TS `finalizeToolResult`.
+    /// Allows post-execution transformation (redaction, truncation).
+    /// Return `None` to use the result as-is.
+    pub finalize_tool_result:
+        Option<
+            Box<
+                dyn Fn(&FinalizeToolResultContext) -> Result<Option<ExecutableToolResult>, Box<dyn std::error::Error>> + Send + Sync,
+            >,
+        >,
+    /// Should-continue-after-stop hook — analogous to TS `shouldContinueAfterStop`.
+    /// Decides whether the turn continues after a terminal stop reason.
+    pub should_continue_after_stop:
+        Option<Box<dyn Fn(&LoopStoppedStepContext) -> Result<Option<ShouldContinueAfterStopResult>, Box<dyn std::error::Error>> + Send + Sync>>,
 }
 
 // ── GoalContext (budget-aware turn execution) ──────────────────────────────

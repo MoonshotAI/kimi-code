@@ -14,7 +14,7 @@
 ///
 /// If neither is available, it falls back to the JS implementation.
 
-import type { ChildProcess} from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -160,6 +160,82 @@ interface ToolExecuteResponse {
   /** When true, the result is a fast prediction from the workspace index. */
   is_prediction?: boolean;
 }
+
+// ── Tool lifecycle hooks (tool_call.rs) ──────────────────────────────────
+
+interface PrepareToolRequest {
+  turn_id: string;
+  step_number: number;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: unknown;
+  all_tool_calls: unknown[];
+  trace_id?: string;
+}
+
+interface PrepareToolResponse {
+  block: boolean;
+  reason?: string;
+  synthetic_result?: {
+    content: string;
+    is_error: boolean;
+    note?: string;
+    is_prediction: boolean;
+    stop_turn: boolean;
+  };
+  updated_args?: unknown;
+  execution_metadata?: unknown;
+  resolved: boolean;
+}
+
+interface AuthorizeToolRequest {
+  turn_id: string;
+  step_number: number;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: unknown;
+  all_tool_calls: unknown[];
+  trace_id?: string;
+  approval_rule: string;
+}
+
+interface AuthorizeToolResponse {
+  block: boolean;
+  reason?: string;
+  synthetic_result?: {
+    content: string;
+    is_error: boolean;
+    note?: string;
+    is_prediction: boolean;
+    stop_turn: boolean;
+  };
+  execution_metadata?: unknown;
+  resolved: boolean;
+}
+
+interface FinalizeToolRequest {
+  turn_id: string;
+  step_number: number;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: unknown;
+  result: {
+    content: string;
+    is_error: boolean;
+    note?: string;
+    is_prediction: boolean;
+    stop_turn: boolean;
+  };
+  trace_id?: string;
+}
+
+type FinalizeToolResponse = {
+  content: string;
+  is_error: boolean;
+  note?: string;
+  is_prediction: boolean;
+  stop_turn: boolean;
+} | null;
 
 /**
  * Classify an incoming RPC line. A JSON-RPC request always carries `method`; a
@@ -316,15 +392,30 @@ class NapiEngine {
       return (callbackId: number) => {
         const payload = nativeModule.getCallbackPayload(callbackId);
         if (!payload) return;
-        handler(payload).then(
-          (result) =>{  nativeModule.resolveCallback(callbackId, null, result); },
-          (error: unknown) =>{ 
-            nativeModule.resolveCallback(
-              callbackId,
-              error instanceof Error ? error.message : String(error),
-              null,
-            ); },
-        );
+        // Wrap in try/catch: if `handler` (or any sync prologue such as
+        // argument parsing) throws synchronously, `.then` would never be
+        // registered and `resolveCallback` would never be called, leaving
+        // the Rust side waiting on this callback forever (turn deadlock).
+        try {
+          Promise.resolve(handler(payload)).then(
+            (result) => {
+              nativeModule.resolveCallback(callbackId, null, result);
+            },
+            (error: unknown) => {
+              nativeModule.resolveCallback(
+                callbackId,
+                error instanceof Error ? error.message : String(error),
+                null,
+              );
+            },
+          );
+        } catch (error: unknown) {
+          nativeModule.resolveCallback(
+            callbackId,
+            error instanceof Error ? error.message : String(error),
+            null,
+          );
+        }
       };
     };
 
@@ -370,6 +461,21 @@ class AgentProcess {
   private toolExecuteHandler: ((req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) | null =
     null;
 
+  /** Callback for handling host/prepare_tool_execution requests from the Rust side. */
+  private prepareToolHandler:
+    | ((req: PrepareToolRequest) => Promise<PrepareToolResponse | null>)
+    | null = null;
+
+  /** Callback for handling host/authorize_tool_execution requests from the Rust side. */
+  private authorizeToolHandler:
+    | ((req: AuthorizeToolRequest) => Promise<AuthorizeToolResponse | null>)
+    | null = null;
+
+  /** Callback for handling host/finalize_tool_result requests from the Rust side. */
+  private finalizeToolHandler:
+    | ((req: FinalizeToolRequest) => Promise<FinalizeToolResponse>)
+    | null = null;
+
   /** Callback for fire-and-forget host/event notifications from Rust. */
   private eventHandler: ((event: EngineEvent) => void) | null = null;
 
@@ -379,6 +485,20 @@ class AgentProcess {
 
   setToolExecuteHandler(handler: (req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) {
     this.toolExecuteHandler = handler;
+  }
+
+  setPrepareToolHandler(handler: (req: PrepareToolRequest) => Promise<PrepareToolResponse | null>) {
+    this.prepareToolHandler = handler;
+  }
+
+  setAuthorizeToolHandler(
+    handler: (req: AuthorizeToolRequest) => Promise<AuthorizeToolResponse | null>,
+  ) {
+    this.authorizeToolHandler = handler;
+  }
+
+  setFinalizeToolHandler(handler: (req: FinalizeToolRequest) => Promise<FinalizeToolResponse>) {
+    this.finalizeToolHandler = handler;
   }
 
   setEventHandler(handler: (event: EngineEvent) => void) {
@@ -498,6 +618,12 @@ class AgentProcess {
       await this.handleHostLlmChat(msg);
     } else if (msg.method === 'host/execute_tool') {
       await this.handleHostExecuteTool(msg);
+    } else if (msg.method === 'host/prepare_tool_execution') {
+      await this.handleHostPrepareTool(msg);
+    } else if (msg.method === 'host/authorize_tool_execution') {
+      await this.handleHostAuthorizeTool(msg);
+    } else if (msg.method === 'host/finalize_tool_result') {
+      await this.handleHostFinalizeTool(msg);
     } else {
       const response = JSON.stringify({
         jsonrpc: '2.0',
@@ -528,6 +654,48 @@ class AgentProcess {
     }
     try {
       const result = await this.toolExecuteHandler(msg.params as ToolExecuteRequest);
+      this.writeHostResult(msg.id, result);
+    } catch (error) {
+      this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async handleHostPrepareTool(msg: RpcMessage) {
+    if (!this.prepareToolHandler) {
+      // No handler registered — respond with null (allow unchanged).
+      this.writeHostResult(msg.id, null);
+      return;
+    }
+    try {
+      const result = await this.prepareToolHandler(msg.params as PrepareToolRequest);
+      this.writeHostResult(msg.id, result);
+    } catch (error) {
+      this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async handleHostAuthorizeTool(msg: RpcMessage) {
+    if (!this.authorizeToolHandler) {
+      // No handler registered — respond with null (allow unchanged).
+      this.writeHostResult(msg.id, null);
+      return;
+    }
+    try {
+      const result = await this.authorizeToolHandler(msg.params as AuthorizeToolRequest);
+      this.writeHostResult(msg.id, result);
+    } catch (error) {
+      this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async handleHostFinalizeTool(msg: RpcMessage) {
+    if (!this.finalizeToolHandler) {
+      // No handler registered — respond with null (use result as-is).
+      this.writeHostResult(msg.id, null);
+      return;
+    }
+    try {
+      const result = await this.finalizeToolHandler(msg.params as FinalizeToolRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -622,6 +790,9 @@ export async function runTurnRust(
   handlers?: {
     llmChat?: (req: LlmChatRequest) => Promise<LlmChatResponse>;
     toolExecute?: (req: ToolExecuteRequest) => Promise<ToolExecuteResponse>;
+    prepareTool?: (req: PrepareToolRequest) => Promise<PrepareToolResponse | null>;
+    authorizeTool?: (req: AuthorizeToolRequest) => Promise<AuthorizeToolResponse | null>;
+    finalizeTool?: (req: FinalizeToolRequest) => Promise<FinalizeToolResponse>;
   },
 ): Promise<RunTurnResult | null> {
   const agent = getAgent();
@@ -632,6 +803,15 @@ export async function runTurnRust(
   }
   if (handlers?.toolExecute) {
     agent.setToolExecuteHandler(handlers.toolExecute);
+  }
+  if (handlers?.prepareTool) {
+    agent.setPrepareToolHandler(handlers.prepareTool);
+  }
+  if (handlers?.authorizeTool) {
+    agent.setAuthorizeToolHandler(handlers.authorizeTool);
+  }
+  if (handlers?.finalizeTool) {
+    agent.setFinalizeToolHandler(handlers.finalizeTool);
   }
 
   try {
@@ -1054,7 +1234,10 @@ export function createRunTurnOverride(
           signal: input.signal,
         });
       } catch (error) {
-        rawResult = { output: error instanceof Error ? error.message : String(error), isError: true };
+        rawResult = {
+          output: error instanceof Error ? error.message : String(error),
+          isError: true,
+        };
       }
 
       const finalized =
@@ -1065,6 +1248,148 @@ export function createRunTurnOverride(
         })) ?? rawResult;
 
       return settle(finalized, effectiveArgs);
+    };
+
+    // ── Tool lifecycle hooks (new: Rust tool_call.rs -> JS) ──────────────
+    const prepareToolHandler = async (
+      req: PrepareToolRequest,
+    ): Promise<PrepareToolResponse | null> => {
+      if (!input.hooks?.prepareToolExecution) return null;
+      const stepTools = input.buildTools?.() ?? input.tools ?? [];
+      const tool = stepTools.find((t) => t.name === req.tool_name);
+      const toolCall: { id: string; name: string; arguments: string; type: 'function' } = {
+        id: req.tool_call_id,
+        name: req.tool_name,
+        arguments:
+          typeof req.arguments === 'string' ? req.arguments : JSON.stringify(req.arguments ?? {}),
+        type: 'function',
+      };
+      try {
+        const result = await input.hooks.prepareToolExecution({
+          toolCall,
+          toolCalls: [toolCall],
+          tool,
+          args: req.arguments,
+          turnId: input.turnId,
+          stepNumber: req.step_number,
+          traceId: req.trace_id,
+          signal: input.signal,
+          llm: input.llm,
+        });
+        if (!result) return null;
+        if (result.block) {
+          return { block: true, reason: result.reason, resolved: true };
+        }
+        if (result.syntheticResult) {
+          return {
+            block: false,
+            synthetic_result: {
+              content: outputToContent(result.syntheticResult.output),
+              is_error: result.syntheticResult.isError === true,
+              stop_turn: result.syntheticResult.stopTurn === true,
+              is_prediction: false,
+            },
+            updated_args: result.updatedArgs,
+            execution_metadata: result.executionMetadata,
+            resolved: true,
+          };
+        }
+        return {
+          block: false,
+          updated_args: result.updatedArgs,
+          execution_metadata: result.executionMetadata,
+          resolved: true,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const authorizeToolHandler = async (
+      req: AuthorizeToolRequest,
+    ): Promise<AuthorizeToolResponse | null> => {
+      if (!input.hooks?.authorizeToolExecution) return null;
+      const stepTools = input.buildTools?.() ?? input.tools ?? [];
+      const tool = stepTools.find((t) => t.name === req.tool_name);
+      const toolCall: { id: string; name: string; arguments: string; type: 'function' } = {
+        id: req.tool_call_id,
+        name: req.tool_name,
+        arguments:
+          typeof req.arguments === 'string' ? req.arguments : JSON.stringify(req.arguments ?? {}),
+        type: 'function',
+      };
+      try {
+        const result = await input.hooks.authorizeToolExecution({
+          toolCall,
+          toolCalls: [toolCall],
+          tool,
+          args: req.arguments,
+          turnId: input.turnId,
+          stepNumber: req.step_number,
+          traceId: req.trace_id,
+          signal: input.signal,
+          llm: input.llm,
+          execution: {
+            approvalRule: req.approval_rule,
+            execute: async () => ({ output: '', isError: false }),
+            accesses: undefined as never,
+          },
+        });
+        if (!result) return null;
+        if (result.block) {
+          return { block: true, reason: result.reason, resolved: true };
+        }
+        if (result.syntheticResult) {
+          return {
+            block: false,
+            synthetic_result: {
+              content: outputToContent(result.syntheticResult.output),
+              is_error: result.syntheticResult.isError === true,
+              stop_turn: result.syntheticResult.stopTurn === true,
+              is_prediction: false,
+            },
+            execution_metadata: result.executionMetadata,
+            resolved: true,
+          };
+        }
+        return { block: false, execution_metadata: result.executionMetadata, resolved: true };
+      } catch {
+        return null;
+      }
+    };
+
+    const finalizeToolHandler = async (req: FinalizeToolRequest): Promise<FinalizeToolResponse> => {
+      if (!input.hooks?.finalizeToolResult) return null;
+      const toolCall: { id: string; name: string; arguments: string; type: 'function' } = {
+        id: req.tool_call_id,
+        name: req.tool_name,
+        arguments:
+          typeof req.arguments === 'string' ? req.arguments : JSON.stringify(req.arguments ?? {}),
+        type: 'function',
+      };
+      try {
+        const result = await input.hooks.finalizeToolResult({
+          toolCall,
+          toolCalls: [toolCall],
+          args: req.arguments,
+          result: req.result as never,
+          turnId: input.turnId,
+          stepNumber: req.step_number,
+          traceId: req.trace_id,
+          signal: input.signal,
+          llm: input.llm,
+        });
+        if (!result) return null;
+        return {
+          content: outputToContent(result.output),
+          is_error: result.isError === true,
+          note: result.note,
+          is_prediction: false,
+          stop_turn: result.stopTurn === true,
+        };
+      } catch {
+        return null;
+      }
     };
 
     // ── Drive the turn ────────────────────────────────────────────────
@@ -1138,6 +1463,9 @@ export function createRunTurnOverride(
         const agent = getAgent()!;
         agent.setLlmChatHandler(llmChatHandler);
         agent.setToolExecuteHandler(toolExecuteHandler);
+        agent.setPrepareToolHandler(prepareToolHandler);
+        agent.setAuthorizeToolHandler(authorizeToolHandler);
+        agent.setFinalizeToolHandler(finalizeToolHandler);
         agent.setEventHandler(handleEngineEvent);
 
         const result = await agent.request('agent/run_turn', {
@@ -1229,6 +1557,153 @@ export function shutdownRustEngine() {
   }
   napiEngine = null;
   engineMode = 'js';
+}
+
+// ── Cron RPC API ──────────────────────────────────────────────────────────────
+
+export interface CronCreateResult {
+  id: string;
+  cron: string;
+  prompt: string;
+  created_at: number;
+  recurring: boolean;
+}
+
+export interface CronTaskSnapshot {
+  id: string;
+  cron: string;
+  recurring: boolean;
+  created_at: number;
+  last_fired_at?: number;
+  next_fire_at?: number;
+}
+
+export interface CronListResult {
+  tasks: CronTaskSnapshot[];
+}
+
+export interface CronDeleteResult {
+  removed: string[];
+}
+
+export interface CronGetNextFireResult {
+  next_fire_at?: number;
+}
+
+/**
+ * Send a JSON-RPC request to the Rust agent (stdio or napi).
+ * Falls back to `null` when the Rust engine is not available.
+ */
+async function agentCall<T = unknown>(method: string, params: unknown): Promise<T | null> {
+  const mode = initEngine();
+  if (mode === 'stdio') {
+    const agent = getAgent();
+    if (!agent) return null;
+    return (await agent.request(method, params)) as T;
+  }
+  if (mode === 'napi') {
+    // Napi mode: use the napi engine's RPC-like direct call.
+    // The napi bridge currently only supports runTurnRust; for generic
+    // RPC we fall through to stdio. If the napi engine is loaded but
+    // no stdio binary is available, cron/background calls are not
+    // available in pure-napi mode.
+    console.warn('[kimi-agent] Napi mode does not support generic RPC; falling back to JS');
+    return null;
+  }
+  return null;
+}
+
+/** Create a cron task. Returns null if the Rust engine is not available. */
+export async function cronCreate(params: {
+  cron: string;
+  prompt: string;
+  recurring?: boolean;
+}): Promise<CronCreateResult | null> {
+  return agentCall<CronCreateResult>('cron/create', params);
+}
+
+/** Delete cron tasks by id. Returns null if the Rust engine is not available. */
+export async function cronDelete(ids: string[]): Promise<CronDeleteResult | null> {
+  return agentCall<CronDeleteResult>('cron/delete', { ids });
+}
+
+/** List all cron tasks. Returns null if the Rust engine is not available. */
+export async function cronList(): Promise<CronListResult | null> {
+  return agentCall<CronListResult>('cron/list', {});
+}
+
+/** Get next fire time for a cron task. Returns null if the Rust engine is not available. */
+export async function cronGetNextFire(taskId?: string): Promise<CronGetNextFireResult | null> {
+  return agentCall<CronGetNextFireResult>('cron/get_next_fire', { task_id: taskId });
+}
+
+// ── Background task RPC API ───────────────────────────────────────────────────
+
+export interface BgRegisterResult {
+  task_id: string | null;
+  error?: string | null;
+}
+
+export interface BgOutputResult {
+  output_path?: string;
+  output_size_bytes: number;
+  preview_bytes: number;
+  truncated: boolean;
+  full_output_available: boolean;
+  preview: string;
+  error?: string;
+}
+
+/** Register a background task. Returns null if the Rust engine is not available. */
+export async function bgRegister(params: {
+  prefix: string;
+  kind: 'process' | 'agent' | 'question';
+  description: string;
+  detached?: boolean;
+  timeoutMs?: number;
+}): Promise<BgRegisterResult | null> {
+  return agentCall<BgRegisterResult>('bg/register', params);
+}
+
+/** List all background tasks. Returns null if the Rust engine is not available. */
+export async function bgList(): Promise<unknown[] | null> {
+  return agentCall<unknown[]>('bg/list', {});
+}
+
+/** Get a specific background task. Returns null if the Rust engine is not available. */
+export async function bgGet(taskId: string): Promise<unknown> {
+  return agentCall('bg/get', { task_id: taskId });
+}
+
+/** Stop a background task. Returns null if the Rust engine is not available. */
+export async function bgStop(taskId: string, reason?: string): Promise<{ ok: boolean } | null> {
+  return agentCall<{ ok: boolean }>('bg/stop', { task_id: taskId, reason });
+}
+
+/** Get output snapshot for a background task. Returns null if the Rust engine is not available. */
+export async function bgOutput(taskId: string): Promise<BgOutputResult | null> {
+  return agentCall<BgOutputResult>('bg/output', { task_id: taskId });
+}
+
+/** Append output to a background task. Returns null if the Rust engine is not available. */
+export async function bgAppendOutput(
+  taskId: string,
+  chunk: string,
+): Promise<{ ok: boolean } | null> {
+  return agentCall<{ ok: boolean }>('bg/append_output', { task_id: taskId, chunk });
+}
+
+/** Settle (mark terminal) a background task. Returns null if the Rust engine is not available. */
+export async function bgSettle(
+  taskId: string,
+  status: string,
+  stopReason?: string,
+): Promise<{ ok: boolean } | null> {
+  return agentCall<{ ok: boolean }>('bg/settle', {
+    task_id: taskId,
+    status,
+    stop_reason: stopReason,
+  });
 }
 
 // ── Workspace prediction ──────────────────────────────────────────────────

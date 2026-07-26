@@ -6,7 +6,11 @@
 /// to the JS host for LLM inference and tool execution.
 use std::sync::Arc;
 
-use crate::rpc::types::{BoxFuture, LlmChatRequest, LlmChatResponse, ToolExecuteRequest, ToolExecuteResponse};
+use crate::rpc::types::{
+    AuthorizeToolRequest, AuthorizeToolResponse, BoxFuture, ExecutableToolResultData,
+    FinalizeToolRequest, FinalizeToolResponse, LlmChatRequest, LlmChatResponse,
+    PrepareToolRequest, PrepareToolResponse, ToolExecuteRequest, ToolExecuteResponse,
+};
 
 /// Host-provided callbacks that the turn loop needs to call back to JS.
 pub trait HostCallbacks: Send + Sync {
@@ -28,6 +32,44 @@ pub trait HostCallbacks: Send + Sync {
     /// them in the transcript. The default implementation drops the event.
     fn emit_event(&self, event: serde_json::Value) {
         let _ = event;
+    }
+
+    // ── Tool lifecycle hooks (tool_call.rs) ─────────────────────────────────
+
+    /// Prepare tool execution hook — analogous to TS `prepareToolExecution`.
+    /// Called before a tool is executed. May block, return a synthetic result,
+    /// or modify arguments. Return `None` to allow the call unchanged.
+    fn prepare_tool_execution(
+        &self,
+        request: PrepareToolRequest,
+    ) -> BoxFuture<'static, Result<Option<PrepareToolResponse>, String>> {
+        // Default: allow the call unchanged.
+        let _ = request;
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Authorize tool execution hook — analogous to TS `authorizeToolExecution`.
+    /// Called after execution resolution, may block or return a synthetic result.
+    /// Return `None` to allow the call.
+    fn authorize_tool_execution(
+        &self,
+        request: AuthorizeToolRequest,
+    ) -> BoxFuture<'static, Result<Option<AuthorizeToolResponse>, String>> {
+        // Default: allow the call unchanged.
+        let _ = request;
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Finalize tool result hook — analogous to TS `finalizeToolResult`.
+    /// Allows post-execution transformation (redaction, truncation).
+    /// Return `None` to use the result as-is.
+    fn finalize_tool_result(
+        &self,
+        request: FinalizeToolRequest,
+    ) -> BoxFuture<'static, Result<FinalizeToolResponse, String>> {
+        // Default: use the result as-is.
+        let _ = request;
+        Box::pin(async { Ok(None) })
     }
 }
 
@@ -79,6 +121,60 @@ impl HostCallbacks for RpcHostCallbacks {
             &event,
         );
     }
+
+    fn prepare_tool_execution(
+        &self,
+        request: PrepareToolRequest,
+    ) -> BoxFuture<'static, Result<Option<PrepareToolResponse>, String>> {
+        let server = self.server.clone();
+        Box::pin(async move {
+            let params = serde_json::to_value(&request)
+                .map_err(|e| format!("Prepare tool serialize error: {e}"))?;
+            let response_value = server
+                .invoke(crate::rpc::types::methods::HOST_PREPARE_TOOL, params)
+                .await
+                .map_err(|e| format!("Prepare tool error: {e}"))?;
+            let response: Option<PrepareToolResponse> = serde_json::from_value(response_value)
+                .map_err(|e| format!("Prepare tool response parse error: {e}"))?;
+            Ok(response)
+        })
+    }
+
+    fn authorize_tool_execution(
+        &self,
+        request: AuthorizeToolRequest,
+    ) -> BoxFuture<'static, Result<Option<AuthorizeToolResponse>, String>> {
+        let server = self.server.clone();
+        Box::pin(async move {
+            let params = serde_json::to_value(&request)
+                .map_err(|e| format!("Authorize tool serialize error: {e}"))?;
+            let response_value = server
+                .invoke(crate::rpc::types::methods::HOST_AUTHORIZE_TOOL, params)
+                .await
+                .map_err(|e| format!("Authorize tool error: {e}"))?;
+            let response: Option<AuthorizeToolResponse> = serde_json::from_value(response_value)
+                .map_err(|e| format!("Authorize tool response parse error: {e}"))?;
+            Ok(response)
+        })
+    }
+
+    fn finalize_tool_result(
+        &self,
+        request: FinalizeToolRequest,
+    ) -> BoxFuture<'static, Result<FinalizeToolResponse, String>> {
+        let server = self.server.clone();
+        Box::pin(async move {
+            let params = serde_json::to_value(&request)
+                .map_err(|e| format!("Finalize tool serialize error: {e}"))?;
+            let response_value = server
+                .invoke(crate::rpc::types::methods::HOST_FINALIZE_TOOL, params)
+                .await
+                .map_err(|e| format!("Finalize tool error: {e}"))?;
+            let response: FinalizeToolResponse = serde_json::from_value(response_value)
+                .map_err(|e| format!("Finalize tool response parse error: {e}"))?;
+            Ok(response)
+        })
+    }
 }
 
 /// A [`HostCallbacks`] decorator that executes read-only tools natively
@@ -126,5 +222,26 @@ impl HostCallbacks for NativeToolCallbacks {
 
     fn emit_event(&self, event: serde_json::Value) {
         self.inner.emit_event(event);
+    }
+
+    fn prepare_tool_execution(
+        &self,
+        request: PrepareToolRequest,
+    ) -> BoxFuture<'static, Result<Option<PrepareToolResponse>, String>> {
+        self.inner.prepare_tool_execution(request)
+    }
+
+    fn authorize_tool_execution(
+        &self,
+        request: AuthorizeToolRequest,
+    ) -> BoxFuture<'static, Result<Option<AuthorizeToolResponse>, String>> {
+        self.inner.authorize_tool_execution(request)
+    }
+
+    fn finalize_tool_result(
+        &self,
+        request: FinalizeToolRequest,
+    ) -> BoxFuture<'static, Result<FinalizeToolResponse, String>> {
+        self.inner.finalize_tool_result(request)
     }
 }

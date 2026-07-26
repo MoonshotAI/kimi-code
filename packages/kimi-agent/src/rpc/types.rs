@@ -102,6 +102,49 @@ pub mod methods {
     /// boundaries, streaming deltas, and natively-executed tool results
     /// so the host can record them in the transcript.
     pub const HOST_EVENT: &str = "host/event";
+
+    // ── Tool hook methods (tool_call.rs lifecycle) ─────────────────────────────────
+    /// Prepare a tool call for execution (Rust → JS host proxy).
+    /// Analogous to TS `prepareToolExecution` hook.
+    pub const HOST_PREPARE_TOOL: &str = "host/prepare_tool_execution";
+
+    /// Authorize a tool call (Rust → JS host proxy).
+    /// Analogous to TS `authorizeToolExecution` hook.
+    pub const HOST_AUTHORIZE_TOOL: &str = "host/authorize_tool_execution";
+
+    /// Finalize a tool result (Rust → JS host proxy).
+    /// Analogous to TS `finalizeToolResult` hook.
+    pub const HOST_FINALIZE_TOOL: &str = "host/finalize_tool_result";
+
+    // ── Cron methods ────────────────────────────────────────────────────────────
+    /// Create a new cron task.
+    pub const CRON_CREATE: &str = "cron/create";
+    /// Delete cron tasks by id.
+    pub const CRON_DELETE: &str = "cron/delete";
+    /// List all cron tasks.
+    pub const CRON_LIST: &str = "cron/list";
+    /// Get next fire time for a task.
+    pub const CRON_GET_NEXT_FIRE: &str = "cron/get_next_fire";
+    /// Rust → JS: a cron job fired.
+    pub const CRON_FIRED: &str = "cron/fired";
+
+    // ── Background task methods ──────────────────────────────────────────────────
+    /// Register a new background task.
+    pub const BG_REGISTER: &str = "bg/register";
+    /// List all background tasks.
+    pub const BG_LIST: &str = "bg/list";
+    /// Get a specific background task.
+    pub const BG_GET: &str = "bg/get";
+    /// Stop a background task.
+    pub const BG_STOP: &str = "bg/stop";
+    /// Get output snapshot for a task.
+    pub const BG_OUTPUT: &str = "bg/output";
+    /// Append output to a task.
+    pub const BG_APPEND_OUTPUT: &str = "bg/append_output";
+    /// Settle a task (mark terminal).
+    pub const BG_SETTLE: &str = "bg/settle";
+    /// Rust → JS: background task event.
+    pub const BG_EVENT: &str = "bg/event";
 }
 
 // ── Message content blocks (multimodal) ─────────────────────────────────
@@ -308,6 +351,109 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
+// ── Tool hook request/response types (tool_call.rs lifecycle) ─────────────
+
+/// Request for the prepare_tool_execution hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrepareToolRequest {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    #[serde(default)]
+    pub all_tool_calls: Vec<serde_json::Value>,
+    pub trace_id: Option<String>,
+}
+
+/// Response from the prepare_tool_execution hook.
+/// `None` = allow unchanged; `Some` = decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrepareToolResponse {
+    /// When true, the tool call is blocked.
+    #[serde(default)]
+    pub block: bool,
+    /// Reason for blocking (when block is true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Synthetic result to use instead of executing (when block is false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_result: Option<ExecutableToolResultData>,
+    /// Updated arguments for the tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_args: Option<serde_json::Value>,
+    /// Execution metadata (opaque, passed through to tool execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_metadata: Option<serde_json::Value>,
+    /// When true, this is a resolved decision (not a pass-through).
+    #[serde(default)]
+    pub resolved: bool,
+}
+
+/// Request for the authorize_tool_execution hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorizeToolRequest {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    #[serde(default)]
+    pub all_tool_calls: Vec<serde_json::Value>,
+    pub trace_id: Option<String>,
+    pub approval_rule: String,
+}
+
+/// Response from the authorize_tool_execution hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorizeToolResponse {
+    /// When true, the tool call is blocked.
+    #[serde(default)]
+    pub block: bool,
+    /// Reason for blocking (when block is true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Synthetic result to use instead of executing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_result: Option<ExecutableToolResultData>,
+    /// Execution metadata (opaque, passed through to tool execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_metadata: Option<serde_json::Value>,
+    /// When true, this is a resolved decision (not a pass-through).
+    #[serde(default)]
+    pub resolved: bool,
+}
+
+/// Request for the finalize_tool_result hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalizeToolRequest {
+    pub turn_id: String,
+    pub step_number: u32,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    pub result: ExecutableToolResultData,
+    pub trace_id: Option<String>,
+}
+
+/// Response from the finalize_tool_result hook.
+/// When `None`, the original result is used unchanged.
+pub type FinalizeToolResponse = Option<ExecutableToolResultData>;
+
+/// Serializable tool result data for RPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutableToolResultData {
+    pub content: String,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub is_prediction: bool,
+    #[serde(default)]
+    pub stop_turn: bool,
+}
+
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthStatus {
@@ -373,6 +519,166 @@ impl JsonRpcError {
             data: None,
         }
     }
+}
+
+// ── Cron RPC types ────────────────────────────────────────────────────────────
+
+/// Parameters for cron/create.
+#[derive(Debug, Deserialize)]
+pub struct CronCreateParams {
+    pub cron: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub recurring: Option<bool>,
+}
+
+/// Result of cron/create.
+#[derive(Debug, Serialize)]
+pub struct CronCreateResult {
+    pub id: String,
+    pub cron: String,
+    pub prompt: String,
+    pub created_at: u64,
+    pub recurring: bool,
+}
+
+/// Parameters for cron/delete.
+#[derive(Debug, Deserialize)]
+pub struct CronDeleteParams {
+    pub ids: Vec<String>,
+}
+
+/// Result of cron/delete.
+#[derive(Debug, Serialize)]
+pub struct CronDeleteResult {
+    pub removed: Vec<String>,
+}
+
+/// A cron task snapshot returned by cron/list.
+#[derive(Debug, Serialize)]
+pub struct CronTaskSnapshotRpc {
+    pub id: String,
+    pub cron: String,
+    pub recurring: bool,
+    pub created_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_fired_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_fire_at: Option<u64>,
+}
+
+/// Result of cron/list.
+#[derive(Debug, Serialize)]
+pub struct CronListResult {
+    pub tasks: Vec<CronTaskSnapshotRpc>,
+}
+
+/// Parameters for cron/get_next_fire.
+#[derive(Debug, Deserialize)]
+pub struct CronGetNextFireParams {
+    #[serde(default)]
+    pub task_id: Option<String>,
+}
+
+/// Result of cron/get_next_fire.
+#[derive(Debug, Serialize)]
+pub struct CronGetNextFireResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_fire_at: Option<u64>,
+}
+
+/// Cron fire event payload (Rust → JS via host/event).
+#[derive(Debug, Serialize)]
+pub struct CronFireEventPayload {
+    pub r#type: String,
+    pub job_id: String,
+    pub cron: String,
+    pub recurring: bool,
+    pub coalesced_count: u32,
+    pub stale: bool,
+    pub prompt: String,
+}
+
+// ── Background RPC types ───────────────────────────────────────────────────────
+
+/// Parameters for bg/register.
+#[derive(Debug, Deserialize)]
+pub struct BgRegisterParams {
+    pub prefix: String,
+    pub kind: String,
+    pub description: String,
+    #[serde(default)]
+    pub detached: Option<bool>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+/// Result of bg/register.
+#[derive(Debug, Serialize)]
+pub struct BgRegisterResult {
+    pub task_id: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Parameters for bg/get.
+#[derive(Debug, Deserialize)]
+pub struct BgGetParams {
+    pub task_id: String,
+}
+
+/// Parameters for bg/stop.
+#[derive(Debug, Deserialize)]
+pub struct BgStopParams {
+    pub task_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Parameters for bg/output.
+#[derive(Debug, Deserialize)]
+pub struct BgOutputParams {
+    pub task_id: String,
+}
+
+/// Result of bg/output.
+#[derive(Debug, Serialize)]
+pub struct BgOutputResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
+    pub output_size_bytes: u64,
+    pub preview_bytes: u64,
+    pub truncated: bool,
+    pub full_output_available: bool,
+    pub preview: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Parameters for bg/append_output.
+#[derive(Debug, Deserialize)]
+pub struct BgAppendOutputParams {
+    pub task_id: String,
+    pub chunk: String,
+}
+
+/// Parameters for bg/settle.
+#[derive(Debug, Deserialize)]
+pub struct BgSettleParams {
+    pub task_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+}
+
+/// Background task event payload (Rust → JS via host/event).
+#[derive(Debug, Serialize)]
+pub struct BgEventPayload {
+    pub r#type: String,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[cfg(test)]
@@ -762,5 +1068,117 @@ mod tests {
         let deserialized: ToolDef = serde_json::from_value(json).unwrap();
         assert_eq!(deserialized.name, "bash");
         assert!(deserialized.input_schema.as_object().unwrap().is_empty());
+    }
+
+    // ── Cron RPC roundtrip tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_cron_create_params_roundtrip() {
+        let json = serde_json::json!({
+            "cron": "0 9 * * *",
+            "prompt": "morning reminder",
+            "recurring": true
+        });
+        let params: CronCreateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.cron, "0 9 * * *");
+        assert_eq!(params.prompt, "morning reminder");
+        assert_eq!(params.recurring, Some(true));
+    }
+
+    #[test]
+    fn test_cron_create_params_defaults() {
+        let json = serde_json::json!({
+            "cron": "*/5 * * * *",
+            "prompt": "every 5"
+        });
+        let params: CronCreateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.cron, "*/5 * * * *");
+        assert_eq!(params.recurring, None); // default
+    }
+
+    #[test]
+    fn test_cron_delete_params_roundtrip() {
+        let json = serde_json::json!({
+            "ids": ["abc12345", "def67890"]
+        });
+        let params: CronDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.ids.len(), 2);
+        assert_eq!(params.ids[0], "abc12345");
+    }
+
+    #[test]
+    fn test_cron_create_result_roundtrip() {
+        let result = CronCreateResult {
+            id: "abc12345".into(),
+            cron: "0 9 * * *".into(),
+            prompt: "test".into(),
+            created_at: 1000,
+            recurring: true,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["id"], "abc12345");
+        assert_eq!(json["recurring"], true);
+        assert_eq!(json["created_at"], 1000);
+    }
+
+    // ── Background RPC roundtrip tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_bg_register_params_roundtrip() {
+        let json = serde_json::json!({
+            "prefix": "bash",
+            "kind": "process",
+            "description": "echo hello",
+            "detached": true,
+            "timeout_ms": 30000
+        });
+        let params: BgRegisterParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.prefix, "bash");
+        assert_eq!(params.kind, "process");
+        assert_eq!(params.detached, Some(true));
+        assert_eq!(params.timeout_ms, Some(30000));
+    }
+
+    #[test]
+    fn test_bg_register_params_minimal() {
+        let json = serde_json::json!({
+            "prefix": "agent",
+            "kind": "agent",
+            "description": "subagent task"
+        });
+        let params: BgRegisterParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.prefix, "agent");
+        assert!(params.detached.is_none());
+        assert!(params.timeout_ms.is_none());
+    }
+
+    #[test]
+    fn test_bg_settle_params_roundtrip() {
+        let json = serde_json::json!({
+            "task_id": "bash-abc123",
+            "status": "completed",
+            "stop_reason": "finished successfully"
+        });
+        let params: BgSettleParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.task_id, "bash-abc123");
+        assert_eq!(params.status, "completed");
+        assert_eq!(params.stop_reason.unwrap(), "finished successfully");
+    }
+
+    #[test]
+    fn test_cron_fire_event_payload() {
+        let payload = CronFireEventPayload {
+            r#type: "cron.fired".into(),
+            job_id: "abc12345".into(),
+            cron: "0 9 * * *".into(),
+            recurring: true,
+            coalesced_count: 1,
+            stale: false,
+            prompt: "morning reminder".into(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["type"], "cron.fired");
+        assert_eq!(json["job_id"], "abc12345");
+        assert_eq!(json["coalesced_count"], 1);
     }
 }
