@@ -46,6 +46,7 @@ import {
   convertOpenAIError,
   hasModelPrefix,
   isMediaPart,
+  isOfficialOpenAIBaseUrl,
   isOpenAIInsufficientQuotaCode,
   isOpenAIReasoningModel,
   OPENAI_REASONING_CAPABILITY,
@@ -1092,8 +1093,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order.
-    if (options?.cacheKey !== undefined) {
+    // Per-turn intent overlays in the fixed contract order. The
+    // `prompt_cache_key` overlay is official-OpenAI only: strictly-validating
+    // compatible endpoints reject unknown fields with a 400 (#2166).
+    if (options?.cacheKey !== undefined && isOfficialOpenAIBaseUrl(this._baseUrl)) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
     if (options?.sampling?.temperature !== undefined) {

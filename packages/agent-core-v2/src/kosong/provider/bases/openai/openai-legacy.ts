@@ -60,6 +60,7 @@ import {
   extractUsage,
   hasModelPrefix,
   isFunctionToolCall,
+  isOfficialOpenAIBaseUrl,
   isOpenAIReasoningModel,
   normalizeOpenAIFinishReason,
   OPENAI_REASONING_CAPABILITY,
@@ -709,7 +710,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     if (options?.cacheKey !== undefined) {
       const hooked = this._hooks?.cacheKey?.(options.cacheKey);
-      kwargs = { ...kwargs, ...(hooked ?? { prompt_cache_key: options.cacheKey }) };
+      if (hooked !== undefined) {
+        kwargs = { ...kwargs, ...hooked };
+      } else if (isOfficialOpenAIBaseUrl(this._baseUrl)) {
+        // The bare `prompt_cache_key` fallback is official-OpenAI only:
+        // strictly-validating compatible endpoints 400 on unknown fields
+        // (#2166); vendors that support it encode it via their cacheKey hook.
+        kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
+      }
     }
 
     if (options?.sampling?.temperature !== undefined) {
