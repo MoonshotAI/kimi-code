@@ -1,3 +1,7 @@
+// Exercises public session lifecycle APIs through the real in-process harness and
+// local persistence; the configured model endpoint is never contacted.
+// Run: pnpm vitest run packages/node-sdk/test/session-plan-compact-usage-resume.test.ts
+
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -154,6 +158,52 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       expect(harness.getSession(created.id)).toBe(resumed);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('resumes both persisted sessions when adjacent index records have no newline', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-index-home-');
+    const firstWorkDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-index-work-');
+    const secondWorkDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-index-work-');
+    const createdHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await createdHarness.createSession({
+        id: 'ses_resume_index_first',
+        workDir: firstWorkDir,
+      });
+      await createdHarness.createSession({
+        id: 'ses_resume_index_second',
+        workDir: secondWorkDir,
+      });
+    } finally {
+      await createdHarness.close();
+    }
+
+    const indexPath = join(homeDir, 'session_index.jsonl');
+    const records = (await readFile(indexPath, 'utf-8'))
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0);
+    if (records.length !== 2) {
+      throw new Error(`expected two session index records, received ${records.length}`);
+    }
+    await writeFile(indexPath, `${records.join('')}\n`, 'utf-8');
+
+    const resumedHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const first = await resumedHarness.resumeSession({ id: 'ses_resume_index_first' });
+      const second = await resumedHarness.resumeSession({ id: 'ses_resume_index_second' });
+
+      expect([first.id, second.id]).toEqual([
+        'ses_resume_index_first',
+        'ses_resume_index_second',
+      ]);
+      expect([first.workDir, second.workDir]).toEqual([
+        toPosix(firstWorkDir),
+        toPosix(secondWorkDir),
+      ]);
+    } finally {
+      await resumedHarness.close();
     }
   });
 

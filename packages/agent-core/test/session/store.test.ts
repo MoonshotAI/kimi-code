@@ -230,6 +230,103 @@ describe('SessionStore', () => {
   });
 
   describe('readSessionIndex', () => {
+    it('keeps adjacent entries when their newline separator is missing', async () => {
+      // Delimiter-like text and an escaped quote in a field must not be mistaken
+      // for the boundary between the two top-level records.
+      const firstWorkDir = await trackWorkDir('concatenated-first');
+      const firstIndexWorkDir = `${firstWorkDir}}{-"quoted`;
+      const secondWorkDir = await trackWorkDir('concatenated-second');
+      const firstSessionId = 'session_concatenated_first';
+      const secondSessionId = 'session_concatenated_second';
+      const firstSessionDir = await seedSessionDir(homeDir, firstWorkDir, firstSessionId);
+      const secondSessionDir = await seedSessionDir(homeDir, secondWorkDir, secondSessionId);
+
+      await writeFile(
+        join(homeDir, 'session_index.jsonl'),
+        `${JSON.stringify({
+          sessionId: firstSessionId,
+          sessionDir: firstSessionDir,
+          workDir: firstIndexWorkDir,
+          ignored: { delimiter: '}{', nested: [{ closingBracket: ']' }] },
+        })}${JSON.stringify({
+          sessionId: secondSessionId,
+          sessionDir: secondSessionDir,
+          workDir: secondWorkDir,
+        })}\n`,
+        'utf-8',
+      );
+
+      await expect(store.get(firstSessionId)).resolves.toMatchObject({ id: firstSessionId });
+      await expect(store.get(secondSessionId)).resolves.toMatchObject({ id: secondSessionId });
+    });
+
+    it('keeps complete entries before a truncated adjacent record', async () => {
+      const workDir = await trackWorkDir('truncated-tail');
+      const sessionId = 'session_before_truncated_tail';
+      const sessionDir = await seedSessionDir(homeDir, workDir, sessionId);
+      await writeFile(
+        join(homeDir, 'session_index.jsonl'),
+        `${JSON.stringify({ sessionId, sessionDir, workDir })}{"sessionId":"truncated`,
+        'utf-8',
+      );
+
+      await expect(store.get(sessionId)).resolves.toMatchObject({ id: sessionId });
+    });
+
+    it('recovers only the complete prefix before garbage on the same line', async () => {
+      const firstWorkDir = await trackWorkDir('before-garbage');
+      const skippedWorkDir = await trackWorkDir('after-garbage');
+      const firstSessionId = 'session_before_garbage';
+      const skippedSessionId = 'session_after_garbage';
+      const firstSessionDir = await seedSessionDir(homeDir, firstWorkDir, firstSessionId);
+      const skippedSessionDir = await seedSessionDir(homeDir, skippedWorkDir, skippedSessionId);
+      const entry = (sessionId: string, sessionDir: string, workDir: string): string =>
+        JSON.stringify({ sessionId, sessionDir, workDir });
+      await writeFile(
+        join(homeDir, 'session_index.jsonl'),
+        `${entry(firstSessionId, firstSessionDir, firstWorkDir)}garbage${entry(
+          skippedSessionId,
+          skippedSessionDir,
+          skippedWorkDir,
+        )}\n`,
+        'utf-8',
+      );
+
+      const index = await readSessionIndex(homeDir, store.sessionsDir);
+      expect(index.has(firstSessionId)).toBe(true);
+      expect(index.has(skippedSessionId)).toBe(false);
+    });
+
+    it('continues reading valid records after a corrupted physical line', async () => {
+      const workDir = await trackWorkDir('after-corrupted-line');
+      const sessionId = 'session_after_corrupted_line';
+      const sessionDir = await seedSessionDir(homeDir, workDir, sessionId);
+      await writeFile(
+        join(homeDir, 'session_index.jsonl'),
+        `garbage\n${JSON.stringify({ sessionId, sessionDir, workDir })}\n`,
+        'utf-8',
+      );
+
+      const index = await readSessionIndex(homeDir, store.sessionsDir);
+      expect(index.has(sessionId)).toBe(true);
+    });
+
+    it('applies a deletion record concatenated after its live entry', async () => {
+      const workDir = await trackWorkDir('concatenated-deletion');
+      const sessionId = 'session_concatenated_deletion';
+      const sessionDir = await seedSessionDir(homeDir, workDir, sessionId);
+      await writeFile(
+        join(homeDir, 'session_index.jsonl'),
+        `${JSON.stringify({ sessionId, sessionDir, workDir })}${JSON.stringify({
+          sessionId,
+          deleted: true,
+        })}\n`,
+        'utf-8',
+      );
+
+      expect((await readSessionIndex(homeDir, store.sessionsDir)).has(sessionId)).toBe(false);
+    });
+
     it('keeps an entry whose index workDir is non-absolute, using state.json workDir', async () => {
       const workDir = await trackWorkDir('relaxed');
       const sessionId = 'session_relaxed';

@@ -12,6 +12,8 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { ILegacySessionIndexStore } from '#/app/sessionIndex/legacySessionIndexStore';
+import { LegacySessionIndexStoreService } from '#/app/sessionIndex/legacySessionIndexStoreService';
 import { ErrorCodes, Error2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -36,6 +38,13 @@ describe('WorkspaceService (file-backed)', () => {
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      ILegacySessionIndexStore,
+      LegacySessionIndexStoreService,
+      InstantiationType.Eager,
+      'sessionIndex',
+    );
     registerScopedService(
       LifecycleScope.App,
       IWorkspacePersistence,
