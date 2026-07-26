@@ -34,6 +34,7 @@ pub mod napi_bindings;
 pub mod rpc;
 pub mod shell_command;
 pub mod skill;
+pub mod tool_select;
 pub mod tools;
 pub mod turn_loop;
 pub mod usage;
