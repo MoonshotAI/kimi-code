@@ -17,8 +17,7 @@
  * Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
- * loop pops it; a goal turn cut by the per-turn step limit is followed by a
- * step-cap variant of that message instead of pausing the goal), accounts live
+ * loop pops it), accounts live
  * turn usage through `usage`, observes terminal goal tool results through
  * `toolExecutor`, writes system reminders through `systemReminder`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through

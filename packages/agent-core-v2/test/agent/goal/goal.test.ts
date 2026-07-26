@@ -1560,8 +1560,6 @@ describe('AgentGoalService core workflow hooks', () => {
     await runGoalStep(loopService, turn);
     endTurn(eventBus, turn, { reason: 'failed', error: createMaxStepsExceededError(1) });
 
-    // The step cap must not pause the goal: a fresh continuation is launched
-    // and its prompt explains why a new turn was started.
     expect(goals.getGoal().goal).toMatchObject({ status: 'active', turnsUsed: 1 });
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
