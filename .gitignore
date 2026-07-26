@@ -3,6 +3,10 @@ dist/
 dist-web/
 dist-single/
 dist-native/
+target/
+*.log
+.codegraph/
+/tmp-*.*
 .tmp-api-extractor/
 .contract-types-tmp/
 .local/
@@ -48,3 +52,20 @@ handover.md
 
 # Vendored reference copies (not part of this repo)
 参考目录/
+
+# Personal / local-only files (kept on disk, not tracked)
+GOAL.md
+apps/kimi-desktop/
+clippy_output.txt
+
+# Local knowledge stores — per-machine SQLite, not shared state
+.kimi-code/knowledge.db
+.kimi-code/knowledge.db-shm
+.kimi-code/knowledge.db-wal
+
+# Debug session dumps — may carry transcript content
+kimi-debug-*.zip
+
+# Scratch analysis artifacts
+scan-report.json
+failed-tests.txt
