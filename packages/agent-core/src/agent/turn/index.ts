@@ -418,11 +418,15 @@ export class TurnFlow {
       // instead of stopping after the turn that merely started it. (The
       // already-active case took the early return above.)
       const goalBecameActive = this.agent.goal.getGoal().goal?.status === 'active';
+      // The same per-turn-step-limit exemption as the driver's continuation
+      // loop: a turn that failed only at the step cap does not block the
+      // handoff — pursuit starts with a fresh continuation turn (told why).
+      const hitStepCap = isMaxStepsTurnFailure(end);
       if (
         goalBecameActive &&
         end.event.reason !== 'cancelled' &&
-        end.event.reason !== 'failed' &&
-        end.event.reason !== 'blocked'
+        end.event.reason !== 'blocked' &&
+        (end.event.reason !== 'failed' || hitStepCap)
       ) {
         // The ordinary turn created or resumed the goal, so it counts as the
         // first active goal turn before the continuation driver takes over.
@@ -433,7 +437,12 @@ export class TurnFlow {
         }
         return await this.driveGoal(
           this.allocateTurnId(),
-          [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+          [
+            {
+              type: 'text',
+              text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+            },
+          ],
           GOAL_CONTINUATION_ORIGIN,
           signal,
         );
@@ -490,9 +499,7 @@ export class TurnFlow {
       // clean step boundary, so it is not a goal failure: fall through to the
       // normal continuation decision below and keep pursuing the goal. The
       // `turn.ended` event still reports the failure (and the limit) to hosts.
-      const hitStepCap =
-        end.event.reason === 'failed' &&
-        end.event.error?.code === ErrorCodes.LOOP_MAX_STEPS_EXCEEDED;
+      const hitStepCap = isMaxStepsTurnFailure(end);
       if (end.event.reason === 'failed' && !hitStepCap) {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
@@ -1295,6 +1302,18 @@ function nonNegativeIntFromEnv(name: string): number | undefined {
 
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+/**
+ * True when a turn ended `failed` only because it reached the per-turn step
+ * limit (`loop_control.max_steps_per_turn`). Such a turn stopped at a clean
+ * step boundary, so goal pursuit continues instead of pausing.
+ */
+function isMaxStepsTurnFailure(end: TurnEndResult): boolean {
+  return (
+    end.event.reason === 'failed' &&
+    end.event.error?.code === ErrorCodes.LOOP_MAX_STEPS_EXCEEDED
+  );
 }
 
 function isTerminalUpdateGoalResult(

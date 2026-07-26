@@ -549,6 +549,67 @@ describe('goal session end-to-end', () => {
     expect(history).toContain('Pick up where that turn stopped');
   });
 
+  it('starts pursuing a goal created mid-turn even when that turn hits maxStepsPerTurn', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['CreateGoal', 'UpdateGoal'],
+      undefined,
+      undefined,
+      { providers: {}, loopControl: { maxStepsPerTurn: 1 } },
+    );
+    const api = new SessionAPIImpl(session);
+
+    // No goal at turn start: the model creates one on the only allowed step,
+    // the turn is then cut by the cap, and pursuit must still begin — with a
+    // continuation turn that explains the cap.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'create',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'work' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'complete',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    expect(scripted.calls).toHaveLength(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'failed',
+        error: expect.objectContaining({ code: ErrorCodes.LOOP_MAX_STEPS_EXCEEDED }),
+      }),
+    );
+    expect(
+      events.filter(
+        (event) =>
+          event['type'] === 'goal.updated' &&
+          ['paused', 'blocked'].includes(
+            String((event['snapshot'] as Record<string, unknown> | null)?.['status']),
+          ),
+      ),
+    ).toEqual([]);
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+    const completion = events.find(
+      (event) =>
+        event['type'] === 'goal.updated' &&
+        (event['change'] as Record<string, unknown> | undefined)?.['kind'] === 'completion',
+    );
+    expect((completion?.['change'] as Record<string, unknown>)?.['stats']).toMatchObject({
+      turnsUsed: 2,
+    });
+    expect(JSON.stringify(agent.context.history)).toContain('per-turn step limit');
+  });
+
   it('pauses the goal on provider rate limits', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];

@@ -17,7 +17,8 @@
  * Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
- * loop pops it), accounts live
+ * loop pops it; a goal turn cut by the per-turn step limit is followed by a
+ * step-cap variant of that message instead of pausing the goal), accounts live
  * turn usage through `usage`, observes terminal goal tool results through
  * `toolExecutor`, writes system reminders through `systemReminder`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through
@@ -177,13 +178,6 @@ const GOAL_CONTINUATION_PROMPT = [
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
-/**
- * Variant of {@link GOAL_CONTINUATION_PROMPT} used when the previous goal turn
- * ended by hitting the per-turn step limit (`loop_control.max_steps_per_turn`).
- * The limit fragments goal work into more continuation turns instead of
- * pausing the goal; the notice tells the model why, so it can size the next
- * slice to fit the limit.
- */
 const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
   'The previous goal turn reached the per-turn step limit before finishing its work,',
   'so a new turn was started for you. Pick up where that turn stopped and keep each',
@@ -855,11 +849,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       return;
     }
     if (goalId === undefined || lifecycleGoalId === undefined) return;
-    // A turn that failed only by reaching the per-turn step limit ended at a
-    // clean step boundary, so it is not a goal failure: skip the abnormal-turn
-    // settlement (which would pause the goal) and continue with a fresh
-    // continuation turn that tells the model why. Goal budgets below still
-    // bound the pursuit.
     const stepCapped = isMaxStepsTurnFailure(result);
     if (
       !stepCapped &&
@@ -1300,11 +1289,6 @@ function isTerminalUpdateGoalResult(
   return status === 'complete' || status === 'blocked';
 }
 
-/**
- * True when a turn failed only by reaching the per-turn step limit
- * (`loop_control.max_steps_per_turn`). Such a turn ended at a clean step
- * boundary, so the goal driver continues the goal instead of pausing it.
- */
 function isMaxStepsTurnFailure(result: Pick<TurnEndedEvent, 'reason' | 'error'>): boolean {
   return (
     result.reason === 'failed' &&
