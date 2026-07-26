@@ -75,6 +75,29 @@ describe('RuntimeWorkspaceView', () => {
     expect(() => win32View.resolve('C:\\provider-a\\repo\\file.txt')).toThrow('outside runtime workspace');
   });
 
+  it('translates Git Bash POSIX paths on win32 bash runtimes', () => {
+    const winBash = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'local', generation: 'one' },
+      {
+        pathClass: 'win32',
+        environment: {
+          osKind: 'Windows',
+          shellName: 'bash',
+          shellPath: 'C:\\kimi-test-nonexistent\\Git\\bin\\bash.exe',
+        },
+      },
+    );
+    const view = new RuntimeWorkspaceView(winBash, {
+      workDir: 'C:\\workspace\\project',
+      additionalDirs: [],
+    });
+    expect(view.resolve('/c/workspace/project/src/index.ts')).toBe('C:\\workspace\\project\\src\\index.ts');
+    expect(view.resolve('/cygdrive/c/workspace/project/package.json')).toBe(
+      'C:\\workspace\\project\\package.json',
+    );
+    expect(() => view.resolve('/tmp/scratch.txt')).toThrow('outside runtime workspace');
+  });
+
   it('deduplicates roots and preserves generation identity', () => {
     const first = new RuntimeWorkspaceView(runtime('one', 'posix'), {
       workDir: '/workspace',

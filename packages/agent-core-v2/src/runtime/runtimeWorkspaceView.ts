@@ -1,4 +1,5 @@
 import { ErrorCodes, Error2 } from '#/errors';
+import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 
 import type { Runtime, RuntimeBinding, RuntimeWorkspaceRoots } from './runtime';
 
@@ -27,9 +28,11 @@ export class RuntimeWorkspaceView {
   }
 
   resolve(path: string, cwd = this.workDir): string {
-    const resolved = this.runtime.path.isAbsolute(path)
-      ? this.runtime.path.resolve(path)
-      : this.runtime.path.resolve(cwd, path);
+    const env = this.runtime.environment;
+    const bridged = env.pathClass === 'win32' ? getShellPathBridge(env).fromShellPath(path) : path;
+    const resolved = this.runtime.path.isAbsolute(bridged)
+      ? this.runtime.path.resolve(bridged)
+      : this.runtime.path.resolve(cwd, bridged);
     this.assertAllowed(resolved);
     return resolved;
   }
