@@ -18,7 +18,9 @@ export interface FileLinkTarget {
 
 const EXTERNAL_SCHEME = /^(?:https?|mailto|data|blob|javascript|vscode-webview):/i;
 const FILE_URI = /^file:\/\//i;
-const VSCODE_FILE_URI = /^vscode:\/\/file/i;
+// Lookahead so the authority boundary is enforced (`vscode://fileevil/x` is
+// not a file link) while `.replace` still strips only the prefix.
+const VSCODE_FILE_URI = /^vscode:\/\/file(?=\/|$)/i;
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/;
 const OTHER_SCHEME = /^[A-Za-z][\w+.-]*:/;
 // A trailing `:line` or `:line:column` suffix (e.g. `src/app.ts:33`).
@@ -78,15 +80,16 @@ export function parseFileLink(href: string | undefined): FileLinkTarget | null {
   if (lineMatch !== null) {
     const line = Number.parseInt(lineMatch[1], 10);
     const path = raw.slice(0, lineMatch.index);
-    // Line references are 1-based; a `:0` suffix is kept as part of the path.
-    if (line >= 1) {
+    // Line references are 1-based and must stay exact through `line - 1`
+    // arithmetic; `:0` or an oversized number is kept as part of the path.
+    if (line >= 1 && Number.isSafeInteger(line)) {
       return path ? { path, line } : null;
     }
   }
   const fragmentLine = /^L(\d+)$/.exec(fragment);
   if (fragmentLine !== null) {
     const line = Number.parseInt(fragmentLine[1], 10);
-    if (line >= 1) {
+    if (line >= 1 && Number.isSafeInteger(line)) {
       return { path: raw, line };
     }
   }

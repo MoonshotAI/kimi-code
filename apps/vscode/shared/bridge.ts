@@ -210,7 +210,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
       return hasString(params, "filePath")
         && isPlainObject(params)
         && (params["line"] === undefined
-          || (Number.isInteger(params["line"]) && (params["line"] as number) >= 1));
+          || (Number.isSafeInteger(params["line"]) && (params["line"] as number) >= 1));
     case Methods.OpenFileDiff:
     case Methods.CheckFileExists:
     case Methods.GetImageDataUri:

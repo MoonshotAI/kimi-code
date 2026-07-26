@@ -31,6 +31,15 @@ describe("parseFileLink", () => {
     expect(parseFileLink("app.ts:0")).toEqual({ path: "app.ts:0" });
   });
 
+  it("keeps an unsafely large line suffix as part of the path", () => {
+    expect(parseFileLink("app.ts:99999999999999999999")).toEqual({ path: "app.ts:99999999999999999999" });
+  });
+
+  it("does not treat other vscode authorities as file links", () => {
+    expect(parseFileLink("vscode://fileevil/path.ts")).toBeNull();
+    expect(parseFileLink("vscode://file")).toBeNull();
+  });
+
   it("parses a file URI with a line suffix", () => {
     expect(parseFileLink("file:///abs/path/report.md:33")).toEqual({ path: "/abs/path/report.md", line: 33 });
   });
