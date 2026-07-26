@@ -2,25 +2,26 @@
  * `web` domain (L4) — `FetchURL` builtin tool.
  *
  * Defines the `FetchURL` tool. The host-injected `UrlFetcher` contract lives
- * in `fetch-url-types`; the tool reads its fetcher from the App-scope
- * `IWebFetchService` at registry-construction time and self-registers via
- * `registerTool(...)` at module load. The default service falls back to the
+ * in `fetch-url-types`; the tool receives the App-scope `IWebFetchService`
+ * via DI and self-registers via `registerAgentTool(...)` at module load. The
+ * default service falls back to the
  * built-in `LocalFetchURLProvider`, so `FetchURL` is always available without OAuth.
  */
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ToolResultBuilder } from '#/tool/result-builder';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebFetchService } from '../web';
 import { HttpFetchError, type UrlFetcher } from './fetch-url-types';
@@ -34,12 +35,22 @@ export const FetchURLInputSchema = z.object({
 export type FetchURLInput = z.infer<typeof FetchURLInputSchema>;
 
 
-export class FetchURLTool implements BuiltinTool<FetchURLInput> {
+export interface IFetchURLTool extends AgentTool<FetchURLInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IFetchURLTool = createDecorator<IFetchURLTool>('fetchURLTool');
+
+export class FetchURLTool implements IFetchURLTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'FetchURL' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(FetchURLInputSchema);
 
-  constructor(private readonly fetcher: UrlFetcher) {}
+  private readonly fetcher: UrlFetcher;
+
+  constructor(@IWebFetchService webFetch: IWebFetchService) {
+    this.fetcher = webFetch.getUrlFetcher();
+  }
 
   resolveExecution(args: FetchURLInput): ToolExecution {
     const preview = args.url.length > 50 ? `${args.url.slice(0, 50)}…` : args.url;
@@ -93,6 +104,4 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
   }
 }
 
-registerTool(FetchURLTool, {
-  staticArgs: (accessor) => [accessor.get(IWebFetchService).getUrlFetcher()],
-});
+registerAgentTool(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web' });

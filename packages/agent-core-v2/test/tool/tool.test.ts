@@ -37,8 +37,8 @@ import {
   type AgentSwarmToolInput,
 } from '#/agent/swarm/tools/agent-swarm';
 import {
-  AgentToolInputSchema,
-  type AgentToolInput,
+  SubagentToolInputSchema,
+  type SubagentToolInput,
 } from '#/session/subagent/tools/agent';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { Error2, ErrorCodes } from '#/errors';
@@ -95,7 +95,7 @@ function secondaryModelFlags(enabled = true): TestAgentServiceOverride {
 
 function agentSchemaProperties<T = unknown>(): Record<string, T> {
   return (
-    toInputJsonSchema(AgentToolInputSchema) as { properties: Record<string, T> }
+    toInputJsonSchema(SubagentToolInputSchema) as { properties: Record<string, T> }
   ).properties;
 }
 
@@ -361,10 +361,10 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   return lifecycle;
 }
 
-function agentTool(ctx: TestAgentContext): ExecutableTool<AgentToolInput> {
+function agentTool(ctx: TestAgentContext): ExecutableTool<SubagentToolInput> {
   const tool = ctx.get(IAgentToolRegistryService).resolve('Agent');
   expect(tool).toBeDefined();
-  return tool! as ExecutableTool<AgentToolInput>;
+  return tool! as ExecutableTool<SubagentToolInput>;
 }
 
 function agentSwarmTool(ctx: TestAgentContext): ExecutableTool<AgentSwarmToolInput> {
@@ -375,7 +375,7 @@ function agentSwarmTool(ctx: TestAgentContext): ExecutableTool<AgentSwarmToolInp
 
 function executeAgentTool(
   ctx: TestAgentContext,
-  args: AgentToolInput,
+  args: SubagentToolInput,
   inputSignal: AbortSignal = signal,
 ) {
   return executeTool(agentTool(ctx), {
@@ -428,9 +428,9 @@ function subagentMeta(parentAgentId = 'main'): AgentMeta {
   };
 }
 
-describe('AgentToolInputSchema', () => {
+describe('SubagentToolInputSchema', () => {
   it('accepts the snake_case background parameter', () => {
-    const parsed = AgentToolInputSchema.parse({
+    const parsed = SubagentToolInputSchema.parse({
       prompt: 'Investigate',
       description: 'Find cause',
       subagent_type: 'explore',
@@ -483,20 +483,20 @@ describe('AgentToolInputSchema', () => {
 
   it('normalizes the default subagent type into tool args', () => {
     expect(
-      AgentToolInputSchema.parse({
+      SubagentToolInputSchema.parse({
         prompt: 'Investigate',
         description: 'Find cause',
       }).subagent_type,
     ).toBe('coder');
     expect(
-      AgentToolInputSchema.parse({
+      SubagentToolInputSchema.parse({
         prompt: 'Investigate',
         description: 'Find cause',
         subagent_type: '',
       }).subagent_type,
     ).toBe('coder');
     expect(
-      AgentToolInputSchema.parse({
+      SubagentToolInputSchema.parse({
         prompt: 'Continue',
         description: 'Continue work',
         resume: 'agent-existing',

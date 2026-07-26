@@ -41,12 +41,13 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
+import { createDecorator } from '#/_base/di/instantiation';
+import type { AgentTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
   type ExecutableToolResultBuilderResult,
   ToolResultBuilder,
 } from '#/tool/result-builder';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -172,7 +173,11 @@ function withoutAutoBackgroundOnTimeout(description: string): string {
   );
 }
 
-export class BashTool implements BuiltinTool<BashInput> {
+export interface IBashTool extends AgentTool<BashInput> { readonly _serviceBrand: undefined }
+export const IBashTool = createDecorator<IBashTool>('bashTool');
+
+export class BashTool implements IBashTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Bash' as const;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
@@ -500,7 +505,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   }
 }
 
-registerTool(BashTool);
+registerAgentTool(IBashTool, BashTool, { name: 'Bash', domain: 'os/backends' });
 
 function formatTimeoutLabel(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;

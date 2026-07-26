@@ -4,26 +4,27 @@
  *
  * Defines the `WebSearch` tool and the host-injected `WebSearchProvider`
  * interface (plus `WebSearchResult`). Web search needs an authenticated
- * Moonshot backend, so the tool lives in the KimiOAuth `auth` domain: it reads
- * its provider from the App-scope `IWebSearchProviderService` at
- * registry-construction time and self-registers via `registerTool(...)` at
- * module load, but only when a provider is configured (there is no local
- * search backend).
+ * Moonshot backend, so the tool lives in the KimiOAuth `auth` domain: it is
+ * contributed via `registerAgentTool(...)` at module load and reads its
+ * provider from the App-scope `IWebSearchProviderService` at activation time,
+ * but only activates when a provider is configured (there is no local search
+ * backend).
  */
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ToolResultBuilder } from '#/tool/result-builder';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebSearchProviderService } from '../webSearch';
 import DESCRIPTION from './web-search.md?raw';
@@ -55,12 +56,28 @@ export const WebSearchInputSchema = z.object({
 export type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
 
 
-export class WebSearchTool implements BuiltinTool<WebSearchInput> {
+export interface IWebSearchTool extends AgentTool<WebSearchInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IWebSearchTool = createDecorator<IWebSearchTool>('webSearchTool');
+
+export class WebSearchTool implements IWebSearchTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'WebSearch' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WebSearchInputSchema);
 
-  constructor(private readonly provider: WebSearchProvider) {}
+  private readonly provider: WebSearchProvider;
+
+  constructor(
+    @IWebSearchProviderService providerService: IWebSearchProviderService,
+  ) {
+    const provider = providerService.getWebSearchProvider();
+    if (provider === undefined) {
+      throw new Error('WebSearchProviderService returned no provider during tool activation.');
+    }
+    this.provider = provider;
+  }
 
   resolveExecution(args: WebSearchInput): ToolExecution {
     const preview = args.query.length > 40 ? `${args.query.slice(0, 40)}…` : args.query;
@@ -140,13 +157,8 @@ function classifySearchError(error: unknown): string {
   return `Search failed: ${message}`;
 }
 
-registerTool(WebSearchTool, {
+registerAgentTool(IWebSearchTool, WebSearchTool, {
+  name: 'WebSearch',
+  domain: 'auth',
   when: (accessor) => accessor.get(IWebSearchProviderService).getWebSearchProvider() !== undefined,
-  staticArgs: (accessor) => {
-    const provider = accessor.get(IWebSearchProviderService).getWebSearchProvider();
-    if (provider === undefined) {
-      throw new Error('WebSearchProviderService returned no provider during tool registration.');
-    }
-    return [provider];
-  },
 });

@@ -16,8 +16,9 @@ import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import { type AgentTool, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import type {
@@ -88,7 +89,11 @@ function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
   );
 }
 
-export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
+export interface ITaskOutputTool extends AgentTool<TaskOutputInput> { readonly _serviceBrand: undefined }
+export const ITaskOutputTool = createDecorator<ITaskOutputTool>('taskOutputTool');
+
+export class TaskOutputTool implements ITaskOutputTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'TaskOutput' as const;
   readonly description: string = TASK_OUTPUT_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskOutputInputSchema);
@@ -161,4 +166,4 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   }
 }
 
-registerTool(TaskOutputTool);
+registerAgentTool(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask' });

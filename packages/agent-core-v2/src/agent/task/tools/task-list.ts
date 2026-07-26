@@ -6,8 +6,9 @@ import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import { type AgentTool, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -41,7 +42,11 @@ export function formatTaskList(tasks: readonly AgentTaskInfo[], activeOnly: bool
   return `${header}\n${tasks.map((task) => formatPlainObject(task)).join('\n---\n')}`;
 }
 
-export class TaskListTool implements BuiltinTool<TaskListInput> {
+export interface ITaskListTool extends AgentTool<TaskListInput> { readonly _serviceBrand: undefined }
+export const ITaskListTool = createDecorator<ITaskListTool>('taskListTool');
+
+export class TaskListTool implements ITaskListTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'TaskList' as const;
   readonly description = TASK_LIST_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskListInputSchema);
@@ -66,4 +71,4 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   }
 }
 
-registerTool(TaskListTool);
+registerAgentTool(ITaskListTool, TaskListTool, { name: 'TaskList', domain: 'agentTask' });

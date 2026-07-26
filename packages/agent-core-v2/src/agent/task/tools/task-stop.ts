@@ -6,8 +6,9 @@ import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import { type AgentTool, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
@@ -26,7 +27,11 @@ export const TaskStopInputSchema = z.object({
 export type TaskStopInput = z.infer<typeof TaskStopInputSchema>;
 
 
-export class TaskStopTool implements BuiltinTool<TaskStopInput> {
+export interface ITaskStopTool extends AgentTool<TaskStopInput> { readonly _serviceBrand: undefined }
+export const ITaskStopTool = createDecorator<ITaskStopTool>('taskStopTool');
+
+export class TaskStopTool implements ITaskStopTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'TaskStop' as const;
   readonly description = TASK_STOP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskStopInputSchema);
@@ -78,7 +83,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
   }
 }
 
-registerTool(TaskStopTool);
+registerAgentTool(ITaskStopTool, TaskStopTool, { name: 'TaskStop', domain: 'agentTask' });
 
 function terminalStopReason(reason: string | undefined): string {
   const trimmed = reason?.trim();

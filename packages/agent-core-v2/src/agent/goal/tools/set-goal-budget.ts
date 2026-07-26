@@ -8,10 +8,11 @@
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { type AgentTool, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/agent/goal/types';
@@ -30,7 +31,11 @@ export const SetGoalBudgetToolInputSchema = z
 
 export type SetGoalBudgetToolInput = z.infer<typeof SetGoalBudgetToolInputSchema>;
 
-export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
+export interface ISetGoalBudgetTool extends AgentTool<SetGoalBudgetToolInput> { readonly _serviceBrand: undefined }
+export const ISetGoalBudgetTool = createDecorator<ISetGoalBudgetTool>('setGoalBudgetTool');
+
+export class SetGoalBudgetTool implements ISetGoalBudgetTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'SetGoalBudget' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SetGoalBudgetToolInputSchema);
@@ -99,7 +104,9 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   }
 }
 
-registerTool(SetGoalBudgetTool, {
+registerAgentTool(ISetGoalBudgetTool, SetGoalBudgetTool, {
+  name: 'SetGoalBudget',
+  domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });
 

@@ -24,7 +24,6 @@ import type { CronJobOrigin, CronMissedOrigin } from '#/agent/contextMemory/type
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IntervalTimer } from '#/_base/utils/timer';
@@ -50,9 +49,9 @@ import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 
-import { CronCreateTool } from './tools/cron-create';
-import { CronListTool } from './tools/cron-list';
-import { CronDeleteTool } from './tools/cron-delete';
+import { ICronCreateTool } from './tools/cron-create';
+import { ICronListTool } from './tools/cron-list';
+import { ICronDeleteTool } from './tools/cron-delete';
 
 import { CronModel, cronAdd, cronDelete, cronCursor } from './cronOps';
 import { ISessionCronService, type CronLoadOptions } from './sessionCronService';
@@ -173,12 +172,11 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private registerCronTools(handle: IAgentScopeHandle): void {
-    const instantiation = handle.accessor.get(IInstantiationService);
     const registry = handle.accessor.get(IAgentToolRegistryService);
     const tools = [
-      instantiation.createInstance(CronCreateTool),
-      instantiation.createInstance(CronListTool),
-      instantiation.createInstance(CronDeleteTool),
+      handle.accessor.get(ICronCreateTool),
+      handle.accessor.get(ICronListTool),
+      handle.accessor.get(ICronDeleteTool),
     ];
     for (const tool of tools) {
       this._register(registry.register(tool, { source: 'builtin' }));

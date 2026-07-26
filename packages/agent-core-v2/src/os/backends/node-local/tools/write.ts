@@ -25,13 +25,14 @@ import { type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { createDecorator } from '#/_base/di/instantiation';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
@@ -67,7 +68,11 @@ export const WriteOutputSchema = z.object({
 export type WriteInput = z.infer<typeof WriteInputSchema>;
 export type WriteOutput = z.infer<typeof WriteOutputSchema>;
 
-export class WriteTool implements BuiltinTool<WriteInput> {
+export interface IWriteTool extends AgentTool<WriteInput> { readonly _serviceBrand: undefined }
+export const IWriteTool = createDecorator<IWriteTool>('writeTool');
+
+export class WriteTool implements IWriteTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Write' as const;
   readonly description = WRITE_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WriteInputSchema);
@@ -166,4 +171,4 @@ export class WriteTool implements BuiltinTool<WriteInput> {
   }
 }
 
-registerTool(WriteTool);
+registerAgentTool(IWriteTool, WriteTool, { name: 'Write', domain: 'os/backends' });

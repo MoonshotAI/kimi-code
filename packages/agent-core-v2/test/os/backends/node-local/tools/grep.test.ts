@@ -2,7 +2,7 @@ import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
@@ -10,17 +10,17 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
+import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
+import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import {
-  AgentBuiltinToolsRegistrar,
-  IAgentBuiltinToolsRegistrar,
-} from '#/agent/toolRegistry/builtinToolsRegistrar';
-import {
-  _clearToolContributionsForTests,
-  getToolContributions,
-  registerTool,
+  _clearAgentToolContributionsForTests,
+  getAgentToolContributions,
+  registerAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
 import {
@@ -37,6 +37,7 @@ import {
   type GrepInput,
   GrepInputSchema,
   GrepTool as ProductionGrepTool,
+  IGrepTool,
 } from '#/os/backends/node-local/tools/grep';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
@@ -282,12 +283,16 @@ afterEach(() => {
 });
 
 describe('GrepTool', () => {
-  it('registers contribution metadata through the production DI path', () => {
-    const savedContributions = [...getToolContributions()];
+  it('registers contribution metadata through the production DI path', async () => {
+    const savedContributions = [...getAgentToolContributions()];
     const disposables = new DisposableStore();
     try {
-      _clearToolContributionsForTests();
-      registerTool(ProductionGrepTool, { source: 'user', disclosure: 'deferred' });
+      _clearAgentToolContributionsForTests();
+      registerAgentTool(IGrepTool, ProductionGrepTool, {
+        name: 'Grep',
+        source: 'user',
+        disclosure: 'deferred',
+      });
 
       const ix = createServices(disposables, {
         strict: true,
@@ -303,12 +308,19 @@ describe('GrepTool', () => {
             _serviceBrand: undefined,
             catalog: { getSkillRoots: () => [] },
           } as unknown as ISessionSkillCatalog);
+          reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-          reg.define(IAgentBuiltinToolsRegistrar, AgentBuiltinToolsRegistrar);
+          reg.define(IAgentToolActivationService, AgentToolActivationService);
+          reg.definePartialInstance(IAgentProfileService, {
+            data: () => ({}) as unknown as ProfileData,
+          });
+          reg.definePartialInstance(IEventBus, {
+            subscribe: () => toDisposable(() => {}),
+          });
         },
       });
 
-      ix.get(IAgentBuiltinToolsRegistrar);
+      await ix.get(IAgentToolActivationService).activate();
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
       const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');
 
@@ -317,9 +329,9 @@ describe('GrepTool', () => {
       expect(info).toMatchObject({ source: 'user', disclosure: 'deferred' });
     } finally {
       disposables.dispose();
-      _clearToolContributionsForTests();
+      _clearAgentToolContributionsForTests();
       for (const contribution of savedContributions) {
-        registerTool(contribution.ctor, contribution.options);
+        registerAgentTool(contribution.id, contribution.ctor, contribution.options);
       }
     }
   });

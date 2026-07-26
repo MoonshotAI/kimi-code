@@ -2,10 +2,10 @@
  * Media tool production registration — the Eager Agent-scope service that
  * keeps `ReadMediaFile` in the tool registry in sync with the bound model.
  *
- * Media tools cannot ride the module-level `registerTool(...)` contribution
- * table: its `when` predicates run once, when the Agent's tool registry is
- * constructed, and at that point no model is bound yet — the capabilities are
- * still `UNKNOWN_CAPABILITY`, so a capability gate would permanently skip the
+ * Media tools cannot ride the module-level `registerAgentTool(...)`
+ * contribution table: its activation runs when the Agent is created, and at
+ * that point no model is bound yet — the capabilities are still
+ * `UNKNOWN_CAPABILITY`, so a capability gate would permanently skip the
  * tool. Registration instead re-runs whenever the resolved model changes:
  * every profile/model update publishes `agent.status.updated`, and this
  * service re-invokes {@link registerMediaTools} when the model alias or its

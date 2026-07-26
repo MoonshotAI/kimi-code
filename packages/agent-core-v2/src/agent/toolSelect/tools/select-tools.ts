@@ -11,8 +11,9 @@
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
 
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '../toolSelect';
 
@@ -34,7 +35,11 @@ const DESCRIPTION =
   'Pass the exact name(s) you need; their full definitions become available immediately, ' +
   'so you can call them directly in your next tool call.';
 
-export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
+export interface ISelectToolsTool extends AgentTool<SelectToolsInput> { readonly _serviceBrand: undefined }
+export const ISelectToolsTool = createDecorator<ISelectToolsTool>('selectToolsTool');
+
+export class SelectToolsTool implements ISelectToolsTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = SELECT_TOOLS_TOOL_NAME;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SelectToolsInputSchema);
@@ -71,4 +76,4 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
   }
 }
 
-registerTool(SelectToolsTool);
+registerAgentTool(ISelectToolsTool, SelectToolsTool, { name: SELECT_TOOLS_TOOL_NAME, domain: 'toolSelect' });

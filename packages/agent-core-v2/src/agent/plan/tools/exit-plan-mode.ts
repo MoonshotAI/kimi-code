@@ -23,8 +23,9 @@
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { z } from 'zod';
 
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import type { AgentTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -87,7 +88,13 @@ type ResolvePlanResult =
   | { readonly ok: false; readonly error: ExecutableToolResult };
 
 
-export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
+export interface IExitPlanModeTool extends AgentTool<ExitPlanModeInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IExitPlanModeTool = createDecorator<IExitPlanModeTool>('exitPlanModeTool');
+
+export class ExitPlanModeTool implements IExitPlanModeTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'ExitPlanMode' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ExitPlanModeInputSchema);
@@ -223,7 +230,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
   }
 }
 
-registerTool(ExitPlanModeTool);
+registerAgentTool(IExitPlanModeTool, ExitPlanModeTool, { name: 'ExitPlanMode', domain: 'plan' });
 
 function hasUniqueOptionLabels(options: readonly ExitPlanModeOption[]): boolean {
   const labels = new Set<string>();

@@ -9,17 +9,20 @@
  *
  * The list is session-shared: the tool reads/writes `ISessionTodoService`,
  * which persists every change as a `tools.update_store` (`key: 'todo'`) wire record on the main agent.
- * Self-registers via `registerTool(TodoListTool)` at module load; the Eager
- * `AgentBuiltinToolsRegistrar` instantiates one per agent (resolving the
- * Session-scope `ISessionTodoService` from the parent scope) and registers it
- * into that agent's tool registry — never from a service constructor, which
- * would re-enter `ISessionTodoService` while it is still being constructed.
+ * Self-registers via `registerAgentTool(ITodoListTool, TodoListTool, ...)` at
+ * module load as a Delayed Agent-scope service contribution;
+ * `AgentToolActivationService` activates it per agent when the profile allows
+ * (resolving the Session-scope `ISessionTodoService` from the parent scope)
+ * and registers it into that agent's tool registry — never from a service
+ * constructor, which would re-enter `ISessionTodoService` while it is still
+ * being constructed.
  */
 
 import { z } from 'zod';
 
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
@@ -51,7 +54,13 @@ export const TodoListInputSchema: z.ZodType<TodoListInput> = z.object({
     ),
 });
 
-export class TodoListTool implements BuiltinTool<TodoListInput> {
+export interface ITodoListTool extends AgentTool<TodoListInput> {
+  readonly _serviceBrand: undefined;
+}
+export const ITodoListTool = createDecorator<ITodoListTool>('todoListTool');
+
+export class TodoListTool implements ITodoListTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = TODO_LIST_TOOL_NAME;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TodoListInputSchema);
@@ -89,4 +98,4 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
   }
 }
 
-registerTool(TodoListTool);
+registerAgentTool(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });

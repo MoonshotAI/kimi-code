@@ -28,8 +28,9 @@ import { z } from 'zod';
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { renderModelToolSkillPrompt } from '#/agent/skill/prompt';
-import type { BuiltinTool, ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import type { AgentTool, ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
 import { isInlineSkillType } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -74,7 +75,11 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
     ),
 });
 
-export class SkillTool implements BuiltinTool<SkillToolInput> {
+export interface ISkillTool extends AgentTool<SkillToolInput> { readonly _serviceBrand: undefined }
+export const ISkillTool = createDecorator<ISkillTool>('skillTool');
+
+export class SkillTool implements ISkillTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Skill';
   readonly description: string = renderPrompt(skillDescriptionTemplate, {
     MAX_SKILL_QUERY_DEPTH,
@@ -116,7 +121,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   }
 }
 
-registerTool(SkillTool);
+registerAgentTool(ISkillTool, SkillTool, { name: 'Skill', domain: 'skill' });
 
 export async function executeModelSkill(
   catalog: ISessionSkillCatalog,

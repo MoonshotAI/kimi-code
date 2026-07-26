@@ -42,7 +42,10 @@
 
 import { z } from 'zod';
 
-import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
+import { createDecorator } from '#/_base/di/instantiation';
+import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
@@ -68,7 +71,12 @@ function previewPrompt(prompt: string): string {
 }
 
 
-export class CronListTool implements BuiltinTool<CronListInput> {
+export interface ICronListTool extends AgentTool<CronListInput> { readonly _serviceBrand: undefined }
+export const ICronListTool = createDecorator<ICronListTool>('cronListTool');
+
+export class CronListTool implements ICronListTool {
+  declare readonly _serviceBrand: undefined;
+
   readonly name = 'CronList' as const;
   readonly description = CRON_LIST_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(
@@ -132,3 +140,5 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     ].join('\n');
   }
 }
+
+registerScopedService(LifecycleScope.Agent, ICronListTool, CronListTool, InstantiationType.Eager, 'cron');

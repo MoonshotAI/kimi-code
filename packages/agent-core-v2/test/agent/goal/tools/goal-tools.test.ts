@@ -28,7 +28,7 @@ import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
-import { getToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -446,7 +446,7 @@ describe('goal tool main-agent gating', () => {
   }
 
   it.each(gatedTools)('%s is contributed with a main-agent-only guard', (name, ctor) => {
-    const contribution = getToolContributions().find((c) => c.ctor === ctor);
+    const contribution = getAgentToolContributions().find((c) => c.ctor === ctor);
     expect(contribution, `${name} contribution`).toBeDefined();
     const when = contribution?.options.when;
     expect(when, `${name} must gate on agent identity`).toBeDefined();

@@ -30,13 +30,14 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { createDecorator } from '#/_base/di/instantiation';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
@@ -233,7 +234,11 @@ const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
   MAX_LINE_LENGTH,
 });
 
-export class ReadTool implements BuiltinTool<ReadInput> {
+export interface IReadTool extends AgentTool<ReadInput> { readonly _serviceBrand: undefined }
+export const IReadTool = createDecorator<IReadTool>('readTool');
+
+export class ReadTool implements IReadTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
   readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
@@ -521,4 +526,4 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   }
 }
 
-registerTool(ReadTool);
+registerAgentTool(IReadTool, ReadTool, { name: 'Read', domain: 'os/backends' });

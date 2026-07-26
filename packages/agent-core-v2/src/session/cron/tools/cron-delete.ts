@@ -37,7 +37,10 @@
 
 import { z } from 'zod';
 
-import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
+import { createDecorator } from '#/_base/di/instantiation';
+import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -55,7 +58,12 @@ export const CronDeleteInputSchema = z.object({
 export type CronDeleteInput = z.infer<typeof CronDeleteInputSchema>;
 
 
-export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
+export interface ICronDeleteTool extends AgentTool<CronDeleteInput> { readonly _serviceBrand: undefined }
+export const ICronDeleteTool = createDecorator<ICronDeleteTool>('cronDeleteTool');
+
+export class CronDeleteTool implements ICronDeleteTool {
+  declare readonly _serviceBrand: undefined;
+
   readonly name = 'CronDelete' as const;
   readonly description = CRON_DELETE_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(
@@ -99,3 +107,5 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
     };
   }
 }
+
+registerScopedService(LifecycleScope.Agent, ICronDeleteTool, CronDeleteTool, InstantiationType.Eager, 'cron');

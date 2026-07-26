@@ -20,13 +20,14 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
+import { createDecorator } from '#/_base/di/instantiation';
 import type {
-  BuiltinTool,
+  AgentTool,
   ExecutableToolContext,
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { ISessionQuestionService } from '#/session/question/question';
 import type {
@@ -130,7 +131,13 @@ const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
 
-export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
+export interface IAskUserQuestionTool extends AgentTool<AskUserQuestionInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IAskUserQuestionTool = createDecorator<IAskUserQuestionTool>('askUserQuestionTool');
+
+export class AskUserQuestionTool implements IAskUserQuestionTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'AskUserQuestion' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
@@ -283,7 +290,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   }
 }
 
-registerTool(AskUserQuestionTool);
+registerAgentTool(IAskUserQuestionTool, AskUserQuestionTool, {
+  name: 'AskUserQuestion',
+  domain: 'questionTools',
+});
 
 function questionDescription(questions: AskUserQuestionInput['questions']): string {
   const first = questions[0]?.question.trim();

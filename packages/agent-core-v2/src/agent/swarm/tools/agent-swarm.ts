@@ -14,14 +14,15 @@
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import {
   ToolAccesses,
-  type BuiltinTool,
+  type AgentTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -118,7 +119,11 @@ interface SwarmRunResult {
   readonly error?: string;
 }
 
-export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
+export interface IAgentSwarmTool extends AgentTool<AgentSwarmToolInput> { readonly _serviceBrand: undefined }
+export const IAgentSwarmTool = createDecorator<IAgentSwarmTool>('agentSwarmTool');
+
+export class AgentSwarmTool implements IAgentSwarmTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'AgentSwarm' as const;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
@@ -248,7 +253,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   }
 }
 
-registerTool(AgentSwarmTool);
+registerAgentTool(IAgentSwarmTool, AgentSwarmTool, { name: 'AgentSwarm', domain: 'swarm' });
 
 async function createAgentSwarmSpecs(
   args: AgentSwarmToolInput,

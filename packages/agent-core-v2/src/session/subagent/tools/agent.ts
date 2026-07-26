@@ -18,8 +18,12 @@
  * models there is no "child follows the parent's current model" invariant to
  * enforce.
  *
- * Registered via the module-level `registerTool(AgentTool)` at the bottom of
- * this file — the same "import = register" pattern used by every builtin tool.
+ * Registered via the module-level `registerAgentTool(ISubagentTool,
+ * SubagentTool)` at the bottom of this file — the same "import = register"
+ * pattern used by every agent tool. The per-profile tool listings in the
+ * description read the full contribution table (not the runtime registry,
+ * which only holds tools the caller's own Profile activated), plus any
+ * dynamically registered tools.
  */
 
 import { z } from 'zod';
@@ -48,12 +52,16 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import {
   ToolAccesses,
-  type BuiltinTool,
+  type AgentTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import {
+  getAgentToolContributions,
+  registerAgentTool,
+} from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -91,7 +99,7 @@ import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 const DEFAULT_PROFILE_NAME = 'coder';
 const RESUMED_LABEL = 'subagent';
 
-export const AgentToolInputSchema = z.preprocess(
+export const SubagentToolInputSchema = z.preprocess(
   (input) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return input;
@@ -139,10 +147,10 @@ export const AgentToolInputSchema = z.preprocess(
   }),
 );
 
-export type AgentToolInput = z.infer<typeof AgentToolInputSchema>;
+export type SubagentToolInput = z.infer<typeof SubagentToolInputSchema>;
 
 
-export const AgentToolOutputSchema = z.object({
+export const SubagentToolOutputSchema = z.object({
   result: z.string().describe('Aggregated text output from the subagent'),
   usage: z
     .object({
@@ -154,7 +162,7 @@ export const AgentToolOutputSchema = z.object({
     .describe('Cumulative token usage'),
 });
 
-export type AgentToolOutput = z.infer<typeof AgentToolOutputSchema>;
+export type SubagentToolOutput = z.infer<typeof SubagentToolOutputSchema>;
 
 const BACKGROUND_AGENT_UNAVAILABLE =
   'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
@@ -165,9 +173,16 @@ const USER_INTERRUPTED_SUBAGENT_MESSAGE =
 const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
 
 
-export class AgentTool implements BuiltinTool<AgentToolInput> {
+export interface ISubagentTool extends AgentTool<SubagentToolInput> {
+  readonly _serviceBrand: undefined;
+}
+
+export const ISubagentTool = createDecorator<ISubagentTool>('subagentTool');
+
+export class SubagentTool implements ISubagentTool {
+  declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
+  readonly parameters: Record<string, unknown> = toInputJsonSchema(SubagentToolInputSchema);
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -209,7 +224,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         : this.catalog.list().filter((profile) => allowlist.includes(profile.name));
     const typeLines = buildProfileDescriptions(
       profiles,
-      this.toolRegistry.listReferences(),
+      this.knownToolReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
       this.flags.enabled(SECONDARY_MODEL_FLAG_ID),
@@ -228,7 +243,21 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     return description;
   }
 
-  async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
+  private knownToolReferences(): ToolReference[] {
+    const refs = new Map<string, ToolReference>();
+    for (const contribution of getAgentToolContributions()) {
+      refs.set(contribution.options.name, {
+        name: contribution.options.name,
+        source: contribution.options.source ?? 'builtin',
+      });
+    }
+    for (const ref of this.toolRegistry.listReferences()) {
+      if (!refs.has(ref.name)) refs.set(ref.name, ref);
+    }
+    return [...refs.values()];
+  }
+
+  async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
     const resumeAgentId = args.resume?.trim();
 
@@ -267,7 +296,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 
   private async launch(
-    args: AgentToolInput,
+    args: SubagentToolInput,
     toolCallId: string,
     controller: AbortController,
   ): Promise<SubagentHandle> {
@@ -387,7 +416,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 
   private async execution(
-    args: AgentToolInput,
+    args: SubagentToolInput,
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
@@ -503,7 +532,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 }
 
-registerTool(AgentTool);
+registerAgentTool(ISubagentTool, SubagentTool, { name: 'Agent', domain: 'subagent' });
 
 
 function buildProfileDescriptions(

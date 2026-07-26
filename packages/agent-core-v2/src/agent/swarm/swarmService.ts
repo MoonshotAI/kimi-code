@@ -12,7 +12,7 @@
  * live-only `context.spliced` event for that pop (so injector bookkeeping
  * stays in step) and appends the exit reminder when nothing was
  * popped. Bound at Agent scope. The `AgentSwarm` tool self-registers via
- * `registerTool(...)` in `tools/agent-swarm.ts`. The service also guards
+ * `registerAgentTool(...)` in `tools/agent-swarm.ts`. The service also guards
  * AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
  * listener: an AgentSwarm call must be the only tool call in its batch,
  * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted

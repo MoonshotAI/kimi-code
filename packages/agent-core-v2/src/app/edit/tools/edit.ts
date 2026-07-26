@@ -20,6 +20,7 @@
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import {
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
@@ -32,12 +33,12 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import editDescriptionTemplate from './edit.md?raw';
 
@@ -66,7 +67,13 @@ export const EditInputSchema = z.object({
 
 export type EditInput = z.infer<typeof EditInputSchema>;
 
-export class EditTool implements BuiltinTool<EditInput> {
+export interface IEditTool extends AgentTool<EditInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IEditTool = createDecorator<IEditTool>('editTool');
+
+export class EditTool implements IEditTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Edit' as const;
   readonly description = editDescriptionTemplate;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(EditInputSchema);
@@ -139,4 +146,4 @@ export class EditTool implements BuiltinTool<EditInput> {
   }
 }
 
-registerTool(EditTool);
+registerAgentTool(IEditTool, EditTool, { name: 'Edit', domain: 'edit' });

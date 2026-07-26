@@ -7,10 +7,11 @@
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { type AgentTool, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import DESCRIPTION from './get-goal.md?raw';
@@ -19,7 +20,11 @@ import { goalResultForModel } from './serialize';
 export const GetGoalToolInputSchema = z.object({}).strict();
 export type GetGoalToolInput = z.infer<typeof GetGoalToolInputSchema>;
 
-export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
+export interface IGetGoalTool extends AgentTool<GetGoalToolInput> { readonly _serviceBrand: undefined }
+export const IGetGoalTool = createDecorator<IGetGoalTool>('getGoalTool');
+
+export class GetGoalTool implements IGetGoalTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'GetGoal' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GetGoalToolInputSchema);
@@ -38,6 +43,8 @@ export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
   }
 }
 
-registerTool(GetGoalTool, {
+registerAgentTool(IGetGoalTool, GetGoalTool, {
+  name: 'GetGoal',
+  domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

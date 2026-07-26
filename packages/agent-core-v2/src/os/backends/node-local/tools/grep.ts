@@ -22,14 +22,15 @@ import { normalize } from 'pathe';
 import { z } from 'zod';
 
 import { ToolResultBuilder } from '#/tool/result-builder';
+import { createDecorator } from '#/_base/di/instantiation';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -182,7 +183,11 @@ const SENSITIVE_GLOBS_TO_EXCLUDE = [
 
 const CONTENT_LINE_RE = /^(.*?)([:-])(\d+)\2/;
 
-export class GrepTool implements BuiltinTool<GrepInput> {
+export interface IGrepTool extends AgentTool<GrepInput> { readonly _serviceBrand: undefined }
+export const IGrepTool = createDecorator<IGrepTool>('grepTool');
+
+export class GrepTool implements IGrepTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Grep' as const;
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
@@ -445,7 +450,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
   }
 }
 
-registerTool(GrepTool);
+registerAgentTool(IGrepTool, GrepTool, { name: 'Grep', domain: 'os/backends' });
 
 function formatSpawnError(error: unknown): string {
   return errorCode(error) === 'ENOENT'

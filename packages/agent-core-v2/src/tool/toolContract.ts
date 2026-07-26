@@ -6,7 +6,8 @@
  * contract every tool implements (`resolveExecution` → `ToolExecution` →
  * `execute(ctx)`), the `ExecutableToolContext` it runs against, the raw and
  * finalized results (`ExecutableToolResult` / `ToolResult`), the streaming
- * `ToolUpdate`, and the `BuiltinTool` alias. Also owns the `ToolAccesses`
+ * `ToolUpdate`, and the `AgentTool` service interface every DI-registered
+ * agent tool implements. Also owns the `ToolAccesses`
  * resource-access declarations an execution emits so the host scheduler can
  * run non-conflicting calls concurrently (together with their conflict
  * semantics), and the `isMcpToolName` name predicate. The `stopTurn` /
@@ -107,7 +108,9 @@ export interface ToolInfo extends ToolDefinition {
   readonly source: ToolSource;
 }
 
-export type BuiltinTool<Input = unknown> = ExecutableTool<Input>;
+export interface AgentTool<Input = unknown> extends ExecutableTool<Input> {
+  readonly _serviceBrand: undefined;
+}
 
 export type ToolResult = ExecutableToolResult & {
   readonly description?: string;

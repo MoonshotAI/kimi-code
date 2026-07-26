@@ -11,10 +11,11 @@
 
 import { z } from 'zod';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { type AgentTool, type ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import {
@@ -35,7 +36,11 @@ export const UpdateGoalToolInputSchema = z
 
 export type UpdateGoalToolInput = z.infer<typeof UpdateGoalToolInputSchema>;
 
-export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
+export interface IUpdateGoalTool extends AgentTool<UpdateGoalToolInput> { readonly _serviceBrand: undefined }
+export const IUpdateGoalTool = createDecorator<IUpdateGoalTool>('updateGoalTool');
+
+export class UpdateGoalTool implements IUpdateGoalTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'UpdateGoal' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(UpdateGoalToolInputSchema);
@@ -112,6 +117,8 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
   return 'Goal not blocked: the current goal changed.';
 }
 
-registerTool(UpdateGoalTool, {
+registerAgentTool(IUpdateGoalTool, UpdateGoalTool, {
+  name: 'UpdateGoal',
+  domain: 'goal',
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

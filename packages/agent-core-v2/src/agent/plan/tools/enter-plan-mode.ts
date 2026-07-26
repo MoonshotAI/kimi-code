@@ -7,8 +7,9 @@
 
 import { z } from 'zod';
 
-import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { createDecorator } from '#/_base/di/instantiation';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -18,7 +19,13 @@ import DESCRIPTION from './enter-plan-mode.md?raw';
 export const EnterPlanModeInputSchema = z.object({}).strict();
 export type EnterPlanModeInput = z.infer<typeof EnterPlanModeInputSchema>;
 
-export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
+export interface IEnterPlanModeTool extends AgentTool<EnterPlanModeInput> {
+  readonly _serviceBrand: undefined;
+}
+export const IEnterPlanModeTool = createDecorator<IEnterPlanModeTool>('enterPlanModeTool');
+
+export class EnterPlanModeTool implements IEnterPlanModeTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'EnterPlanMode' as const;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(EnterPlanModeInputSchema);
@@ -58,7 +65,7 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
   }
 }
 
-registerTool(EnterPlanModeTool);
+registerAgentTool(IEnterPlanModeTool, EnterPlanModeTool, { name: 'EnterPlanMode', domain: 'plan' });
 
 function enteredPlanModeMessage(planPath: string | null): string {
   if (planPath === null) {

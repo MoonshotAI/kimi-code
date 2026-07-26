@@ -25,7 +25,10 @@
 
 import { z } from 'zod';
 
-import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
+import { createDecorator } from '#/_base/di/instantiation';
+import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -74,7 +77,12 @@ interface CronCreateOutput {
 }
 
 
-export class CronCreateTool implements BuiltinTool<CronCreateInput> {
+export interface ICronCreateTool extends AgentTool<CronCreateInput> { readonly _serviceBrand: undefined }
+export const ICronCreateTool = createDecorator<ICronCreateTool>('cronCreateTool');
+
+export class CronCreateTool implements ICronCreateTool {
+  declare readonly _serviceBrand: undefined;
+
   readonly name = 'CronCreate' as const;
   readonly description = CRON_CREATE_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(
@@ -223,3 +231,5 @@ function formatOutput(o: CronCreateOutput): string {
   ];
   return lines.join('\n');
 }
+
+registerScopedService(LifecycleScope.Agent, ICronCreateTool, CronCreateTool, InstantiationType.Eager, 'cron');

@@ -177,6 +177,10 @@ const DOMAIN_LAYER = new Map([
   ['toolDedupe', 4],
   ['toolSelect', 4],
   ['toolPolicy', 4],
+  // `toolActivation` turns the `toolRegistry` (L3) contribution table into
+  // per-agent runtime registrations, filtered by the bound Profile's tool
+  // policy (`profile`, L4) — the reason it cannot live in L3 itself.
+  ['toolActivation', 4],
   ['contextMemory', 4],
   ['contextInjector', 4],
   ['agentPlugin', 4],

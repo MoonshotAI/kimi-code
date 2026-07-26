@@ -61,13 +61,14 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { createDecorator } from '#/_base/di/instantiation';
 import {
+  type AgentTool,
   ToolAccesses,
-  type BuiltinTool,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { registerAgentTool } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
   isWithinDirectory,
@@ -129,7 +130,11 @@ export const WINDOWS_PATH_HINT =
   'returned in Windows backslash form; convert them to forward slashes before ' +
   'using them in a Bash command.';
 
-export class GlobTool implements BuiltinTool<GlobInput> {
+export interface IGlobTool extends AgentTool<GlobInput> { readonly _serviceBrand: undefined }
+export const IGlobTool = createDecorator<IGlobTool>('globTool');
+
+export class GlobTool implements IGlobTool {
+  declare readonly _serviceBrand: undefined;
   readonly name = 'Glob' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
@@ -331,7 +336,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 }
 
-registerTool(GlobTool);
+registerAgentTool(IGlobTool, GlobTool, { name: 'Glob', domain: 'os/backends' });
 
 function createRgProbe(processService: IHostProcessService): RgProbe {
   return {

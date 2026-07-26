@@ -12,9 +12,10 @@
  * the provider's `baseUrl`. The explicit config wins over the managed
  * derivation. Both use the host's Kimi identity headers (`IHostRequestHeaders`,
  * mirroring v1's `kimiRequestHeaders`) as default headers. When neither source
- * is configured it yields `undefined` so the self-registering `WebSearch` tool
- * stays hidden. Owns no tool registration — the `WebSearch` tool self-registers
- * via `registerTool(...)` and reads this service from the Agent-scope accessor.
+ * is configured it yields `undefined` so the contributed `WebSearch` tool
+ * stays hidden. Owns no tool registration — the `WebSearch` tool contributes
+ * itself via `registerAgentTool(...)` and reads this service from the
+ * Agent-scope accessor.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
  */
