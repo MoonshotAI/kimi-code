@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 // file to vitest's API and add it to `include` to opt it in.
 export default defineConfig({
 	test: {
-		include: [],
+		include: ["test/above-viewport-inplace.vitest.ts"],
 		passWithNoTests: true,
 	},
 });

@@ -1171,6 +1171,19 @@ export class TUI extends Container {
 		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
 	}
 
+	/** Whether either frame carries kitty image ids inside [start, end]. */
+	private rangeHasKittyImages(
+		start: number,
+		end: number,
+		newLineImageIds: ReadonlyArray<ReadonlyArray<number>>,
+	): boolean {
+		for (let i = start; i <= end; i++) {
+			if ((newLineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0) return true;
+			if ((this.previousLineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0) return true;
+		}
+		return false;
+	}
+
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
 		if (firstChanged < 0 || lastChanged < firstChanged) return "";
 
@@ -1515,11 +1528,43 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If the first changed line is above the previous viewport, a full
+		// redraw is normally needed — but an in-place mutation (same line
+		// count, no kitty images in the above-viewport range) of rows already
+		// committed to scrollback cannot change what the terminal shows, so
+		// repainting the whole buffer would only produce a destructive
+		// ESC[2J/ESC[3J clear per tick (e.g. an agent-status spinner pushed
+		// above the viewport, #2039). Skip the paint, or clamp the range to
+		// the viewport when it spans the boundary; any layout shift or image
+		// involvement keeps the full redraw (the post-#1367 baseline).
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			const aboveEnd = Math.min(lastChanged, prevViewportTop - 1);
+			const inPlaceAboveViewport =
+				newLines.length === this.previousLines.length &&
+				!this.rangeHasKittyImages(firstChanged, aboveEnd, lineImageIds);
+			if (!inPlaceAboveViewport) {
+				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
+			if (lastChanged < prevViewportTop) {
+				// Entirely above the viewport: scrollback keeps a stale frame
+				// of those rows (invisible from the live viewport), so only
+				// commit the caches and reposition the hardware cursor,
+				// mirroring the no-change path above.
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousViewportTop = prevViewportTop;
+				this.previousLines = newLines;
+				this.previousRawLines = rawLines;
+				this.previousLineImageIds = lineImageIds;
+				this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				return;
+			}
+			// The change spans the viewport boundary: repaint only the
+			// visible part on the regular differential path.
+			firstChanged = prevViewportTop;
 		}
 
 		// Render from first changed line to end
