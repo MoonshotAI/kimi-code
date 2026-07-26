@@ -121,6 +121,20 @@ const GOAL_CONTINUATION_PROMPT = [
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
+/**
+ * Variant of {@link GOAL_CONTINUATION_PROMPT} used when the previous goal turn
+ * ended by hitting the per-turn step limit (`loop_control.max_steps_per_turn`).
+ * The limit fragments goal work into more continuation turns instead of
+ * pausing the goal; the notice tells the model why, so it can size the next
+ * slice to fit the limit.
+ */
+const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
+  'The previous goal turn reached the per-turn step limit before finishing its work,',
+  'so a new turn was started for you. Pick up where that turn stopped and keep each',
+  'slice of work small enough to fit the limit.',
+  GOAL_CONTINUATION_PROMPT,
+].join(' ');
+
 export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
   private turnId = -1;
@@ -438,7 +452,9 @@ export class TurnFlow {
    * full turn, then reads the goal status the model set via `UpdateGoal`:
    * `complete` (the record is cleared) / `blocked` stop the loop; `active`
    * (the model didn't decide) re-injects the goal reminder and runs the
-   * next continuation turn. Aborted or failed turns pause the goal. Goal-state
+   * next continuation turn. Aborted or failed turns pause the goal — except a
+   * turn that only failed by reaching the per-turn step limit, which just
+   * fragments goal work into more continuation turns. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
    */
@@ -470,7 +486,14 @@ export class TurnFlow {
         await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
         return end;
       }
-      if (end.event.reason === 'failed') {
+      // A turn that failed only by reaching the per-turn step limit ended at a
+      // clean step boundary, so it is not a goal failure: fall through to the
+      // normal continuation decision below and keep pursuing the goal. The
+      // `turn.ended` event still reports the failure (and the limit) to hosts.
+      const hitStepCap =
+        end.event.reason === 'failed' &&
+        end.event.error?.code === ErrorCodes.LOOP_MAX_STEPS_EXCEEDED;
+      if (end.event.reason === 'failed' && !hitStepCap) {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
       }
@@ -495,7 +518,12 @@ export class TurnFlow {
       }
 
       turnId = this.allocateTurnId();
-      turnInput = [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }];
+      turnInput = [
+        {
+          type: 'text',
+          text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+        },
+      ];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
   }
