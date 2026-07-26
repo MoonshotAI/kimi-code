@@ -1,376 +1,389 @@
-/// Compaction — context compaction strategy and state management.
+/// Compaction — the full-compaction lifecycle.
 ///
-/// Corresponds to `packages/agent-core/src/agent/compaction/`.
+/// Corresponds to `packages/agent-core-v2/src/agent/fullCompaction/`.
 ///
-/// Manages compaction lifecycle (full compaction and micro compaction).
-/// The actual LLM-based summarization is delegated through `HostCallbacks`;
-/// this module handles the state machine, triggering logic, and strategy.
+/// This module owns the *state machine*: when a compaction may start, how many
+/// messages it targets, how an overflowing summarizer request is retried, and
+/// what the result reads as. The summarization itself — building the request,
+/// calling the model, writing the rewritten history — is delegated to the host
+/// through [`CompactionDelegate`], because none of it is decidable here.
+///
+/// The decision logic lives in [`strategy`]; the summarizer-input shaping in
+/// [`utils`]; the replayable phase in [`ops`].
+pub mod ops;
+pub mod strategy;
+pub mod utils;
 
-/// Strategy configuration for compaction.
-#[derive(Debug, Clone)]
+pub use ops::{
+    apply_begin, apply_cancel, apply_complete, begin_event, normalise_restored_phase,
+    CompactionBeginData, CompactionEvent, CompactionPhase,
+};
+pub use strategy::{
+    can_split_after, CompactionSource, CompactionStrategyConfig, DefaultCompactionStrategy,
+    ProfileModelContext, RuntimeCompactionStrategy,
+};
+pub use utils::{
+    collect_summary, drop_leading_tool_results, drop_oldest_message_and_leading_tool_results,
+    history_safe_to_compact, shrink_compaction_history_after_overflow, CompactionAttemptError,
+    COMPACTION_OVERFLOW_SHRINK_RATIOS,
+};
+
+use crate::context::types::ContextMessage;
+
+/// Share of the window at which a cache-cold early compaction may fire.
+const EARLY_CACHE_COLD_RATIO: f64 = 0.60;
+
+/// Lifecycle knobs, distinct from the algorithm knobs in
+/// [`CompactionStrategyConfig`].
+///
+/// The ratios and the reserved slice belong to the strategy because a model
+/// profile can override them; these govern the retry loop and are fixed.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompactionConfig {
-    /// Maximum number of compactions per turn.
-    pub max_compaction_per_turn: u32,
-    /// Maximum overflow compaction attempts before giving up.
+    /// `None` is TS's `Infinity` — no per-turn cap.
+    pub max_compaction_per_turn: Option<u32>,
     pub max_overflow_compaction_attempts: u32,
-    /// Token threshold at which auto-compaction triggers (fraction of max context).
-    pub auto_compact_ratio: f64,
-    /// Token ratio at which before_step blocks until compaction finishes.
-    pub block_ratio: f64,
-    /// Reserved context size (tokens) that compaction must always leave free.
-    pub reserved_context_size: u32,
-    /// Whether to compact early while the provider cache is still cold.
+    /// Compact ahead of the trigger while the provider cache is still cold.
+    /// Not present in TS; opt-in and off by default.
     pub compact_early_while_cache_cold: bool,
 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
+        let strategy = CompactionStrategyConfig::default();
         Self {
-            max_compaction_per_turn: 3,
-            max_overflow_compaction_attempts: 3,
-            auto_compact_ratio: 0.85,
-            block_ratio: 0.95,
-            reserved_context_size: 4096,
+            max_compaction_per_turn: strategy.max_compaction_per_turn,
+            max_overflow_compaction_attempts: strategy.max_overflow_compaction_attempts,
             compact_early_while_cache_cold: false,
         }
     }
 }
 
-/// Data passed when beginning a compaction.
-#[derive(Debug, Clone)]
-pub struct CompactionBeginData {
+/// What the host is being asked to summarise.
+pub struct CompactionRequest<'a> {
     pub source: CompactionSource,
     pub instruction: Option<String>,
+    /// How many messages from the head to summarise.
+    pub compacted_count: usize,
+    /// The history the count refers to.
+    pub messages: &'a [ContextMessage],
+    /// 1-based; greater than 1 means a previous attempt overflowed.
+    pub attempt: u32,
 }
 
-/// Source of a compaction trigger.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactionSource {
-    Auto,
-    Manual,
-}
-
-/// Result of a completed compaction.
-#[derive(Debug, Clone)]
+/// Outcome of a completed compaction. Mirrors the TS `CompactionResult`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompactionResult {
+    pub summary: String,
+    pub context_summary: Option<String>,
+    pub compacted_count: usize,
     pub tokens_before: u64,
     pub tokens_after: u64,
-    pub compacted_count: u32,
+    pub kept_user_message_count: Option<usize>,
+    pub kept_head_user_message_count: Option<usize>,
     pub dropped_count: Option<u32>,
 }
 
-/// Strategy trait for controlling compaction behavior.
-///
-/// The host can implement this to customize how compaction decisions are
-/// made — for example reducing compact count on overflow, or adjusting
-/// the summarization approach based on context.
-pub trait CompactionStrategy: Send + Sync {
-    /// Given the current token count before compaction, compute how many
-    /// messages should be compacted. Returns None to use the default.
-    fn compute_compact_count(&self, _before_tokens: u64) -> Option<u32> { None }
-
-    /// After an overflow error, optionally reduce the compaction target.
-    fn reduce_compact_on_overflow(&self, _attempt: u32, _current: u32) -> u32 { _current.saturating_sub(1) }
+/// Why a compaction round did not produce a result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionError {
+    /// The per-turn cap was already spent.
+    TurnLimitExceeded,
+    /// The retry budget ran out without the request fitting the window.
+    OverflowUnrecoverable { attempts: u32 },
+    /// Nothing could be safely summarised.
+    NothingToCompact,
+    NoDelegate,
+    /// The host reported a failure.
+    Delegate(String),
 }
 
-/// FullCompaction — manages the full compaction lifecycle.
-///
-/// Delegates the actual LLM summarization work through the provided
-/// `CompactionDelegate` trait, which the host implements.
+impl std::fmt::Display for CompactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionError::TurnLimitExceeded => f.write_str("Compaction limit exceeded"),
+            CompactionError::OverflowUnrecoverable { attempts } => write!(
+                f,
+                "Compaction failed to bring the context under the model window after {attempts} attempt(s)"
+            ),
+            CompactionError::NothingToCompact => {
+                f.write_str("No safe compaction split point in the current history")
+            }
+            CompactionError::NoDelegate => f.write_str("No compaction delegate set"),
+            CompactionError::Delegate(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for CompactionError {}
+
+/// What the host reports back from one summarization attempt.
+pub enum CompactionAttempt {
+    Done(CompactionResult),
+    /// The request itself exceeded the model window; the round will retry with
+    /// a shallower cut.
+    Overflowed,
+}
+
 pub trait CompactionDelegate: Send + Sync {
-    /// Begin a compaction round. Returns the compaction result.
-    fn compact(
-        &self,
-        data: &CompactionBeginData,
-        signal: &std::sync::atomic::AtomicBool,
-    ) -> Result<CompactionResult, String>;
+    fn compact(&self, request: &CompactionRequest<'_>) -> Result<CompactionAttempt, String>;
 }
 
-/// FullCompaction state machine.
+/// The full-compaction state machine.
 pub struct FullCompaction {
     config: CompactionConfig,
-    compacting: bool,
+    strategy: RuntimeCompactionStrategy,
+    phase: CompactionPhase,
     compaction_count_in_turn: u32,
     consecutive_overflow_compactions: u32,
     last_compacted_token_count: Option<u64>,
-    /// Delegate for actual compaction execution.
     delegate: Option<Box<dyn CompactionDelegate>>,
-    /// Optional strategy for customizing compaction decisions.
-    strategy: Option<Box<dyn CompactionStrategy>>,
 }
 
 impl FullCompaction {
-    /// Create a new FullCompaction.
-    pub fn new(config: CompactionConfig) -> Self {
+    pub fn new(config: CompactionConfig, model: ProfileModelContext) -> Self {
         Self {
             config,
-            compacting: false,
+            strategy: RuntimeCompactionStrategy::new(model),
+            phase: CompactionPhase::Idle,
             compaction_count_in_turn: 0,
             consecutive_overflow_compactions: 0,
             last_compacted_token_count: None,
             delegate: None,
-            strategy: None,
         }
     }
 
-    /// Set the compaction delegate.
     pub fn set_delegate(&mut self, delegate: Box<dyn CompactionDelegate>) {
         self.delegate = Some(delegate);
     }
 
-    /// Set the compaction strategy.
-    pub fn set_strategy(&mut self, strategy: Box<dyn CompactionStrategy>) {
-        self.strategy = Some(strategy);
+    pub fn set_model(&mut self, model: ProfileModelContext) {
+        self.strategy = RuntimeCompactionStrategy::new(model);
     }
 
-    /// Whether a compaction is currently in progress.
+    pub fn strategy(&self) -> &RuntimeCompactionStrategy {
+        &self.strategy
+    }
+
+    pub fn phase(&self) -> CompactionPhase {
+        self.phase
+    }
+
     pub fn is_compacting(&self) -> bool {
-        self.compacting
+        self.phase == CompactionPhase::Running
     }
 
-    /// Begin compaction.
-    pub fn begin(&mut self, data: &CompactionBeginData) -> Result<(), String> {
-        if self.compacting {
-            return Ok(());
-        }
-
-        if matches!(data.source, CompactionSource::Manual) {
-            self.compaction_count_in_turn = 0;
-        } else {
-            self.compaction_count_in_turn += 1;
-        }
-
-        if self.compaction_count_in_turn > self.config.max_compaction_per_turn {
-            return Err("Compaction limit exceeded".to_string());
-        }
-
-        self.compacting = true;
-
-        let delegate = self.delegate.as_ref().ok_or("No compaction delegate set")?;
-        let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let result = delegate.compact(data, &cancelled)?;
-
-        self.last_compacted_token_count = Some(result.tokens_after);
-        self.compacting = false;
-
-        Ok(())
-    }
-
-    /// Cancel the current compaction.
-    pub fn cancel(&mut self) {
-        self.compacting = false;
-    }
-
-    /// Reset per-turn counters.
-    pub fn reset_for_turn(&mut self) {
-        self.compaction_count_in_turn = 0;
-        self.last_compacted_token_count = None;
-        self.consecutive_overflow_compactions = 0;
-    }
-
-    /// Check whether auto-compaction should trigger based on token count.
-    pub fn should_compact(&self, token_count: u64, max_context_tokens: u64) -> bool {
-        if self.compacting {
+    /// Whether pressure warrants an automatic compaction now.
+    ///
+    /// On top of the strategy's predicate this adds two liveness guards: never
+    /// stack a second compaction, and never re-run at a token count the last
+    /// compaction already failed to get below — otherwise a history that cannot
+    /// shrink further would compact on every step forever.
+    pub fn should_compact(&self, used_tokens: u64) -> bool {
+        if self.is_compacting() {
             return false;
         }
-        if max_context_tokens == 0 {
+        if self.last_compacted_token_count.is_some_and(|last| used_tokens <= last) {
             return false;
         }
-
-        if let Some(last) = self.last_compacted_token_count {
-            if token_count <= last {
-                return false;
-            }
-        }
-
-        let effective_max = self.effective_max_context(max_context_tokens);
-        if effective_max == 0 {
-            return false;
-        }
-        let trigger_at = (effective_max as f64 * self.config.auto_compact_ratio) as u64;
-        token_count >= trigger_at
+        self.strategy.should_compact(used_tokens)
     }
 
-    /// Check whether to compact early while the provider cache is still cold.
-    /// This is useful when the first few LLM calls are cheap and compaction
-    /// can happen before the cache fills up.
-    pub fn should_compact_early_while_cache_cold(&self, token_count: u64, max_context_tokens: u64) -> bool {
+    /// Whether the step loop must wait for compaction before continuing.
+    ///
+    /// A pure predicate on pressure, as in TS — the caller decides what to do
+    /// about it.
+    pub fn should_block(&self, used_tokens: u64) -> bool {
+        self.strategy.should_block(used_tokens)
+    }
+
+    /// Compact ahead of the trigger while the provider cache is still cold.
+    ///
+    /// Not a TS behaviour — opt-in and off by default. Compaction invalidates
+    /// the provider's prefix cache, so doing it before the cache is warm costs
+    /// nothing, whereas the same rewrite later throws away a paid-for prefix.
+    /// Only ever fires on the first compaction of a turn.
+    pub fn should_compact_early_while_cache_cold(&self, used_tokens: u64) -> bool {
         if !self.config.compact_early_while_cache_cold {
             return false;
         }
-        if self.compacting || self.compaction_count_in_turn > 0 {
+        if self.is_compacting() || self.compaction_count_in_turn > 0 {
             return false;
         }
-        // Compact early at a lower threshold (60% of effective max).
-        let effective_max = self.effective_max_context(max_context_tokens);
-        if effective_max == 0 {
+        let max_size = self.strategy.max_size();
+        if max_size == 0 {
             return false;
         }
-        let early_trigger = (effective_max as f64 * 0.60) as u64;
-        token_count >= early_trigger
+        used_tokens as f64 >= max_size as f64 * EARLY_CACHE_COLD_RATIO
     }
 
-    /// Check whether the step loop should block waiting for compaction.
-    pub fn should_block(&self, token_count: u64, max_context_tokens: u64) -> bool {
-        if !self.compacting {
-            return false;
+    pub fn reset_for_turn(&mut self) {
+        self.compaction_count_in_turn = 0;
+        self.consecutive_overflow_compactions = 0;
+        self.last_compacted_token_count = None;
+    }
+
+    pub fn cancel(&mut self) {
+        if let Some(next) = apply_cancel(self.phase) {
+            self.phase = next;
         }
-        if max_context_tokens == 0 {
-            return false;
-        }
-        let effective_max = self.effective_max_context(max_context_tokens);
-        let block_at = (effective_max as f64 * self.config.block_ratio) as u64;
-        token_count >= block_at
     }
 
-    /// Handle a context overflow error.
-    pub fn handle_overflow_error(&mut self, _token_count: u64) -> Result<(), String> {
-        self.consecutive_overflow_compactions += 1;
-        if self.consecutive_overflow_compactions > self.config.max_overflow_compaction_attempts {
-            return Err("Compaction failed to bring the context under the model window".to_string());
-        }
-        // Delegate will handle actual compaction on next begin() call.
-        Ok(())
+    /// Reset a phase stranded by a crash.
+    pub fn restore(&mut self, phase: CompactionPhase) {
+        self.phase = normalise_restored_phase(phase);
     }
 
-    /// Effective max context tokens considering the reserved size.
-    fn effective_max_context(&self, max_context_tokens: u64) -> u64 {
-        max_context_tokens.saturating_sub(self.config.reserved_context_size as u64)
-    }
-
-    /// Run a complete compaction round from check to completion.
+    /// Run one compaction round end to end.
     ///
-    /// 1. Check whether compaction should trigger (via `should_compact()`).
-    /// 2. If triggered, call the delegate to execute compaction.
-    /// 3. Handle overflow errors with retry if needed.
-    /// 4. Return the result or an error if compaction failed.
-    ///
-    /// This is the main entry point for the turn loop to call.
+    /// Returns `Ok(None)` when no compaction was warranted. On overflow the cut
+    /// is deepened via [`RuntimeCompactionStrategy::reduce_compact_on_overflow`]
+    /// and retried until the attempt budget is spent.
     pub fn compaction_round(
         &mut self,
-        token_count: u64,
-        max_context_tokens: u64,
+        messages: &[ContextMessage],
+        used_tokens: u64,
         source: CompactionSource,
         instruction: Option<String>,
-    ) -> Result<Option<CompactionResult>, String> {
-        // Skip if already compacting or not needed.
-        if self.compacting {
+    ) -> Result<Option<CompactionResult>, CompactionError> {
+        if self.is_compacting() {
+            return Ok(None);
+        }
+        if source == CompactionSource::Auto
+            && !self.should_compact(used_tokens)
+            && !self.should_compact_early_while_cache_cold(used_tokens)
+        {
             return Ok(None);
         }
 
-        let should_run = match source {
-            CompactionSource::Manual => true,
-            CompactionSource::Auto => {
-                if self.should_compact_early_while_cache_cold(token_count, max_context_tokens) {
-                    true
-                } else if self.should_compact(token_count, max_context_tokens) {
-                    true
-                } else {
-                    return Ok(None);
-                }
+        if source == CompactionSource::Manual {
+            self.compaction_count_in_turn = 0;
+        } else {
+            self.compaction_count_in_turn += 1;
+            if self
+                .config
+                .max_compaction_per_turn
+                .is_some_and(|cap| self.compaction_count_in_turn > cap)
+            {
+                return Err(CompactionError::TurnLimitExceeded);
             }
-        };
-
-        if !should_run {
-            return Ok(None);
         }
 
-        // Apply strategy to determine compact count.
-        let target_count = self
-            .strategy
-            .as_ref()
-            .and_then(|s| s.compute_compact_count(token_count));
+        let mut compacted_count = self.strategy.compute_compact_count(messages, source);
+        if compacted_count == 0 {
+            return Err(CompactionError::NothingToCompact);
+        }
 
-        let data = CompactionBeginData {
-            source,
-            instruction,
-        };
+        if self.delegate.is_none() {
+            return Err(CompactionError::NoDelegate);
+        }
+        self.phase = apply_begin(self.phase).unwrap_or(self.phase);
 
-        // Attempt compaction with overflow retry.
-        let mut attempt = 0u32;
+        let max_attempts = self.config.max_overflow_compaction_attempts;
+        let mut attempt: u32 = 0;
         loop {
             attempt += 1;
-            if let Err(e) = self.begin(&data) {
-                // Check if this is an overflow that can be retried.
-                if e.contains("overflow") || e.contains("limit") {
+            let request = CompactionRequest {
+                source,
+                instruction: instruction.clone(),
+                compacted_count,
+                messages,
+                attempt,
+            };
+            let outcome = self
+                .delegate
+                .as_ref()
+                .expect("delegate presence checked above")
+                .compact(&request);
+
+            match outcome {
+                Ok(CompactionAttempt::Done(result)) => {
+                    self.last_compacted_token_count = Some(result.tokens_after);
+                    self.consecutive_overflow_compactions = 0;
+                    self.phase = apply_complete(self.phase).unwrap_or(self.phase);
+                    return Ok(Some(result));
+                }
+                Ok(CompactionAttempt::Overflowed) => {
                     self.consecutive_overflow_compactions += 1;
-                    if self.consecutive_overflow_compactions > self.config.max_overflow_compaction_attempts {
-                        return Err("Compaction failed to bring the context under the model window".to_string());
+                    if attempt >= max_attempts {
+                        self.phase = apply_complete(self.phase).unwrap_or(self.phase);
+                        return Err(CompactionError::OverflowUnrecoverable { attempts: attempt });
                     }
-                    // Reduce target for next attempt via strategy.
-                    if let Some(ref strategy) = self.strategy {
-                        let reduced = strategy.reduce_compact_on_overflow(attempt, target_count.unwrap_or(1));
-                        if reduced == 0 {
-                            return Err(format!("Compaction overflow retry exhausted after {} attempts", attempt));
+                    // Shrink the cut so the retry sends a *smaller* request —
+                    // `compacted_count` is how much history goes to the
+                    // summarizer, so fewer messages is what relieves the
+                    // overflow. Previously this value was computed and thrown
+                    // away, so every retry re-sent the identical oversized
+                    // request and the budget burned for nothing.
+                    //
+                    // `reduce_compact_on_overflow` is a pure function of the
+                    // history, so it can only help once; after that, step down
+                    // one safe split at a time to guarantee progress.
+                    let reduced = self.strategy.reduce_compact_on_overflow(messages);
+                    let next = if reduced < compacted_count {
+                        Some(reduced)
+                    } else {
+                        self.strategy.previous_safe_split(messages, compacted_count)
+                    };
+                    match next.filter(|n| *n > 0) {
+                        Some(next) => compacted_count = next,
+                        None => {
+                            self.phase = apply_complete(self.phase).unwrap_or(self.phase);
+                            return Err(CompactionError::OverflowUnrecoverable {
+                                attempts: attempt,
+                            });
                         }
                     }
-                    continue;
                 }
-                return Err(e);
+                Err(message) => {
+                    self.phase = apply_complete(self.phase).unwrap_or(self.phase);
+                    return Err(CompactionError::Delegate(message));
+                }
             }
-            break;
         }
-
-        // Build the result from internal state.
-        Ok(Some(CompactionResult {
-            tokens_before: token_count,
-            tokens_after: self.last_compacted_token_count.unwrap_or(token_count),
-            compacted_count: self.compaction_count_in_turn,
-            dropped_count: None,
-        }))
     }
 }
 
-// ── CompactionHandoffInfo ────────────────────────────────────────────────────
+// ── CompactionHandoffInfo ──────────────────────────────────────────────────
 
-/// Information about a compaction handoff event, for integration with the
-/// handoff mechanism in `kimi-native-tools`.
-#[derive(Debug, Clone)]
+/// Summary of a compaction for the handoff mechanism.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionHandoffInfo {
-    /// Token count before compaction.
     pub tokens_before: u64,
-    /// Token count after compaction.
     pub tokens_after: u64,
-    /// Number of messages compacted.
-    pub compacted_count: u32,
-    /// Whether the compaction was triggered automatically.
+    pub compacted_count: usize,
     pub is_auto: bool,
 }
 
-impl From<&CompactionResult> for CompactionHandoffInfo {
-    fn from(result: &CompactionResult) -> Self {
+impl CompactionHandoffInfo {
+    pub fn from_result(result: &CompactionResult, source: CompactionSource) -> Self {
         Self {
             tokens_before: result.tokens_before,
             tokens_after: result.tokens_after,
             compacted_count: result.compacted_count,
-            is_auto: true,
+            is_auto: source == CompactionSource::Auto,
         }
     }
 }
 
-// ── MicroCompaction ───────────────────────────────────────────────────────
+// ── MicroCompaction ────────────────────────────────────────────────────────
 
-/// MicroCompaction — detects when a micro-compaction is needed.
-///
-/// Micro-compaction is a lightweight compaction that removes only the
-/// most recent tool results, without running an LLM summarizer.
+/// Detects when a lightweight compaction — dropping recent tool results
+/// without invoking a summarizer — is warranted.
 pub struct MicroCompaction {
-    /// Token threshold for triggering micro-compaction.
     threshold: u64,
 }
 
 impl MicroCompaction {
-    /// Create a new MicroCompaction.
     pub fn new(threshold: u64) -> Self {
         Self { threshold }
     }
 
-    /// Detect whether micro-compaction should run.
-    pub fn detect(&self, token_count: u64, max_context_tokens: u64) -> bool {
+    pub fn detect(&self, used_tokens: u64, max_context_tokens: u64) -> bool {
         if max_context_tokens == 0 {
             return false;
         }
-        token_count > max_context_tokens.saturating_sub(self.threshold)
+        used_tokens > max_context_tokens.saturating_sub(self.threshold)
     }
 }
 
@@ -383,232 +396,432 @@ impl Default for MicroCompaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::types::{ContentPart, ToolCall};
+    use std::sync::Mutex;
 
-    #[test]
-    fn test_full_compaction_new() {
-        let fc = FullCompaction::new(CompactionConfig::default());
-        assert!(!fc.is_compacting());
-    }
-
-    #[test]
-    fn test_full_compaction_begin_without_delegate_fails() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        let data = CompactionBeginData {
-            source: CompactionSource::Auto,
-            instruction: None,
-        };
-        let result = fc.begin(&data);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_reset_for_turn() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        fc.compaction_count_in_turn = 5;
-        fc.last_compacted_token_count = Some(1000);
-        fc.reset_for_turn();
-        assert_eq!(fc.compaction_count_in_turn, 0);
-        assert!(fc.last_compacted_token_count.is_none());
-    }
-
-    #[test]
-    fn test_should_compact_below_threshold() {
-        let fc = FullCompaction::new(CompactionConfig::default());
-        // 100_000 effective max, 0.85 ratio = 85_000 trigger. 800 < 85_000 → no.
-        assert!(!fc.should_compact(800, 100_000));
-    }
-
-    #[test]
-    fn test_should_compact_above_threshold() {
-        let fc = FullCompaction::new(CompactionConfig::default());
-        // 100_000 effective max, 0.85 ratio = 85_000 trigger. 90_000 >= 85_000 → yes.
-        assert!(fc.should_compact(90_000, 100_000));
-    }
-
-    #[test]
-    fn test_should_compact_no_max_context() {
-        let fc = FullCompaction::new(CompactionConfig::default());
-        assert!(!fc.should_compact(900, 0));
-    }
-
-    #[test]
-    fn test_should_compact_already_compacting() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        fc.compacting = true;
-        assert!(!fc.should_compact(900, 1000));
-    }
-
-    #[test]
-    fn test_should_compact_same_token_count() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        fc.last_compacted_token_count = Some(900);
-        assert!(!fc.should_compact(800, 1000));
-    }
-
-    #[test]
-    fn test_should_block_during_compaction() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        fc.compacting = true;
-        // At 95% block ratio, 1000 * 0.95 = 950. Token count 980 >= 950 → yes.
-        assert!(fc.should_block(980, 1000));
-    }
-
-    #[test]
-    fn test_should_block_when_not_compacting() {
-        let fc = FullCompaction::new(CompactionConfig::default());
-        assert!(!fc.should_block(980, 1000));
-    }
-
-    #[test]
-    fn test_effective_max_context() {
-        let fc = FullCompaction::new(CompactionConfig {
-            reserved_context_size: 4096,
+    fn msg(role: &str, text: &str, tool_calls: usize) -> ContextMessage {
+        ContextMessage {
+            role: role.to_string(),
+            content: vec![ContentPart::Text { text: text.to_string() }],
+            tool_calls: (0..tool_calls)
+                .map(|i| ToolCall {
+                    r#type: "function".to_string(),
+                    id: format!("c{i}"),
+                    name: "read".to_string(),
+                    arguments: serde_json::Value::Null,
+                    extras: None,
+                })
+                .collect(),
             ..Default::default()
-        });
-        assert_eq!(fc.effective_max_context(100_000), 95_904);
+        }
     }
 
-    #[test]
-    fn test_overflow_exceeds_limit() {
-        let mut fc = FullCompaction::new(CompactionConfig {
-            max_overflow_compaction_attempts: 2,
-            ..Default::default()
-        });
-        assert!(fc.handle_overflow_error(1000).is_ok());
-        assert!(fc.handle_overflow_error(1000).is_ok());
-        assert!(fc.handle_overflow_error(1000).is_err());
+    fn history() -> Vec<ContextMessage> {
+        vec![
+            msg("user", "q1", 0),
+            msg("assistant", "a1", 0),
+            msg("user", "q2", 0),
+            msg("assistant", "a2", 0),
+            msg("user", "q3", 0),
+            msg("assistant", "a3", 0),
+        ]
     }
 
+    /// `turns` user/assistant pairs — a safe cut after every assistant.
+    fn long_history(turns: usize) -> Vec<ContextMessage> {
+        let mut messages = Vec::with_capacity(turns * 2);
+        for i in 0..turns {
+            messages.push(msg("user", &format!("question number {i}"), 0));
+            messages.push(msg("assistant", &format!("answer number {i}"), 0));
+        }
+        messages
+    }
+
+    fn model(max_size: u64) -> ProfileModelContext {
+        ProfileModelContext { max_size, ..Default::default() }
+    }
+
+    fn result(tokens_after: u64) -> CompactionResult {
+        CompactionResult {
+            summary: "summary".to_string(),
+            context_summary: None,
+            compacted_count: 2,
+            tokens_before: 1000,
+            tokens_after,
+            kept_user_message_count: Some(1),
+            kept_head_user_message_count: None,
+            dropped_count: None,
+        }
+    }
+
+    /// Records every request and replays a scripted sequence of outcomes.
+    struct ScriptedDelegate {
+        outcomes: Mutex<Vec<Result<CompactionAttempt, String>>>,
+        seen_counts: Mutex<Vec<usize>>,
+    }
+
+    impl ScriptedDelegate {
+        fn new(outcomes: Vec<Result<CompactionAttempt, String>>) -> Self {
+            Self { outcomes: Mutex::new(outcomes), seen_counts: Mutex::new(Vec::new()) }
+        }
+    }
+
+    impl CompactionDelegate for ScriptedDelegate {
+        fn compact(&self, request: &CompactionRequest<'_>) -> Result<CompactionAttempt, String> {
+            self.seen_counts.lock().unwrap().push(request.compacted_count);
+            let mut outcomes = self.outcomes.lock().unwrap();
+            if outcomes.is_empty() {
+                return Err("script exhausted".to_string());
+            }
+            outcomes.remove(0)
+        }
+    }
+
+    fn with_delegate(
+        max_size: u64,
+        outcomes: Vec<Result<CompactionAttempt, String>>,
+    ) -> (FullCompaction, std::sync::Arc<ScriptedDelegate>) {
+        let delegate = std::sync::Arc::new(ScriptedDelegate::new(outcomes));
+        let mut fc = FullCompaction::new(CompactionConfig::default(), model(max_size));
+        fc.set_delegate(Box::new(DelegateHandle(delegate.clone())));
+        (fc, delegate)
+    }
+
+    struct DelegateHandle(std::sync::Arc<ScriptedDelegate>);
+    impl CompactionDelegate for DelegateHandle {
+        fn compact(&self, request: &CompactionRequest<'_>) -> Result<CompactionAttempt, String> {
+            self.0.compact(request)
+        }
+    }
+
+    // ── construction ──────────────────────────────────────────────────────
+
     #[test]
-    fn test_cancel_clears_compacting() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        fc.compacting = true;
-        fc.cancel();
+    fn a_new_compaction_is_idle() {
+        let fc = FullCompaction::new(CompactionConfig::default(), model(100_000));
         assert!(!fc.is_compacting());
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
     }
 
     #[test]
-    fn test_micro_compaction_detects_above_threshold() {
-        let mc = MicroCompaction::new(4096);
-        // 100_000 - 4096 = 95904. Token count 96000 > 95904 → yes.
-        assert!(mc.detect(96000, 100_000));
-    }
-
-    #[test]
-    fn test_micro_compaction_below_threshold() {
-        let mc = MicroCompaction::new(4096);
-        assert!(!mc.detect(90000, 100_000));
-    }
-
-    #[test]
-    fn test_micro_compaction_no_max_context() {
-        let mc = MicroCompaction::new(4096);
-        assert!(!mc.detect(90000, 0));
-    }
-
-    #[test]
-    fn test_default_config_sensible() {
+    fn the_lifecycle_defaults_track_the_strategy_defaults() {
         let config = CompactionConfig::default();
-        assert_eq!(config.max_compaction_per_turn, 3);
-        assert!(config.auto_compact_ratio > 0.0);
-        assert!(config.block_ratio > config.auto_compact_ratio);
+        let strategy = CompactionStrategyConfig::default();
+        assert_eq!(config.max_compaction_per_turn, strategy.max_compaction_per_turn);
+        assert_eq!(
+            config.max_overflow_compaction_attempts,
+            strategy.max_overflow_compaction_attempts
+        );
+        assert!(!config.compact_early_while_cache_cold);
+    }
+
+    // ── trigger predicates ────────────────────────────────────────────────
+
+    #[test]
+    fn pressure_below_the_threshold_does_not_trigger() {
+        let fc = FullCompaction::new(CompactionConfig::default(), model(1_000_000));
+        assert!(!fc.should_compact(800));
     }
 
     #[test]
-    fn test_compaction_round_skips_when_not_needed() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        let result = fc.compaction_round(800, 100_000, CompactionSource::Auto, None).unwrap();
-        assert!(result.is_none());
+    fn pressure_above_the_threshold_triggers() {
+        let fc = FullCompaction::new(CompactionConfig::default(), model(1_000_000));
+        assert!(fc.should_compact(900_000));
     }
 
     #[test]
-    fn test_compaction_round_manual_triggers() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        struct MockDelegate;
-        impl CompactionDelegate for MockDelegate {
-            fn compact(&self, _data: &CompactionBeginData, _signal: &std::sync::atomic::AtomicBool) -> Result<CompactionResult, String> {
-                Ok(CompactionResult {
-                    tokens_before: 90_000,
-                    tokens_after: 30_000,
-                    compacted_count: 5,
-                    dropped_count: None,
-                })
-            }
+    fn the_reserved_slice_triggers_earlier_than_the_ratio() {
+        // Regression guard: the previous implementation subtracted the reserve
+        // from the window and *then* applied the ratio, which fires far too
+        // early. TS applies the ratio to the full window and treats the reserve
+        // as a separate floor.
+        let fc = FullCompaction::new(CompactionConfig::default(), model(100_000));
+        assert!(!fc.should_compact(49_999));
+        assert!(fc.should_compact(50_000));
+    }
+
+    #[test]
+    fn a_zero_window_never_triggers() {
+        let fc = FullCompaction::new(CompactionConfig::default(), model(0));
+        assert!(!fc.should_compact(u64::MAX));
+        assert!(!fc.should_block(u64::MAX));
+    }
+
+    #[test]
+    fn blocking_does_not_require_a_compaction_to_be_running() {
+        // TS's shouldBlock is a pure pressure predicate; the previous Rust
+        // version returned false unless a compaction was already in flight,
+        // which meant the loop never blocked at all.
+        let fc = FullCompaction::new(CompactionConfig::default(), model(1_000_000));
+        assert!(!fc.is_compacting());
+        assert!(fc.should_block(900_000));
+    }
+
+    #[test]
+    fn a_repeat_at_the_same_token_count_does_not_re_trigger() {
+        let (mut fc, _) = with_delegate(100_000, vec![Ok(CompactionAttempt::Done(result(60_000)))]);
+        fc.compaction_round(&history(), 90_000, CompactionSource::Auto, None).unwrap();
+        assert!(!fc.should_compact(60_000), "already at the post-compaction size");
+        assert!(!fc.should_compact(59_000), "and below it");
+        assert!(fc.should_compact(70_000), "but growth re-arms the trigger");
+    }
+
+    // ── rounds ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn an_auto_round_below_threshold_does_nothing() {
+        let (mut fc, delegate) = with_delegate(1_000_000, vec![]);
+        let outcome = fc.compaction_round(&history(), 100, CompactionSource::Auto, None).unwrap();
+        assert!(outcome.is_none());
+        assert!(delegate.seen_counts.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_manual_round_runs_regardless_of_pressure() {
+        let (mut fc, delegate) =
+            with_delegate(1_000_000, vec![Ok(CompactionAttempt::Done(result(500)))]);
+        let outcome = fc.compaction_round(&history(), 1, CompactionSource::Manual, None).unwrap();
+        assert!(outcome.is_some());
+        assert_eq!(delegate.seen_counts.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_round_returns_to_idle_on_success() {
+        let (mut fc, _) = with_delegate(1_000_000, vec![Ok(CompactionAttempt::Done(result(500)))]);
+        fc.compaction_round(&history(), 1, CompactionSource::Manual, None).unwrap();
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    #[test]
+    fn a_round_passes_the_computed_cut_to_the_delegate() {
+        let (mut fc, delegate) =
+            with_delegate(1_000_000, vec![Ok(CompactionAttempt::Done(result(500)))]);
+        let messages = history();
+        fc.compaction_round(&messages, 1, CompactionSource::Manual, None).unwrap();
+        let counts = delegate.seen_counts.lock().unwrap();
+        assert_eq!(counts.len(), 1);
+        assert!(counts[0] > 0 && counts[0] <= messages.len());
+        assert!(can_split_after(&messages, counts[0] - 1), "the cut must be safe");
+    }
+
+    #[test]
+    fn a_history_with_no_safe_split_reports_nothing_to_compact() {
+        let (mut fc, _) = with_delegate(1_000_000, vec![]);
+        let messages = vec![msg("user", "q1", 0), msg("user", "q2", 0)];
+        assert_eq!(
+            fc.compaction_round(&messages, 1, CompactionSource::Manual, None),
+            Err(CompactionError::NothingToCompact)
+        );
+    }
+
+    #[test]
+    fn a_round_without_a_delegate_fails_before_starting() {
+        let mut fc = FullCompaction::new(CompactionConfig::default(), model(1_000_000));
+        assert_eq!(
+            fc.compaction_round(&history(), 1, CompactionSource::Manual, None),
+            Err(CompactionError::NoDelegate)
+        );
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    #[test]
+    fn a_delegate_failure_surfaces_and_clears_the_phase() {
+        let (mut fc, _) = with_delegate(1_000_000, vec![Err("model unavailable".to_string())]);
+        assert_eq!(
+            fc.compaction_round(&history(), 1, CompactionSource::Manual, None),
+            Err(CompactionError::Delegate("model unavailable".to_string()))
+        );
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    // ── overflow retry ────────────────────────────────────────────────────
+
+    #[test]
+    fn an_overflow_shrinks_the_cut_and_retries() {
+        // Regression guard: the reduced count used to be computed and dropped,
+        // so every retry re-sent the identical oversized request. The retry
+        // must summarise *less* history, not more — `compacted_count` is the
+        // size of the summarizer's input.
+        let (mut fc, delegate) = with_delegate(
+            1_000_000,
+            vec![
+                Ok(CompactionAttempt::Overflowed),
+                Ok(CompactionAttempt::Done(result(500))),
+            ],
+        );
+        let outcome = fc.compaction_round(&history(), 1, CompactionSource::Manual, None).unwrap();
+        assert!(outcome.is_some());
+        let counts = delegate.seen_counts.lock().unwrap();
+        assert_eq!(counts.len(), 2);
+        assert!(counts[1] < counts[0], "the retry must send less: {counts:?}");
+    }
+
+    #[test]
+    fn repeated_overflows_keep_shrinking() {
+        // A window small enough that the reduction threshold (5% of it) is
+        // reachable, so the first retry lands mid-history instead of jumping
+        // straight to the shallowest cut and leaving nowhere to retreat to.
+        let messages = long_history(8);
+        let (mut fc, delegate) = with_delegate(
+            200,
+            vec![
+                Ok(CompactionAttempt::Overflowed),
+                Ok(CompactionAttempt::Overflowed),
+                Ok(CompactionAttempt::Done(result(50))),
+            ],
+        );
+        fc.compaction_round(&messages, 1, CompactionSource::Manual, None).unwrap();
+        let counts = delegate.seen_counts.lock().unwrap();
+        assert_eq!(counts.len(), 3, "{counts:?}");
+        assert!(counts[1] < counts[0] && counts[2] < counts[1], "{counts:?}");
+    }
+
+    #[test]
+    fn overflow_gives_up_when_no_shallower_split_exists() {
+        // One turn: the only safe cut is the whole prefix (cutting after the
+        // opening user message would strand it), so there is nowhere left to
+        // retreat to and the round must fail rather than spin.
+        let messages = vec![msg("user", "q", 0), msg("assistant", "a", 0)];
+        let (mut fc, delegate) = with_delegate(
+            1_000_000,
+            vec![Ok(CompactionAttempt::Overflowed), Ok(CompactionAttempt::Overflowed)],
+        );
+        let outcome = fc.compaction_round(&messages, 1, CompactionSource::Manual, None);
+        assert!(matches!(outcome, Err(CompactionError::OverflowUnrecoverable { .. })));
+        assert_eq!(delegate.seen_counts.lock().unwrap().len(), 1, "no pointless retry");
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    #[test]
+    fn overflow_gives_up_after_the_attempt_budget() {
+        let messages = long_history(8);
+        let (mut fc, delegate) = with_delegate(
+            200,
+            (0..4).map(|_| Ok(CompactionAttempt::Overflowed)).collect(),
+        );
+        let outcome = fc.compaction_round(&messages, 1, CompactionSource::Manual, None);
+        assert!(matches!(outcome, Err(CompactionError::OverflowUnrecoverable { .. })));
+        let counts = delegate.seen_counts.lock().unwrap();
+        assert!(
+            counts.len() <= CompactionConfig::default().max_overflow_compaction_attempts as usize,
+            "{counts:?} exceeded the attempt budget"
+        );
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    #[test]
+    fn every_retry_cut_is_valid_and_strictly_smaller() {
+        let messages = long_history(8);
+        let (mut fc, delegate) = with_delegate(
+            200,
+            vec![
+                Ok(CompactionAttempt::Overflowed),
+                Ok(CompactionAttempt::Overflowed),
+                Ok(CompactionAttempt::Done(result(50))),
+            ],
+        );
+        fc.compaction_round(&messages, 1, CompactionSource::Manual, None).unwrap();
+        let counts = delegate.seen_counts.lock().unwrap();
+        for pair in counts.windows(2) {
+            assert!(pair[1] < pair[0], "retries must shrink: {counts:?}");
         }
-        fc.set_delegate(Box::new(MockDelegate));
-        let result = fc.compaction_round(90_000, 100_000, CompactionSource::Manual, None).unwrap();
-        assert!(result.is_some());
-        let r = result.unwrap();
-        assert!(r.tokens_after < r.tokens_before);
-    }
-
-    #[test]
-    fn test_compaction_round_auto_triggers_at_threshold() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        struct MockDelegate;
-        impl CompactionDelegate for MockDelegate {
-            fn compact(&self, _data: &CompactionBeginData, _signal: &std::sync::atomic::AtomicBool) -> Result<CompactionResult, String> {
-                Ok(CompactionResult {
-                    tokens_before: 90_000,
-                    tokens_after: 30_000,
-                    compacted_count: 5,
-                    dropped_count: None,
-                })
-            }
+        for count in counts.iter() {
+            assert!(*count > 0 && *count <= messages.len(), "cut {count} out of range");
+            assert!(can_split_after(&messages, count - 1), "cut {count} is unsafe");
         }
-        fc.set_delegate(Box::new(MockDelegate));
-        // 90_000 >= 85_000 (85% of 100_000 - 4096) → should trigger
-        let result = fc.compaction_round(90_000, 100_000, CompactionSource::Auto, None).unwrap();
-        assert!(result.is_some());
     }
 
-    #[test]
-    fn test_compaction_round_no_delegate() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        let result = fc.compaction_round(90_000, 100_000, CompactionSource::Manual, None);
-        assert!(result.is_err());
-    }
+    // ── per-turn cap ──────────────────────────────────────────────────────
 
     #[test]
-    fn test_compaction_handoff_info_from_result() {
-        let result = CompactionResult {
-            tokens_before: 100_000,
-            tokens_after: 40_000,
-            compacted_count: 10,
-            dropped_count: Some(2),
-        };
-        let info = CompactionHandoffInfo::from(&result);
-        assert_eq!(info.tokens_before, 100_000);
-        assert_eq!(info.tokens_after, 40_000);
-        assert_eq!(info.compacted_count, 10);
-        assert!(info.is_auto);
-    }
-
-    #[test]
-    fn test_compaction_round_strategy_override() {
-        let mut fc = FullCompaction::new(CompactionConfig::default());
-        struct MockDelegate;
-        impl CompactionDelegate for MockDelegate {
-            fn compact(&self, _data: &CompactionBeginData, _signal: &std::sync::atomic::AtomicBool) -> Result<CompactionResult, String> {
-                Ok(CompactionResult {
-                    tokens_before: 90_000,
-                    tokens_after: 30_000,
-                    compacted_count: 5,
-                    dropped_count: None,
-                })
-            }
+    fn the_default_has_no_per_turn_cap() {
+        let (mut fc, _) = with_delegate(
+            100_000,
+            (0..5).map(|_| Ok(CompactionAttempt::Done(result(1)))).collect(),
+        );
+        for i in 0..5 {
+            let used = 90_000 + i * 1_000;
+            assert!(fc.compaction_round(&history(), used, CompactionSource::Auto, None).is_ok());
         }
-        fc.set_delegate(Box::new(MockDelegate));
+    }
 
-        struct TestStrategy;
-        impl CompactionStrategy for TestStrategy {
-            fn compute_compact_count(&self, _before_tokens: u64) -> Option<u32> {
-                Some(10) // compact 10 messages
-            }
-        }
-        fc.set_strategy(Box::new(TestStrategy));
+    #[test]
+    fn a_configured_cap_stops_repeated_auto_compaction() {
+        let delegate = std::sync::Arc::new(ScriptedDelegate::new(
+            (0..5).map(|_| Ok(CompactionAttempt::Done(result(1)))).collect(),
+        ));
+        let mut fc = FullCompaction::new(
+            CompactionConfig { max_compaction_per_turn: Some(2), ..Default::default() },
+            model(100_000),
+        );
+        fc.set_delegate(Box::new(DelegateHandle(delegate)));
+        assert!(fc.compaction_round(&history(), 90_000, CompactionSource::Auto, None).is_ok());
+        assert!(fc.compaction_round(&history(), 91_000, CompactionSource::Auto, None).is_ok());
+        assert_eq!(
+            fc.compaction_round(&history(), 92_000, CompactionSource::Auto, None),
+            Err(CompactionError::TurnLimitExceeded)
+        );
+    }
 
-        let result = fc.compaction_round(90_000, 100_000, CompactionSource::Manual, None).unwrap();
-        assert!(result.is_some());
+    #[test]
+    fn a_manual_compaction_resets_the_per_turn_counter() {
+        let delegate = std::sync::Arc::new(ScriptedDelegate::new(
+            (0..5).map(|_| Ok(CompactionAttempt::Done(result(1)))).collect(),
+        ));
+        let mut fc = FullCompaction::new(
+            CompactionConfig { max_compaction_per_turn: Some(1), ..Default::default() },
+            model(100_000),
+        );
+        fc.set_delegate(Box::new(DelegateHandle(delegate)));
+        fc.compaction_round(&history(), 90_000, CompactionSource::Auto, None).unwrap();
+        // Manual clears the budget rather than being refused by it.
+        assert!(fc.compaction_round(&history(), 91_000, CompactionSource::Manual, None).is_ok());
+    }
+
+    #[test]
+    fn reset_for_turn_clears_the_counters() {
+        let (mut fc, _) = with_delegate(100_000, vec![Ok(CompactionAttempt::Done(result(60_000)))]);
+        fc.compaction_round(&history(), 90_000, CompactionSource::Auto, None).unwrap();
+        fc.reset_for_turn();
+        assert!(fc.should_compact(60_000), "the monotonic guard is cleared too");
+    }
+
+    // ── phase handling ────────────────────────────────────────────────────
+
+    #[test]
+    fn cancel_returns_to_idle() {
+        let mut fc = FullCompaction::new(CompactionConfig::default(), model(100_000));
+        fc.phase = CompactionPhase::Running;
+        fc.cancel();
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+    }
+
+    #[test]
+    fn a_stranded_running_phase_is_reset_on_restore() {
+        let mut fc = FullCompaction::new(CompactionConfig::default(), model(100_000));
+        fc.restore(CompactionPhase::Running);
+        assert_eq!(fc.phase(), CompactionPhase::Idle);
+        assert!(!fc.is_compacting());
+    }
+
+    // ── handoff + micro ───────────────────────────────────────────────────
+
+    #[test]
+    fn handoff_info_records_the_trigger_source() {
+        let result = result(500);
+        let auto = CompactionHandoffInfo::from_result(&result, CompactionSource::Auto);
+        assert!(auto.is_auto);
+        assert_eq!(auto.tokens_before, 1000);
+        assert_eq!(auto.tokens_after, 500);
+        let manual = CompactionHandoffInfo::from_result(&result, CompactionSource::Manual);
+        assert!(!manual.is_auto);
+    }
+
+    #[test]
+    fn micro_compaction_detects_pressure_near_the_ceiling() {
+        let micro = MicroCompaction::new(1_000);
+        assert!(micro.detect(99_500, 100_000));
+        assert!(!micro.detect(98_000, 100_000));
+        assert!(!micro.detect(99_500, 0), "an unknown window never triggers");
     }
 }
