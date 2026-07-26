@@ -27,12 +27,32 @@ const LINE_SUFFIX = /:(\d+)(?::\d+)?$/;
 export function parseFileLink(href: string | undefined): FileLinkTarget | null {
   if (!href || href.startsWith("#")) return null;
 
+  // Fragments are split off first (before decoding, so an encoded `%23`
+  // stays literal): `README.md#usage` opens the file, and a GitHub-style
+  // `#L20` doubles as a line reference when no `:line` suffix is present.
   let raw = href;
+  let fragment = "";
+  const hashIndex = raw.indexOf("#");
+  if (hashIndex !== -1) {
+    fragment = raw.slice(hashIndex + 1);
+    raw = raw.slice(0, hashIndex);
+  }
+
   if (FILE_URI.test(raw)) {
+    raw = raw.replace(FILE_URI, "");
+    if (!raw.startsWith("/")) {
+      // Authority-bearing file URI: `file://server/share/x` is the standard
+      // form of a Windows UNC path; a `localhost` authority means none.
+      const slash = raw.indexOf("/");
+      const authority = slash === -1 ? raw : raw.slice(0, slash);
+      const rest = slash === -1 ? "" : raw.slice(slash);
+      raw = authority.toLowerCase() === "localhost" ? rest : `//${authority}${rest}`;
+    }
     // `file:///C:/x` keeps `/C:/x` after the scheme — drop the extra slash.
-    raw = raw.replace(FILE_URI, "").replace(/^\/(?=[A-Za-z]:[\\/])/, "");
+    raw = raw.replace(/^\/(?=[A-Za-z]:[\\/])/, "");
   } else if (VSCODE_FILE_URI.test(raw)) {
-    raw = raw.replace(VSCODE_FILE_URI, "");
+    // Same drive normalization: `vscode://file/C:/x` yields `/C:/x`.
+    raw = raw.replace(VSCODE_FILE_URI, "").replace(/^\/(?=[A-Za-z]:[\\/])/, "");
   } else if (EXTERNAL_SCHEME.test(raw)) {
     return null;
   } else if (raw.startsWith("//")) {
@@ -52,6 +72,7 @@ export function parseFileLink(href: string | undefined): FileLinkTarget | null {
   } catch {
     // Malformed escape: keep the text as written.
   }
+  if (!raw) return null;
 
   const lineMatch = LINE_SUFFIX.exec(raw);
   if (lineMatch !== null) {
@@ -62,7 +83,14 @@ export function parseFileLink(href: string | undefined): FileLinkTarget | null {
       return path ? { path, line } : null;
     }
   }
-  return raw ? { path: raw } : null;
+  const fragmentLine = /^L(\d+)$/.exec(fragment);
+  if (fragmentLine !== null) {
+    const line = Number.parseInt(fragmentLine[1], 10);
+    if (line >= 1) {
+      return { path: raw, line };
+    }
+  }
+  return { path: raw };
 }
 
 /**

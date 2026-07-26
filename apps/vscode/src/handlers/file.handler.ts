@@ -90,10 +90,9 @@ const openFile: Handler<OpenFileParams, { ok: boolean }> = async ({ filePath, li
 };
 
 function isAbsolutePathInput(input: string): boolean {
-  // Same detection as resolveWorkspacePath's rejection branch.
-  return path.posix.isAbsolute(input.replaceAll("\\", "/"))
-    || path.win32.isAbsolute(input)
-    || /^[A-Za-z]:/.test(input);
+  // Drive-relative inputs (`C:foo`) are not absolute: they fall through to
+  // resolveWorkspacePath, which rejects them the same way it always has.
+  return path.posix.isAbsolute(input.replaceAll("\\", "/")) || path.win32.isAbsolute(input);
 }
 
 const openFileDiff: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {

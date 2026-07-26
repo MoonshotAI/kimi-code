@@ -306,6 +306,18 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(areSameFsPath((uri as vscode.Uri).fsPath, inside)).toBe(true);
   });
 
+  it("refuses a drive-relative path", async () => {
+    const workDir = join(root, "project");
+    await mkdir(workDir);
+    await writeFile(join(workDir, "secret.txt"), "secret");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "C:secret.txt" }, ctx);
+
+    expect(result).toEqual({ ok: false });
+    expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
+  });
+
   it("refuses an absolute path outside the selected working directory", async () => {
     const workDir = join(root, "project");
     await mkdir(workDir);

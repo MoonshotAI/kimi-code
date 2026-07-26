@@ -43,6 +43,25 @@ describe("parseFileLink", () => {
     expect(parseFileLink("vscode://file/abs/path/report.md:33")).toEqual({ path: "/abs/path/report.md", line: 33 });
   });
 
+  it("parses a Windows drive vscode file URI without a bogus leading slash", () => {
+    expect(parseFileLink("vscode://file/C:/proj/file.ts:7")).toEqual({ path: "C:/proj/file.ts", line: 7 });
+  });
+
+  it("parses an authority-bearing file URI as a UNC path", () => {
+    expect(parseFileLink("file://server/share/project/file.ts")).toEqual({ path: "//server/share/project/file.ts" });
+  });
+
+  it("treats a localhost file URI authority as none", () => {
+    expect(parseFileLink("file://localhost/abs/report.md")).toEqual({ path: "/abs/report.md" });
+  });
+
+  it("splits fragments off the path and reads GitHub-style line fragments", () => {
+    expect(parseFileLink("README.md#usage")).toEqual({ path: "README.md" });
+    expect(parseFileLink("src/app.ts#L20")).toEqual({ path: "src/app.ts", line: 20 });
+    expect(parseFileLink("app.ts:12#L99")).toEqual({ path: "app.ts", line: 12 });
+    expect(parseFileLink("file:///abs/report.md#L2")).toEqual({ path: "/abs/report.md", line: 2 });
+  });
+
   it("parses a native Windows path with a line suffix", () => {
     expect(parseFileLink("C:\\proj\\file.ts:7")).toEqual({ path: "C:\\proj\\file.ts", line: 7 });
   });
