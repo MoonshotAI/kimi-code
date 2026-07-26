@@ -8,6 +8,8 @@
 /// decide whether to continue or stop.
 
 pub mod completion_verifier;
+pub mod injection;
+pub mod judge;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
