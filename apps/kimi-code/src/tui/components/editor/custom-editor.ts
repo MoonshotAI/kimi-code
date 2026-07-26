@@ -126,6 +126,7 @@ export class CustomEditor extends Editor {
   public onNonEscapeInput?: () => void;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
+  public onCopySelection?: (text: string) => void;
   public onToggleToolExpand?: () => void;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
@@ -391,6 +392,11 @@ export class CustomEditor extends Editor {
     }
 
     if (matchesKey(normalized, Key.ctrl('c'))) {
+      const selectedText = this.getSelectedText();
+      if (selectedText !== undefined) {
+        this.onCopySelection?.(selectedText);
+        return;
+      }
       this.onCtrlC?.();
       return;
     }
@@ -461,6 +467,10 @@ export class CustomEditor extends Editor {
     if (matchesKey(normalized, Key.escape)) {
       if (this.hasAutocompleteActivity()) {
         this.cancelAutocompleteActivity();
+        return;
+      }
+      if (this.hasSelection()) {
+        this.clearSelection();
         return;
       }
       this.onEscape?.();

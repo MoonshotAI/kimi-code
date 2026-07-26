@@ -2,6 +2,7 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
@@ -57,6 +58,8 @@ export interface EditorKeyboardHost {
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
+  suspendTerminalMouseTracking(): void;
+  refreshTerminalMouseTracking(): void;
 }
 
 export class EditorKeyboardController {
@@ -120,6 +123,10 @@ export class EditorKeyboardController {
 
     editor.onNonEscapeInput = () => {
       this.clearPendingUndoEsc();
+    };
+
+    editor.onCopySelection = (text: string) => {
+      void copyTextToClipboard(text).catch(() => undefined);
     };
 
     editor.onCtrlC = () => {
@@ -525,6 +532,7 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
+    this.host.suspendTerminalMouseTracking();
     state.ui.stop();
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
@@ -542,6 +550,7 @@ export class EditorKeyboardController {
         process.stdin.pause();
       }
       state.ui.start();
+      this.host.refreshTerminalMouseTracking();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
       this.host.setExternalEditorRunning(false);

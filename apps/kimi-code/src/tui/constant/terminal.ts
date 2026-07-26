@@ -17,6 +17,12 @@ export const TERMINAL_FOCUS_OUT = `${ESC}[O`;
 export const ENABLE_TERMINAL_FOCUS_REPORTING = `${ESC}[?1004h`;
 export const DISABLE_TERMINAL_FOCUS_REPORTING = `${ESC}[?1004l`;
 
+// Xterm SGR mouse reporting. Button-event tracking reports drag motion while
+// a button is held; SGR mode keeps coordinates unambiguous in wide terminals.
+export const ENABLE_TERMINAL_MOUSE_REPORTING = `${ESC}[?1002h${ESC}[?1006h`;
+export const DISABLE_TERMINAL_MOUSE_REPORTING =
+  `${ESC}[?1006l${ESC}[?1003l${ESC}[?1002l${ESC}[?1000l`;
+
 // Standard OSC 11 background-color query. The response regex intentionally
 // allows a missing leading ESC because terminals can echo replies alongside
 // other raw input, but it requires an OSC terminator so fragmented color

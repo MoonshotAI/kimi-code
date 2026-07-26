@@ -34,6 +34,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
     await host.refreshPluginCommands();
   }
   host.refreshSlashCommandAutocomplete();
+  host.refreshTerminalMouseTracking();
   applyRuntimeConfig(host, config);
   await applyReloadedTuiConfig(host, tuiConfig);
 

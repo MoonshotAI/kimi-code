@@ -146,6 +146,7 @@ export interface SlashCommandHost {
    * it while still session-less.
    */
   hydrateLazyConfigDefaults(): Promise<void>;
+  refreshTerminalMouseTracking(): void;
 
   // Session
   requireSession(): Session;

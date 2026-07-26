@@ -6,6 +6,13 @@ import {
   type EditorKeyboardHost,
 } from '#/tui/controllers/editor-keyboard';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+
+vi.mock('#/utils/clipboard/clipboard-text', () => ({
+  copyTextToClipboard: vi.fn(async () => 'native'),
+}));
+
+const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 interface Harness {
   readonly host: EditorKeyboardHost;
@@ -82,6 +89,21 @@ function pressNonEscape(editor: Harness['editor']): void {
   if (handler === undefined) throw new Error('onNonEscapeInput handler not installed');
   (handler as () => void)();
 }
+
+describe('EditorKeyboardController selection copy', () => {
+  it('writes selected text to the clipboard without changing editor content', async () => {
+    copyTextToClipboardMock.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    const { editor } = createHarness();
+    const handler = editor['onCopySelection'];
+    if (handler === undefined) throw new Error('onCopySelection handler not installed');
+
+    (handler as unknown as (text: string) => void)('selected text');
+    await Promise.resolve();
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith('selected text');
+    expect(editor['setText']).not.toHaveBeenCalled();
+  });
+});
 
 describe('EditorKeyboardController double-Esc undo', () => {
   beforeEach(() => {

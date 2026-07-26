@@ -116,6 +116,41 @@ describe('CustomEditor onNonEscapeInput', () => {
   });
 });
 
+describe('CustomEditor Ctrl+C selection copy', () => {
+  it('copies the selection instead of invoking the app-level Ctrl+C action', () => {
+    const editor = makeEditor();
+    const onCopySelection = vi.fn();
+    const onCtrlC = vi.fn();
+    editor.onCopySelection = onCopySelection;
+    editor.onCtrlC = onCtrlC;
+    editor.setText('hello world');
+    editor.beginSelection({ line: 0, col: 6 });
+    editor.updateSelection({ line: 0, col: 11 });
+    editor.finishSelection();
+
+    editor.handleInput('\u0003');
+
+    expect(onCopySelection).toHaveBeenCalledWith('world');
+    expect(onCtrlC).not.toHaveBeenCalled();
+    expect(editor.getText()).toBe('hello world');
+    expect(editor.hasSelection()).toBe(true);
+  });
+
+  it('preserves the existing app-level Ctrl+C behavior without a selection', () => {
+    const editor = makeEditor();
+    const onCopySelection = vi.fn();
+    const onCtrlC = vi.fn();
+    editor.onCopySelection = onCopySelection;
+    editor.onCtrlC = onCtrlC;
+    editor.setText('hello world');
+
+    editor.handleInput('\u0003');
+
+    expect(onCopySelection).not.toHaveBeenCalled();
+    expect(onCtrlC).toHaveBeenCalledOnce();
+  });
+});
+
 describe('CustomEditor slash argument completion refresh', () => {
   it('reopens /add-dir directory completions after tab completion and entering slash', async () => {
     const editor = makeEditor();

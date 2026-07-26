@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
@@ -16,6 +17,10 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import { REPLAY_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { quoteShellArg } from '#/utils/shell-quote';
+import {
+  DISABLE_TERMINAL_MOUSE_REPORTING,
+  ENABLE_TERMINAL_MOUSE_REPORTING,
+} from '#/tui/constant/terminal';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -48,6 +53,11 @@ interface RuntimeStateDriver extends StartupDriver {
 
 interface ThemeTrackingDriver extends StartupDriver {
   refreshTerminalThemeTracking(): void;
+}
+
+interface MouseTrackingDriver extends StartupDriver {
+  refreshTerminalMouseTracking(): void;
+  suspendTerminalMouseTracking(): void;
 }
 
 interface MigrateExitDriver extends StartupDriver {
@@ -1275,6 +1285,33 @@ describe('KimiTUI startup', () => {
     driver.state.editor.onCtrlC?.();
 
     expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('tracks terminal mouse input only while the main editor is mounted', () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MouseTrackingDriver;
+    const { write, addInputListener, removeInputListener } = captureInputListeners(driver);
+
+    try {
+      setExperimentalFeatures([{ id: 'terminal_mouse_input', enabled: true }]);
+      driver.state.editorContainer.clear();
+      driver.state.editorContainer.addChild(driver.state.editor);
+
+      driver.refreshTerminalMouseTracking();
+
+      expect(addInputListener).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledWith(ENABLE_TERMINAL_MOUSE_REPORTING);
+
+      driver.suspendTerminalMouseTracking();
+      expect(removeInputListener).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_MOUSE_REPORTING);
+
+      driver.state.editorContainer.clear();
+      driver.refreshTerminalMouseTracking();
+      expect(addInputListener).toHaveBeenCalledOnce();
+    } finally {
+      setExperimentalFeatures([]);
+    }
   });
 
   it('tracks terminal theme reports while auto theme is active', () => {
