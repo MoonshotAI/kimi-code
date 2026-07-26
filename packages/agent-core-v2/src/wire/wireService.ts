@@ -6,7 +6,11 @@
  * including creation-time sealing, metadata, migrations, atomic healing
  * rewrites, blob dehydration and rehydration plus an ordered post-restore hook.
  * It is bound at Agent scope because the aggregate identity is the Agent
- * identity.
+ * identity. Replay silently skips `LEGACY_RECORD_TYPES` — journal vocabulary
+ * this engine knows of but deliberately does not replay: records of retired
+ * features (micro compaction) and v1-only bookkeeping it recomputes live
+ * (context token counts). Genuinely unknown types are still reported, and
+ * healing rewrites preserve legacy records for readers that understand them.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -48,6 +52,11 @@ import {
 } from './record';
 
 const MAX_DRAIN = 100;
+
+const LEGACY_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'micro_compaction.apply',
+  'context.update_token_count',
+]);
 
 export class CycleError extends WireError {
   constructor(readonly depth: number, readonly opTypes: readonly string[]) {
@@ -213,7 +222,9 @@ export class WireService extends Disposable implements IWireService {
   private replayRecord(record: WireRecord, index: number): void {
     const descriptor = OP_REGISTRY.get(record.type);
     if (descriptor === undefined) {
-      this.reportSkippedRecord(record.type, index);
+      if (!LEGACY_RECORD_TYPES.has(record.type)) {
+        this.reportSkippedRecord(record.type, index);
+      }
       return;
     }
     const payload = descriptor.schema.safeParse(wireRecordToPayload(record));
