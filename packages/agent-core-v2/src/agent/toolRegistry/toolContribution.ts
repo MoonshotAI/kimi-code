@@ -4,15 +4,17 @@
  * Tools contribute themselves at module load via
  * `registerAgentTool(identifier, ctor, options?)` — a double registration:
  * the tool is registered as an Agent-scope DI service
- * (`registerScopedService`) and recorded in this contribution table. No tool
- * is constructed at scope creation — `InstantiationType.Eager` only skips
- * the lazy proxy at resolve time in this DI, so the runtime registry always
- * holds real instances, never proxies.
+ * (`registerScopedService`) and recorded in this contribution table. The DI
+ * registration opts out of scope creation's `instantiateAll` sweep
+ * (`instantiateWithScope: false`), so no tool constructor runs at scope
+ * creation — constructors may legitimately throw when their host capability
+ * is absent (e.g. `WebSearchTool` without a configured provider), and the
+ * runtime registry always holds real instances, never proxies.
  * `AgentToolActivationService` (`toolActivation`, L4) consumes the table when
  * an Agent is created: for each contribution whose `when` predicate holds and
  * whose `name` the bound Profile's tool policy allows, it resolves the
- * service through the container (`accessor.get`, triggering the Delayed
- * instantiation) and registers it into the per-agent runtime registry. The
+ * service through the container (`accessor.get`, triggering construction) and
+ * registers it into the per-agent runtime registry. The
  * declared `name` is what lets activation filter without instantiating.
  *
  * `registerAgentTool` is deliberately not "builtin"-scoped: the same API is
@@ -69,6 +71,9 @@ export function registerAgentTool<T extends AnyAgentTool>(
     ctor,
     InstantiationType.Eager,
     options.domain ?? 'unknown',
+    // Activation (`AgentToolActivationService.activate`) is the only
+    // resolution path — scope creation must not construct tools.
+    false,
   );
   _agentToolContributions.push({ id, ctor, options });
 }

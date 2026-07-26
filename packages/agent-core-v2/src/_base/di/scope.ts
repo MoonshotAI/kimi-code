@@ -7,7 +7,9 @@
  * graph, so dependencies are always constructed before their dependents and
  * cycles still throw `CyclicDependencyError`; `Delayed` descriptors only
  * materialize their lazy proxy at scope creation — the real constructor
- * still defers to first property access.
+ * still defers to first property access. Registrations with an explicit
+ * activation pass (e.g. agent tools) opt out of this sweep via
+ * `SyncDescriptor.instantiateWithScope = false`.
  */
 
 import { SyncDescriptor } from './descriptors';
@@ -39,12 +41,14 @@ export function registerScopedService<T>(
   ctor: new (...args: any[]) => T,
   type: InstantiationType = InstantiationType.Eager,
   domain: string = 'unknown',
+  instantiateWithScope: boolean = true,
 ): void {
   const descriptor = new SyncDescriptor<T>(
     ctor,
     [],
     type === InstantiationType.Delayed,
   );
+  descriptor.instantiateWithScope = instantiateWithScope;
   _scopedRegistry.push({
     scope,
     id: id as ServiceIdentifier<unknown>,
@@ -101,7 +105,11 @@ function instantiateAll(
   instantiation: IInstantiationService,
   collection: ServiceCollection,
 ): void {
-  collection.forEach((id) => {
+  collection.forEach((id, value) => {
+    // Registrations that own an explicit activation pass (e.g. agent tools)
+    // opt out via `instantiateWithScope: false`; scope creation must not run
+    // their constructors. Seeds are plain instances, not descriptors.
+    if (value instanceof SyncDescriptor && !value.instantiateWithScope) return;
     instantiation.invokeFunction((accessor) => accessor.get(id));
   });
 }
