@@ -87,28 +87,26 @@ pub fn interpolate(template: &str, params: &HashMap<String, String>) -> String {
 /// 2. Try `fallback` (usually English).
 /// 3. Return the `key` itself as the last resort.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `locale_json` or `fallback_json` is not valid JSON.
+/// Returns `Err` if `locale_json` or `fallback_json` is not valid JSON.
 pub fn translate(
     locale_json: &str,
     fallback_json: &str,
     key: &str,
     params: Option<&HashMap<String, String>>,
-) -> String {
-    let locale_data: Value =
-        serde_json::from_str(locale_json).expect("locale_json must be valid JSON");
-    let fallback_data: Value =
-        serde_json::from_str(fallback_json).expect("fallback_json must be valid JSON");
+) -> Result<String, serde_json::Error> {
+    let locale_data: Value = serde_json::from_str(locale_json)?;
+    let fallback_data: Value = serde_json::from_str(fallback_json)?;
 
     let raw = resolve(&locale_data, key)
         .or_else(|| resolve(&fallback_data, key))
         .unwrap_or(key);
 
-    match params {
+    Ok(match params {
         Some(p) => interpolate(raw, p),
         None => raw.to_string(),
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -126,18 +124,21 @@ pub struct BatchResult {
 ///
 /// This is more efficient than calling `translate()` N times when you have
 /// many keys to resolve against the same locale data.
+///
+/// # Errors
+///
+/// Returns `Err` if `locale_json` or `fallback_json` is not valid JSON.
 pub fn translate_batch(
     locale_json: &str,
     fallback_json: &str,
     keys: &[String],
     params: Option<&HashMap<String, String>>,
-) -> Vec<BatchResult> {
-    let locale_data: Value =
-        serde_json::from_str(locale_json).expect("locale_json must be valid JSON");
-    let fallback_data: Value =
-        serde_json::from_str(fallback_json).expect("fallback_json must be valid JSON");
+) -> Result<Vec<BatchResult>, serde_json::Error> {
+    let locale_data: Value = serde_json::from_str(locale_json)?;
+    let fallback_data: Value = serde_json::from_str(fallback_json)?;
 
-    keys.iter()
+    Ok(keys
+        .iter()
         .map(|key| {
             let raw = resolve(&locale_data, key)
                 .or_else(|| resolve(&fallback_data, key))
@@ -151,7 +152,7 @@ pub fn translate_batch(
                 message,
             }
         })
-        .collect()
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -183,55 +184,69 @@ impl CachedTranslator {
     }
 
     /// Parse (or retrieve from cache) a JSON string into a Value.
-    fn parse(&self, json: &str) -> Value {
-        // Fast path: check cache (read lock)
-        if let Some(cached) = self.cache.read().unwrap().get(json) {
-            return cached.clone();
+    fn parse(&self, json: &str) -> Result<Value, serde_json::Error> {
+        // Fast path: check cache (read lock). Poisoned locks are recovered via
+        // `into_inner` — a panicking writer must not cascade failures here.
+        if let Some(cached) = self
+            .cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(json)
+        {
+            return Ok(cached.clone());
         }
 
         // Slow path: parse and cache (write lock)
-        let value: Value =
-            serde_json::from_str(json).expect("locale JSON must be valid");
+        let value: Value = serde_json::from_str(json)?;
         self.cache
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(json.to_string(), value.clone());
-        value
+        Ok(value)
     }
 
     /// Translate a single key, using cached JSON parsing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `locale_json` or `fallback_json` is not valid JSON.
     pub fn translate(
         &self,
         locale_json: &str,
         fallback_json: &str,
         key: &str,
         params: Option<&HashMap<String, String>>,
-    ) -> String {
-        let locale_data = self.parse(locale_json);
-        let fallback_data = self.parse(fallback_json);
+    ) -> Result<String, serde_json::Error> {
+        let locale_data = self.parse(locale_json)?;
+        let fallback_data = self.parse(fallback_json)?;
 
         let raw = resolve(&locale_data, key)
             .or_else(|| resolve(&fallback_data, key))
             .unwrap_or(key);
 
-        match params {
+        Ok(match params {
             Some(p) => interpolate(raw, p),
             None => raw.to_string(),
-        }
+        })
     }
 
     /// Translate multiple keys in a batch, parsing each locale JSON once.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `locale_json` or `fallback_json` is not valid JSON.
     pub fn translate_batch(
         &self,
         locale_json: &str,
         fallback_json: &str,
         keys: &[String],
         params: Option<&HashMap<String, String>>,
-    ) -> Vec<BatchResult> {
-        let locale_data = self.parse(locale_json);
-        let fallback_data = self.parse(fallback_json);
+    ) -> Result<Vec<BatchResult>, serde_json::Error> {
+        let locale_data = self.parse(locale_json)?;
+        let fallback_data = self.parse(fallback_json)?;
 
-        keys.iter()
+        Ok(keys
+            .iter()
             .map(|key| {
                 let raw = resolve(&locale_data, key)
                     .or_else(|| resolve(&fallback_data, key))
@@ -245,12 +260,12 @@ impl CachedTranslator {
                     message,
                 }
             })
-            .collect()
+            .collect())
     }
 
     /// Clear the parsed-JSON cache (useful when locale data is reloaded).
     pub fn clear_cache(&self) {
-        self.cache.write().unwrap().clear();
+        self.cache.write().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -427,7 +442,7 @@ mod tests {
     fn test_translate_zh() {
         let mut params = HashMap::new();
         params.insert("name".to_string(), "世界".to_string());
-        let result = translate(zh(), en(), "common.greeting", Some(&params));
+        let result = translate(zh(), en(), "common.greeting", Some(&params)).unwrap();
         assert_eq!(result, "你好，世界！");
     }
 
@@ -435,32 +450,32 @@ mod tests {
     fn test_translate_zh_missing_fallsback_to_en() {
         let data_zh = r#"{"common": {"ok": "确定"}}"#;
         let data_en = r#"{"common": {"foo": "bar"}}"#;
-        let result = translate(data_zh, data_en, "common.foo", None);
+        let result = translate(data_zh, data_en, "common.foo", None).unwrap();
         assert_eq!(result, "bar");
     }
 
     #[test]
     fn test_translate_missing_key_returns_key() {
-        let result = translate(en(), en(), "nonexistent.key", None);
+        let result = translate(en(), en(), "nonexistent.key", None).unwrap();
         assert_eq!(result, "nonexistent.key");
     }
 
     #[test]
     fn test_translate_no_params() {
-        let result = translate(en(), en(), "common.ok", None);
+        let result = translate(en(), en(), "common.ok", None).unwrap();
         assert_eq!(result, "OK");
     }
 
     #[test]
     fn test_translate_empty_params() {
         let params = HashMap::new();
-        let result = translate(en(), en(), "common.ok", Some(&params));
+        let result = translate(en(), en(), "common.ok", Some(&params)).unwrap();
         assert_eq!(result, "OK");
     }
 
     #[test]
     fn test_translate_zh_ok() {
-        let result = translate(zh(), en(), "common.ok", None);
+        let result = translate(zh(), en(), "common.ok", None).unwrap();
         assert_eq!(result, "确定");
     }
 
@@ -473,7 +488,7 @@ mod tests {
             "common.cancel".to_string(),
             "nonexistent.key".to_string(),
         ];
-        let results = translate_batch(en(), en(), &keys, None);
+        let results = translate_batch(en(), en(), &keys, None).unwrap();
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].message, "OK");
         assert_eq!(results[1].message, "Cancel");
@@ -486,7 +501,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("name".to_string(), "Alice".to_string());
         params.insert("item".to_string(), "File".to_string());
-        let results = translate_batch(zh(), en(), &keys, Some(&params));
+        let results = translate_batch(zh(), en(), &keys, Some(&params)).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].message, "你好，Alice！");
         assert_eq!(results[1].message, "未找到File");
@@ -495,7 +510,7 @@ mod tests {
     #[test]
     fn test_translate_batch_empty() {
         let keys: Vec<String> = vec![];
-        let results = translate_batch(en(), en(), &keys, None);
+        let results = translate_batch(en(), en(), &keys, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -504,7 +519,7 @@ mod tests {
     #[test]
     fn test_cached_translator_simple() {
         let t = CachedTranslator::new();
-        let msg = t.translate(en(), en(), "common.ok", None);
+        let msg = t.translate(en(), en(), "common.ok", None).unwrap();
         assert_eq!(msg, "OK");
     }
 
@@ -514,7 +529,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("name".to_string(), "Rust".to_string());
         let msg = t.translate(en(), en(), "common.greeting", Some(&params));
-        assert_eq!(msg, "Hello, Rust!");
+        assert_eq!(msg.unwrap(), "Hello, Rust!");
     }
 
     #[test]
@@ -522,7 +537,7 @@ mod tests {
         let t = CachedTranslator::new();
         let data_zh = r#"{"common": {"ok": "确定"}}"#;
         let data_en = r#"{"common": {"foo": "bar"}}"#;
-        let msg = t.translate(data_zh, data_en, "common.foo", None);
+        let msg = t.translate(data_zh, data_en, "common.foo", None).unwrap();
         assert_eq!(msg, "bar");
     }
 
@@ -533,7 +548,7 @@ mod tests {
             "common.ok".to_string(),
             "common.cancel".to_string(),
         ];
-        let results = t.translate_batch(en(), en(), &keys, None);
+        let results = t.translate_batch(en(), en(), &keys, None).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].message, "OK");
         assert_eq!(results[1].message, "Cancel");
@@ -542,10 +557,10 @@ mod tests {
     #[test]
     fn test_cached_translator_clear_cache() {
         let t = CachedTranslator::new();
-        let msg1 = t.translate(en(), en(), "common.ok", None);
+        let msg1 = t.translate(en(), en(), "common.ok", None).unwrap();
         assert_eq!(msg1, "OK");
         t.clear_cache();
-        let msg2 = t.translate(en(), en(), "common.ok", None);
+        let msg2 = t.translate(en(), en(), "common.ok", None).unwrap();
         assert_eq!(msg2, "OK");
     }
 
@@ -553,10 +568,10 @@ mod tests {
     fn test_cached_translator_locale_switch() {
         let t = CachedTranslator::new();
         // Translate with en
-        let en_msg = t.translate(en(), en(), "common.ok", None);
+        let en_msg = t.translate(en(), en(), "common.ok", None).unwrap();
         assert_eq!(en_msg, "OK");
         // Translate with zh (same cache, different key because JSON string differs)
-        let zh_msg = t.translate(zh(), en(), "common.ok", None);
+        let zh_msg = t.translate(zh(), en(), "common.ok", None).unwrap();
         assert_eq!(zh_msg, "确定");
         // Both should be cached independently
         assert_eq!(t.cache.read().unwrap().len(), 2);
@@ -568,7 +583,7 @@ mod tests {
     fn test_translate_key_with_dots_is_path_separator() {
         let data = r#"{"a": {"b": {"c": "value"}}}"#;
         // The key "a.b.c" is split into ["a", "b", "c"] path segments
-        let result = translate(data, data, "a.b.c", None);
+        let result = translate(data, data, "a.b.c", None).unwrap();
         assert_eq!(result, "value");
     }
 
@@ -577,7 +592,7 @@ mod tests {
         let data = r#"{"greeting": "こんにちは、{{name}}さん"}"#;
         let mut params = HashMap::new();
         params.insert("name".to_string(), "世界".to_string());
-        let result = translate(data, data, "greeting", Some(&params));
+        let result = translate(data, data, "greeting", Some(&params)).unwrap();
         assert_eq!(result, "こんにちは、世界さん");
     }
 

@@ -101,7 +101,7 @@ pub fn glob_search(config: &GlobConfig) -> GlobResult {
         let search_path = &search_path;
 
         Box::new(move |entry| {
-            if all_files.lock().unwrap().len() >= MAX_MATCHES * 2 {
+            if all_files.lock().unwrap_or_else(|e| e.into_inner()).len() >= MAX_MATCHES * 2 {
                 return ignore::WalkState::Quit;
             }
 
@@ -127,12 +127,12 @@ pub fn glob_search(config: &GlobConfig) -> GlobResult {
                 .and_then(|m| m.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
 
-            all_files.lock().unwrap().push((path.to_path_buf(), mtime));
+            all_files.lock().unwrap_or_else(|e| e.into_inner()).push((path.to_path_buf(), mtime));
             ignore::WalkState::Continue
         })
     });
 
-    let mut sorted: Vec<(PathBuf, SystemTime)> = all_files.into_inner().unwrap();
+    let mut sorted: Vec<(PathBuf, SystemTime)> = all_files.into_inner().unwrap_or_else(|e| e.into_inner());
     sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     let truncated = sorted.len() > MAX_MATCHES;

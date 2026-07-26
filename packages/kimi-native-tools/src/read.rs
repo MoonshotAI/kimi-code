@@ -752,4 +752,69 @@ mod tests {
         assert!(result.error.is_none());
         assert_eq!(result.line_count, 0);
     }
+
+    #[test]
+    fn test_read_nonexistent_file_returns_error() {
+        let result = read_file(&ReadConfig {
+            path: "/nonexistent/path/file.txt".to_string(),
+            line_offset: None,
+            n_lines: None,
+        });
+        assert!(result.error.is_some());
+        // The error message varies by platform; just check an error was returned
+        assert!(!result.error.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_read_negative_offset_tail_1() {
+        let f = write_temp(b"line1\nline2\nline3\nline4\nline5\n");
+        let result = read_file(&ReadConfig {
+            path: f.path().to_str().unwrap().to_string(),
+            line_offset: Some(-1),
+            n_lines: None,
+        });
+        assert!(result.error.is_none(), "{}", result.error.unwrap_or_default());
+        assert!(result.content.contains("5\tline5"));
+    }
+
+    #[test]
+    fn test_read_negative_offset_tail_3() {
+        let f = write_temp(b"line1\nline2\nline3\nline4\nline5\n");
+        let result = read_file(&ReadConfig {
+            path: f.path().to_str().unwrap().to_string(),
+            line_offset: Some(-3),
+            n_lines: None,
+        });
+        assert!(result.error.is_none(), "{}", result.error.unwrap_or_default());
+        assert!(result.content.contains("3\tline3"));
+        assert!(result.content.contains("4\tline4"));
+        assert!(result.content.contains("5\tline5"));
+    }
+
+    #[test]
+    fn test_read_with_n_lines_cap() {
+        let f = write_temp(b"line1\nline2\nline3\nline4\nline5\n");
+        let result = read_file(&ReadConfig {
+            path: f.path().to_str().unwrap().to_string(),
+            line_offset: Some(1),
+            n_lines: Some(2),
+        });
+        assert!(result.error.is_none());
+        assert!(result.content.contains("line1"));
+        assert!(result.content.contains("line2"));
+        assert!(!result.content.contains("line3"));
+    }
+
+    #[test]
+    fn test_read_n_lines_exceeds_max() {
+        let f = write_temp(b"line1\nline2\n");
+        let result = read_file(&ReadConfig {
+            path: f.path().to_str().unwrap().to_string(),
+            line_offset: Some(1),
+            n_lines: Some(9999),
+        });
+        assert!(result.error.is_none());
+        assert!(result.content.contains("line1"));
+        assert!(result.content.contains("line2"));
+    }
 }

@@ -199,7 +199,7 @@ impl GoalAccountingState {
 
     /// Begin a new turn. Call at turn start with the current token usage.
     pub fn start_turn(&self, turn_id: &str, token_usage_at_start: &TokenUsage) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.current_turn_id = Some(turn_id.to_string());
         inner.turns.insert(
             turn_id.to_string(),
@@ -209,7 +209,7 @@ impl GoalAccountingState {
 
     /// Returns the current turn ID, if any.
     pub fn current_turn_id(&self) -> Option<String> {
-        self.inner.lock().unwrap().current_turn_id.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).current_turn_id.clone()
     }
 
     /// Record updated token usage for a turn. Returns the delta if the turn
@@ -219,7 +219,7 @@ impl GoalAccountingState {
         turn_id: &str,
         total_usage: &TokenUsage,
     ) -> Option<RecordedTokenDelta> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let turn = inner.turns.get_mut(turn_id)?;
         turn.current_usage = total_usage.clone();
         // Only account if this turn has an active goal
@@ -235,7 +235,7 @@ impl GoalAccountingState {
 
     /// Mark a turn as working towards a specific goal.
     pub fn mark_turn_goal_active(&self, turn_id: &str, goal_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.active_goal_id = Some(goal_id.to_string());
             // Reset baseline so we don't double-count tokens from before the goal
@@ -247,7 +247,7 @@ impl GoalAccountingState {
 
     /// Mark the current turn's goal as active (for create-in-turn flow).
     pub fn mark_current_turn_goal_active(&self, goal_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let turn_id = inner.current_turn_id.clone();
         if let Some(tid) = turn_id {
             if let Some(turn) = inner.turns.get_mut(&tid) {
@@ -261,7 +261,7 @@ impl GoalAccountingState {
 
     /// Mark a goal as active when no turn is running (idle goal after resume).
     pub fn mark_idle_goal_active(&self, goal_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.wall_clock.active_goal_id = Some(goal_id.to_string());
         inner.wall_clock.reset_baseline();
     }
@@ -269,7 +269,7 @@ impl GoalAccountingState {
     /// Snapshot chargeable progress for a turn (token delta + time delta).
     /// Returns None if there is nothing to charge.
     pub fn progress_snapshot(&self, turn_id: &str) -> Option<GoalProgressSnapshot> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let turn = inner.turns.get(turn_id)?;
         let expected_goal_id = turn.active_goal_id.clone()?;
         let token_delta = turn.token_delta();
@@ -295,7 +295,7 @@ impl GoalAccountingState {
 
     /// Snapshot chargeable progress when idle (wall-clock only, no tokens).
     pub fn idle_progress_snapshot(&self) -> Option<GoalProgressSnapshot> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let expected_goal_id = inner.wall_clock.active_goal_id.clone()?;
         let time_delta = inner.wall_clock.elapsed_secs();
         if time_delta == 0 {
@@ -310,7 +310,7 @@ impl GoalAccountingState {
 
     /// Mark the snapshot's delta as accounted (reset baselines).
     pub fn mark_progress_accounted(&self, snapshot: &GoalProgressSnapshot) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         // Reset turn token baseline if there's a matching turn
         let turn_id = inner.current_turn_id.clone();
         if let Some(tid) = turn_id {
@@ -324,7 +324,7 @@ impl GoalAccountingState {
 
     /// Clear the active goal from all tracking.
     pub fn clear_active_goal(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         // Remove goal from current turn
         let turn_id = inner.current_turn_id.clone();
         if let Some(tid) = turn_id {
@@ -339,7 +339,7 @@ impl GoalAccountingState {
 
     /// Check if a turn is the current active goal turn.
     pub fn turn_is_current_active_goal(&self, turn_id: &str) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.current_turn_id.as_deref() != Some(turn_id) {
             return false;
         }
@@ -352,7 +352,7 @@ impl GoalAccountingState {
 
     /// Finish a turn — remove its tracking state.
     pub fn finish_turn(&self, turn_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.turns.remove(turn_id);
         if inner.current_turn_id.as_deref() == Some(turn_id) {
             inner.current_turn_id = None;

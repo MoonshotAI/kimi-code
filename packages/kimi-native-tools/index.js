@@ -42,7 +42,7 @@ function loadBinding() {
   // Try from release build directory (cargo build --release).
   const ext = process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
   // Rust crate name is kimi_native_tools (underscores), JS package is kimi-native-tools (hyphens).
-  const rustName = BINDING_NAME.replace(/-/g, '_');
+  const rustName = BINDING_NAME.replaceAll(/-/g, '_');
   const releasePath = path.join(__dirname, 'target', 'release', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(releasePath)) {
@@ -64,7 +64,7 @@ function loadBinding() {
 
   throw new Error(
     `Failed to load kimi-native-tools binding for ${process.platform}-${process.arch}. ` +
-    'Run `npm run build` or `cargo build --release` to compile the native module.'
+      'Run `npm run build` or `cargo build --release` to compile the native module.',
   );
 }
 
@@ -133,11 +133,7 @@ async function nativeFetchUrl(url, options = {}) {
  * @returns {Promise<{results: Array<{title: string, url: string, snippet: string, siteName?: string}>, error?: string}>}
  */
 async function nativeWebSearch(query, options = {}) {
-  return binding.nativeWebSearch(
-    query,
-    options.timeoutMs ?? null,
-    options.maxResults ?? null,
-  );
+  return binding.nativeWebSearch(query, options.timeoutMs ?? null, options.maxResults ?? null);
 }
 
 // ============================================================================
@@ -186,11 +182,7 @@ async function nativeLlmStream(config) {
  * @returns {Promise<{ content: string, lineCount: number, error?: string }>}
  */
 async function nativeRead(path, options = {}) {
-  return binding.nativeRead(
-    path,
-    options.lineOffset ?? null,
-    options.nLines ?? null,
-  );
+  return binding.nativeRead(path, options.lineOffset ?? null, options.nLines ?? null);
 }
 
 // ============================================================================
@@ -207,11 +199,7 @@ async function nativeRead(path, options = {}) {
  * @returns {Promise<Array<{ content: string, lineCount: number, error?: string }>>}
  */
 async function nativeBatchRead(paths, options = {}) {
-  return binding.nativeBatchRead(
-    paths,
-    options.lineOffsets ?? null,
-    options.nLinesArray ?? null,
-  );
+  return binding.nativeBatchRead(paths, options.lineOffsets ?? null, options.nLinesArray ?? null);
 }
 
 // ============================================================================
@@ -228,11 +216,7 @@ async function nativeBatchRead(paths, options = {}) {
  * @returns {Promise<{ bytesWritten: number, error?: string }>}
  */
 async function nativeWrite(path, content, options = {}) {
-  return binding.nativeWrite(
-    path,
-    content,
-    options.mode ?? null,
-  );
+  return binding.nativeWrite(path, content, options.mode ?? null);
 }
 // ============================================================================
 // File cache
@@ -262,12 +246,7 @@ function nativeFileCacheInvalidate(path) {
  * @returns {{ success: boolean, error?: string, replacements: number }}
  */
 function nativeEdit(path, oldString, newString, options = {}) {
-  return binding.nativeEdit(
-    path,
-    oldString,
-    newString,
-    options.replaceAll ?? null,
-  );
+  return binding.nativeEdit(path, oldString, newString, options.replaceAll ?? null);
 }
 
 // ============================================================================
@@ -329,11 +308,7 @@ function nativeGrep(pattern, options = {}) {
  * @returns {{ files: string[], error?: string, truncated: boolean }}
  */
 function nativeGlob(pattern, options = {}) {
-  return binding.nativeGlob(
-    pattern,
-    options.path ?? null,
-    options.includeDirs ?? null,
-  );
+  return binding.nativeGlob(pattern, options.path ?? null, options.includeDirs ?? null);
 }
 
 /**
@@ -363,10 +338,7 @@ function nativeGlobMatchesAny(globs, path) {
  * @returns {{ output: string, error?: string }}
  */
 function nativeListDirectory(options = {}) {
-  return binding.nativeListDirectory(
-    options.path ?? null,
-    options.collapseHiddenDirs ?? null,
-  );
+  return binding.nativeListDirectory(options.path ?? null, options.collapseHiddenDirs ?? null);
 }
 
 // ============================================================================
@@ -376,7 +348,7 @@ function nativeListDirectory(options = {}) {
 /**
  * Best-effort pixel-dimension reader for common raster formats.
  *
- * @param {Buffer|Uint8Array} data - Raw file bytes (at least the first few hundred bytes).
+ * @param {Uint8Array} data - Raw file bytes (at least the first few hundred bytes). `Buffer` is accepted, being a `Uint8Array` subclass.
  * @returns {{ width: number, height: number } | null} Image dimensions or null if unknown.
  */
 function nativeSniffImageDimensions(data) {
@@ -389,13 +361,15 @@ function nativeSniffImageDimensions(data) {
  * Uses file extension first, then falls back to magic-byte sniffing.
  *
  * @param {string} path - File path (used for extension-based detection).
- * @param {Buffer|Uint8Array} header - First bytes of the file content (up to 512 bytes).
+ * @param {Uint8Array} header - First bytes of the file content (up to 512 bytes). `Buffer` is accepted, being a `Uint8Array` subclass.
  * @returns {{ kind: string, mimeType: string }}
  */
 function nativeDetectFileType(path, header) {
   const r = binding.nativeDetectFileType(path, new Uint8Array(header));
   // napi-rs: struct fields arrive as snake_case; normalize to camelCase.
-  return r ? { kind: r.kind, mimeType: r.mime_type ?? r.mimeType } : { kind: 'unknown', mimeType: '' };
+  return r
+    ? { kind: r.kind, mimeType: r.mime_type ?? r.mimeType }
+    : { kind: 'unknown', mimeType: '' };
 }
 
 /**
@@ -476,16 +450,9 @@ function nativeTruncateTextToTokensFromEnd(text, maxTokens) {
  * @returns {{ exitCode: number, stdout: string, stderr: string, timedOut: boolean, error?: string }}
  */
 function nativeBash(command, options = {}) {
-  const envPairs = options.env
-    ? options.env.map(([k, v]) => [k, v])
-    : null;
+  const envPairs = options.env ? options.env.map(([k, v]) => [k, v]) : null;
 
-  return binding.nativeBash(
-    command,
-    options.cwd ?? null,
-    options.timeout ?? null,
-    envPairs,
-  );
+  return binding.nativeBash(command, options.cwd ?? null, options.timeout ?? null, envPairs);
 }
 
 // ============================================================================
@@ -674,7 +641,13 @@ function nativeGrepStructured(
  * @param {boolean} alreadyTruncated - Whether truncation already occurred.
  * @returns {{output: string, charsWritten: number, newNchars: number, truncated: boolean}}
  */
-function nativeWriteToolOutputChunk(text, currentNchars, maxChars, maxLineLength, alreadyTruncated) {
+function nativeWriteToolOutputChunk(
+  text,
+  currentNchars,
+  maxChars,
+  maxLineLength,
+  alreadyTruncated,
+) {
   return binding.nativeWriteToolOutputChunk(
     text,
     currentNchars,
@@ -869,8 +842,22 @@ function nativeGoalApplyUpdate(goalJson, updateJson) {
 }
 
 /** Compute chargeable token delta between two usage snapshots. */
-function nativeGoalComputeTokenDelta(prevInput, prevCached, prevOutput, currInput, currCached, currOutput) {
-  return binding.nativeGoalComputeTokenDelta(prevInput, prevCached, prevOutput, currInput, currCached, currOutput);
+function nativeGoalComputeTokenDelta(
+  prevInput,
+  prevCached,
+  prevOutput,
+  currInput,
+  currCached,
+  currOutput,
+) {
+  return binding.nativeGoalComputeTokenDelta(
+    prevInput,
+    prevCached,
+    prevOutput,
+    currInput,
+    currCached,
+    currOutput,
+  );
 }
 
 /** Render the continuation steering prompt. */
@@ -923,6 +910,37 @@ function nativePathIsWithinWorkspace(candidate, roots, pathClass) {
  */
 function nativePathCanonicalizeForGlob(path, cwd, pathClass) {
   return binding.nativePathCanonicalizeForGlob(path, cwd, pathClass);
+}
+
+// ============================================================================
+// Workspace Index — file metadata index for tool predictions
+// ============================================================================
+
+/**
+ * Build the workspace index by scanning `root` recursively.
+ *
+ * This is a blocking operation. For large workspaces, it may take
+ * 100ms–2s. Call once at workspace load time.
+ *
+ * @param {string} root - Absolute path to the workspace root directory.
+ * @returns {number} Number of files indexed.
+ */
+function nativeBuildWorkspaceIndex(root) {
+  return binding.nativeBuildWorkspaceIndex(root);
+}
+
+/**
+ * Get a Read prediction from the workspace index.
+ *
+ * Returns `null` if:
+ *   - No index has been built (call `nativeBuildWorkspaceIndex` first)
+ *   - The file is not in the index
+ *
+ * @param {string} path - Absolute path to the file.
+ * @returns {{ lineCount: number, size: number, preview: string, estimatedReadMs: number } | null} Prediction or null.
+ */
+function nativeWorkspaceIndexPredictRead(path) {
+  return binding.nativeWorkspaceIndexPredictRead(path);
 }
 
 // ============================================================================
@@ -1033,6 +1051,108 @@ function nativeGoalEngineRenderPausedNote(json) {
 }
 
 // ============================================================================
+// Knowledge Base — SQLite + FTS5 local coding standards database
+// ============================================================================
+
+/**
+ * Open (or create) a knowledge database at the given path.
+ * @param {string} dbPath - Path to the SQLite database file.
+ */
+function knowledgeOpen(dbPath) {
+  return binding.knowledgeOpen(dbPath);
+}
+
+/**
+ * Close and remove a DB connection from the pool. Releases file handles.
+ * @param {string|null|undefined} [dbPath] - Path of DB to close. If null/omitted, closes the active DB.
+ */
+function knowledgeClose(dbPath) {
+  return binding.knowledgeClose(dbPath ?? null);
+}
+
+/**
+ * Add a knowledge entry. Returns JSON string of the created entry.
+ * @param {string} title
+ * @param {string} category - 'coding-style' | 'pitfall' | 'architecture' | 'workflow'
+ * @param {string} content
+ * @param {string} tags - Comma-separated tag list.
+ * @param {string|null} scope - Optional scope path (e.g., project root).
+ * @param {string} source - 'human' | 'ai-learned' | 'ai-confirmed'
+ * @param {number} confidence - 0.0 - 1.0
+ * @param {string} status - 'pending' | 'confirmed' | 'rejected'
+ * @returns {string} JSON string of the created KnowledgeEntry.
+ */
+function knowledgeAdd(title, category, content, tags, scope, source, confidence, status) {
+  return binding.knowledgeAdd(
+    title,
+    category,
+    content,
+    tags,
+    scope ?? null,
+    source,
+    confidence,
+    status,
+  );
+}
+
+/**
+ * Search the knowledge base. Returns JSON string of KnowledgeSearchResult[].
+ * @param {string} query - FTS5 query (use '*' for all).
+ * @param {string|null} scopePath - Scope filter (path boundary aware).
+ * @param {string|null} tags - Comma-separated tag filter.
+ * @param {number} limit - Max results.
+ * @param {number} minConfidence - Minimum confidence threshold (0.0-1.0).
+ * @returns {string} JSON string of KnowledgeSearchResult[].
+ */
+function knowledgeSearch(query, scopePath, tags, limit, minConfidence) {
+  return binding.knowledgeSearch(query, scopePath ?? null, tags ?? null, limit, minConfidence);
+}
+
+/**
+ * Hard-remove an entry by id.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function knowledgeRemove(id) {
+  return binding.knowledgeRemove(id);
+}
+
+/**
+ * Confirm a pending AI-learned entry. Sets status='confirmed', confidence=1.0, source='ai-confirmed'.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function knowledgeConfirm(id) {
+  return binding.knowledgeConfirm(id);
+}
+
+/**
+ * Reject (soft-delete) an entry. Sets status='rejected'.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function knowledgeReject(id) {
+  return binding.knowledgeReject(id);
+}
+
+/**
+ * Return database statistics as JSON.
+ * @returns {string} JSON string of KnowledgeStats.
+ */
+function knowledgeStats() {
+  return binding.knowledgeStats();
+}
+
+/**
+ * Bulk-import entries from markdown (--- separated blocks).
+ * @param {string} markdown
+ * @returns {string} JSON string of import result.
+ */
+function knowledgeImport(markdown) {
+  return binding.knowledgeImport(markdown);
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
@@ -1134,6 +1254,10 @@ module.exports = {
   nativePathIsWithinWorkspace,
   nativePathCanonicalizeForGlob,
 
+  // Workspace Index
+  nativeBuildWorkspaceIndex,
+  nativeWorkspaceIndexPredictRead,
+
   // Permission
   nativeParsePermissionPattern,
 
@@ -1155,4 +1279,15 @@ module.exports = {
 
   // LLM Stream
   nativeLlmStream,
+
+  // Knowledge Base
+  knowledgeOpen,
+  knowledgeClose,
+  knowledgeAdd,
+  knowledgeSearch,
+  knowledgeRemove,
+  knowledgeConfirm,
+  knowledgeReject,
+  knowledgeStats,
+  knowledgeImport,
 };

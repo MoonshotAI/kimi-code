@@ -159,7 +159,11 @@ fn is_video_magic(header: &[u8]) -> bool {
 /// keep the two lists in sync. The list is intentionally short to
 /// avoid false positives; exemptions like `.env.example` are handled
 /// explicitly in `is_sensitive_file`.
-const SENSITIVE_BASENAMES: &[&str] = &[".env", "id_rsa", "id_ed25519", "id_ecdsa", "credentials"];
+const SENSITIVE_BASENAMES: &[&str] = &[
+    ".env", "id_rsa", "id_ed25519", "id_ecdsa", "credentials",
+    ".npmrc", ".pypirc", ".netrc", "htpasswd", ".pgpass",
+    ".git-credentials", ".ppk", ".p12", ".pfx", "kubeconfig",
+];
 
 const ENV_EXEMPTIONS: &[&str] = &[".env.example", ".env.sample", ".env.template"];
 const PUBLIC_KEY_BASENAMES: &[&str] = &["id_rsa.pub", "id_ed25519.pub", "id_ecdsa.pub"];
@@ -168,6 +172,21 @@ const SENSITIVE_BASENAME_PREFIXES: &[&str] = &["id_rsa", "id_ed25519", "id_ecdsa
 
 const SENSITIVE_DOT_VARIANT_SUFFIXES: &[&str] = &[
     ".bak", ".backup", ".copy", ".disabled", ".key", ".old", ".orig", ".pem", ".save", ".tmp",
+];
+
+/// Path suffixes for sensitive files (directory components + basename).
+const SENSITIVE_PATH_SUFFIXES: &[&[&str]] = &[
+    &[".aws", "credentials"],
+    &[".gcp", "credentials"],
+    &[".docker", "config.json"],
+    &[".kube", "config"],
+    &[".config", "kube", "config"],
+    &[".ssh", "config"],
+];
+
+/// Key-file extensions that indicate private keys or certificates.
+const SENSITIVE_KEYFILE_EXTENSIONS: &[&str] = &[
+    ".ppk", ".p12", ".pfx", ".keystore", ".jks",
 ];
 
 /// Image dimensions (width × height in pixels).
@@ -306,10 +325,18 @@ pub fn is_sensitive_file(path: &str) -> bool {
         }
     }
 
-    for suffix in [".aws/credentials", ".gcp/credentials"] {
+    for parts in SENSITIVE_PATH_SUFFIXES {
+        let suffix = parts.join("/");
         if comparable_path.ends_with(&format!("/{}", suffix))
             || comparable_path.contains(&format!("/{}/", suffix))
         {
+            return true;
+        }
+    }
+
+    // Check keyfile extensions
+    for ext in SENSITIVE_KEYFILE_EXTENSIONS {
+        if comparable_name.ends_with(ext) {
             return true;
         }
     }

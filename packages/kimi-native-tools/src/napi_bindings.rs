@@ -14,11 +14,14 @@ use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
 use crate::output_truncate;
 use crate::permission;
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
+use crate::render_prompt;
 use crate::tool_access::{self, ToolAccessMeta};
 use crate::tool_naming;
 use crate::translation::{self, CachedTranslator};
 use crate::write::{self, WriteMode, WriteResult};
 use napi::bindgen_prelude::Uint8Array;
+use crate::canonical_args;
+use crate::tool_dedup;
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -52,8 +55,9 @@ pub fn native_translate(
     fallback_json: String,
     key: String,
     params: Option<HashMap<String, String>>,
-) -> String {
+) -> napi::Result<String> {
     translation::translate(&locale_json, &fallback_json, &key, params.as_ref())
+        .map_err(|e| napi::Error::from_reason(format!("invalid locale JSON: {e}")))
 }
 
 /// Same as `native_translate`, but uses the process-wide cached translator.
@@ -63,8 +67,10 @@ pub fn native_translate_cached(
     fallback_json: String,
     key: String,
     params: Option<HashMap<String, String>>,
-) -> String {
-    cached_translator().translate(&locale_json, &fallback_json, &key, params.as_ref())
+) -> napi::Result<String> {
+    cached_translator()
+        .translate(&locale_json, &fallback_json, &key, params.as_ref())
+        .map_err(|e| napi::Error::from_reason(format!("invalid locale JSON: {e}")))
 }
 
 /// Clear the process-wide translator cache (call on locale reload).
@@ -90,13 +96,10 @@ pub fn native_translate_batch(
     fallback_json: String,
     keys: Vec<String>,
     params: Option<HashMap<String, String>>,
-) -> Vec<NativeTranslateBatchResult> {
-    to_batch_results(translation::translate_batch(
-        &locale_json,
-        &fallback_json,
-        &keys,
-        params.as_ref(),
-    ))
+) -> napi::Result<Vec<NativeTranslateBatchResult>> {
+    let results = translation::translate_batch(&locale_json, &fallback_json, &keys, params.as_ref())
+        .map_err(|e| napi::Error::from_reason(format!("invalid locale JSON: {e}")))?;
+    Ok(to_batch_results(results))
 }
 
 /// Same as `native_translate_batch`, but uses the process-wide cached translator.
@@ -106,13 +109,11 @@ pub fn native_translate_batch_cached(
     fallback_json: String,
     keys: Vec<String>,
     params: Option<HashMap<String, String>>,
-) -> Vec<NativeTranslateBatchResult> {
-    to_batch_results(cached_translator().translate_batch(
-        &locale_json,
-        &fallback_json,
-        &keys,
-        params.as_ref(),
-    ))
+) -> napi::Result<Vec<NativeTranslateBatchResult>> {
+    let results = cached_translator()
+        .translate_batch(&locale_json, &fallback_json, &keys, params.as_ref())
+        .map_err(|e| napi::Error::from_reason(format!("invalid locale JSON: {e}")))?;
+    Ok(to_batch_results(results))
 }
 
 // ============================================================================
@@ -610,6 +611,12 @@ pub fn native_is_sensitive_file(path: String) -> bool {
 #[napi]
 pub fn native_is_sensitive_file_bytes(path: Uint8Array) -> bool {
     file_type::is_sensitive_file_bytes(&path)
+}
+
+/// Check if a WebP byte stream is animated (contains the "ANMF" marker).
+#[napi]
+pub fn native_is_animated_webp(data: Uint8Array) -> bool {
+    webp_animated::is_animated_webp(&data)
 }
 
 /// Result of `native_detect_file_type`.
@@ -1295,6 +1302,561 @@ pub fn native_qualify_mcp_tool_name(server_name: String, tool_name: String) -> S
 }
 
 // ============================================================================
+// Tool Policy — tool-activation policy evaluation
+// ============================================================================
+
+use crate::tool_policy;
+
+/// Check if a tool is active according to a policy.
+#[napi]
+pub fn native_is_tool_active(policy_json: String, name: String, source: String) -> bool {
+    tool_policy::native_is_tool_active(policy_json, name, source)
+}
+
+/// Three-layer tool policy composition.
+#[napi]
+pub fn native_is_tool_active_composed(layers_json: String, name: String, source: String) -> bool {
+    tool_policy::native_is_tool_active_composed(layers_json, name, source)
+}
+
+/// Filter patterns to get literal (non-glob, non-MCP) tool names.
+#[napi]
+pub fn native_literal_tool_names(patterns_json: String) -> String {
+    tool_policy::native_literal_tool_names(patterns_json)
+}
+
+/// Find inactive tool patterns (dead configurations).
+#[napi]
+pub fn native_find_inactive_tool_patterns(patterns_json: String, is_known_tool_name_json: Option<String>) -> String {
+    tool_policy::native_find_inactive_tool_patterns(patterns_json, is_known_tool_name_json)
+}
+
+/// Resolve active tool names from a policy.
+#[napi]
+pub fn native_resolve_active_tool_names(policy_json: String) -> String {
+    tool_policy::native_resolve_active_tool_names(policy_json)
+}
+
+// ============================================================================
+// Permission Rules — pattern matching for permission rules
+// ============================================================================
+
+use crate::permission_rules;
+
+/// Match a permission rule against a tool name and execution.
+/// Returns JSON: { matched: bool, strategy?: string, hasRuleArgs?: bool }
+#[napi]
+pub fn native_match_permission_rule(
+    rule_json: String,
+    tool_name: String,
+    has_matches_rule: bool,
+    arg_pattern_match: Option<bool>,
+) -> String {
+    permission_rules::native_match_permission_rule(rule_json, tool_name, has_matches_rule, arg_pattern_match)
+}
+
+// ============================================================================
+// Byte LRU Cache — byte-bounded LRU cache
+// ============================================================================
+
+use crate::byte_lru_cache;
+
+/// Create a new byte-bounded LRU cache state.
+#[napi]
+pub fn native_byte_lru_cache_new(max_bytes: f64) -> String {
+    byte_lru_cache::native_byte_lru_cache_new(max_bytes)
+}
+
+/// Get a value from the LRU cache.
+#[napi]
+pub fn native_byte_lru_cache_get(cache_json: String, key: String) -> String {
+    byte_lru_cache::native_byte_lru_cache_get(cache_json, key)
+}
+
+/// Set a value in the LRU cache.
+#[napi]
+pub fn native_byte_lru_cache_set(cache_json: String, key: String, value_json: String) -> String {
+    byte_lru_cache::native_byte_lru_cache_set(cache_json, key, value_json)
+}
+
+// ============================================================================
+// Prompt Metadata — pure helpers for session metadata
+// ============================================================================
+
+use crate::prompt_metadata;
+
+/// Truncate text to title length.
+#[napi]
+pub fn native_title_from_prompt_metadata_text(text: String) -> String {
+    prompt_metadata::native_title_from_prompt_metadata_text(text)
+}
+
+/// Extract text from a content part for metadata.
+#[napi]
+pub fn native_prompt_part_text(part_json: String) -> Option<String> {
+    prompt_metadata::native_prompt_part_text(part_json)
+}
+
+/// Extract prompt metadata text from content parts.
+#[napi]
+pub fn native_prompt_metadata_text_from_content_parts(parts_json: String) -> Option<String> {
+    prompt_metadata::native_prompt_metadata_text_from_content_parts(parts_json)
+}
+
+/// Format prompt metadata text from a skill activation.
+#[napi]
+pub fn native_prompt_metadata_text_from_skill(name: String, args: Option<String>) -> Option<String> {
+    prompt_metadata::native_prompt_metadata_text_from_skill(name, args)
+}
+
+/// Format prompt metadata text from a plugin command.
+#[napi]
+pub fn native_prompt_metadata_text_from_plugin_command(plugin_id: String, command_name: String, args: Option<String>) -> Option<String> {
+    prompt_metadata::native_prompt_metadata_text_from_plugin_command(plugin_id, command_name, args)
+}
+
+/// Check if a title is untitled.
+#[napi]
+pub fn native_is_untitled(title: Option<String>) -> bool {
+    prompt_metadata::native_is_untitled(title)
+}
+
+/// Sanitize and truncate prompt text.
+#[napi]
+pub fn native_sanitize_and_truncate_prompt_text(text: String, max_length: i32) -> Option<String> {
+    prompt_metadata::native_sanitize_and_truncate_prompt_text(text, max_length)
+}
+
+// ============================================================================
+// Tool Dedup — same-step and cross-step tool call deduplication
+// ============================================================================
+
+/// Canonical JSON serialization: sort object keys for stable hashing.
+/// Mirrors `canonicalTelemetryArgs()` in TS.
+#[napi]
+pub fn native_tool_dedup_canonical_json(args_json: String) -> String {
+    tool_dedup::native_tool_dedup_canonical_json(args_json)
+}
+
+/// Create a stable dedup key from tool name + canonical args.
+#[napi]
+pub fn native_tool_dedup_make_key(tool_name: String, canonical_args: String) -> String {
+    tool_dedup::native_tool_dedup_make_key(tool_name, canonical_args)
+}
+
+/// SHA256 hash of canonical args (first 8 hex chars).
+#[napi]
+pub fn native_tool_dedup_args_hash(canonical_args: String) -> String {
+    tool_dedup::native_tool_dedup_args_hash(canonical_args)
+}
+
+/// Determine reminder level from cross-step streak.
+#[napi]
+pub fn native_tool_dedup_reminder_level(streak: u32) -> u32 {
+    tool_dedup::native_tool_dedup_reminder_level(streak)
+}
+
+/// Check if a tool call is a same-step duplicate.
+/// Returns JSON: { step_keys, is_same_step_dup, cross_step_streak }
+#[napi]
+pub fn native_tool_dedup_check(
+    step_keys_json: String,
+    key: String,
+    consecutive_key: Option<String>,
+    consecutive_count: u32,
+) -> String {
+    tool_dedup::native_tool_dedup_check(step_keys_json, key, consecutive_key, consecutive_count)
+}
+
+/// Finalize a step: update cross-step tracking.
+/// Returns JSON: { consecutive_key, consecutive_count, reminder_level }
+#[napi]
+pub fn native_tool_dedup_end_step(
+    step_keys_json: String,
+    consecutive_key: Option<String>,
+    consecutive_count: u32,
+) -> String {
+    tool_dedup::native_tool_dedup_end_step(step_keys_json, consecutive_key, consecutive_count)
+}
+
+// ============================================================================
+// Usage — token usage accounting
+// ============================================================================
+
+use crate::usage;
+
+/// Add two TokenUsage values together.
+#[napi]
+pub fn native_usage_add(a_json: String, b_json: String) -> String {
+    usage::native_usage_add(a_json, b_json)
+}
+
+/// Create an empty TokenUsage (all zeros).
+#[napi]
+pub fn native_usage_empty() -> String {
+    usage::native_usage_empty()
+}
+
+/// Compute the total input tokens (sum of all input fields).
+#[napi]
+pub fn native_usage_input_total(usage_json: String) -> f64 {
+    usage::native_usage_input_total(usage_json)
+}
+
+/// Compute the grand total (input + output).
+#[napi]
+pub fn native_usage_grand_total(usage_json: String) -> f64 {
+    usage::native_usage_grand_total(usage_json)
+}
+
+/// Sum all usage values in a per-model map.
+/// Returns JSON string of the total TokenUsage, or empty string if empty.
+#[napi]
+pub fn native_usage_total(by_model_json: String) -> String {
+    usage::native_usage_total(by_model_json)
+}
+
+/// Build a UsageStatus from a UsageModel state and optional current turn.
+/// Returns JSON UsageStatus { by_model, total, current_turn }
+#[napi]
+pub fn native_usage_status_from_state(model_json: String, current_turn_json: String) -> String {
+    usage::native_usage_status_from_state(model_json, current_turn_json)
+}
+
+// ============================================================================
+// Fault Injection — one-shot latch for testing
+// ============================================================================
+
+use crate::fault_injection;
+
+/// Arm a one-shot fault.
+/// state_json: { armed: string | null, fired: string[] }
+/// Returns updated state JSON.
+#[napi]
+pub fn native_fault_injection_arm(state_json: String, kind: String) -> String {
+    fault_injection::native_fault_injection_arm(state_json, kind)
+}
+
+/// Take the armed fault (consume it and record as fired).
+/// Returns JSON: { armed: null, fired: string[], taken: string | null }
+#[napi]
+pub fn native_fault_injection_take(state_json: String) -> String {
+    fault_injection::native_fault_injection_take(state_json)
+}
+
+/// Clear the state.
+#[napi]
+pub fn native_fault_injection_clear() -> String {
+    fault_injection::native_fault_injection_clear()
+}
+
+/// Get status snapshot.
+#[napi]
+pub fn native_fault_injection_status(state_json: String) -> String {
+    fault_injection::native_fault_injection_status(state_json)
+}
+
+// ============================================================================
+// Context Projector — pure projection functions
+// ============================================================================
+
+use crate::context_projector;
+
+/// Check if a content part is blank (text with only whitespace).
+#[napi]
+pub fn native_is_blank_text(part_json: String) -> bool {
+    context_projector::native_is_blank_text(part_json)
+}
+
+/// Check if a message is the interrupted tool result sentinel.
+#[napi]
+pub fn native_is_interrupted_tool_result(message_json: String) -> bool {
+    context_projector::native_is_interrupted_tool_result(message_json)
+}
+
+/// Check if a message is a user message that can be merged.
+#[napi]
+pub fn native_can_merge_user_message(message_json: String) -> bool {
+    context_projector::native_can_merge_user_message(message_json)
+}
+
+/// Check if a message has declared tools.
+#[napi]
+pub fn native_has_declared_tools(message_json: String) -> bool {
+    context_projector::native_has_declared_tools(message_json)
+}
+
+/// Degrade older media parts, keeping only the `keep_recent` most recent ones.
+#[napi]
+pub fn native_degrade_older_media_parts(messages_json: String, keep_recent: i32) -> String {
+    context_projector::native_degrade_older_media_parts(messages_json, keep_recent)
+}
+
+/// Capture a media strip snapshot: returns a JSON array of media key strings.
+#[napi]
+pub fn native_capture_media_strip_snapshot(messages_json: String) -> String {
+    context_projector::native_capture_media_strip_snapshot(messages_json)
+}
+
+/// Strip media parts by snapshot keys.
+#[napi]
+pub fn native_strip_media_parts_by_snapshot(
+    messages_json: String,
+    snapshot_keys_json: String,
+) -> String {
+    context_projector::native_strip_media_parts_by_snapshot(messages_json, snapshot_keys_json)
+}
+
+/// Drop leading non-user messages from a message array.
+#[napi]
+pub fn native_drop_leading_non_user_messages(messages_json: String) -> String {
+    context_projector::native_drop_leading_non_user_messages(messages_json)
+}
+
+/// Merge consecutive assistant messages.
+#[napi]
+pub fn native_merge_consecutive_assistant_messages(messages_json: String) -> String {
+    context_projector::native_merge_consecutive_assistant_messages(messages_json)
+}
+
+/// Deduplicate duplicate tool calls and tool results.
+#[napi]
+pub fn native_dedupe_duplicate_tool_calls(messages_json: String) -> String {
+    context_projector::native_dedupe_duplicate_tool_calls(messages_json)
+}
+
+// ============================================================================
+// Context Ops — undo, precheck, utility operations
+// ============================================================================
+
+use crate::context_ops;
+
+/// Check if a value is a ContextMessage.
+#[napi]
+pub fn native_is_context_message(value_json: String) -> bool {
+    context_ops::native_is_context_message(value_json)
+}
+
+/// Extract text content from a message.
+#[napi]
+pub fn native_text_of(message_json: String) -> String {
+    context_ops::native_text_of(message_json)
+}
+
+/// Check if a message is a real user prompt.
+#[napi]
+pub fn native_is_real_user_prompt(message_json: String) -> bool {
+    context_ops::native_is_real_user_prompt(message_json)
+}
+
+/// Compute an undo cut.
+#[napi]
+pub fn native_compute_undo_cut(messages_json: String, count: i32) -> context_ops::NativeUndoCut {
+    context_ops::native_compute_undo_cut(messages_json, count)
+}
+
+/// Check if a cut is fully undoable.
+#[napi]
+pub fn native_is_fully_undoable(cut_index: i32, removed_count: i32, count: i32) -> bool {
+    context_ops::native_is_fully_undoable(cut_index, removed_count, count)
+}
+
+/// Pre-check if undo is available.
+#[napi]
+pub fn native_precheck_undo(messages_json: String, count: i32) -> context_ops::NativeUndoPrecheck {
+    context_ops::native_precheck_undo(messages_json, count)
+}
+
+/// Format an undo unavailable message.
+#[napi]
+pub fn native_format_undo_unavailable_message(reason: String, undoable: i32, requested: i32) -> String {
+    context_ops::native_format_undo_unavailable_message(reason, undoable, requested)
+}
+
+// ============================================================================
+// Loop Event Fold — reduce loop events into ContextMessages
+// ============================================================================
+
+use crate::loop_event_fold;
+
+/// Fold a loop event into the state.
+/// Returns JSON: { state: ContextMessage[], fold_ctx: FoldCtx }
+#[napi]
+pub fn native_fold_loop_event(state_json: String, fold_ctx_json: String, event_json: String) -> String {
+    loop_event_fold::native_fold_loop_event(state_json, fold_ctx_json, event_json)
+}
+
+/// Fold an append_message event.
+/// Returns JSON: { state: ContextMessage[], fold_ctx: FoldCtx }
+#[napi]
+pub fn native_fold_append_message(state_json: String, fold_ctx_json: String, message_json: String) -> String {
+    loop_event_fold::native_fold_append_message(state_json, fold_ctx_json, message_json)
+}
+
+/// Reset fold state.
+/// Returns JSON: { state: ContextMessage[], fold_ctx: FoldCtx }
+#[napi]
+pub fn native_reset_fold(state_json: String) -> String {
+    loop_event_fold::native_reset_fold(state_json)
+}
+
+// ============================================================================
+// Compaction Handoff — pure context compaction functions
+// ============================================================================
+
+use crate::compaction_handoff;
+
+/// Build a compaction summary text.
+#[napi]
+pub fn native_build_compaction_summary_text(summary: String) -> String {
+    compaction_handoff::native_build_compaction_summary_text(summary)
+}
+
+/// Build a compaction elision text.
+#[napi]
+pub fn native_build_compaction_elision_text(omitted_tokens: i32) -> String {
+    compaction_handoff::native_build_compaction_elision_text(omitted_tokens)
+}
+
+/// Check if a message is a compaction summary.
+#[napi]
+pub fn native_is_compaction_summary_message(message_json: String) -> bool {
+    compaction_handoff::native_is_compaction_summary_message(message_json)
+}
+
+/// Determine compaction disposition of a message origin.
+#[napi]
+pub fn native_compaction_user_message_disposition(message_json: String) -> String {
+    compaction_handoff::native_compaction_user_message_disposition(message_json)
+}
+
+/// Extract text from message content.
+#[napi]
+pub fn native_extract_text(message_json: String) -> String {
+    compaction_handoff::native_extract_text(message_json)
+}
+
+/// Collect compactable user messages from a history.
+#[napi]
+pub fn native_collect_compactable_user_messages(messages_json: String) -> String {
+    compaction_handoff::native_collect_compactable_user_messages(messages_json)
+}
+
+/// Select recent user messages up to max_tokens.
+#[napi]
+pub fn native_select_recent_user_messages(messages_json: String, max_tokens: Option<i32>) -> String {
+    compaction_handoff::native_select_recent_user_messages(messages_json, max_tokens)
+}
+
+// ============================================================================
+// Context Transcript — pure helper functions
+// ============================================================================
+
+use crate::context_transcript;
+
+/// Check if a value is context-message-like.
+#[napi]
+pub fn native_is_context_message_like(value_json: String) -> bool {
+    context_transcript::native_is_context_message_like(value_json)
+}
+
+/// Extract text from content parts.
+#[napi]
+pub fn native_text_of_parts(content_json: String) -> String {
+    context_transcript::native_text_of_parts(content_json)
+}
+
+/// Read a number field from a wire record.
+#[napi]
+pub fn native_read_number(record_json: String, key: String) -> Option<f64> {
+    context_transcript::native_read_number(record_json, key)
+}
+
+/// Turn raw tool result output into ContentPart[].
+#[napi]
+pub fn native_raw_tool_result_content(output_json: String) -> String {
+    context_transcript::native_raw_tool_result_content(output_json)
+}
+
+/// Read compaction summary text from a wire record.
+#[napi]
+pub fn native_read_compaction_summary_text(record_json: String) -> String {
+    context_transcript::native_read_compaction_summary_text(record_json)
+}
+
+// ============================================================================
+// LLM Requester — pure helper functions
+// ============================================================================
+
+use crate::llm_requester;
+
+/// Compute a SHA256 fingerprint of a string.
+#[napi]
+pub fn native_fingerprint(content: String) -> String {
+    llm_requester::native_fingerprint(content)
+}
+
+/// Filter tools to show only provider-visible ones.
+#[napi]
+pub fn native_provider_visible_tools(tools_json: String) -> String {
+    llm_requester::native_provider_visible_tools(tools_json)
+}
+
+/// Extract tool signature.
+#[napi]
+pub fn native_tool_signature(tools_json: String) -> String {
+    llm_requester::native_tool_signature(tools_json)
+}
+
+/// Determine request kind for record.
+#[napi]
+pub fn native_request_kind_for_record(fields_json: String) -> String {
+    llm_requester::native_request_kind_for_record(fields_json)
+}
+
+/// Determine projection field value.
+#[napi]
+pub fn native_projection_field(fields_json: String) -> String {
+    llm_requester::native_projection_field(fields_json)
+}
+
+/// Extract a string field from a JSON object.
+#[napi]
+pub fn native_string_field(fields_json: String, key: String) -> Option<String> {
+    llm_requester::native_string_field(fields_json, key)
+}
+
+/// Extract a number field from a JSON object.
+#[napi]
+pub fn native_number_field(fields_json: String, key: String) -> Option<f64> {
+    llm_requester::native_number_field(fields_json, key)
+}
+
+/// Extract API status code from an error object.
+#[napi]
+pub fn native_api_status_code(error_json: String) -> Option<i32> {
+    llm_requester::native_api_status_code(error_json)
+}
+
+/// Extract API trace ID from an error object.
+#[napi]
+pub fn native_api_trace_id(error_json: String) -> Option<String> {
+    llm_requester::native_api_trace_id(error_json)
+}
+
+/// Extract log fields for a request source.
+#[napi]
+pub fn native_log_fields_for_source(source_json: String) -> String {
+    llm_requester::native_log_fields_for_source(source_json)
+}
+
+/// Convert a fault injection kind to an error.
+#[napi]
+pub fn native_fault_to_error(kind_json: String) -> String {
+    llm_requester::native_fault_to_error(kind_json)
+}
+
+// ============================================================================
 // Goal — state machine, accounting, steering
 // ============================================================================
 
@@ -1766,6 +2328,7 @@ fn get_i64(v: &serde_json::Value, key: &str) -> Result<i64, String> {
 use std::sync::Mutex;
 
 use crate::workspace_index;
+use crate::webp_animated;
 
 /// Global workspace index, built once at workspace load time.
 static WORKSPACE_INDEX: Mutex<Option<workspace_index::WorkspaceIndex>> = Mutex::new(None);
@@ -1790,7 +2353,7 @@ pub struct NativeReadPrediction {
 pub fn native_build_workspace_index(root: String) -> u32 {
     let index = workspace_index::WorkspaceIndex::build(&root);
     let count = index.file_count();
-    let mut guard = WORKSPACE_INDEX.lock().unwrap();
+    let mut guard = WORKSPACE_INDEX.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(index);
     count as u32
 }
@@ -1859,6 +2422,18 @@ pub fn native_path_is_within_directory(candidate: String, base: String, path_cla
 pub fn native_path_is_within_workspace(candidate: String, roots: Vec<String>, path_class: String) -> bool {
     let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
     path_access::is_within_workspace(&candidate, &roots, class)
+}
+
+/// Check if a path is a symlink that escapes the allowed workspace roots.
+///
+/// Returns an empty string if safe, or an error description if the path is a
+/// symlink pointing outside the workspace.
+#[napi]
+pub fn native_check_symlink_escape(path: String, roots: Vec<String>) -> String {
+    match path_access::check_symlink_escape(&path, &roots) {
+        Ok(()) => String::new(),
+        Err(e) => e,
+    }
 }
 
 // ============================================================================

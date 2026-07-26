@@ -30,10 +30,7 @@ export interface BatchReadOptions {
   nLinesArray?: Array<number | null>;
 }
 
-export function nativeBatchRead(
-  paths: string[],
-  options?: BatchReadOptions,
-): Promise<ReadResult[]>;
+export function nativeBatchRead(paths: string[], options?: BatchReadOptions): Promise<ReadResult[]>;
 
 // ============================================================================
 // File cache
@@ -161,7 +158,8 @@ export interface ImageDimensions {
   height: number;
 }
 
-export function nativeSniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions | null;
+/** `Buffer` is accepted, being a `Uint8Array` subclass. */
+export function nativeSniffImageDimensions(data: Uint8Array): ImageDimensions | null;
 
 export function nativeIsSensitiveFile(path: string): boolean;
 
@@ -371,7 +369,10 @@ export function nativeGrepStructured(
 // MCP — Config loading
 // ============================================================================
 
-export function nativeMcpLoadConfig(cwd: string, homeDir?: string | null): Promise<Record<string, unknown>>;
+export function nativeMcpLoadConfig(
+  cwd: string,
+  homeDir?: string | null,
+): Promise<Record<string, unknown>>;
 
 // ============================================================================
 // MCP — Stdio client

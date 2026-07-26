@@ -357,7 +357,7 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
 
             let path_str = path.to_string_lossy();
             if is_sensitive_file(&path_str) {
-                filtered_sensitive.lock().unwrap().push(relativize(path, search_path));
+                filtered_sensitive.lock().unwrap_or_else(|e| e.into_inner()).push(relativize(path, search_path));
                 return ignore::WalkState::Continue;
             }
 
@@ -399,9 +399,9 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
                 let mtime = fs::metadata(path)
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                file_matches.lock().unwrap().push((path.to_path_buf(), match_count, mtime));
+                file_matches.lock().unwrap_or_else(|e| e.into_inner()).push((path.to_path_buf(), match_count, mtime));
                 if needs_full_content && !accumulated_content.is_empty() {
-                    content_cache.lock().unwrap().push((path.to_path_buf(), accumulated_content));
+                    content_cache.lock().unwrap_or_else(|e| e.into_inner()).push((path.to_path_buf(), accumulated_content));
                 }
             }
 
@@ -703,7 +703,7 @@ pub fn grep_search_structured(config: &GrepStructuredConfig) -> GrepStructuredRe
             }
 
             if !matches.is_empty() {
-                files.lock().unwrap().push(GrepStructuredFileHit {
+                files.lock().unwrap_or_else(|e| e.into_inner()).push(GrepStructuredFileHit {
                     path: rel_str,
                     matches,
                 });

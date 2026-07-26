@@ -5,8 +5,16 @@ edition = "2021"
 description = "Native Rust tools for Kimi Code — bash, grep, glob, read, write, edit"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 name = "kimi_native_tools"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3"
+
+[[bench]]
+name = "native_tools_bench"
+harness = false
 
 [dependencies]
 napi = { version = "2", features = ["async", "napi8", "serde"] }
@@ -30,15 +38,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 ulid = "1"
 chrono = "0.4"
 once_cell = "1"
+sha2 = "0.10"
 
 [build-dependencies]
 napi-build = "2"
-
-[dev-dependencies]
-tempfile = "3"
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
-strip = "symbols"
