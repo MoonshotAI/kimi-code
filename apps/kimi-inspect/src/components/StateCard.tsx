@@ -46,17 +46,24 @@ export function StateCard({
 
   // Fold each poll into a diff against the previous snapshot. `plainNode`
   // on first load / owner switch — diffing a freshly loaded tree against
-  // nothing (or against the previous owner) would paint it all-green.
+  // nothing (or against the previous owner) would paint it all-green. While
+  // the new owner's fetch is in flight the query still carries the previous
+  // owner's placeholder data (`data.id !== id`); ignore it so a stale tree
+  // never renders under the new owner's badge.
   const [tree, setTree] = useState<{ id: string; node: DiffNode } | null>(null);
   useEffect(() => {
     const data = query.data;
-    if (data === undefined) return;
+    if (data === undefined || data.id !== id) return;
     setTree((prev) =>
       prev === null || prev.id !== data.id
         ? { id: data.id, node: plainNode(data.snapshot) }
         : { id: data.id, node: diffValue(prev.node.value, data.snapshot) },
     );
-  }, [query.data]);
+  }, [query.data, id]);
+
+  // The tree is only shown when it belongs to the current owner — after an
+  // owner switch the old tree is suppressed until the new snapshot arrives.
+  const visibleTree = tree !== null && tree.id === id ? tree : null;
 
   // One-click expand/collapse: bumping `nonce` remounts the tree, and the
   // fresh `defaultDepth` decides how deep nodes open (Infinity = expand all,
@@ -71,9 +78,9 @@ export function StateCard({
           <span className="text-[12px] font-medium text-neutral-200">{title}</span>
           <span className="ml-2 font-mono text-[10px] text-neutral-600">{label}</span>
           {badge}
-          {tree !== null ? (
+          {visibleTree !== null ? (
             <Badge tone="neutral">
-              {Object.keys(tree.node.value as Record<string, unknown>).length} keys
+              {Object.keys(visibleTree.node.value as Record<string, unknown>).length} keys
             </Badge>
           ) : null}
         </div>
@@ -97,12 +104,12 @@ export function StateCard({
             <ErrorLine error={query.error} />
           </div>
         ) : null}
-        {tree === null ? (
+        {visibleTree === null ? (
           <div className="text-[11px] text-neutral-600 italic">
-            {query.isPending ? 'Loading state…' : 'no state registered'}
+            {query.isPending || tree !== null ? 'Loading state…' : 'no state registered'}
           </div>
         ) : (
-          <StateTree key={expand.nonce} root={tree.node} defaultDepth={expand.depth} />
+          <StateTree key={expand.nonce} root={visibleTree.node} defaultDepth={expand.depth} />
         )}
       </div>
     </div>
