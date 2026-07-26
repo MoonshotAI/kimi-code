@@ -1,10 +1,15 @@
 /// PlanMode — plan mode state machine.
 ///
-/// Corresponds to `packages/agent-core/src/agent/plan/index.ts`.
+/// Corresponds to `packages/agent-core/src/agent/plan/index.ts` (this file)
+/// plus the v2 additions: the wire ops in [`ops`] and the reminder-injection
+/// provider in [`injection`].
 ///
 /// Manages plan mode state (active/inactive, plan ID, file path). File
 /// system operations (read/write plan files) are delegated through the
 /// `Kaos` trait, which maps to the JS host on the napi/stdio path.
+
+pub mod injection;
+pub mod ops;
 
 use serde::{Deserialize, Serialize};
 
