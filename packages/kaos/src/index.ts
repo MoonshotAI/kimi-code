@@ -8,6 +8,12 @@ export type {
   ShellName,
 } from './environment';
 export { detectEnvironment, detectEnvironmentFromNode } from './environment';
+export type {
+  ShellPathBridge,
+  ShellPathBridgeDeps,
+  ShellPathBridgeEnv,
+} from './shell-path-bridge';
+export { createShellPathBridge, getShellPathBridge, translateShellDrivePath } from './shell-path-bridge';
 export {
   KaosError,
   KaosValueError,

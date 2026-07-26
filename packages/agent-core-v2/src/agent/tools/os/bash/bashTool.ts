@@ -50,6 +50,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
   type ExecutableToolResultBuilderResult,
@@ -193,7 +194,7 @@ export class BashTool implements IBashTool {
   }
 
   private spawn(effectiveCwd: string, command: string): Promise<IProcess> {
-    const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
+    const shellCwd = getShellPathBridge(this.env).toShellPath(effectiveCwd);
     const shellArgs = [
       this.env.shellPath,
       '-c',
@@ -485,21 +486,6 @@ async function killSpawnedProcess(proc: IProcess): Promise<void> {
 
 function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
-}
-
-function windowsPathToPosixPath(path: string): string {
-  if (path.startsWith('\\\\')) {
-    return path.replaceAll('\\', '/');
-  }
-
-  const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toLowerCase();
-    const rest = path.slice(2).replaceAll('\\', '/');
-    return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
-  }
-
-  return path.replaceAll('\\', '/');
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
