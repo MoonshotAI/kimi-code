@@ -82,6 +82,7 @@ import {
   type LoopErrorHandlerRegistrationOptions,
   type LoopRunOptions,
   type LoopRunResult,
+  type LoopTurnOverride,
   type Step,
   type StepEnqueueOptions,
   type StepResult,
@@ -107,6 +108,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   };
 
   private readonly standaloneStepQueue = new StepRequestQueue();
+
+  /** External turn runner (the Rust engine bridge); `run()` delegates to it. */
+  private turnOverride: LoopTurnOverride | undefined;
   private readonly pendingAssignments = new Map<
     StepRequest,
     ReturnType<typeof createControlledPromise<import('./loop').StepAssignment>>
@@ -413,7 +417,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       result = await this.run({
         turnId: turn.id,
         signal: turn.signal,
-        onStarted: () =>{  ready.resolve(); },
+        onStarted: () => {
+          ready.resolve();
+        },
       });
       return result;
     } catch (error) {
@@ -530,7 +536,32 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
+  setTurnOverride(override: LoopTurnOverride | undefined): void {
+    this.turnOverride = override;
+  }
+
   async run(options: LoopRunOptions): Promise<LoopRunResult> {
+    const turnOverride = this.turnOverride;
+    if (turnOverride !== undefined) {
+      // The external engine drives the whole turn. It owns stepping, retries,
+      // and budgets internally. The queue is still drained here first — step
+      // requests carry the turn's prompt/injections and only reach the model
+      // by materializing into `context` — but requests enqueued mid-turn are
+      // not deliverable under an override and abort with the turn.
+      const runtime = this.createLoopRuntime(options);
+      let batch = runtime.queue.takeNextBatch();
+      while (batch !== undefined) {
+        this.materializeBatch(batch);
+        batch = runtime.queue.takeNextBatch();
+      }
+      try {
+        return await turnOverride({ turnId: options.turnId, signal: runtime.turnSignal });
+      } catch (error) {
+        return { type: 'failed', steps: 0, error };
+      } finally {
+        runtime.queue.abortTurnScoped();
+      }
+    }
     const runtime = this.createLoopRuntime(options);
     try {
       while (true) {

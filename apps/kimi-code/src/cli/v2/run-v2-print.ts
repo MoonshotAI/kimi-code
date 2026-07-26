@@ -73,15 +73,6 @@ import {
   parseHeadlessGoalCreate,
   type HeadlessGoalCreate,
 } from '../goal-prompt';
-import {
-  type PromptRunIO,
-  configuredModel,
-  installPromptTerminationCleanup,
-  raceWithTimeout,
-  requireConfiguredModel,
-} from '../run-prompt';
-import { createKimiCodeHostIdentity } from '../version';
-
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
@@ -92,6 +83,15 @@ import {
   writeExperimentalVersion,
   writeResumeHint,
 } from '../prompt-render';
+import {
+  type PromptRunIO,
+  configuredModel,
+  installPromptTerminationCleanup,
+  raceWithTimeout,
+  requireConfiguredModel,
+} from '../run-prompt';
+import { createKimiCodeHostIdentity } from '../version';
+import { installRustEngineV2 } from './rust-engine-v2';
 
 const PROMPT_UI_MODE = 'print';
 /** Re-check `goalActive` at least this often while waiting for goal turns. */
@@ -422,6 +422,11 @@ async function runNativeTurn(
 
   await agent.accessor.get(IAuthSummaryService).ensureReady();
 
+  // Rust agent engine bridge: with `agent.engine = "rust"`, turns run in the
+  // Rust engine through the loop-service override seam; a failed install
+  // falls back to the JS loop silently, mirroring the v1 path.
+  await installRustEngineV2(agent.accessor);
+
   const turnEndings = createPrintTurnEndings();
   const subscription = agent.accessor.get(IEventBus).subscribe((event: DomainEvent) => {
     dispatchNativeEvent(writer, event, stderr);
@@ -579,7 +584,9 @@ function dispatchNativeEvent(
       return;
     case 'tool.progress':
       if (event.update.text !== undefined && event.update.text.length > 0) {
-        stderr.write(event.update.text.endsWith('\n') ? event.update.text : `${event.update.text}\n`);
+        stderr.write(
+          event.update.text.endsWith('\n') ? event.update.text : `${event.update.text}\n`,
+        );
       }
       return;
   }
@@ -710,9 +717,7 @@ export interface PrintBackgroundPolicyInput {
  * The steer ceiling deadline is set once on entry, so goal/cron waiting
  * consumes the same budget.
  */
-export async function applyPrintBackgroundPolicy(
-  input: PrintBackgroundPolicyInput,
-): Promise<void> {
+export async function applyPrintBackgroundPolicy(input: PrintBackgroundPolicyInput): Promise<void> {
   const deadline = input.now() + input.ceilingS * 1000;
   let turns = 0;
   // Cron anti-spin guard: the last fire time seen already in the past. Two

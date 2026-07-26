@@ -1,10 +1,12 @@
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
+import type { Hooks } from '#/hooks';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
-import type { Hooks } from '#/hooks';
-import { t } from '@moonshot-ai/kimi-i18n';
+
 import { LoopErrors } from './errors';
 import type { StepRequest } from './stepRequest';
 
@@ -20,8 +22,7 @@ export class LoopError extends Error2 {
 export function createMaxStepsExceededError(maxSteps: number, message?: string): LoopError {
   return new LoopError(
     LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED,
-    message ??
-      t('v2Loop.maxStepsExceeded', { maxSteps: String(maxSteps) }),
+    message ?? t('v2Loop.maxStepsExceeded', { maxSteps: String(maxSteps) }),
     { details: { maxSteps } },
   );
 }
@@ -136,12 +137,30 @@ export interface StepEnqueueOptions {
   readonly at?: 'head' | 'tail';
 }
 
+/**
+ * External turn runner installed by the host (the Rust agent engine bridge).
+ * When set, `run()` delegates the whole turn to it instead of the built-in
+ * step loop. The override receives only the turn identity and cancellation —
+ * it closes over whatever agent-scope services it needs, so this contract
+ * stays free of engine-specific types.
+ */
+export type LoopTurnOverride = (input: {
+  readonly turnId: number;
+  readonly signal: AbortSignal;
+}) => Promise<LoopRunResult>;
+
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
   enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
 
   run(options: LoopRunOptions): Promise<LoopRunResult>;
+
+  /**
+   * Install (or clear, with `undefined`) the external turn runner. Applies to
+   * turns started after the call; an in-flight turn is not migrated.
+   */
+  setTurnOverride(override: LoopTurnOverride | undefined): void;
 
   status(): AgentLoopStatus;
 
