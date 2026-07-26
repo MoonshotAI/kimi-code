@@ -1,7 +1,12 @@
 /// KnowledgeService — knowledge base search and storage.
 ///
 /// Corresponds to `packages/agent-core-v2/src/agent/knowledge/`.
-/// Delegates actual knowledge operations to the JS host.
+/// Delegates actual storage (SQLite FTS5 in kimi-native-tools) to the host;
+/// the injection signal extraction lives in [`injection`], the auto-learner
+/// in [`learner`].
+
+pub mod injection;
+pub mod learner;
 
 use serde::{Deserialize, Serialize};
 
