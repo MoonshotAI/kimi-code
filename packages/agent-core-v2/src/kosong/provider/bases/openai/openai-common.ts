@@ -286,14 +286,16 @@ export function hasModelPrefix(modelName: string, prefixes: readonly string[]): 
  * `prompt_cache_key` is an official-OpenAI request field: strictly-validating
  * OpenAI-compatible endpoints reject unknown parameters with a 400, so the
  * bases only fall back to it when the effective base URL targets
- * `api.openai.com` (or is unset, which the client defaults there).
+ * `api.openai.com` or a regional variant like `eu.api.openai.com` (or is
+ * unset, which the client defaults there).
  */
 export function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
   if (baseUrl === undefined) {
     return true;
   }
   try {
-    return new URL(baseUrl).hostname === 'api.openai.com';
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === 'api.openai.com' || hostname.endsWith('.api.openai.com');
   } catch {
     return false;
   }
