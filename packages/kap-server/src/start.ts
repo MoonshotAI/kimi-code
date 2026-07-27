@@ -12,6 +12,7 @@ import {
   hostRequestHeadersSeed,
   IConfigService,
   IProviderDiscoveryService,
+  ITelemetryService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -61,6 +62,11 @@ import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
+import {
+  initializeServerTelemetry,
+  type ServerTelemetry,
+  shutdownServerTelemetry,
+} from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -124,6 +130,14 @@ export interface ServerStartOptions {
    * embedding hosts (the CLI) should pass their own version.
    */
   readonly version?: string;
+  /**
+   * Opt-in cloud telemetry for the engine's `ITelemetryService` events: when
+   * true, a `CloudAppender` is attached at startup (still gated by the config
+   * `telemetry` toggle) and flushed on close. Defaults to false so tests and
+   * embedding hosts that wire their own telemetry never post to the real
+   * endpoint unintentionally; the CLI's `kimi web` host passes true.
+   */
+  readonly telemetry?: boolean;
 }
 
 export interface RunningServer {
@@ -213,6 +227,23 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     ...(opts.seeds ?? []),
   ]);
 
+  // Attach the cloud telemetry appender BEFORE any session is created:
+  // `session_started` / `session_load_failed` fire inside create()/resume(), so
+  // an appender wired later would drop them to the null appender. Opt-in via
+  // `opts.telemetry` (off by default so tests never post to the real endpoint);
+  // best-effort — telemetry must never block server boot.
+  let telemetry: ServerTelemetry = { service: core.accessor.get(ITelemetryService) };
+  if (opts.telemetry === true) {
+    try {
+      telemetry = await initializeServerTelemetry(core, homeDir);
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'telemetry initialization failed; continuing without telemetry',
+      );
+    }
+  }
+
   if (exposureClass !== 'loopback') {
     logger.warn(
       { host, exposureClass },
@@ -292,6 +323,9 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
+    // Flush buffered telemetry before the Core scope (and its storage layer)
+    // is disposed; bounded so a wedged endpoint cannot hold shutdown hostage.
+    await shutdownServerTelemetry(telemetry);
     core.dispose();
     await registration.release();
   };
