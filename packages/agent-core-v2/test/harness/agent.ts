@@ -16,6 +16,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
@@ -119,7 +120,7 @@ import {
   ITelemetryService,
   IHostTerminalService,
   IAgentToolRegistryService,
-  IAgentBuiltinToolsRegistrar,
+  IAgentToolActivationService,
   IAgentUserToolService,
   IAgentUsageService,
   ISessionWorkspaceContext,
@@ -144,6 +145,7 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
+import { promptTurn } from '#/agent/loop/turnOps';
 import { IModelService, type ModelsSection } from '#/kosong/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -151,6 +153,7 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
+import { secondaryModelOverlay } from '#/app/kosongConfig/secondaryModelOverlay';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
@@ -357,6 +360,7 @@ interface ResumeStateSnapshot {
   readonly context: {
     readonly history: readonly ContextMessage[];
   };
+  readonly checkpointedModels: Readonly<Record<string, unknown>>;
   readonly permission: Omit<ReturnType<IAgentPermissionGate['data']>, 'rules'>;
   readonly usage: Omit<ReturnType<IAgentUsageService['status']>, 'currentTurn'>;
 }
@@ -537,7 +541,7 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
         reg.defineInstance(id, value);
       }
       const file = (): SyncDescriptor<IFileSystemStorageService> =>
-        new SyncDescriptor(FileStorageService, [homeDir], true);
+        new SyncDescriptor(FileStorageService, [homeDir]);
       reg.defineDescriptor(IFileSystemStorageService, file());
       reg.define(IBlobStore, BlobStoreService);
     }
@@ -1032,7 +1036,7 @@ export class AgentTestContext {
             reg.defineInstance(id, value);
           }
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
-            new SyncDescriptor(InMemoryStorageService, [], true);
+            new SyncDescriptor(InMemoryStorageService, []);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());
           reg.define(IBlobStore, BlobStoreService);
           reg.defineInstance(
@@ -1332,7 +1336,11 @@ export class AgentTestContext {
     const permissionRules = this.get(IAgentPermissionRulesService);
     const cron = this.get(ISessionCronService);
     const plan = this.get(IAgentPlanService);
-    this.get(IAgentBuiltinToolsRegistrar);
+    // Activate the AgentTool contributions before any profile allowlist is
+    // applied by `configure()` — at this point `activeToolNames` is still
+    // undefined, so every contribution whose `when` holds lands in the
+    // registry, matching the harness's historical all-tools behavior.
+    void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
     this.get(IAgentExternalHooksService);
     this.get(IAgentStepRetryService);
@@ -1455,6 +1463,18 @@ export class AgentTestContext {
     });
   }
 
+  appendUserTurn(text: string): void {
+    this.get(IWireService).dispatch(
+      promptTurn({ input: [{ type: 'text', text }], origin: { kind: 'user' } }),
+    );
+    this.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+  }
+
   appendSystemReminder(
     content: string,
     origin: ContextMessage['origin'] = { kind: 'injection', variant: 'system-reminder' },
@@ -1485,9 +1505,9 @@ export class AgentTestContext {
     this.get(IAgentPromptService).clear();
   }
 
-  undoHistory(count: number): number {
+  async undoHistory(count: number): Promise<number> {
     const rpcMethods = this.get(IAgentRPCService);
-    return rpcMethods.undoHistory({ count }) as unknown as number;
+    return rpcMethods.undoHistory({ count });
   }
 
   newEvents(): EventSnapshot {
@@ -1566,6 +1586,16 @@ export class AgentTestContext {
 
   appendExchange(_step: number, userText: string, assistantText: string, tokenTotal: number): void {
     this.appendUserText(userText);
+    this.appendAssistantMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: assistantText }],
+      toolCalls: [],
+    });
+    this.coverUsage(tokenTotal);
+  }
+
+  appendTurnExchange(userText: string, assistantText: string, tokenTotal?: number): void {
+    this.appendUserTurn(userText);
     this.appendAssistantMessage({
       role: 'assistant',
       content: [{ type: 'text', text: assistantText }],
@@ -2177,6 +2207,12 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   return {
     config: configStateSnapshot(ctx),
     context: resumeContextSnapshot(ctx),
+    checkpointedModels: Object.fromEntries(
+      CHECKPOINTED_MODELS.map((model) => [
+        model.name,
+        (ctx.get(IWireService).getModel(model) as Checkpointed<unknown>).current,
+      ]),
+    ),
     permission: permissionData,
     usage: usageStatus,
   };
@@ -2315,7 +2351,15 @@ function applyTestAgentOptionsToConfig(config: KimiConfig, options: TestAgentOpt
 }
 
 function configService(readConfig: () => KimiConfig): IConfigService {
-  const effectiveConfig = () => configWithEnvOverrides(readConfig());
+  // Mirror the production overlay chain: the secondary-model recipe
+  // materializes its derived entry into the effective models view, so
+  // spawn-time binding resolves it exactly as in production. Top-level
+  // shallow clone only — `apply` replaces (never mutates) section values.
+  const effectiveConfig = () => {
+    const effective = { ...configWithEnvOverrides(readConfig()) } as Record<string, unknown>;
+    secondaryModelOverlay.apply(effective, () => undefined, (_domain, value) => value);
+    return effective as unknown as KimiConfig;
+  };
   const memory = new Map<string, unknown>();
   const sectionEmitter = new Emitter<{
     readonly domain: string;

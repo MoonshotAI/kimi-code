@@ -4,16 +4,20 @@
  * Coordinates session-level workspace mutations: resolves and persists
  * project-local config through `projectLocalConfig`, updates
  * `workspaceContext`, and mirrors command output into the main agent through
- * `agentLifecycle` and `contextMemory`. Bound at Session scope.
+ * `agentLifecycle` and `contextMemory`. The plain-data state
+ * (`pendingMainInjections`) is registered into `sessionState`
+ * (`ISessionStateService`) and read/written through it. Bound at Session
+ * scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import {
@@ -22,21 +26,27 @@ import {
   type WorkspaceAdditionalDirsResult,
 } from './workspaceCommand';
 
+export const workspaceCommandPendingMainInjectionsKey = defineState<ContextMessage[]>(
+  'workspaceCommand.pendingMainInjections',
+  () => [],
+);
+
 export class SessionWorkspaceCommandService
   extends Disposable
   implements ISessionWorkspaceCommandService
 {
   declare readonly _serviceBrand: undefined;
-  private readonly pendingMainInjections: ContextMessage[] = [];
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @IProjectLocalConfigService
     private readonly localConfig: IProjectLocalConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
   ) {
     super();
+    this.states.register(workspaceCommandPendingMainInjectionsKey);
     this._register(
       this.agents.onDidCreate((handle) => {
         if (handle.id !== MAIN_AGENT_ID) return;
@@ -45,6 +55,10 @@ export class SessionWorkspaceCommandService
         handle.accessor.get(IAgentContextMemoryService).append(...pending);
       }),
     );
+  }
+
+  private get pendingMainInjections(): ContextMessage[] {
+    return this.states.get(workspaceCommandPendingMainInjectionsKey);
   }
 
   async addAdditionalDir(input: AddAdditionalDirInput): Promise<WorkspaceAdditionalDirsResult> {
@@ -119,6 +133,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionWorkspaceCommandService,
   SessionWorkspaceCommandService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'workspaceCommand',
 );

@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
-import { FetchURLTool } from '#/app/web/tools/fetch-url';
+import { FetchURLTool } from '#/agent/tools/fetch-url/fetchUrlTool';
 import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types';
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
@@ -53,7 +53,10 @@ describe('FetchURLTool abort signal', () => {
     const fetch = vi
       .fn<UrlFetcher['fetch']>()
       .mockResolvedValue({ content: 'hello', kind: 'passthrough' } satisfies UrlFetchResult);
-    const tool = new FetchURLTool({ fetch });
+    const tool = new FetchURLTool({
+      _serviceBrand: undefined,
+      getUrlFetcher: () => ({ fetch }),
+    });
 
     await execute(tool, 'https://example.com', controller.signal);
 
@@ -69,7 +72,10 @@ describe('FetchURLTool abort signal', () => {
       controller.abort(new Error('Aborted by the user'));
       throw abortError();
     });
-    const tool = new FetchURLTool({ fetch });
+    const tool = new FetchURLTool({
+      _serviceBrand: undefined,
+      getUrlFetcher: () => ({ fetch }),
+    });
 
     await expect(execute(tool, 'https://example.com', controller.signal)).rejects.toThrow();
   });
@@ -77,7 +83,10 @@ describe('FetchURLTool abort signal', () => {
   it('returns a normal error result when fetch fails without abort', async () => {
     const controller = new AbortController();
     const fetch = vi.fn<UrlFetcher['fetch']>().mockRejectedValue(new Error('boom'));
-    const tool = new FetchURLTool({ fetch });
+    const tool = new FetchURLTool({
+      _serviceBrand: undefined,
+      getUrlFetcher: () => ({ fetch }),
+    });
 
     const result = await execute(tool, 'https://example.com', controller.signal);
 
@@ -94,7 +103,10 @@ describe('FetchURLTool output note', () => {
     const fetch = vi
       .fn<UrlFetcher['fetch']>()
       .mockResolvedValue({ content: 'BODY', kind } satisfies UrlFetchResult);
-    const tool = new FetchURLTool({ fetch });
+    const tool = new FetchURLTool({
+      _serviceBrand: undefined,
+      getUrlFetcher: () => ({ fetch }),
+    });
     const result = await execute(tool, 'https://example.com', new AbortController().signal);
     expect(result.isError).toBe(false);
     if (typeof result.output !== 'string') throw new Error('expected string output');

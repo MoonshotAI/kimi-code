@@ -14,14 +14,14 @@
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/goal         current goal (null when none)
- *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
+ *   GET    /sessions/{session_id}/warnings     session-level notices
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
  * the native v2 services directly (`ISessionLifecycleService.fork` / `archive` / `restore`,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
- * calls `IAgentPromptService.undo` directly (it now throws
+ * calls `IAgentConversationUndoService.undo` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
  * `ISessionLegacyService.status` for the cross-domain status rollup. The
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
@@ -35,12 +35,14 @@
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
  *
- * `GET /sessions/{id}/warnings` surfaces the only v1 warning
- * (`agents-md-oversized`) by projecting the main agent's
- * `IAgentProfileService.getAgentsMdWarning()` — computed and cached when the
- * agent binds a profile (via `prepareSystemPromptContext`) — into the v1
- * `{ code, message, severity }` wire shape. An unbound main agent yields an
- * empty list, matching v1's "no warning" case.
+ * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
+ * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
+ * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
+ * — computed and cached when the agent binds a profile) and the
+ * secondary-model early-validation warning (projected from the Session-scope
+ * `ISessionSecondaryModelWarningService` — computed and cached when the main
+ * agent is created). An unbound main agent or a valid/unset secondary model
+ * yields an empty list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -75,19 +77,18 @@ import {
   ErrorCodes,
   IAgentContextMemoryService,
   IAgentProfileService,
-  IAgentPromptService,
+  IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentLifecycleService,
   IAgentRPCService,
-  IAgentActivityView,
   IAuthSummaryService,
+  ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
-  ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionSecondaryModelWarningService,
   IEventService,
   IWorkspaceAliases,
   IWorkspaceService,
@@ -129,7 +130,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface SessionRouteHost {
@@ -690,12 +691,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (parsed.action === 'undo') {
           const body = undoSessionRequestSchema.parse(req.body);
           const agent = await resolveMainAgent(core, parsed.id);
-          // `prompt.undo` throws `session.undo_unavailable` (with a structured
-          // `reason`) when the history cannot satisfy `count`; it is a no-op
-          // until the precheck passes, so the post-undo read below always sees
-          // the cut applied. The status rollup stays in the legacy adapter
-          // (cross-domain) and is reused here verbatim.
-          agent.accessor.get(IAgentPromptService).undo(body.count);
+          // The conversation undo service throws `session.undo_unavailable` (with a
+          // structured `reason`) when fewer than `count` turns may be cut;
+          // it quiesces the loop/compaction first, so the post-undo read
+          // below always sees the cut applied.
+          await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
           const history = agent.accessor.get(IAgentContextMemoryService).get();
           requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
           const [summary, status] = await Promise.all([
@@ -999,14 +999,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       try {
-        // Surface the v2 `agents-md-oversized` notice in the v1 wire shape. The
-        // warning is computed (and cached) by `IAgentProfileService` when the main
-        // agent binds a profile; an unbound main agent yields `undefined` → `[]`,
-        // matching v1's "no warning" case.
+        // Surface v2 notices in the v1 wire shape. The agents-md warning is
+        // computed (and cached) by `IAgentProfileService` when the main agent
+        // binds a profile; the secondary-model warning is computed (and
+        // cached) by `ISessionSecondaryModelWarningService` when the main
+        // agent is created. An unbound main agent / unset secondary model
+        // yields `undefined` → that entry drops out, matching v1's "no
+        // warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings =
-          agentsMdWarning === undefined
+        const secondaryModelWarning = session.accessor
+          .get(ISessionSecondaryModelWarningService)
+          .getSecondaryModelWarning();
+        const warnings = [
+          ...(agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1014,7 +1020,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ];
+              ]),
+          ...(secondaryModelWarning === undefined
+            ? []
+            : [
+                {
+                  code: secondaryModelWarning.code,
+                  message: secondaryModelWarning.message,
+                  severity: 'warning' as const,
+                },
+              ]),
+        ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -1080,11 +1096,11 @@ export interface SessionFacts {
 }
 
 /**
- * Resolve a session's live wire facts, derived on demand from the agents'
- * activity views: `busy` = any agent with an active turn or background task;
- * the reason is the main agent's latest turn outcome (`blocked` folds into
- * `failed`). Nothing is booked at session level — a cold session (no live
- * handle) is not busy and carries no outcome.
+ * Resolve a session's live wire facts from the core `ISessionActivityView`
+ * aggregate (`busy` = any agent with an active turn or background task; the
+ * reason is the main agent's latest turn outcome, `blocked` folds into
+ * `failed`). A cold session (no live handle) is not busy and carries no
+ * outcome.
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
@@ -1095,33 +1111,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       pendingInteraction: 'none',
     };
   }
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
-  const interactions = handle.accessor.get(ISessionInteractionService);
-  let busy = false;
-  for (const agent of agents.list()) {
-    const state = agent.accessor.get(IAgentActivityView).state();
-    if (state.turn !== undefined || state.background.length > 0) {
-      busy = true;
-      break;
-    }
-  }
-  const reason = mainActivity?.lastTurn?.reason;
-  const pendingInteraction = resolvePendingInteraction(interactions);
-  return {
-    busy,
-    mainTurnActive: mainActivity?.turn !== undefined,
-    pendingInteraction,
-    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
-  };
-}
-
-function resolvePendingInteraction(
-  interactions: ISessionInteractionService,
-): SessionPendingInteraction {
-  if (interactions.listPending('approval').length > 0) return 'approval';
-  if (interactions.listPending('question').length > 0) return 'question';
-  return 'none';
+  return handle.accessor.get(ISessionActivityView).state();
 }
 
 /**
@@ -1228,6 +1218,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case 'session.fork_active_turn':
+      case ErrorCodes.SESSION_BUSY:
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
         return;
       case 'compaction.unable':

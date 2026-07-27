@@ -19,6 +19,8 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 
 import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';
+import { useSessionActivities } from '../activity/useSessionActivity';
+import type { SessionWorkFacts } from '../activity/store';
 import { Badge, ErrorLine, relTime } from '../ui';
 
 /**
@@ -46,6 +48,7 @@ export function Sidebar({
   const { klient, baseUrl, config } = useConnection();
   const queryClient = useQueryClient();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const activities = useSessionActivities();
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
@@ -147,6 +150,7 @@ export function Sidebar({
             <SessionRow
               key={s.id}
               s={s}
+              activity={activities.get(s.id)}
               active={s.id === activeSessionId}
               onClick={() => onSelectSession(s.id)}
             />
@@ -201,7 +205,17 @@ function WorkspaceRow({
   );
 }
 
-function SessionRow({ s, active, onClick }: { s: SessionSummary; active: boolean; onClick: () => void }) {
+function SessionRow({
+  s,
+  active,
+  activity,
+  onClick,
+}: {
+  s: SessionSummary;
+  active: boolean;
+  activity?: SessionWorkFacts | undefined;
+  onClick: () => void;
+}) {
   return (
     <div
       className={`cursor-pointer px-3 py-2 hover:bg-neutral-800/60 ${active ? 'bg-sky-950/60' : ''}`}
@@ -211,6 +225,12 @@ function SessionRow({ s, active, onClick }: { s: SessionSummary; active: boolean
         <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">
           {s.title ?? s.lastPrompt ?? s.id}
         </span>
+        {activity?.busy ? <Badge tone="green">running</Badge> : null}
+        {activity?.pendingInteraction === 'approval' ? <Badge tone="amber">approval</Badge> : null}
+        {activity?.pendingInteraction === 'question' ? <Badge tone="sky">question</Badge> : null}
+        {activity !== undefined && !activity.busy && activity.lastTurnReason === 'failed' ? (
+          <Badge tone="red">failed</Badge>
+        ) : null}
         {s.archived ? <Badge tone="neutral">archived</Badge> : null}
       </div>
       <div className="mt-0.5 flex items-center gap-2 text-[10px] text-neutral-500">

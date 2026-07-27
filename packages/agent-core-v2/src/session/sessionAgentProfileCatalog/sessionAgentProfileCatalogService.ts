@@ -17,16 +17,18 @@
  * fixed, and `loadAll` merges whatever loaded even when a fatal source
  * rejects mid-pass. The swallowed handler on `ready` keeps an un-awaited
  * rejection from crashing the process, and event-driven reloads get the
- * same warning treatment.
+ * same warning treatment. The plain-data state (`contributions`, `merged`)
+ * is registered into `sessionState` (`ISessionStateService`) and
+ * read/written through it.
  * Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { isError2 } from '#/_base/errors/errors';
+import { defineState } from '#/_base/state/stateRegistry';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   IAgentProfileCatalogService,
@@ -37,11 +39,20 @@ import type {
   IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
 import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import { IExplicitFileAgentSource } from './explicitFileAgentSource';
 import { IExtraFileAgentSource } from './extraFileAgentSource';
 import { IProjectFileAgentSource } from './projectFileAgentSource';
 import { ISessionAgentProfileCatalog } from './sessionAgentProfileCatalog';
+
+export const agentProfileCatalogContributionsKey = defineState<
+  Map<string, { readonly c: AgentProfileContribution; readonly priority: number }>
+>('sessionAgentProfileCatalog.contributions', () => new Map());
+export const agentProfileCatalogMergedKey = defineState<Map<string, AgentProfile>>(
+  'sessionAgentProfileCatalog.merged',
+  () => new Map(),
+);
 
 export class SessionAgentProfileCatalogService
   extends Disposable
@@ -50,17 +61,13 @@ export class SessionAgentProfileCatalogService
   declare readonly _serviceBrand: undefined;
 
   private readonly sources: readonly IAgentProfileSource[];
-  private readonly contributions = new Map<
-    string,
-    { readonly c: AgentProfileContribution; readonly priority: number }
-  >();
   private readonly sourceLoadTails = new Map<IAgentProfileSource, Promise<void>>();
-  private merged = new Map<string, AgentProfile>();
   private readyPromise: Promise<void>;
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());
   readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @IAgentProfileCatalogService private readonly builtin: IAgentProfileCatalogService,
     @IUserFileAgentSource user: IUserFileAgentSource,
     @IExtraFileAgentSource extra: IExtraFileAgentSource,
@@ -69,6 +76,8 @@ export class SessionAgentProfileCatalogService
     @ILogService private readonly log: ILogService,
   ) {
     super();
+    this.states.register(agentProfileCatalogContributionsKey);
+    this.states.register(agentProfileCatalogMergedKey);
     this.sources = [user, extra, project, explicit].toSorted(
       (a, b) => a.priority - b.priority,
     );
@@ -86,6 +95,21 @@ export class SessionAgentProfileCatalogService
     this.remerge();
     this.readyPromise = this.loadAll();
     void this.readyPromise.catch(() => undefined);
+  }
+
+  private get contributions(): Map<
+    string,
+    { readonly c: AgentProfileContribution; readonly priority: number }
+  > {
+    return this.states.get(agentProfileCatalogContributionsKey);
+  }
+
+  private get merged(): Map<string, AgentProfile> {
+    return this.states.get(agentProfileCatalogMergedKey);
+  }
+
+  private set merged(value: Map<string, AgentProfile>) {
+    this.states.set(agentProfileCatalogMergedKey, value);
   }
 
   get ready(): Promise<void> {
@@ -207,6 +231,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionAgentProfileCatalog,
   SessionAgentProfileCatalogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionAgentProfileCatalog',
 );

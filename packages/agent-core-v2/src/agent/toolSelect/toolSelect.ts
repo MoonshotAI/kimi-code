@@ -2,7 +2,8 @@
  * `toolSelect` domain (L4) — progressive tool disclosure contract.
  *
  * Defines the Agent-scope service that shapes provider-visible tool/history
- * views, loads selected MCP schemas, and reports loadable-tool announcements.
+ * views, loads selected dynamic schemas, and reports loadable-tool
+ * announcements.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

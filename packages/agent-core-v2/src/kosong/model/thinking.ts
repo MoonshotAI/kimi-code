@@ -103,6 +103,19 @@ export function requiresStrictThinkingValidation(
   return strict;
 }
 
+/**
+ * Whether the wire encodes a true protocol-level thinking disable
+ * (`thinking: { type: 'disabled' }`). Only the Anthropic and Kimi wires do;
+ * everywhere else "off" is the absence of an effort field or a pseudo-effort
+ * the upstream may still reason through — exactly what the models.dev
+ * `always_thinking` marker exists to capture. Kosong owns this verdict (the
+ * adapters that emit the encoding live here); callers outside the vendor
+ * layer must never re-hardcode the wire ids.
+ */
+export function wireHasProtocolThinkingDisable(protocol: string | undefined): boolean {
+  return protocol === 'anthropic' || protocol === 'kimi';
+}
+
 // ---------------------------------------------------------------------------
 // Effort resolution (pure)
 // ---------------------------------------------------------------------------

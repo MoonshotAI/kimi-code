@@ -22,9 +22,8 @@
  * already-loaded raw value and re-runs overlays. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
@@ -419,10 +418,20 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyEnvOverlay(next);
     this.effective = next;
 
-    const changedDomains = domains ?? [
-      ...new Set([...Object.keys(previous), ...Object.keys(next)]),
-    ];
-    this.commit(source, changedDomains);
+    // Commit candidates: the explicitly touched domains PLUS anything the
+    // recompute actually changed. Section env bindings and effective overlays
+    // rewrite sibling domains the caller's list never names (e.g. setting
+    // `[secondary_model]` synthesizes a derived entry into `models`; removing
+    // the recipe retracts it). `commit` re-checks every candidate with
+    // deepEqual before firing, so widening the set is free — missing a real
+    // change is what costs (a stale registry downstream).
+    const candidates = new Set(
+      domains ?? [...Object.keys(previous), ...Object.keys(next)],
+    );
+    for (const domain of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+      if (!deepEqual(previous[domain], next[domain])) candidates.add(domain);
+    }
+    this.commit(source, [...candidates]);
   }
 
   private deliveredValue(domain: string): unknown {
@@ -565,13 +574,13 @@ registerScopedService(
   LifecycleScope.App,
   IConfigRegistry,
   ConfigRegistry,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'config',
 );
 registerScopedService(
   LifecycleScope.App,
   IConfigService,
   ConfigService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'config',
 );

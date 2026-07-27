@@ -32,6 +32,10 @@ describe('exportSessionRequestSchema', () => {
     });
   });
 
+  it('accepts the desktop log flag', () => {
+    expect(exportSessionRequestSchema.parse({ desktop: true })).toEqual({ desktop: true });
+  });
+
   it('accepts a Web log at the 256 KiB UTF-8 boundary', () => {
     expect(exportSessionRequestSchema.safeParse({ web_log: 'a'.repeat(256 * 1024) }).success).toBe(
       true,

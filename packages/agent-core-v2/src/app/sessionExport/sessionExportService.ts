@@ -8,8 +8,7 @@
 
 import { join, resolve } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
@@ -40,6 +39,7 @@ import { openZipSource, type ZipSource } from './file-source';
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
 const WEB_LOG_REL = 'logs/kimi-web.jsonl';
+const DESKTOP_LOG_REL = 'logs/kimi-desktop.log';
 
 export class SessionExportService implements ISessionExportService {
   declare readonly _serviceBrand: undefined;
@@ -86,6 +86,10 @@ export class SessionExportService implements ISessionExportService {
       request: input,
       summary: liveSummary,
       globalLogPath: resolveGlobalLogPath(this.bootstrap.homeDir),
+      desktopLogPath:
+        input.includeDesktopLog === true
+          ? join(this.bootstrap.homeDir, 'logs', 'kimi-code-desktop.log')
+          : undefined,
       webLog: options.webLog,
       signal: options.signal,
       maxArchiveBytes: options.maxArchiveBytes,
@@ -159,6 +163,7 @@ export async function exportSessionDirectory(input: {
   readonly request: ExportSessionPayload;
   readonly summary: ExportSessionDirectorySummary;
   readonly globalLogPath?: string | undefined;
+  readonly desktopLogPath?: string | undefined;
   readonly webLog?: string;
   readonly signal?: AbortSignal;
   readonly maxArchiveBytes?: number;
@@ -170,11 +175,16 @@ export async function exportSessionDirectory(input: {
   let sessionLogSourceTransferred = false;
   let globalSource: ZipSource | undefined;
   let globalSourceTransferred = false;
+  let desktopSource: ZipSource | undefined;
+  let desktopSourceTransferred = false;
 
   try {
     sessionLogSource = await openOptionalZipSource(sessionLogPath, input.signal);
     if (input.request.includeGlobalLog === true && input.globalLogPath !== undefined) {
       globalSource = await openOptionalZipSource(input.globalLogPath, input.signal);
+    }
+    if (input.desktopLogPath !== undefined) {
+      desktopSource = await openOptionalZipSource(input.desktopLogPath, input.signal);
     }
     const sessionFiles = await collectFilesRecursive(sessionDir);
     if (sessionFiles.length === 0 && sessionLogSource === undefined) {
@@ -219,10 +229,14 @@ export async function exportSessionDirectory(input: {
     if (globalSource !== undefined) {
       extras.push({ source: globalSource, target: GLOBAL_LOG_REL });
     }
-    const manifest =
-      globalSource === undefined
-        ? baseManifest
-        : { ...baseManifest, globalLogPath: GLOBAL_LOG_REL };
+    if (desktopSource !== undefined) {
+      extras.push({ source: desktopSource, target: DESKTOP_LOG_REL });
+    }
+    const manifest = {
+      ...baseManifest,
+      globalLogPath: globalSource === undefined ? undefined : GLOBAL_LOG_REL,
+      desktopLogPath: desktopSource === undefined ? undefined : DESKTOP_LOG_REL,
+    };
 
     const writing = writeExportZip({
       outputPath,
@@ -235,6 +249,7 @@ export async function exportSessionDirectory(input: {
     });
     sessionLogSourceTransferred = sessionLogSource !== undefined;
     globalSourceTransferred = globalSource !== undefined;
+    desktopSourceTransferred = desktopSource !== undefined;
     const entries = await writing;
 
     return {
@@ -249,6 +264,9 @@ export async function exportSessionDirectory(input: {
     }
     if (globalSource !== undefined && !globalSourceTransferred) {
       await globalSource.close().catch(() => {});
+    }
+    if (desktopSource !== undefined && !desktopSourceTransferred) {
+      await desktopSource.close().catch(() => {});
     }
   }
 }
@@ -289,6 +307,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionExportService,
   SessionExportService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionExport',
 );

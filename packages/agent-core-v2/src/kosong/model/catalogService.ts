@@ -47,9 +47,8 @@
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
@@ -320,6 +319,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" is not configured in config.toml.`,
+        { details: { model: id } },
       );
     }
     trace.capture(TRACE.configuredModel, configuredModel);
@@ -732,6 +732,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelCatalog,
   ModelCatalog,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'modelCatalog',
 );

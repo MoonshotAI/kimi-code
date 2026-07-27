@@ -5,14 +5,13 @@
  * where do its key/url come from": the protocol base this registration
  * composes with, its deviation traits (applying to that protocol only), its
  * endpoint fallback chain, how much of the host's request headers it
- * receives, how its models are discovered, and its declared capability.
- * Registration happens once per vendor × protocol pair, in the vendor's
- * `*.contrib.ts` side-effect module: a vendor running over several
- * transports registers one definition per protocol (Kimi composes with
- * `openai` on its native transport and registers a second definition over
- * `anthropic`). Vendor-level facts (endpoint, host headers, model source,
- * capability) are declared identically on every registration of the same id
- * via shared constants, so id-level queries can read any of them.
+ * receives, and how its models are discovered. Registration happens once per
+ * vendor × protocol pair, in the vendor's `*.contrib.ts` side-effect module:
+ * a vendor running over several transports registers one definition per
+ * protocol (Kimi composes with `openai` on its native transport and registers
+ * a second definition over `anthropic`). Vendor-level facts (endpoint, host
+ * headers, model source) are declared identically on every registration of
+ * the same id via shared constants, so id-level queries can read any of them.
  *
  * `resolveProviderEndpoint` is the single authority on the endpoint fallback
  * chain: definition-level `endpoint` first, otherwise the aggregation of the
@@ -20,7 +19,6 @@
  * bag (defaulting to `process.env`).
  */
 
-import type { ModelCapability } from '#/kosong/contract/capability';
 import type { Protocol, ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import type {
   ProtocolEndpoint,
@@ -49,11 +47,6 @@ export interface ProviderDefinition {
   readonly hostHeaders?: 'full' | 'user-agent';
   /** How the runtime should discover the vendor's models. */
   readonly modelSource?: ModelSource;
-  /**
-   * Declared capability. Resolution order is definition → traits → base:
-   * when present this wins outright — even when it is `UNKNOWN_CAPABILITY`.
-   */
-  readonly capability?: ModelCapability;
 }
 
 const providerDefinitions = new Map<string, Map<Protocol, ProviderDefinition>>();

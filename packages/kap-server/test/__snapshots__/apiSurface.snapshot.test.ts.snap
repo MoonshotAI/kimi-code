@@ -30,11 +30,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/providers/{provider_id}",
+    ],
+    [
+      "DELETE",
       "/api/v1/workspaces/{workspace_id}",
     ],
     [
       "GET",
       "/api/v1/auth",
+    ],
+    [
+      "GET",
+      "/api/v1/catalog/providers",
+    ],
+    [
+      "GET",
+      "/api/v1/catalog/providers/{catalog_id}",
     ],
     [
       "GET",
@@ -198,6 +210,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/transcript/plan",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/transcript/user-messages",
     ],
     [
@@ -278,6 +294,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/providers",
+    ],
+    [
+      "POST",
       "/api/v1/providers{action}",
     ],
     [
@@ -351,6 +371,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/workspaces",
+    ],
+    [
+      "PUT",
+      "/api/v1/providers/{provider_id}",
     ],
   ],
 }

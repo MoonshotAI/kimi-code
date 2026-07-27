@@ -15,6 +15,7 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -45,7 +46,9 @@ import {
   type AgentSpawnAttemptOptions,
   type QueuedAgentRunTask,
 } from '#/session/swarm/agentRunBatch';
-import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { Error2 } from '#/_base/errors/errors';
+import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -903,6 +906,19 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: (alias: string) => {
+        if (alias === 'provider/bad') {
+          throw new Error2(
+            ConfigErrors.codes.CONFIG_INVALID,
+            'Model "provider/bad" is not configured in config.toml.',
+            { details: { model: 'provider/bad' } },
+          );
+        }
+        return { id: alias } as Model;
+      },
+    } as IModelCatalog);
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -1062,7 +1078,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
-  it('realigns resumed children to the caller current model', async () => {
+  it('keeps resumed children on their own recorded model', async () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },
     };
@@ -1080,12 +1096,62 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('kimi-test');
+    // No realign: resume must not drag the child back to the parent's model.
+    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
     expect(runAgent).toHaveBeenCalledWith(
       'agent-existing',
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('prefers the spawn task binding over the caller model', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const spawnTask: SessionSwarmSpawnTask = {
+      ...spawnSessionTask('src/a.ts'),
+      kind: 'spawn',
+      binding: { model: 'provider/secondary', thinking: 'low' },
+    };
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnTask],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-new' }]);
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'provider/secondary',
+          thinking: 'low',
+          cwd: '/repo',
+        },
+      }),
+    );
+  });
+
+  it('points at the secondary model config when a spawn task binding is invalid', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const spawnTask: SessionSwarmSpawnTask = {
+      ...spawnSessionTask('src/a.ts'),
+      kind: 'spawn',
+      binding: { model: 'provider/bad', thinking: 'low' },
+    };
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnTask],
+      }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      },
+    ]);
+    expect(createAgent).not.toHaveBeenCalled();
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1187,7 +1253,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   });
 });
 
-function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
+function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
   return {
     kind: 'spawn',
     data: {},

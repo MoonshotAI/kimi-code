@@ -18,16 +18,17 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
-  ReadMediaFileTool,
   type ReadMediaFileInput,
   type VideoUploader,
-} from '#/agent/media/tools/read-media';
+} from '#/agent/tools/read-media-file/read-media-file';
+import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
 } from '#/agent/media/image-compress';
 import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import {
   ToolAccesses,
@@ -852,6 +853,7 @@ describe('AgentMediaToolsRegistrar', () => {
       createTestEnv(),
       workspaceCtx,
       recordingTelemetry([]),
+      new AgentStateService(),
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;

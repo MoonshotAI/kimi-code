@@ -4,9 +4,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -40,14 +40,14 @@ describe('WorkspaceService (file-backed)', () => {
       LifecycleScope.App,
       IWorkspacePersistence,
       FileWorkspacePersistence,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspace',
     );
     registerScopedService(
       LifecycleScope.App,
       IWorkspaceService,
       WorkspaceService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspace',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-'));

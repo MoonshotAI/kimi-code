@@ -11,8 +11,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -202,6 +201,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostProcessService,
   HostProcessService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'hostProcess',
 );

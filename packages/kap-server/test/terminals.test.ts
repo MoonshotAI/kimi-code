@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import {
   IHostTerminalService,
-  InstantiationType,
+  ScopeActivation,
   LifecycleScope,
   registerScopedService,
   type TerminalProcess,
@@ -79,7 +79,7 @@ registerScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   FakeHostTerminalService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'terminal-test',
 );
 

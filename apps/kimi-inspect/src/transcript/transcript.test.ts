@@ -19,6 +19,7 @@ import type { WsLike } from '../channel/wsLike';
 import {
   fetchTranscriptOps,
   fetchTranscriptPage,
+  fetchTranscriptPlan,
   type TranscriptPage,
 } from './api';
 import {
@@ -280,10 +281,107 @@ describe('fetchTranscriptOps', () => {
   });
 });
 
+// ------------------------------------------------------------------ plan lookup
+
+describe('fetchTranscriptPlan', () => {
+  const planEntry = {
+    tool_call_id: 'call_plan',
+    turn_id: 't3',
+    source: 'interaction',
+    plan: '# The Plan\n\nDo the thing.',
+    path: '/tmp/plans/foo.md',
+    options: [{ label: 'Approach A', description: 'fast' }],
+    review: { state: 'approved', selected_option: 'Approach A', feedback: 'looks good' },
+  };
+
+  it('requests the plan endpoint with agent_id/tool_call_id and maps the snake_case payload', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: [planEntry] }));
+    const plans = await fetchTranscriptPlan({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's 1',
+      agentId: 'main',
+      toolCallId: 'call_plan',
+      fetchImpl,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript/plan?');
+    expect(calls[0]!.url).toContain('agent_id=main');
+    expect(calls[0]!.url).toContain('tool_call_id=call_plan');
+    expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
+    expect(plans).toEqual([
+      {
+        toolCallId: 'call_plan',
+        turnId: 't3',
+        source: 'interaction',
+        plan: '# The Plan\n\nDo the thing.',
+        path: '/tmp/plans/foo.md',
+        options: [{ label: 'Approach A', description: 'fast' }],
+        review: { state: 'approved', selectedOption: 'Approach A', feedback: 'looks good' },
+      },
+    ]);
+  });
+
+  it('omits tool_call_id from the query when unset (lists every plan of the agent)', async () => {
+    const { calls, fetchImpl } = fakeFetch(
+      okEnvelope({
+        agent_id: 'main',
+        plans: [
+          { tool_call_id: 'call_draft', turn_id: 't1', source: 'display', plan: '# Draft' },
+          { tool_call_id: 'call_final', turn_id: 't2', source: 'output', plan: '# Final' },
+        ],
+      }),
+    );
+    const plans = await fetchTranscriptPlan({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      fetchImpl,
+    });
+    expect(calls[0]!.url).not.toContain('tool_call_id');
+    expect(plans.map((p) => [p.toolCallId, p.plan])).toEqual([
+      ['call_draft', '# Draft'],
+      ['call_final', '# Final'],
+    ]);
+    expect(plans[0]!.review).toBeUndefined();
+    expect(plans[0]!.path).toBeUndefined();
+    expect(plans[0]!.options).toBeUndefined();
+  });
+
+  it('throws on a 40416 envelope (unknown tool call / not ExitPlanMode)', async () => {
+    const { fetchImpl } = fakeFetch({
+      code: 40416,
+      msg: 'no ExitPlanMode tool call found for tool_call_id: call_nope',
+      data: null,
+    });
+    await expect(
+      fetchTranscriptPlan({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        toolCallId: 'call_nope',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('40416');
+  });
+
+  it('throws when the payload fails schema validation', async () => {
+    const { fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: 'nope' }));
+    await expect(
+      fetchTranscriptPlan({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('unexpected response shape');
+  });
+});
+
 // ---------------------------------------------------------------- ws
 
 describe('TranscriptWs', () => {
-  it('connects with the bearer subprotocol and sends client_hello with the transcript grade spec', () => {
+  it('connects with the bearer subprotocol and sends the grade spec via subscribe_v2', () => {
     FakeWs.reset();
     makeWs();
     const sock = FakeWs.instances[0]!;
@@ -294,7 +392,13 @@ describe('TranscriptWs', () => {
       type: 'client_hello',
       payload: {
         subscriptions: ['s1'],
-        transcript: { s1: { main: 'delta' } },
+      },
+    });
+    expect(sock.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: {
+        session_id: 's1',
+        transcript: { main: 'block' },
       },
     });
   });
@@ -342,7 +446,7 @@ describe('TranscriptWs', () => {
     expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
   });
 
-  it('sends transcript_since in client_hello when getSince has a watermark', async () => {
+  it('sends a clean client_hello and carries grades/transcript_since on subscribe_v2', async () => {
     FakeWs.reset();
     let watermark: number | undefined;
     new TranscriptWs({
@@ -358,10 +462,15 @@ describe('TranscriptWs', () => {
     sock.open();
     expect(sock.sentFrames()[0]).toMatchObject({
       type: 'client_hello',
-      payload: { transcript: { s1: { main: 'delta' } } },
+      payload: { client_id: 'kimi-inspect', subscriptions: ['s1'] },
+    });
+    expect(sock.sentFrames()[0]).not.toHaveProperty('payload.transcript');
+    expect(sock.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: { session_id: 's1', transcript: { main: 'block' } },
     });
     expect(
-      (sock.sentFrames()[0] as { payload: Record<string, unknown> }).payload['transcript_since'],
+      (sock.sentFrames()[1] as { payload: Record<string, unknown> }).payload['transcript_since'],
     ).toBeUndefined();
     watermark = 42;
     sock.emit('close');
@@ -370,9 +479,9 @@ describe('TranscriptWs', () => {
     });
     const second = FakeWs.instances[1]!;
     second.open();
-    expect(second.sentFrames()[0]).toMatchObject({
-      type: 'client_hello',
-      payload: { transcript_since: { s1: { main: 42 } } },
+    expect(second.sentFrames()[1]).toMatchObject({
+      type: 'subscribe_v2',
+      payload: { session_id: 's1', transcript_since: { main: 42 } },
     });
   });
 
@@ -435,7 +544,7 @@ describe('TranscriptWs', () => {
     expect(seen.resyncs).toBe(1);
   });
 
-  it('re-subscribes after a drop and reports the reconnect only on the subscribe ack', () => {
+  it('re-subscribes after a drop and reports the reconnect only on the subscribe_v2 ack', () => {
     vi.useFakeTimers();
     try {
       FakeWs.reset();
@@ -443,10 +552,14 @@ describe('TranscriptWs', () => {
       const first = FakeWs.instances[0]!;
       first.open();
       // Open alone does not reconcile: the server attaches the transcript
-      // stream only after processing client_hello.
+      // stream only after processing subscribe_v2.
       expect(seen.reconnects).toBe(0);
+      // Neither does the client_hello ack.
       const helloId = (first.sentFrames()[0] as { id: string }).id;
       first.serverFrame({ type: 'ack', id: helloId, code: 0, msg: 'success', payload: {} });
+      expect(seen.reconnects).toBe(0);
+      const subscribeV2Id = (first.sentFrames()[1] as { id: string }).id;
+      first.serverFrame({ type: 'ack', id: subscribeV2Id, code: 0, msg: 'success', payload: {} });
       expect(seen.reconnects).toBe(1);
       first.emit('close');
       vi.advanceTimersByTime(600);
@@ -454,9 +567,10 @@ describe('TranscriptWs', () => {
       const second = FakeWs.instances[1]!;
       second.open();
       expect(second.sentFrames()[0]).toMatchObject({ type: 'client_hello' });
+      expect(second.sentFrames()[1]).toMatchObject({ type: 'subscribe_v2' });
       expect(seen.reconnects).toBe(1);
-      const helloId2 = (second.sentFrames()[0] as { id: string }).id;
-      second.serverFrame({ type: 'ack', id: helloId2, code: 0, msg: 'success', payload: {} });
+      const subscribeV2Id2 = (second.sentFrames()[1] as { id: string }).id;
+      second.serverFrame({ type: 'ack', id: subscribeV2Id2, code: 0, msg: 'success', payload: {} });
       expect(seen.reconnects).toBe(2);
     } finally {
       vi.useRealTimers();

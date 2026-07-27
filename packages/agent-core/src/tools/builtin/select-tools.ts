@@ -1,11 +1,12 @@
 /**
  * select_tools — the load-by-exact-name primitive of progressive tool
- * disclosure. MCP tool schemas stay out of the immutable top-level `tools[]`;
- * the model reads the `<tools_added>/<tools_removed>` announcements, calls
- * this tool with exact names, and the full definitions are appended to the
- * conversation as a `role: 'system'` message carrying `tools` (the
- * `messages[].tools` wire contract). Loaded tools become executable the very
- * next step: the loop re-reads the executable tool table per step.
+ * disclosure. Dynamic tool schemas stay out of the immutable top-level
+ * `tools[]`; the model reads the `<tools_added>/<tools_removed>`
+ * announcements, calls this tool with exact names, and the full definitions
+ * are appended to the conversation as a `role: 'system'` message carrying
+ * `tools` (the `messages[].tools` wire contract). Loaded tools become
+ * executable the very next step: the loop re-reads the executable tool table
+ * per step.
  *
  * Registered only when `agent.toolSelectEnabled` (capability × flag gate) and
  * deliberately NOT main-agent-only — subagents get the same disclosure.
@@ -98,7 +99,7 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
           // the loaded set, after which a re-select injects the new schema.
           toLoad.sort((a, b) => a.localeCompare(b));
           const tools = toLoad
-            .map((name) => manager.getMcpToolSchema(name))
+            .map((name) => manager.getDynamicToolSchema(name))
             .filter((tool): tool is NonNullable<typeof tool> => tool !== undefined);
           this.agent.context.appendMessage({
             role: 'system',

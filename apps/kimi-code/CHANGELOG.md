@@ -1,5 +1,39 @@
 # @moonshot-ai/kimi-code
 
+## 0.29.2
+
+### Patch Changes
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Hold per-agent runtime state of the experimental engine in the agent-scope state container, so it is observable in one place and disposed with the agent; state snapshots collapse class instances to name markers so resource graphs cannot exhaust memory during export.
+
+- [#2119](https://github.com/MoonshotAI/kimi-code/pull/2119) [`f06eb5c`](https://github.com/MoonshotAI/kimi-code/commit/f06eb5c60e0a4e51162d1854dda1db41892b457c) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Allow hosts to defer registered user-tool schemas until needed. Set `disclosure: "deferred"` when registering a tool.
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Instantiate every registered service eagerly at scope creation on the experimental engine, following the dependency graph automatically, and drop the hand-maintained lists that resolved side-effect services one by one at startup.
+
+- [#2120](https://github.com/MoonshotAI/kimi-code/pull/2120) [`0d00a07`](https://github.com/MoonshotAI/kimi-code/commit/0d00a07c02e334ca904077b2ea8c56cf58b44586) Thanks [@yicun](https://github.com/yicun)! - web: Fix copying selected chat text over plain HTTP from replacing the clipboard with an event placeholder.
+
+- [#2210](https://github.com/MoonshotAI/kimi-code/pull/2210) [`0cef160`](https://github.com/MoonshotAI/kimi-code/commit/0cef160c4b900a3d78212cd5da4b80d335ea0b6f) Thanks [@chengluyu](https://github.com/chengluyu)! - Fix goal pursuit being interrupted when a goal turn reaches the per-turn step limit (`loop_control.max_steps_per_turn`); the limit now splits goal work into more continuation turns instead of pausing the goal.
+
+- [#2153](https://github.com/MoonshotAI/kimi-code/pull/2153) [`c497af6`](https://github.com/MoonshotAI/kimi-code/commit/c497af60e6cd20aab05e590f98a28fb15dd3491d) Thanks [@chengluyu](https://github.com/chengluyu)! - Fix messages sent while a goal is running being rejected with a "Cannot launch a new turn while another turn is active" error; they are now steered into the active goal turn instead of being dropped.
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Hold per-session runtime state of the experimental engine in the session-scope state container, so it is observable in one place and disposed with the session.
+
+- [#2055](https://github.com/MoonshotAI/kimi-code/pull/2055) [`d40d0d3`](https://github.com/MoonshotAI/kimi-code/commit/d40d0d305d2866cb5ab8696e559e0813b5f92201) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix /undo to restore conversation history, todo lists, plan mode, and task notifications consistently.
+
+## 0.29.1
+
+### Patch Changes
+
+- [#2065](https://github.com/MoonshotAI/kimi-code/pull/2065) [`527d485`](https://github.com/MoonshotAI/kimi-code/commit/527d485d9296fe20f473a4a578d9e6a499c20cd9) Thanks [@7Sageer](https://github.com/7Sageer)! - Add global default MCP server timeouts in `config.toml` and env vars.
+
+- [#2104](https://github.com/MoonshotAI/kimi-code/pull/2104) [`66f611a`](https://github.com/MoonshotAI/kimi-code/commit/66f611aae99887ad2076aa3482a0df5e415d3511) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix loss of thinking content with OpenAI-compatible endpoints that return reasoning under a different field name (e.g. newer vLLM); the reasoning field is now detected per endpoint and echoed back on follow-up requests.
+
+- [#2089](https://github.com/MoonshotAI/kimi-code/pull/2089) [`ca38b7e`](https://github.com/MoonshotAI/kimi-code/commit/ca38b7ed864ad5fa2b2e3c8b96d8a7b10a734445) Thanks [@liruifengv](https://github.com/liruifengv)! - Remove the toolbar tip that suggested trying the "superpowers" plugin.
+
+- [#2064](https://github.com/MoonshotAI/kimi-code/pull/2064) [`7b62ed5`](https://github.com/MoonshotAI/kimi-code/commit/7b62ed5b2c2709719f360c01a2f513dee34ae179) Thanks [@7Sageer](https://github.com/7Sageer)! - Add experimental secondary-model bindings for newly spawned subagents, including per-agent model preferences and subagent-only model overrides.
+
+- [#2096](https://github.com/MoonshotAI/kimi-code/pull/2096) [`5fdbdb4`](https://github.com/MoonshotAI/kimi-code/commit/5fdbdb4a22b86ae6f7ba7c775741689aaaf215f0) Thanks [@7Sageer](https://github.com/7Sageer)! - Add environment variables to configure the web search and web fetch services without OAuth login.
+
 ## 0.29.0
 
 ### Minor Changes

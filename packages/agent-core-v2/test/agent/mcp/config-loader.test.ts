@@ -1,3 +1,11 @@
+/**
+ * Scenario: MCP config discovery, precedence, normalization, and validation.
+ *
+ * Exercises the real loader against temporary JSON files. Run with `pnpm
+ * --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/mcp/config-loader.test.ts`.
+ */
+
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -208,6 +216,47 @@ describe('loadMcpServers', () => {
     });
     await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
+    });
+  });
+
+  it('throws Error2(config.invalid) when an MCP timeout exceeds the Node.js timer limit', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        bad: {
+          transport: 'stdio',
+          command: 'node',
+          startupTimeoutMs: 2_147_483_648,
+          toolTimeoutMs: 2_147_483_648,
+        },
+      },
+    });
+    await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+  });
+
+  it('loads MCP timeouts at the Node.js timer upper boundary', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        boundary: {
+          transport: 'stdio',
+          command: 'node',
+          startupTimeoutMs: 2_147_483_647,
+          toolTimeoutMs: 2_147_483_647,
+        },
+      },
+    });
+    await expect(loadMcpServers({ cwd, homeDir: home })).resolves.toEqual({
+      boundary: {
+        transport: 'stdio',
+        command: 'node',
+        startupTimeoutMs: 2_147_483_647,
+        toolTimeoutMs: 2_147_483_647,
+      },
     });
   });
 

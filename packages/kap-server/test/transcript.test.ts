@@ -97,6 +97,21 @@ interface UserMessagesContract {
   }[];
 }
 
+interface PlanEntryContract {
+  tool_call_id: string;
+  turn_id: string;
+  source: 'interaction' | 'display' | 'output';
+  plan: string;
+  path?: string;
+  options?: { label: string; description?: string }[];
+  review?: { state: string; selected_option?: string; feedback?: string };
+}
+
+interface PlanContract {
+  agent_id: string;
+  plans: PlanEntryContract[];
+}
+
 function serverEvent(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
 }
@@ -1074,5 +1089,307 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/user-messages?agent_id=${encodeURIComponent('../main')}`,
     );
     expect(hostile.body.code).toBe(40001);
+  });
+
+  it('serves plan info for an ExitPlanMode call from its approval interaction (live)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    // Bind the transcript before publishing live events.
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'build it' }),
+    );
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_plan',
+        name: 'ExitPlanMode',
+        args: {},
+      }),
+    );
+
+    const planDisplay = {
+      kind: 'plan_review',
+      plan: '# The Plan\n\nDo the thing.',
+      path: '/tmp/plans/foo.md',
+      options: [{ label: 'Approach A', description: 'fast' }],
+    };
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'apr-plan',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'call_plan',
+        toolName: 'ExitPlanMode',
+        action: 'Presenting plan and exiting plan mode',
+        display: planDisplay,
+      },
+      origin: { agentId: 'main', turnId: 1 },
+    });
+    interactions.respond('apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
+      tool_call_id: 'call_plan',
+      turn_id: 't1',
+      source: 'interaction',
+      plan: '# The Plan\n\nDo the thing.',
+      path: '/tmp/plans/foo.md',
+      options: [{ label: 'Approach A', description: 'fast' }],
+      review: { state: 'approved', selected_option: 'Approach A' },
+    });
+  });
+
+  it('serves plan info from the live tool frame display when no interaction exists (auto mode)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_plan',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Auto Plan', path: '/tmp/plans/auto.md' },
+      }),
+    );
+    bus.publish(
+      serverEvent({
+        type: 'tool.result',
+        turnId: 1,
+        toolCallId: 'call_plan',
+        output:
+          'Exited plan mode. Plan mode deactivated. All tools are now available.\nPlan saved to: /tmp/plans/auto.md\n\n## Plan (auto-approved, not user-reviewed):\n# Auto Plan',
+      }),
+    );
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
+      source: 'display',
+      plan: '# Auto Plan',
+      path: '/tmp/plans/auto.md',
+    });
+    expect(body.data.plans[0]!.review).toBeUndefined();
+  });
+
+  it('rebuilds plan info from the tool result output for a cold session', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    const output =
+      'Exited plan mode. Plan mode deactivated. All tools are now available.\nPlan saved to: /tmp/plans/foo.md\n\n## Approved Plan:\n# The Plan\n\nDo the thing.';
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'build it' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_plan', name: 'ExitPlanMode', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: output }],
+        toolCalls: [],
+        toolCallId: 'call_plan',
+      },
+    ]);
+
+    // Reboot on the same home — the session drops out of memory (cold path).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
+      tool_call_id: 'call_plan',
+      source: 'output',
+      plan: '# The Plan\n\nDo the thing.',
+      path: '/tmp/plans/foo.md',
+    });
+    expect(body.data.plans[0]!.review).toBeUndefined();
+  });
+
+  it('rebuilds plan info from the persisted interaction for a cold session (revise)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'build it' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_plan', name: 'ExitPlanMode', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'User requested revisions. Plan mode remains active.' }],
+        toolCalls: [],
+        toolCallId: 'call_plan',
+      },
+    ]);
+
+    // A Revise outcome: the tool result carries no plan content — only the
+    // persisted interaction does.
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'apr-plan',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'call_plan',
+        toolName: 'ExitPlanMode',
+        action: 'Presenting plan and exiting plan mode',
+        display: { kind: 'plan_review', plan: '# Draft Plan', path: '/tmp/plans/foo.md' },
+      },
+      origin: { agentId: 'main', turnId: 0 },
+    });
+    interactions.respond('apr-plan', {
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'split it up',
+    });
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    await agent!.accessor.get(IWireService).flush();
+
+    // Reboot on the same home — the session drops out of memory (cold path).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.plans).toHaveLength(1);
+    expect(body.data.plans[0]).toMatchObject({
+      source: 'interaction',
+      plan: '# Draft Plan',
+      path: '/tmp/plans/foo.md',
+      review: { state: 'rejected', selected_option: 'Revise', feedback: 'split it up' },
+    });
+  });
+
+  it('answers 40401 / 40416 / 40001 on the plan route', async () => {
+    const missing = await getJson<null>(
+      '/api/v1/sessions/nope/transcript/plan?agent_id=main&tool_call_id=call_plan',
+    );
+    expect(missing.body.code).toBe(40401);
+
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(
+      serverEvent({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_bash', name: 'Bash', args: {} }),
+    );
+    bus.publish(serverEvent({ type: 'tool.result', turnId: 1, toolCallId: 'call_bash', output: 'ok' }));
+
+    // Unknown tool call.
+    const unknown = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_nope`,
+    );
+    expect(unknown.body.code).toBe(40416);
+
+    // A real tool call that is not ExitPlanMode has no plan.
+    const notPlan = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_bash`,
+    );
+    expect(notPlan.body.code).toBe(40416);
+
+    // Hostile agent id fails validation.
+    const hostile = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=${encodeURIComponent('../main')}&tool_call_id=call_plan`,
+    );
+    expect(hostile.body.code).toBe(40001);
+  });
+
+  it('lists every ExitPlanMode plan of the agent when tool_call_id is omitted', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    // Two separate ExitPlanMode calls (a Revise → resubmit pair), plus an
+    // unrelated tool call that must not appear.
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_draft',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Draft' },
+      }),
+    );
+    bus.publish(
+      serverEvent({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_bash', name: 'Bash', args: {} }),
+    );
+    bus.publish(serverEvent({ type: 'tool.result', turnId: 1, toolCallId: 'call_bash', output: 'ok' }));
+    bus.publish(serverEvent({ type: 'turn.step.completed', turnId: 1, step: 1 }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    bus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_final',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
+      }),
+    );
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'apr-final',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'call_final',
+        toolName: 'ExitPlanMode',
+        action: 'Presenting plan and exiting plan mode',
+        display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
+      },
+      origin: { agentId: 'main', turnId: 1 },
+    });
+    interactions.respond('apr-final', { decision: 'approved' });
+
+    const { body } = await getJson<PlanContract>(
+      `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.agent_id).toBe('main');
+    expect(body.data.plans.map((p) => [p.tool_call_id, p.plan])).toEqual([
+      ['call_draft', '# Draft'],
+      ['call_final', '# Final'],
+    ]);
+    // The draft has no interaction; the final carries its review outcome.
+    expect(body.data.plans[0]!.review).toBeUndefined();
+    expect(body.data.plans[1]!.review).toMatchObject({ state: 'approved' });
   });
 });

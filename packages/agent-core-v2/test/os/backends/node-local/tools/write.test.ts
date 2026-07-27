@@ -16,7 +16,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import { type WriteInput, WriteInputSchema, WriteTool } from '#/os/backends/node-local/tools/write';
+import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
+import { WriteTool } from '#/agent/tools/os/write/writeTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 

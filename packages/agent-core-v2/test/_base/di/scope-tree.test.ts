@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import {
   LifecycleScope,
+  ScopeActivation,
   Scope,
   _clearScopedRegistryForTests,
   createAppScope,
@@ -127,9 +127,9 @@ describe('Scope tree', () => {
       tag = 'C';
       dispose(): void { events.push('C'); }
     }
-    registerScopedService(LifecycleScope.App, IA, A, InstantiationType.Eager);
-    registerScopedService(LifecycleScope.Session, IB, B, InstantiationType.Eager);
-    registerScopedService(LifecycleScope.Agent, IC, C, InstantiationType.Eager);
+    registerScopedService(LifecycleScope.App, IA, A);
+    registerScopedService(LifecycleScope.Session, IB, B);
+    registerScopedService(LifecycleScope.Agent, IC, C);
 
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1');
@@ -180,6 +180,87 @@ describe('Scope tree', () => {
     const session = app.createChild(LifecycleScope.Session, 's1');
     session.dispose();
     expect(() => session.createChild(LifecycleScope.Agent, 'a1')).toThrow(/disposed/);
+    app.dispose();
+  });
+
+  it('does not construct OnDemand services until they are resolved', () => {
+    let constructions = 0;
+    interface ITagged {
+      tag: string;
+    }
+    const ITagged = createDecorator<ITagged>('tree-on-demand');
+    _clearScopedRegistryForTests();
+    class Tagged implements ITagged {
+      tag = 'tagged';
+      constructor() {
+        constructions += 1;
+      }
+    }
+    registerScopedService(
+      LifecycleScope.Session,
+      ITagged,
+      Tagged,
+      ScopeActivation.OnDemand,
+    );
+
+    const app = createAppScope();
+    const session = app.createChild(LifecycleScope.Session, 's1');
+    expect(constructions).toBe(0);
+    expect(session.accessor.get(ITagged)).toBeInstanceOf(Tagged);
+    expect(constructions).toBe(1);
+    app.dispose();
+  });
+
+  it('constructs OnScopeCreated services and their dependencies in dependency order', () => {
+    const events: string[] = [];
+    interface ITagged {
+      tag: string;
+    }
+    const IDep = createDecorator<ITagged>('tree-scope-create-dep');
+    const ITop = createDecorator<ITagged>('tree-scope-create-top');
+    _clearScopedRegistryForTests();
+    class Dep implements ITagged {
+      tag = 'dep';
+      constructor() {
+        events.push('dep');
+      }
+    }
+    class Top implements ITagged {
+      tag = 'top';
+      constructor(@IDep public readonly dep: ITagged) {
+        events.push('top');
+      }
+    }
+    registerScopedService(LifecycleScope.Session, ITop, Top);
+    registerScopedService(
+      LifecycleScope.Session,
+      IDep,
+      Dep,
+      ScopeActivation.OnDemand,
+    );
+
+    const app = createAppScope();
+    app.createChild(LifecycleScope.Session, 's1');
+    expect(events).toEqual(['dep', 'top']);
+    app.dispose();
+  });
+
+  it('fails scope creation when an OnScopeCreated service constructor throws', () => {
+    interface IBoom {
+      tag: 'boom';
+    }
+    const IBoom = createDecorator<IBoom>('tree-scope-create-boom');
+    _clearScopedRegistryForTests();
+    class Boom implements IBoom {
+      tag = 'boom' as const;
+      constructor() {
+        throw new Error('boom');
+      }
+    }
+    registerScopedService(LifecycleScope.Session, IBoom, Boom);
+
+    const app = createAppScope();
+    expect(() => app.createChild(LifecycleScope.Session, 's1')).toThrow(/boom/);
     app.dispose();
   });
 });

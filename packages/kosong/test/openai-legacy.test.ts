@@ -590,6 +590,153 @@ describe('OpenAILegacyChatProvider', () => {
         { role: 'user', content: 'Thanks!' },
       ]);
     });
+
+    it('defaults to reasoning_content before any detection', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: '4.' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: '4.',
+        reasoning_content: 'Thinking...',
+      });
+    });
+
+    it('echoes thinking under the dialect detected from the response', async () => {
+      const provider = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // Detection happens while draining the first response.
+      const first = await provider.generate('', [], []);
+      for await (const part of first) void part;
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await provider.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('explicit reasoningKey pins the dialect against detection', async () => {
+      const provider = createProvider({ reasoningKey: 'custom_reasoning' });
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // With an explicit key, only that key is read inbound: a `reasoning`
+      // field is not picked up, and detection stays out of the way.
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([{ type: 'text', text: 'ok' }]);
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await provider.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', custom_reasoning: 'hmm' });
+    });
+
+    it('dialect detected on a per-step clone steers the original provider', async () => {
+      const original = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (original as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // The per-step clone shares `_client` (mocked above) and must also share
+      // the dialect cell: learning on the clone steers the original.
+      const clone = original.withGenerationKwargs({ max_tokens: 2048 });
+      const first = await clone.generate('', [], []);
+      for await (const part of first) void part;
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await original.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
   });
 
   describe('generation kwargs', () => {

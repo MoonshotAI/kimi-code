@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { type ISessionTodoService } from '#/session/todo/sessionTodo';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
-import { TodoListInputSchema, TodoListTool } from '#/session/todo/tools/todo-list';
+import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
+import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;

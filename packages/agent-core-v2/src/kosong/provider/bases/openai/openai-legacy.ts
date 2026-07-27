@@ -72,6 +72,7 @@ import {
   type ToolMessageConversion,
   toolToOpenAI,
 } from './openai-common';
+import { ReasoningKeyDialect } from './reasoning-key';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -79,8 +80,11 @@ import {
 } from '../request-auth';
 import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
 
-const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
-const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
+// Inbound: scan the known reasoning field names in priority order; first
+// string value wins. Outbound: echo the dialect the endpoint actually spoke
+// (detected by ReasoningKeyDialect), defaulting to `reasoning_content`. Both
+// arms can be pinned by an explicit key — operator config (`reasoning_key`)
+// or a trait's `reasoningKey` declaration.
 
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
@@ -166,20 +170,6 @@ interface OpenAIToolCallOut {
   function: { name: string; arguments: string | null };
 }
 
-function extractReasoningContent(
-  source: unknown,
-  explicitKey: string | undefined,
-): string | undefined {
-  if (typeof source !== 'object' || source === null) return undefined;
-  const record = source as Record<string, unknown>;
-  const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string') return value;
-  }
-  return undefined;
-}
-
 function usesMaxCompletionTokens(model: string): boolean {
   const normalized = model.toLowerCase();
   return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
@@ -225,7 +215,7 @@ function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown>
 
 function convertMessage(
   message: Message,
-  reasoningKey: string | undefined,
+  reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
   preserveThinking: boolean,
   allowToolResultExtraction: boolean,
@@ -291,8 +281,10 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
+  // Round-trip thinking under the dialect the endpoint actually spoke
+  // (detected from inbound responses; defaults to `reasoning_content`).
   if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
-    result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
+    result[reasoningKey] = reasoningContent;
   }
 
   return result;
@@ -348,7 +340,7 @@ function appendToolResultMediaMessage(
 
 function convertHistoryMessages(
   history: readonly Message[],
-  reasoningKey: string | undefined,
+  reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
   preserveThinking: boolean,
 ): OpenAIMessage[] {
@@ -380,7 +372,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
     private readonly _traceId: string | null,
     private readonly _extractUsageHook?:
       | ((chunk: Record<string, unknown>) => Record<string, unknown> | null | undefined)
@@ -389,12 +381,12 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     if (isStream) {
       this._iter = this._convertStreamResponse(
         response as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-        reasoningKey,
+        reasoningKeyDialect,
       );
     } else {
       this._iter = this._convertNonStreamResponse(
         response as OpenAI.Chat.ChatCompletion,
-        reasoningKey,
+        reasoningKeyDialect,
       );
     }
   }
@@ -441,7 +433,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
   private async *_convertNonStreamResponse(
     response: OpenAI.Chat.ChatCompletion,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
   ): AsyncGenerator<StreamedMessagePart> {
     this._id = response.id;
     this._captureUsage(response as unknown as Record<string, unknown>, response.usage);
@@ -450,7 +442,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    const reasoning = extractReasoningContent(message, reasoningKey);
+    // Reasoning content: honor the explicit key when set, otherwise scan the
+    // de facto field set and remember the dialect for outbound echo.
+    const reasoning = reasoningKeyDialect.observe(message);
     if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
@@ -474,7 +468,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
   private async *_convertStreamResponse(
     response: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
   ): AsyncGenerator<StreamedMessagePart> {
     const bufferedToolCalls = new Map<number | string, BufferedChatCompletionToolCall>();
 
@@ -499,7 +493,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         const delta = choice.delta;
 
-        const reasoning = extractReasoningContent(delta, reasoningKey);
+        // Reasoning content: honor the explicit key when set, otherwise scan
+        // the de facto field set and remember the dialect for outbound echo.
+        const reasoning = reasoningKeyDialect.observe(delta);
         if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
@@ -528,7 +524,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private readonly _apiKey: string | undefined;
   private readonly _baseUrl: string | undefined;
   private readonly _defaultHeaders: Record<string, string> | undefined;
-  private readonly _reasoningKey: string | undefined;
+  private readonly _reasoningKeyDialect: ReasoningKeyDialect;
   private readonly _offEffort: string | undefined;
   private readonly _thinkingEffort: ThinkingEffort | undefined;
   private readonly _generationKwargs: OpenAILegacyGenerationKwargs;
@@ -557,10 +553,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._hooks = options.hooks;
     const normalizedReasoningKey = options.reasoningKey?.trim();
-    this._reasoningKey =
+    // An explicit key — operator config or a trait declaration — pins the
+    // dialect and disables detection; with neither, the dialect is learned
+    // from inbound responses (defaulting to `reasoning_content`).
+    this._reasoningKeyDialect = new ReasoningKeyDialect(
       normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
         ? normalizedReasoningKey
-        : this._hooks?.reasoningKey?.();
+        : this._hooks?.reasoningKey?.(),
+    );
     this._thinkingEffort = options.thinkingEffort;
     this._offEffort = options.offEffort;
     this._generationKwargs = normalizeGenerationKwargs(
@@ -603,6 +603,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // reasoning field; the hook reads the already-seeded kwargs (e.g. the
     // thinking config a withThinking hook just encoded).
     const preserveThinking = this._hooks?.preserveThinking?.(kwargs) ?? false;
+    // Outbound reasoning field: the dialect the endpoint actually spoke.
+    const reasoningKey = this._reasoningKeyDialect.outboundKey();
 
     const messages: Record<string, unknown>[] = [];
     if (systemPrompt) {
@@ -617,7 +619,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       // Trait mode: the tool-declaration-only skip and the tool-result media
       // extraction are handed over to the trait wholesale.
       for (const msg of normalizedHistory) {
-        const converted = convertMessage(msg, this._reasoningKey, null, preserveThinking, false);
+        const converted = convertMessage(msg, reasoningKey, null, preserveThinking, false);
         const shaped = convertMessageHook(msg, converted);
         if (shaped !== null) {
           messages.push(shaped);
@@ -627,7 +629,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       messages.push(
         ...convertHistoryMessages(
           normalizedHistory,
-          this._reasoningKey,
+          reasoningKey,
           this._toolMessageConversion,
           preserveThinking,
         ),
@@ -680,7 +682,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
           | OpenAI.Chat.ChatCompletion
           | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
         this._stream,
-        this._reasoningKey,
+        this._reasoningKeyDialect,
         parseTraceId(response.headers),
         this._hooks?.extractUsage,
       );

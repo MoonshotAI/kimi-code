@@ -24,8 +24,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
-| `--agent <name>` | | Start the session with the specified agent as the main Agent (v2 engine only) |
-| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it (v2 engine only). Cannot be repeated or combined with `--agent` |
+| `--agent <name>` | | Start the session with the specified agent as the main Agent (experimental `kimi -p` only) |
+| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it (experimental `kimi -p` only). Cannot be repeated or combined with `--agent` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
@@ -98,7 +98,7 @@ There are two ways to specify Skills directories, with different semantics:
 
 ### Custom Agents
 
-`--agent` and `--agent-file` select which agent drives the session. Both currently require the v2 engine — `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`:
+`--agent` and `--agent-file` select which agent drives the session. Both are currently available only under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; any other launch rejects them with a clear error:
 
 ```sh
 KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"

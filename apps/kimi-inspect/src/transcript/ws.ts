@@ -1,10 +1,16 @@
 /**
- * Minimal `/api/v1/ws` client for the transcript stream — **delta only**.
+ * Minimal `/api/v1/ws` client for the transcript stream — **block grade**.
  *
- * The socket is used exclusively as an incremental channel: after the
+ * The socket is used exclusively as an incremental channel, at the cheapest
+ * grade that keeps the live view correct: 'block' drops the per-token
+ * `append` frames (the bulk of transcript traffic) and still receives the
+ * whole-state frame upserts at every flush point, so content converges
+ * without a REST round-trip. After the
  * upgrade, the client sends `client_hello` with the session in
- * `subscriptions` plus the opt-in `transcript` grade map, and forwards every
- * `transcript.ops` frame to the consumer. Full state never comes from here:
+ * `subscriptions`, then a `subscribe_v2` frame carrying the opt-in
+ * `transcript` grade map (plus the `transcript_since` cursor when a
+ * watermark is known), and forwards every `transcript.ops` frame to the
+ * consumer. Full state never comes from here:
  * `transcript.reset` snapshots are ignored by the store (they are surfaced
  * through the optional `onReset` handler for observers like the audit panel),
  * because complete data (initial load and any refresh) is read back from the
@@ -12,10 +18,10 @@
  *
  * Loss signals are surfaced, not repaired locally — transcript frames are
  * volatile by design (never journaled), so the consumer answers them with a
- * REST refresh: `resync_required` → `onResyncRequired`, and the subscribe
- * ack after every established socket → `onReconnected` (the server attaches
- * the stream only after processing `client_hello`; ops emitted between the
- * REST page load and that point are missed).
+ * REST refresh: `resync_required` → `onResyncRequired`, and the
+ * `subscribe_v2` ack after every established socket → `onReconnected` (the
+ * server attaches the stream only after processing `subscribe_v2`; ops
+ * emitted between the REST page load and that point are missed).
  *
  * The bearer token is presented at the upgrade through the
  * `kimi-code.bearer.<token>` subprotocol (the only credential channel a
@@ -107,7 +113,8 @@ export class TranscriptWs {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private helloId: string | undefined;
-  private helloAcked = false;
+  private subscribeV2Id: string | undefined;
+  private subscribeV2Acked = false;
 
   constructor(opts: TranscriptWsOptions) {
     this.wsUrl = toWsUrl(opts.url);
@@ -153,7 +160,8 @@ export class TranscriptWs {
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
       this.helloId = `kimi-inspect-${Date.now().toString(36)}`;
-      this.helloAcked = false;
+      this.subscribeV2Id = `${this.helloId}-sub`;
+      this.subscribeV2Acked = false;
       const since = this.getSince?.();
       this.send({
         type: 'client_hello',
@@ -161,15 +169,23 @@ export class TranscriptWs {
         payload: {
           client_id: 'kimi-inspect',
           subscriptions: [this.sessionId],
-          transcript: { [this.sessionId]: { [this.agentId]: 'delta' } },
-          transcript_since:
-            since !== undefined ? { [this.sessionId]: { [this.agentId]: since } } : undefined,
         },
       });
-      // The reconcile fires on the subscribe ACK (see onMessage) — the server
-      // attaches the transcript stream only after processing client_hello,
-      // so refreshing at open could finish before the subscription is active
-      // and still miss the ops in between.
+      // Transcript grades ride only `subscribe_v2` — sent right after the
+      // hello on the same socket, so the server processes them in order.
+      this.send({
+        type: 'subscribe_v2',
+        id: this.subscribeV2Id,
+        payload: {
+          session_id: this.sessionId,
+          transcript: { [this.agentId]: 'block' },
+          transcript_since: since !== undefined ? { [this.agentId]: since } : undefined,
+        },
+      });
+      // The reconcile fires on the subscribe_v2 ACK (see onMessage) — the
+      // server attaches the transcript stream only after processing
+      // subscribe_v2, so refreshing at open could finish before the
+      // subscription is active and still miss the ops in between.
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
@@ -194,11 +210,15 @@ export class TranscriptWs {
     }
     switch (frame.type) {
       case 'ack': {
-        // The subscribe ack: the server has attached the transcript stream
-        // by now — reconcile once per hello (ops emitted between the REST
+        // The subscribe_v2 ack: the server has attached the transcript stream
+        // by now — reconcile once per socket (ops emitted between the REST
         // page load and this point are missed; the consumer refreshes).
-        if (!this.helloAcked && frame.id !== undefined && frame.id === this.helloId) {
-          this.helloAcked = true;
+        if (
+          !this.subscribeV2Acked &&
+          frame.id !== undefined &&
+          frame.id === this.subscribeV2Id
+        ) {
+          this.subscribeV2Acked = true;
           this.handlers.onReconnected();
         }
         return;

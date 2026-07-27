@@ -27,6 +27,8 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { AgentPlanService } from '#/agent/plan/planService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
@@ -194,6 +196,7 @@ describe('AgentPlanService plan-guard listener', () => {
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
+        reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentPlanService, AgentPlanService);
       },
     });

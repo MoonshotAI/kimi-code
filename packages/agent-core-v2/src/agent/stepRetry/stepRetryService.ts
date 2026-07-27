@@ -9,13 +9,16 @@
  * step numbering and consumes `maxSteps` budget like any other step. Each
  * claimed failure publishes `turn.step.retrying`. Consecutive attempts are
  * counted per failed driver and reset when any step succeeds (`onDidFinishStep`)
- * or a new turn starts. Bound at Agent scope; Eager so the handler registers
- * before the first turn runs (same rationale as `fullCompaction`).
+ * or a new turn starts. The mutable retry state (`lastFailedDriverId`,
+ * `failedAttempts`) is registered into `agentState` (`IAgentStateService`) and
+ * read/written through it. Bound at Agent scope and constructed with the scope
+ * so the handler registers before the first turn runs (same rationale as
+ * `fullCompaction`).
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
   readRetryAfterMs,
@@ -32,6 +35,7 @@ import {
   type LoopErrorContext,
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import { IAgentStateService } from '#/agent/state/agentState';
 
 import { IAgentStepRetryService } from './stepRetry';
 
@@ -55,18 +59,27 @@ declare module '#/app/event/eventBus' {
   }
 }
 
+export const stepRetryLastFailedDriverIdKey = defineState<string | undefined>(
+  'stepRetry.lastFailedDriverId',
+  () => undefined as string | undefined,
+);
+export const stepRetryFailedAttemptsKey = defineState<number>(
+  'stepRetry.failedAttempts',
+  () => 0,
+);
+
 export class AgentStepRetryService extends Disposable implements IAgentStepRetryService {
   declare readonly _serviceBrand: undefined;
-
-  private lastFailedDriverId: string | undefined;
-  private failedAttempts = 0;
 
   constructor(
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(stepRetryLastFailedDriverIdKey);
+    this.states.register(stepRetryFailedAttemptsKey);
     this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'step-retry',
@@ -81,6 +94,22 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
       }),
     );
     this._register(this.eventBus.subscribe('turn.started', () => this.resetAttempts()));
+  }
+
+  private get lastFailedDriverId(): string | undefined {
+    return this.states.get(stepRetryLastFailedDriverIdKey);
+  }
+
+  private set lastFailedDriverId(value: string | undefined) {
+    this.states.set(stepRetryLastFailedDriverIdKey, value);
+  }
+
+  private get failedAttempts(): number {
+    return this.states.get(stepRetryFailedAttemptsKey);
+  }
+
+  private set failedAttempts(value: number) {
+    this.states.set(stepRetryFailedAttemptsKey, value);
   }
 
   private resetAttempts(): void {
@@ -134,6 +163,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentStepRetryService,
   AgentStepRetryService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'stepRetry',
 );

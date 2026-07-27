@@ -62,6 +62,8 @@ function makeBroadcaster(): SessionEventBroadcaster {
   return {
     subscribe: async () => true,
     unsubscribe: () => {},
+    addGlobalTarget: () => {},
+    removeGlobalTarget: () => {},
     getCursor: async () => ({ seq: 0, epoch: '' }),
     getBufferedSince: async () => ({
       events: [],
@@ -208,7 +210,7 @@ describe('coalesceFrames', () => {
 // WsConnectionV1 — transcript subscription parsing
 // ---------------------------------------------------------------------------
 
-describe('WsConnectionV1 transcript subscriptions', () => {
+describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
   interface SubscribeCall {
     sessionId: string;
     filter: unknown;
@@ -219,8 +221,10 @@ describe('WsConnectionV1 transcript subscriptions', () => {
   function makeCapturingBroadcaster(): {
     broadcaster: SessionEventBroadcaster;
     calls: SubscribeCall[];
+    detaches: { sessionId: string; agentIds?: readonly string[] }[];
   } {
     const calls: SubscribeCall[] = [];
+    const detaches: { sessionId: string; agentIds?: readonly string[] }[] = [];
     const broadcaster = {
       subscribe: async (
         sessionId: string,
@@ -233,6 +237,11 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         return true;
       },
       unsubscribe: () => {},
+      unsubscribeTranscript: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
+        detaches.push({ sessionId, agentIds });
+      },
+      addGlobalTarget: () => {},
+      removeGlobalTarget: () => {},
       getCursor: async () => ({ seq: 0, epoch: '' }),
       getBufferedSince: async () => ({
         events: [],
@@ -241,14 +250,46 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         epoch: '',
       }),
     } as unknown as SessionEventBroadcaster;
-    return { broadcaster, calls };
+    return { broadcaster, calls, detaches };
   }
 
   function controlFrame(type: string, payload: Record<string, unknown>): string {
     return JSON.stringify({ type, id: 'req-1', payload });
   }
 
-  it('forwards client_hello transcript grades to the broadcaster and stores them per session', async () => {
+  it('forwards subscribe_v2 grades and transcript_since to the broadcaster and stores them per session', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', {
+        session_id: 's1',
+        transcript: { '*': 'delta' },
+        transcript_since: { main: 7, '*': 3 },
+      }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    expect(calls[0]).toMatchObject({
+      sessionId: 's1',
+      grades: { '*': 'delta' },
+      opts: { transcriptSince: { main: 7, '*': 3 } },
+    });
+    expect(conn.subscriptions.get('s1')).toEqual({
+      agentFilter: undefined,
+      transcriptGrades: { '*': 'delta' },
+    });
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'], not_found: [] } });
+    conn.close();
+  });
+
+  it('ignores legacy transcript fields on client_hello and subscribe', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
@@ -257,18 +298,28 @@ describe('WsConnectionV1 transcript subscriptions', () => {
       'message',
       controlFrame('client_hello', {
         client_id: 'c1',
-        subscriptions: ['s1', 's2'],
+        subscriptions: ['s1'],
         transcript: { s1: { '*': 'delta' } },
+        transcript_since: { s1: { main: 7 } },
+      }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ sessionId: 's1', grades: undefined });
+    expect(calls[0]!.opts?.transcriptSince).toBeUndefined();
+    expect(conn.subscriptions.get('s1')).toEqual({
+      agentFilter: undefined,
+      transcriptGrades: undefined,
+    });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe', {
+        session_ids: ['s2'],
+        transcript: { s2: { '*': 'delta' } },
       }),
     );
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-
-    expect(calls[0]).toMatchObject({ sessionId: 's1', grades: { '*': 'delta' } });
     expect(calls[1]).toMatchObject({ sessionId: 's2', grades: undefined });
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: undefined,
-      transcriptGrades: { '*': 'delta' },
-    });
     expect(conn.subscriptions.get('s2')).toEqual({
       agentFilter: undefined,
       transcriptGrades: undefined,
@@ -276,33 +327,56 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     conn.close();
   });
 
-  it('forwards subscribe transcript grades alongside the agent filter', async () => {
+  it('acks an invalid subscribe_v2 payload with an error and does not attach', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
-      controlFrame('subscribe', {
-        session_ids: ['s1'],
-        agent_filter: { s1: ['main'] },
-        transcript: { s1: { main: 'block', 'agent-0': 'off' } },
+      controlFrame('subscribe_v2', {
+        session_id: 's1',
+        transcript: { main: 'everything' },
       }),
+    );
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(conn.subscriptions.size).toBe(0);
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack.code).toBe(1);
+    conn.close();
+  });
+
+  it('preserves the existing agent filter when subscribe_v2 updates the grades', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
     );
     await vi.waitFor(() => expect(calls).toHaveLength(1));
 
-    expect(calls[0]).toMatchObject({
-      sessionId: 's1',
-      grades: { main: 'block', 'agent-0': 'off' },
-    });
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { main: 'block' } }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+
+    expect(calls[1]).toMatchObject({ sessionId: 's1', grades: { main: 'block' } });
+    expect(calls[1]!.filter).toEqual(new Set(['main']));
     expect(conn.subscriptions.get('s1')).toEqual({
       agentFilter: new Set(['main']),
-      transcriptGrades: { main: 'block', 'agent-0': 'off' },
+      transcriptGrades: { main: 'block' },
     });
     conn.close();
   });
 
-  it('sends the transcript baseline after the grade-filtered cursor replay, not before it', async () => {
+  it('keeps subscribe_v2 grades across a plain re-subscribe and filters the cursor replay through them', async () => {
     const socket = new FakeSocket();
     const backlog = [
       durable('turn.started', 's1', 3),
@@ -312,7 +386,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     // Mirror the real broadcaster's replay crop: with a transcript grade spec
     // the projected types drop out, retained (global/lifecycle) events stay.
     // The dedicated suppression coverage lives in sessionEventBroadcaster's
-    // tests — here we only verify the grade spec reaches `getBufferedSince`.
+    // tests — here we only verify the preserved grade spec reaches
+    // `getBufferedSince`.
     const PROJECTED = new Set(['turn.started', 'assistant.delta']);
     let seenGrades: unknown;
     const broadcaster = {
@@ -332,6 +407,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
       },
       unsubscribe: () => {},
+      addGlobalTarget: () => {},
+      removeGlobalTarget: () => {},
       getCursor: async () => ({ seq: 10, epoch: 'e1' }),
       getBufferedSince: async (_sid: string, _cursor: unknown, _filter: unknown, grades: unknown) => {
         seenGrades = grades;
@@ -347,48 +424,112 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     } as unknown as SessionEventBroadcaster;
     const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
 
+    // Grades arrive via subscribe_v2 first (no cursor → immediate baseline)…
     socket.emit(
       'message',
-      controlFrame('subscribe', {
-        session_ids: ['s1'],
-        cursors: { s1: { seq: 2, epoch: 'e1' } },
-        transcript: { s1: { '*': 'delta' } },
-      }),
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
     );
     await vi.waitFor(() => {
       const types = socket.frames().map((f) => (f as { type: string }).type);
       expect(types).toContain('transcript.reset');
     });
+    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
 
-    // The replay forwards the parsed grade spec…
-    expect(seenGrades).toEqual({ '*': 'delta' });
+    // …then a plain re-subscribe with a durable cursor must not wipe them.
+    socket.emit(
+      'message',
+      controlFrame('subscribe', {
+        session_ids: ['s1'],
+        cursors: { s1: { seq: 2, epoch: 'e1' } },
+      }),
+    );
+    await vi.waitFor(() => expect(seenGrades).toEqual({ '*': 'delta' }));
+    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
+
     const types = socket.frames().map((f) => (f as { type: string }).type);
-    // …so the backlog's projected events are suppressed; only the retained
-    // global event replays, and the baseline reset still lands after it.
+    // The replay is filtered through the preserved grades: projected events
+    // are suppressed; only the retained global event replays, and the
+    // deferred baseline reset lands after it.
     expect(types).not.toContain('turn.started');
     expect(types).not.toContain('assistant.delta');
     expect(
-      types.slice(types.indexOf('event.session.work_changed'), types.indexOf('transcript.reset') + 1),
+      types.slice(types.indexOf('event.session.work_changed'), types.lastIndexOf('transcript.reset') + 1),
     ).toEqual(['event.session.work_changed', 'transcript.reset']);
     conn.close();
   });
 
-  it('drops a malformed transcript field instead of widening the subscription', async () => {
+  it('reports an unknown session in the subscribe_v2 ack not_found list', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async () => false;
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
-      controlFrame('client_hello', {
-        client_id: 'c1',
-        subscriptions: ['s1'],
-        transcript: { s1: { main: 'everything' } },
-      }),
+      controlFrame('subscribe_v2', { session_id: 'gone', transcript: { '*': 'delta' } }),
+    );
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack).toMatchObject({ code: 0, payload: { accepted: [], not_found: ['gone'] } });
+    expect(conn.subscriptions.size).toBe(0);
+    conn.close();
+  });
+
+  it('unsubscribe_v2 detaches listed agents with an explicit off, keeping the filter and other grades', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls, detaches } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
     );
     await vi.waitFor(() => expect(calls).toHaveLength(1));
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
+    );
+    await vi.waitFor(() =>
+      expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' }),
+    );
 
-    expect(calls[0]!.grades).toBeUndefined();
+    socket.emit(
+      'message',
+      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: ['main'] }),
+    );
+    await vi.waitFor(() => expect(detaches).toHaveLength(1));
+
+    expect(detaches[0]).toEqual({ sessionId: 's1', agentIds: ['main'] });
+    // An explicit 'off' — deleting the key would fall back to the '*' default.
+    expect(conn.subscriptions.get('s1')).toEqual({
+      agentFilter: new Set(['main']),
+      transcriptGrades: { '*': 'delta', main: 'off' },
+    });
+    const ack = socket.sent.map((f) => JSON.parse(f)).findLast((f) => f.type === 'ack');
+    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'], not_found: [] } });
+    conn.close();
+  });
+
+  it('unsubscribe_v2 without agent_ids detaches the whole transcript stream', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, detaches } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
+    );
+    await vi.waitFor(() =>
+      expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' }),
+    );
+
+    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
+    await vi.waitFor(() => expect(detaches).toHaveLength(1));
+
+    expect(detaches[0]).toEqual({ sessionId: 's1', agentIds: undefined });
     expect(conn.subscriptions.get('s1')).toEqual({
       agentFilter: undefined,
       transcriptGrades: undefined,
@@ -396,35 +537,89 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     conn.close();
   });
 
-  it('forwards transcript_since cursors to the broadcaster and drops malformed ones', async () => {
+  it('unsubscribe_v2 is idempotent for an unsubscribed session and never touches the broadcaster', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls, detaches } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(detaches).toHaveLength(0);
+    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'] } });
+    conn.close();
+  });
+
+  it('acks an invalid unsubscribe_v2 payload with an error', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, detaches } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('unsubscribe_v2', { agent_ids: ['main'] }));
+    socket.emit(
+      'message',
+      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: [] }),
+    );
+    await vi.waitFor(() =>
+      expect(socket.sent.filter((f) => JSON.parse(f).type === 'ack')).toHaveLength(2),
+    );
+
+    expect(detaches).toHaveLength(0);
+    const acks = socket.sent.map((f) => JSON.parse(f)).filter((f) => f.type === 'ack');
+    expect(acks.every((a) => a.code === 1)).toBe(true);
+    conn.close();
+  });
+
+  it('serializes back-to-back control frames: subscribe then subscribe_v2 lands filter and grades', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    // No awaits between the frames — the second handler reads state the
+    // first one stores, so they must run in receive order.
+    socket.emit(
+      'message',
+      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
+    );
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+
+    expect(conn.subscriptions.get('s1')).toEqual({
+      agentFilter: new Set(['main']),
+      transcriptGrades: { '*': 'delta' },
+    });
+    conn.close();
+  });
+
+  it('re-subscribes an agent at full grade after it was detached', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
-      controlFrame('subscribe', {
-        session_ids: ['s1'],
-        transcript: { s1: { '*': 'delta' } },
-        transcript_since: { s1: { main: 7, '*': 3 } },
-      }),
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
     );
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]!.opts).toMatchObject({ transcriptSince: { main: 7, '*': 3 } });
+    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
+    await vi.waitFor(() =>
+      expect(conn.subscriptions.get('s1')?.transcriptGrades).toBeUndefined(),
+    );
 
-    // A malformed cursor field drops the cursors (never the grades), so the
-    // seeding falls back to baseline resets.
     socket.emit(
       'message',
-      controlFrame('subscribe', {
-        session_ids: ['s2'],
-        transcript: { s2: { '*': 'delta' } },
-        transcript_since: { s2: { main: 'not-a-number' } },
-      }),
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { main: 'turn' } }),
     );
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1]!.grades).toEqual({ '*': 'delta' });
-    expect(calls[1]!.opts?.transcriptSince).toBeUndefined();
+
+    expect(calls[1]).toMatchObject({ sessionId: 's1', grades: { main: 'turn' } });
+    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ main: 'turn' });
     conn.close();
   });
 });
@@ -441,25 +636,40 @@ describe('WsConnectionV1 outbound buffer', () => {
     vi.useRealTimers();
   });
 
-  it('buffers server_hello and flushes it after the interval', async () => {
+  it('sends server_hello immediately', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    expect(socket.sent).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(16);
-    expect(socket.frames().map((f) => (f as { type: string }).type)).toContain('server_hello');
+    expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual(['server_hello']);
     conn.close();
   });
 
-  it('coalesces adjacent deltas into one socket.send', async () => {
+  it('buffers subscribe_v2 transcript frames without merging them', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
+    socket.sent = [];
+
+    conn.send(durable('transcript.reset', 's1', 7));
+    conn.send(durable('transcript.ops', 's1', 8));
+    expect(socket.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(15);
+    expect(socket.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const frames = socket.frames() as Array<{ type: string; seq: number }>;
+    expect(frames.map((frame) => frame.type)).toEqual(['transcript.reset', 'transcript.ops']);
+    expect(frames.map((frame) => frame.seq)).toEqual([7, 8]);
+    conn.close();
+  });
+
+  it('coalesces adjacent subscribed deltas into one socket.send', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16 });
     socket.sent = [];
 
     conn.send(delta('s1', 'main', 1, 'Hello', 0));
     conn.send(delta('s1', 'main', 1, ' ', 5));
     conn.send(delta('s1', 'main', 1, 'world', 6));
-    expect(socket.sent).toHaveLength(0); // still buffered
+    expect(socket.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(16);
 
     const frames = socket.frames();
@@ -471,15 +681,36 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
-  it('flushes immediately once the batch reaches maxBatchSize', async () => {
+  it('sends public events immediately and preserves FIFO with subscribed events', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16 });
+    socket.sent = [];
+
+    conn.send(delta('s1', 'main', 1, 'before', 0));
+    expect(socket.sent).toHaveLength(0);
+    conn.send(durable('event.session.work_changed', 's1', 2), 'immediate');
+
+    expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual([
+      'assistant.delta',
+      'event.session.work_changed',
+    ]);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(socket.sent).toHaveLength(2);
+    conn.close();
+  });
+
+  it('flushes immediately once the subscribed batch reaches maxBatchSize', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000, maxBatchSize: 3 });
-    // constructor already queued server_hello (1); two deltas bring it to 3.
+    socket.sent = [];
+
     conn.send(delta('s1', 'main', 1, 'a', 0));
     conn.send(delta('s1', 'main', 1, 'b', 1));
-    // No timer advanced — flush must have happened synchronously.
-    const types = socket.frames().map((f) => (f as { type: string }).type);
-    expect(types).toEqual(['server_hello', 'assistant.delta']);
+    conn.send(delta('s1', 'main', 1, 'c', 2));
+
+    const frames = socket.frames();
+    expect(frames).toHaveLength(1);
+    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('abc');
     conn.close();
   });
 
@@ -489,55 +720,94 @@ describe('WsConnectionV1 outbound buffer', () => {
       flushIntervalMs: 16,
       highWaterMarkBytes: 100,
     });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
     socket.sent = [];
 
-    socket.bufferedAmount = 200; // above the watermark
+    socket.bufferedAmount = 200;
     conn.send(delta('s1', 'main', 1, 'Hello', 0));
-    await vi.advanceTimersByTimeAsync(16); // flush attempted → deferred
+    await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
 
-    // More deltas arrive while deferred — they merge into the queued frame.
     conn.send(delta('s1', 'main', 1, ' world', 5));
-    await vi.advanceTimersByTimeAsync(5); // backpressure retry, still high
+    await vi.advanceTimersByTimeAsync(5);
     expect(socket.sent).toHaveLength(0);
 
-    socket.bufferedAmount = 0; // peer drained
-    await vi.advanceTimersByTimeAsync(5); // retry succeeds
+    socket.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(5);
     const frames = socket.frames();
     expect(frames).toHaveLength(1);
     expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('Hello world');
     conn.close();
   });
 
-  it('force-flushes buffered frames on close', async () => {
+  it('force-flushes buffered subscription frames on close', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000 });
-    // server_hello is still buffered (interval not elapsed).
+    socket.sent = [];
+
     conn.send(delta('s1', 'main', 1, 'tail', 0));
     expect(socket.sent).toHaveLength(0);
 
     conn.close();
-    const types = socket.frames().map((f) => (f as { type: string }).type);
-    expect(types).toContain('server_hello');
-    expect(types).toContain('assistant.delta');
-    const tail = socket
-      .frames()
-      .find((f) => (f as { type: string }).type === 'assistant.delta') as {
-      payload: { delta: string };
-    };
-    expect(tail.payload.delta).toBe('tail');
+    const frames = socket.frames();
+    expect(frames).toHaveLength(1);
+    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('tail');
   });
 
   it('drops buffered frames when the socket is already closed at flush time', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
     socket.sent = [];
 
-    socket.readyState = socket.CLOSED; // peer went away
+    socket.readyState = socket.CLOSED;
     conn.send(delta('s1', 'main', 1, 'lost', 0));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WsConnectionV1 — global-event registration lifecycle
+// ---------------------------------------------------------------------------
+
+describe('WsConnectionV1 global target registration', () => {
+  function makeGlobalTargetBroadcaster() {
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      addGlobalTarget: (target: unknown) => added.push(target),
+      removeGlobalTarget: (target: unknown) => removed.push(target),
+      getCursor: async () => ({ seq: 0, epoch: '' }),
+      getBufferedSince: async () => ({
+        events: [],
+        resyncRequired: false,
+        currentSeq: 0,
+        epoch: '',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    return { broadcaster, added, removed };
+  }
+
+  it('registers the connection as a global target on construction and unregisters on close', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, added, removed } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    expect(added).toEqual([conn]);
+    expect(removed).toEqual([]);
+
+    conn.close();
+    expect(removed).toEqual([conn]);
+  });
+
+  it('unregisters when the socket closes on its own', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, added, removed } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+    expect(added).toEqual([conn]);
+
+    socket.emit('close');
+    expect(removed).toEqual([conn]);
   });
 });
