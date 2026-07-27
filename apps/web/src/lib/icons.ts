@@ -59,6 +59,7 @@ import KimiFileText from '~icons/kimi/file-text';
 import KimiFolder from '~icons/kimi/folder';
 import KimiFolderOpen from '~icons/kimi/folder-open';
 import KimiAddFolder from '~icons/kimi/folder-plus';
+import KimiFullAccess from '~icons/kimi/full-access';
 import KimiGlobe from '~icons/kimi/globe';
 import KimiGrip from '~icons/kimi/grip';
 import KimiHand from '~icons/kimi/hand';
@@ -83,6 +84,7 @@ import KimiRobot from '~icons/kimi/robot';
 import KimiSearch from '~icons/kimi/search';
 import KimiSend from '~icons/kimi/send';
 import KimiSetting from '~icons/kimi/setting';
+import KimiShieldQuestion from '~icons/kimi/shield-question';
 import KimiSignIn from '~icons/kimi/sign-in';
 import KimiSliders from '~icons/kimi/sliders';
 import KimiStop from '~icons/kimi/stop';
@@ -145,6 +147,7 @@ import RawKimiFileText from '~icons/kimi/file-text?raw';
 import RawKimiFolder from '~icons/kimi/folder?raw';
 import RawKimiFolderOpen from '~icons/kimi/folder-open?raw';
 import RawKimiAddFolder from '~icons/kimi/folder-plus?raw';
+import RawKimiFullAccess from '~icons/kimi/full-access?raw';
 import RawKimiGlobe from '~icons/kimi/globe?raw';
 import RawKimiGrip from '~icons/kimi/grip?raw';
 import RawKimiHand from '~icons/kimi/hand?raw';
@@ -169,6 +172,7 @@ import RawKimiRobot from '~icons/kimi/robot?raw';
 import RawKimiSearch from '~icons/kimi/search?raw';
 import RawKimiSend from '~icons/kimi/send?raw';
 import RawKimiSetting from '~icons/kimi/setting?raw';
+import RawKimiShieldQuestion from '~icons/kimi/shield-question?raw';
 import RawKimiSignIn from '~icons/kimi/sign-in?raw';
 import RawKimiSliders from '~icons/kimi/sliders?raw';
 import RawKimiStop from '~icons/kimi/stop?raw';
@@ -228,6 +232,8 @@ export type IconName =
   | 'dark-mode'
   | 'log-in'
   | 'hand'
+  | 'full-access'
+  | 'shield-question'
   | 'chevron-down'
   | 'chevron-right'
   | 'chevron-up'
@@ -326,6 +332,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   'dark-mode': entry(KimiDarkMode, RawKimiDarkMode),
   'log-in': entry(KimiSignIn, RawKimiSignIn),
   hand: entry(KimiHand, RawKimiHand),
+  'full-access': entry(KimiFullAccess, RawKimiFullAccess),
+  'shield-question': entry(KimiShieldQuestion, RawKimiShieldQuestion),
   'chevron-down': entry(KimiChevronDown, RawKimiChevronDown),
   'chevron-right': entry(KimiChevronRight, RawKimiChevronRight),
   'chevron-up': entry(KimiChevronUp, RawKimiChevronUp),
@@ -494,6 +502,8 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'help-circle',
       'alert-triangle',
       'hand',
+      'full-access',
+      'shield-question',
       'clock',
       'sparkles',
       'pause',
