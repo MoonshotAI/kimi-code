@@ -41,6 +41,19 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  /**
+   * Cumulative tokens consumed by this session (all input classes + output),
+   * summed from the agent's usage records. Undefined until the first usage
+   * report arrives, so fresh sessions show no footer counter yet.
+   */
+  sessionTokensUsed?: number;
+  /**
+   * Estimated output tokens of the in-flight model stream, accumulated from
+   * assistant/thinking/tool-argument deltas since the last official usage
+   * report. Rendered as a `+~N` suffix on the footer's usage counter and
+   * reset to 0 on turn begin and whenever a usage record lands.
+   */
+  streamingTokensEstimated?: number;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';

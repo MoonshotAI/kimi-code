@@ -3,7 +3,7 @@
  *
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
- *   Line 2: context: N% (tokens/max)
+ *   Line 2: context: N% (tokens/max) · used: Nk[+~Nk]
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
@@ -172,6 +172,25 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
   return `context: ${String(usagePercentFromRatio(usage))}%`;
 }
 
+/**
+ * Footer suffix with the session's cumulative token consumption, appended
+ * right after the context readout. While the model streams, a live estimate
+ * of the in-flight output appears as a `+~N` suffix (or `~N` before the
+ * first official report). Hidden entirely when both are zero/undefined so a
+ * fresh session's footer stays clean.
+ */
+function formatSessionUsageSuffix(
+  tokensUsed: number | undefined,
+  streamingEstimate: number | undefined,
+): string {
+  const hasBase = tokensUsed !== undefined && tokensUsed > 0;
+  const hasLive = streamingEstimate !== undefined && streamingEstimate > 0;
+  if (!hasBase && !hasLive) return '';
+  if (!hasBase) return ` · used: ~${formatTokenCount(streamingEstimate ?? 0)}`;
+  const base = ` · used: ${formatTokenCount(tokensUsed)}`;
+  return hasLive ? `${base}+~${formatTokenCount(streamingEstimate)}` : base;
+}
+
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
   const base = chalk.hex(colors.textDim)(formatGitBadgeBase(status));
   if (status.pullRequest === null) return base;
@@ -332,29 +351,27 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
-    const contextText = formatContextStatus(
-      state.contextUsage,
-      state.contextTokens,
-      state.maxContextTokens,
-    );
-    const contextWidth = visibleWidth(contextText);
+    // ── Line 2: transient hint (bottom-left) + context + session usage (right) ──
+    const statusText =
+      formatContextStatus(state.contextUsage, state.contextTokens, state.maxContextTokens) +
+      formatSessionUsageSuffix(state.sessionTokensUsed, state.streamingTokensEstimated);
+    const statusWidth = visibleWidth(statusText);
     let line2: string;
     if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
+      const maxHintWidth = Math.max(0, width - statusWidth - 1);
       const shownHint =
         visibleWidth(this.transientHint) <= maxHintWidth
           ? this.transientHint
           : truncateToWidth(this.transientHint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
+      const pad = Math.max(0, width - hintWidth - statusWidth);
       line2 =
         chalk.hex(colors.warning).bold(shownHint) +
         ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+        chalk.hex(colors.text)(statusText);
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      const leftPad = Math.max(0, width - statusWidth);
+      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(statusText);
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];

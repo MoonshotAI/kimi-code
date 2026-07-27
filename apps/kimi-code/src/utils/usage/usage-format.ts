@@ -5,6 +5,37 @@
  * command itself chalks the colour afterwards.
  */
 
+import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+
+/**
+ * Grand total tokens consumed: every input class (uncached, cache-read,
+ * cache-creation) plus output. Matches `grandTotal` in `@moonshot-ai/kosong`,
+ * re-implemented here so the TUI app does not need a direct kosong dependency.
+ */
+export function totalTokensConsumed(usage: TokenUsage): number {
+  return usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output;
+}
+
+/**
+ * Rough token estimate for streamed text — the same character heuristic
+ * agent-core uses (`packages/agent-core/src/utils/tokens.ts`): ASCII at
+ * ~4 chars per token, everything else (CJK etc.) at ~1 char per token.
+ * Only used for the live in-flight estimate in the footer; the official
+ * usage record always supersedes it when the step completes.
+ */
+export function estimateStreamTokens(text: string): number {
+  let asciiCount = 0;
+  let nonAsciiCount = 0;
+  for (const char of text) {
+    if (char.codePointAt(0)! <= 127) {
+      asciiCount++;
+    } else {
+      nonAsciiCount++;
+    }
+  }
+  return Math.ceil(asciiCount / 4) + nonAsciiCount;
+}
+
 /**
  * Format a token count in 1024-based units: context sizes are powers of
  * two, so 262144 reads as "256k", not "262.1k". k values at or above

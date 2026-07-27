@@ -71,6 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { estimateStreamTokens, totalTokensConsumed } from '#/utils/usage/usage-format';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -162,6 +163,12 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Live output-token estimate for the in-flight stream, accumulated from
+   * deltas. Mirrored into `AppState.streamingTokensEstimated`; reset on turn
+   * begin, on session reset, and when an official usage record lands.
+   */
+  private streamingTokensEstimated = 0;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -181,6 +188,19 @@ export class SessionEventHandler {
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
+    this.streamingTokensEstimated = 0;
+  }
+
+  /**
+   * Accumulate streamed text into the live token estimate and mirror it into
+   * AppState so the footer's `+~N` suffix ticks while the model generates.
+   */
+  private bumpStreamingEstimate(text: string | undefined): void {
+    if (text === undefined || text.length === 0) return;
+    this.streamingTokensEstimated += estimateStreamTokens(text);
+    if (this.streamingTokensEstimated !== this.host.state.appState.streamingTokensEstimated) {
+      this.host.setAppState({ streamingTokensEstimated: this.streamingTokensEstimated });
+    }
   }
 
   clearAgentSwarmProgress(): void {
@@ -313,6 +333,7 @@ export class SessionEventHandler {
 
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasAssistantText = false;
+    this.streamingTokensEstimated = 0;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
     }
@@ -327,6 +348,7 @@ export class SessionEventHandler {
     this.host.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+      streamingTokensEstimated: 0,
     });
   }
 
@@ -481,6 +503,7 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    this.bumpStreamingEstimate(event.delta);
     // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
     // protocol) streams thinking deltas whose visible text is empty — only an
     // opaque signature rides along. Models also occasionally stream whitespace-
@@ -500,6 +523,7 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    this.bumpStreamingEstimate(event.delta);
     if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
@@ -571,6 +595,9 @@ export class SessionEventHandler {
 
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {
     if (event.toolCallId.length === 0) return;
+    // Tool-call arguments are model output too; count them in the live
+    // estimate. `name` is skipped — it may repeat on later deltas.
+    this.bumpStreamingEstimate(event.argumentsPart);
     const { state, streamingUI } = this.host;
     streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
     const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
@@ -658,6 +685,13 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
+    if (event.usage?.total !== undefined) {
+      patch.sessionTokensUsed = totalTokensConsumed(event.usage.total);
+      // The official record folds in everything streamed so far; restart the
+      // live estimate from zero so the footer flips from "+~N" back to exact.
+      this.streamingTokensEstimated = 0;
+      patch.streamingTokensEstimated = 0;
+    }
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;

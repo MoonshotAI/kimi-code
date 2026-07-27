@@ -130,6 +130,72 @@ describe('FooterComponent — context NaN resilience', () => {
     expect(strip(line2 ?? '')).toContain('context: 0%');
   });
 
+  it('hides the session-usage suffix until the first usage report', () => {
+    const fc = new FooterComponent(baseState({ sessionTokensUsed: undefined }));
+    const out = strip(fc.render(200).join(''));
+    expect(out).not.toContain('used:');
+  });
+
+  it('hides the session-usage suffix for zero consumption', () => {
+    const fc = new FooterComponent(baseState({ sessionTokensUsed: 0 }));
+    const out = strip(fc.render(200).join(''));
+    expect(out).not.toContain('used:');
+  });
+
+  it('renders session usage next to the context readout in 1024 units', () => {
+    const fc = new FooterComponent(
+      baseState({
+        contextUsage: 0.427,
+        contextTokens: 430_080,
+        maxContextTokens: 1_048_576,
+        sessionTokensUsed: 46_285,
+      }),
+    );
+    const out = strip(fc.render(200).join(''));
+    expect(out).toMatch(/context: 42% \(420k\/1M\) · used: 45\.2k/);
+  });
+
+  it('renders multi-megabyte session usage with the M suffix', () => {
+    const fc = new FooterComponent(baseState({ sessionTokensUsed: 2_500_000 }));
+    const out = strip(fc.render(200).join(''));
+    expect(out).toContain('used: 2.4M');
+  });
+
+  it('keeps the transient hint alongside context and session usage', () => {
+    const footer = new FooterComponent(baseState({ sessionTokensUsed: 1024 }));
+
+    footer.setTransientHint('Press Ctrl-C again to exit');
+
+    const [, line2] = footer.render(120);
+    expect(strip(line2 ?? '')).toContain('Press Ctrl-C again to exit');
+    expect(strip(line2 ?? '')).toContain('context: 0%');
+    expect(strip(line2 ?? '')).toContain('used: 1k');
+  });
+
+  it('appends the live streaming estimate as a +~N suffix while generating', () => {
+    const fc = new FooterComponent(
+      baseState({ sessionTokensUsed: 46_285, streamingTokensEstimated: 358 }),
+    );
+    const out = strip(fc.render(200).join(''));
+    expect(out).toContain('used: 45.2k+~358');
+  });
+
+  it('shows a tilde-only estimate before the first official usage report', () => {
+    const fc = new FooterComponent(baseState({ streamingTokensEstimated: 512 }));
+    const out = strip(fc.render(200).join(''));
+    expect(out).toContain('used: ~512');
+    expect(out).not.toContain('+~');
+  });
+
+  it('drops the +~N suffix once the live estimate resets to zero', () => {
+    const fc = new FooterComponent(
+      baseState({ sessionTokensUsed: 1024, streamingTokensEstimated: 0 }),
+    );
+    const out = strip(fc.render(200).join(''));
+    expect(out).toContain('used: 1k');
+    expect(out).not.toContain('+~');
+  });
+
   it('highlights the pull request badge separately from git status text', () => {
     const previousLevel = chalk.level;
     chalk.level = 3;

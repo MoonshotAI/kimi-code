@@ -31,6 +31,7 @@ import { getInputHistoryFile } from '#/utils/paths';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
+import { totalTokensConsumed } from '#/utils/usage/usage-format';
 
 import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
@@ -1578,6 +1579,9 @@ export class KimiTUI {
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
+      sessionTokensUsed:
+        status.usage?.total !== undefined ? totalTokensConsumed(status.usage.total) : undefined,
+      streamingTokensEstimated: 0,
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
