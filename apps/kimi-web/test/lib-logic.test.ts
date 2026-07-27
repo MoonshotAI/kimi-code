@@ -334,8 +334,19 @@ describe('buildEditDiffLines', () => {
     expect(buildEditDiffLines({ name: 'Edit', arg })).toBeNull();
   });
 
-  it('falls back to output for every Write (new file or overwrite)', () => {
-    expect(buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toBeNull();
+  it('shows Write content as an all-addition diff', () => {
+    expect(buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toEqual([
+      { type: 'add', text: 'x', newNo: 1 },
+    ]);
+    expect(
+      buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x\ny', mode: 'overwrite' }) }),
+    ).toEqual([
+      { type: 'add', text: 'x', newNo: 1 },
+      { type: 'add', text: 'y', newNo: 2 },
+    ]);
+  });
+
+  it('falls back to output for appending Writes', () => {
     expect(
       buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x', mode: 'append' }) }),
     ).toBeNull();
