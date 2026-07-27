@@ -37,6 +37,7 @@ import {
   setShortcutBinding,
   useShortcutOverrides,
 } from '../../composables/useShortcuts';
+import { track } from '../../lib/track';
 
 const { t } = useI18n();
 const overrides = useShortcutOverrides();
@@ -216,6 +217,9 @@ function onRecordKeydown(e: KeyboardEvent): void {
   }
   const previous = { customized: isShortcutCustomized(id), binding: overrides[id] };
   setShortcutBinding(id, binding);
+  // A same-scope conflict never reaches here (rejected above), so an assign
+  // never carries had_conflict.
+  track('shortcut_binding_changed', { action: id, op: 'assign' });
   // OS-global actions: the binding only goes live when the suspended
   // registration resumes — finalize asynchronously so a refused chord rolls
   // back with an error instead of sitting dead in the row.
@@ -254,12 +258,19 @@ function onReset(action: ShortcutAction): void {
   }
   rowError.value = null;
   resetShortcutBinding(action.id);
+  track('shortcut_binding_changed', { action: action.id, op: 'reset' });
+}
+
+function onClear(action: ShortcutAction): void {
+  setShortcutBinding(action.id, null);
+  track('shortcut_binding_changed', { action: action.id, op: 'clear' });
 }
 
 function onResetAll(): void {
   // Defaults are internally consistent, so a full reset can never conflict.
   rowError.value = null;
   resetAllShortcutBindings();
+  track('shortcut_binding_changed', { action: '*', op: 'reset_all' });
 }
 
 // Modifier keyup during a recording: refresh (or clear) the live preview so
@@ -340,7 +351,7 @@ onUnmounted(() => {
                 v-else-if="resolvedBinding(action.id) !== null"
                 size="sm"
                 :label="t('shortcuts.unassign')"
-                @click="setShortcutBinding(action.id, null)"
+                @click="onClear(action)"
               >
                 <Icon name="trash" />
               </IconButton>

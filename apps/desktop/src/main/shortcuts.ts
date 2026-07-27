@@ -3,6 +3,7 @@ import { globalShortcut } from 'electron';
 import { bindingToAccelerator } from './menu';
 import { showMainWindow } from './window';
 import { log } from './log';
+import { trackDesktopEvent } from './track';
 
 // OS-level global shortcut that summons the app (brings the main window to the
 // foreground even when the app is hidden or unfocused). The renderer owns the
@@ -41,6 +42,7 @@ function activate(binding: string): boolean {
   const accelerator = bindingToAccelerator(binding);
   if (accelerator === undefined) {
     log.warn(`[kimi-desktop] global shortcut binding ${binding} cannot be expressed as an accelerator`);
+    trackDesktopEvent('global_shortcut_register_failed', { reason: 'invalid' });
     return false;
   }
   if (accelerator === registeredAccelerator) {
@@ -49,10 +51,12 @@ function activate(binding: string): boolean {
   // Register the new chord BEFORE dropping the old one: a refusal must not
   // take the working shortcut down with it.
   const ok = globalShortcut.register(accelerator, () => {
+    trackDesktopEvent('global_shortcut_invoked');
     showMainWindow();
   });
   if (!ok) {
     log.warn(`[kimi-desktop] global shortcut ${accelerator} not registered (already taken)`);
+    trackDesktopEvent('global_shortcut_register_failed', { reason: 'conflicted' });
     return false;
   }
   deactivate();

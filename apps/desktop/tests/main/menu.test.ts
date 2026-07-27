@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MenuItemConstructorOptions } from 'electron';
 
 import { bindingToAccelerator, menuTemplate } from '../../src/main/menu';
@@ -7,6 +7,45 @@ import {
   parseBinding,
   serializeBinding,
 } from '../../src/renderer/lib/keymap';
+
+const mocks = vi.hoisted(() => ({
+  trackDesktopEvent: vi.fn(),
+  showMainWindow: vi.fn(),
+  createWindow: vi.fn(),
+  sendToRenderer: vi.fn(),
+  getMainWindow: vi.fn((): null => null),
+  connect: vi.fn(),
+  requestUpdateCheck: vi.fn(),
+  requestUpdateDownload: vi.fn(),
+  requestUpdateInstall: vi.fn(),
+  getUpdateStatus: vi.fn(() => ({ state: 'idle' as const })),
+  getUpdateAutoDownload: vi.fn(() => false),
+  openExternal: vi.fn(),
+}));
+
+// Telemetry clicks invoke Electron + neighboring main modules; mock them so
+// the click handlers can run in the node test environment.
+vi.mock('electron', () => ({
+  app: { getLocale: () => 'en-US', isPackaged: true },
+  dialog: { showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: false })) },
+  Menu: { buildFromTemplate: vi.fn((template: unknown) => template), setApplicationMenu: vi.fn() },
+  shell: { openExternal: mocks.openExternal },
+}));
+vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
+vi.mock('../../src/main/window', () => ({
+  getMainWindow: mocks.getMainWindow,
+  createWindow: mocks.createWindow,
+  sendToRenderer: mocks.sendToRenderer,
+  showMainWindow: mocks.showMainWindow,
+}));
+vi.mock('../../src/main/connect', () => ({ connect: mocks.connect }));
+vi.mock('../../src/main/updater', () => ({
+  getUpdateAutoDownload: mocks.getUpdateAutoDownload,
+  getUpdateStatus: mocks.getUpdateStatus,
+  requestUpdateCheck: mocks.requestUpdateCheck,
+  requestUpdateDownload: mocks.requestUpdateDownload,
+  requestUpdateInstall: mocks.requestUpdateInstall,
+}));
 
 function submenuItems(item: MenuItemConstructorOptions): MenuItemConstructorOptions[] {
   return (item.submenu ?? []) as MenuItemConstructorOptions[];
@@ -350,5 +389,43 @@ describe('bindingToAccelerator', () => {
     expect(bindingToAccelerator('hyper+k')).toBeUndefined();
     // The single quote is NOT in Electron's documented key-code set.
     expect(bindingToAccelerator("mod+'")).toBeUndefined();
+  });
+});
+
+describe('menu telemetry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Our click handlers ignore the Electron callback args.
+  function clickItem(item: MenuItemConstructorOptions | undefined): void {
+    expect(item, 'menu item exists').toBeDefined();
+    (item?.click as (() => void) | undefined)?.();
+  }
+
+  it('tracks the main-only Check for Updates item (runMenuUpdateCheck entry)', async () => {
+    mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'latest' });
+    clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'check-for-updates' });
+    // Let the fire-and-forget update check settle (dialog mocks resolve cleanly).
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('tracks the Help menu Documentation / Console links', () => {
+    const template = menuTemplate(true, 'en');
+    const helpItems = submenuItems(template[template.length - 1] as MenuItemConstructorOptions);
+    clickItem(helpItems.find((item) => item.id === 'help-docs'));
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-docs' });
+    clickItem(helpItems.find((item) => item.id === 'help-console'));
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-console' });
+    expect(mocks.openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not track renderer-forwarded items (renderer-side action_invoked covers them)', () => {
+    const all = walkItems(menuTemplate(true, 'en'));
+    for (const id of ['open-settings', 'new-chat', 'open-folder', 'select-all', 'retry-connection']) {
+      clickItem(all.find((item) => item.id === id));
+    }
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
   });
 });

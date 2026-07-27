@@ -54,6 +54,7 @@ const WHITELIST = [
   'showOpenDialog',
   'showSaveDialog',
   'showWindow',
+  'track',
 ];
 
 beforeEach(() => {
@@ -261,6 +262,15 @@ describe('kimiDesktop preload bridge', () => {
     // A non-boolean set payload is dropped before reaching IPC.
     await exposed.setUpdateAutoDownload('yes' as unknown as boolean);
     expect(invoke).not.toHaveBeenCalledWith('kimi:update-set-auto-download', 'yes');
+
+    // Telemetry: non-empty event names forward; empty ones are dropped.
+    exposed.track('action_invoked', { action: 'newSession', source: 'shortcut' });
+    expect(send).toHaveBeenCalledWith('kimi:track', 'action_invoked', {
+      action: 'newSession',
+      source: 'shortcut',
+    });
+    exposed.track('');
+    expect(send).toHaveBeenCalledTimes(10);
   });
 
   it('coerces the auto-download preference response to a boolean default', async () => {

@@ -61,6 +61,7 @@ import {
   resolveOpenInTarget,
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
+import { track } from './lib/track';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -226,7 +227,14 @@ onMounted(() => {
       // The edit menu's Select All forwards here (its accelerator shadows the
       // keydown, so the conversation pane never sees the chord on desktop).
       if (menuId === 'select-all') {
+        track('action_invoked', { action: 'select-all', source: 'menu' });
         selectAllFromMenu();
+        return;
+      }
+      // The connection retry itself runs main-side (menu.ts); the renderer
+      // only records the menu-only action.
+      if (menuId === 'retry-connection') {
+        track('action_invoked', { action: 'retry-connection', source: 'menu' });
         return;
       }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
@@ -236,7 +244,7 @@ onMounted(() => {
       // would stack competing focus traps — only the closing press (settings
       // already open) is allowed through.
       if (anyOverlayOpen.value && !(actionId === 'openSettings' && showSettings.value)) return;
-      runShortcutAction(actionId);
+      runShortcutAction(actionId, 'menu');
     }) ?? null;
 });
 
@@ -306,7 +314,11 @@ async function openWorkspaceInDefaultApp(): Promise<void> {
   await openInNativeApp(target, root);
 }
 
-function runShortcutAction(id: string): void {
+// Single funnel for app-level actions — the keydown dispatcher, the native
+// menu, and the UI buttons all dispatch through here, so action_invoked
+// source attribution lives in exactly one place.
+function runShortcutAction(id: string, source: 'shortcut' | 'menu' | 'button'): void {
+  track('action_invoked', { action: id, source });
   switch (id) {
     case 'openSettings':
       showSettings.value = !showSettings.value;
@@ -389,7 +401,7 @@ function onShortcutKeydown(e: KeyboardEvent): void {
     if (!closesOpenDialog) return;
   }
   e.preventDefault();
-  runShortcutAction(id);
+  runShortcutAction(id, 'shortcut');
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +989,7 @@ async function handleDropWorkspacePaths(paths: string[]): Promise<void> {
       showAddWorkspace.value = true;
       break;
     }
+    track('native_feature_used', { feature: 'workspace_drop' });
   }
 }
 
@@ -984,6 +997,13 @@ function focusComposerAfterDraft(): void {
   void nextTick(() => {
     conversationPaneRef.value?.focusComposer();
   });
+}
+
+// The sidebar settings entry always OPENS the dialog (the modal blocks a
+// second click), unlike the dispatcher's toggle for shortcut/menu presses.
+function openSettingsFromButton(): void {
+  track('action_invoked', { action: 'openSettings', source: 'button' });
+  showSettings.value = true;
 }
 
 // Primary "+ New": enter the draft state in the current workspace so the
@@ -1048,10 +1068,10 @@ function openPr(url: string): void {
         :workspace-sort-mode="client.workspaceSortMode.value"
         :backend="client.backend.value"
         @select="client.selectSession($event)"
-        @create="handleCreateSession"
+        @create="runShortcutAction('newSession', 'button')"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
-        @add-workspace="requestAddWorkspace()"
+        @add-workspace="runShortcutAction('openFolder', 'button')"
         @add-workspace-paths="void handleDropWorkspacePaths($event)"
         @rename="(id, title) => client.renameSession(id, title)"
         @archive="confirmArchiveSession($event)"
@@ -1067,8 +1087,8 @@ function openPr(url: string): void {
         @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
-        @open-settings="showSettings = true"
-        @collapse="toggleSidebarCollapse"
+        @open-settings="openSettingsFromButton"
+        @collapse="runShortcutAction('toggleSidebar', 'button')"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -1143,7 +1163,7 @@ function openPr(url: string): void {
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="requestAddWorkspace()"
+      @add-workspace="runShortcutAction('openFolder', 'button')"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
       @login="openLogin()"
@@ -1194,7 +1214,7 @@ function openPr(url: string): void {
       class="sidebar-toggle-btn"
       size="sm"
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
-      @click="toggleSidebarCollapse"
+      @click="runShortcutAction('toggleSidebar', 'button')"
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
@@ -1207,7 +1227,7 @@ function openPr(url: string): void {
       class="new-chat-btn"
       size="sm"
       :label="t('sidebar.newChat')"
-      @click="handleCreateSession"
+      @click="runShortcutAction('newSession', 'button')"
     >
       <Icon name="chat-new" />
     </IconButton>
@@ -1381,9 +1401,9 @@ function openPr(url: string): void {
       :attention-by-session="client.attentionBySession.value"
       :attention-by-workspace="client.attentionByWorkspace.value"
       @select="client.selectSession($event)"
-      @create="handleCreateSession"
+      @create="runShortcutAction('newSession', 'button')"
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="requestAddWorkspace()"
+      @add-workspace="runShortcutAction('openFolder', 'button')"
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="confirmArchiveSession($event)"
       @delete-workspace="confirmDeleteWorkspace($event)"

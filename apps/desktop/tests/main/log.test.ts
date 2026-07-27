@@ -148,3 +148,47 @@ describe('isUndiciStreamCloseRace', () => {
     expect(isUndiciStreamCloseRace(undefined)).toBe(false);
   });
 });
+
+describe('installCrashGuards', () => {
+  it('tracks app_crashed for uncaught errors and skips the benign undici race', async () => {
+    // Fresh module instances: every initMainLogging() above already tripped
+    // the once-only guard installation on the shared instance.
+    vi.resetModules();
+    const handlers = new Map<string, (arg: unknown) => void>();
+    const onSpy = vi
+      .spyOn(process, 'on')
+      .mockImplementation(((event: string, cb: (arg: unknown) => void) => {
+        handlers.set(event, cb);
+        return process;
+      }) as unknown as typeof process.on);
+    const impl = vi.fn();
+    try {
+      const { setDesktopTrackImpl } = await import('../../src/main/track');
+      const { installCrashGuards } = await import('../../src/main/log');
+      setDesktopTrackImpl(impl);
+      installCrashGuards();
+
+      handlers.get('uncaughtException')?.(new TypeError('x'));
+      expect(impl).toHaveBeenCalledWith('app_crashed', {
+        kind: 'uncaught_exception',
+        error_name: 'TypeError',
+      });
+
+      handlers.get('unhandledRejection')?.('oops');
+      expect(impl).toHaveBeenCalledWith('app_crashed', {
+        kind: 'unhandled_rejection',
+        error_name: undefined,
+      });
+
+      impl.mockClear();
+      handlers.get('uncaughtException')?.(
+        Object.assign(new TypeError('Invalid state: ReadableStream is already closed'), {
+          code: 'ERR_INVALID_STATE',
+        }),
+      );
+      expect(impl).not.toHaveBeenCalled();
+    } finally {
+      onSpy.mockRestore();
+    }
+  });
+});

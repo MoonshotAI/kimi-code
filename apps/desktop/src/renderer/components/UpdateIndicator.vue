@@ -12,14 +12,17 @@
      neither exists (older versions simply have no notes).
      Renders only when the main process reports an update state the user has
      not skipped; with no desktop bridge (plain web) useUpdateStatus stays
-     idle and nothing renders, so this file is safe to sync to apps/web. -->
+     idle and nothing renders. Telemetry goes through lib/track.ts (a
+     bridge-probed no-op without the preload bridge) — sync that file along
+     with this one (docs/native-todos.md). -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/web-ui';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import type { IconName } from '../lib/icons';
 import { useUpdateStatus } from '../composables/useUpdateStatus';
+import { track } from '../lib/track';
 
 const { t, locale } = useI18n();
 const { status, visible, skipVersion, download, install, autoDownload, setAutoDownload, canToggleAutoDownload } =
@@ -111,17 +114,32 @@ const icon = computed<IconName>(() => {
   }
 });
 
+// The whitelist's version field is optional — omit it when the status has none.
+function versionProps(): { version?: string } {
+  const version = status.value.version;
+  return version === undefined ? {} : { version };
+}
+
+// The pill is the only way to open the dialog, so a rising edge = one shown.
+watch(open, (isOpen) => {
+  if (isOpen) track('update_prompt_shown', versionProps());
+});
+
 function onDownload(): void {
+  // The error state's retry button shares this entry with the download.
+  track('update_prompt_action', { action: status.value.state === 'error' ? 'retry' : 'download', ...versionProps() });
   // The dialog stays open and flips to the live progress view.
   download();
 }
 
 function onSkip(): void {
+  track('update_prompt_action', { action: 'skip', ...versionProps() });
   skipVersion();
   open.value = false;
 }
 
 function onRestartNow(): void {
+  track('update_prompt_action', { action: 'restart', ...versionProps() });
   install();
   open.value = false;
 }

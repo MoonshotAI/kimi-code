@@ -33,6 +33,7 @@ import PinnedSessionList from './PinnedSessionList.vue';
 import { isDesktop, isMacosDesktop } from '../lib/desktopFlag';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
+import { track } from '../lib/track';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -164,6 +165,13 @@ function toggleSearch(): void {
   } else {
     openSearch();
   }
+}
+
+// The header search button is the 'button'-sourced entry of the searchSessions
+// action (shortcut/menu entries are attributed in App.vue's dispatcher).
+function onSearchButtonClick(): void {
+  track('action_invoked', { action: 'searchSessions', source: 'button' });
+  openSearch();
 }
 
 // App.vue's shortcut dispatcher drives the dialog through these exposes
@@ -884,7 +892,7 @@ onBeforeUnmount(() => {
         >
           <Icon name="folder" />
         </IconButton>
-        <button class="search" type="button" @click="openSearch">
+        <button class="search" type="button" @click="onSearchButtonClick">
           <Icon class="search-icon" name="search" />
           <span class="search-input">{{ t('sidebar.search') }}</span>
           <Kbd :keys="sessionSearchKeys" />

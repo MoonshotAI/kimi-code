@@ -8,6 +8,7 @@ import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import { IPC, type RendererEventChannel } from './ipc-channels';
 import { log, redactUrlForLog } from './log';
+import { trackDesktopEvent } from './track';
 import { isVibrancyEnabled } from './ui-state';
 
 let mainWindow: BrowserWindow | null = null;
@@ -20,6 +21,9 @@ export function getMainWindow(): BrowserWindow | null {
     click): un-minimize + show + focus when it exists (including hidden via
     hide-on-close); recreate it after a real destroy. */
 export function showMainWindow(): void {
+  // Records the summon intent, not a visibility change: the window may
+  // already be visible (menu/tray/shortcut callers surface it regardless).
+  trackDesktopEvent('window_lifecycle', { action: 'shown' });
   // Cancel a deferred full-screen hide scheduled by the close handler: the
   // explicit re-show is the fresher intent and wins.
   pendingFullscreenHide = false;
@@ -322,6 +326,7 @@ export function createWindow(): void {
     saveBounds(win);
     if (shouldHideOnClose(process.platform, isQuitting)) {
       event.preventDefault();
+      trackDesktopEvent('window_lifecycle', { action: 'hidden' });
       // A detached DevTools window would linger on screen after the hide.
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
       // Hiding a full-screen window would leave a black space behind (macOS)
@@ -339,6 +344,7 @@ export function createWindow(): void {
     }
   });
   win.on('closed', () => {
+    trackDesktopEvent('window_lifecycle', { action: 'closed' });
     if (mainWindow === win) {
       mainWindow = null;
     }

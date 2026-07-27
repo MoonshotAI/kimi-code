@@ -5,6 +5,7 @@ const {
   installProxyMock,
   hostRequestHeadersSeedMock,
   createKimiDefaultHeadersMock,
+  wireDesktopTelemetryMock,
 } = vi.hoisted(() => ({
   startServerMock: vi.fn(),
   installProxyMock: vi.fn(),
@@ -15,6 +16,7 @@ const {
     'User-Agent': 'kimi-code-desktop/1.2.3',
     'X-Msh-Platform': 'kimi_code_cli',
   })),
+  wireDesktopTelemetryMock: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/kap-server', () => ({
@@ -32,6 +34,9 @@ vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   installGlobalProxyDispatcher: installProxyMock,
   resolveKimiHome: () => '/tmp/kimi-test',
 }));
+vi.mock('../../src/main/telemetry', () => ({
+  wireDesktopTelemetry: wireDesktopTelemetryMock,
+}));
 
 import { startDesktopServer } from '../../src/main/server';
 
@@ -41,13 +46,16 @@ describe('startDesktopServer', () => {
     installProxyMock.mockReset();
     hostRequestHeadersSeedMock.mockClear();
     createKimiDefaultHeadersMock.mockClear();
+    wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
   });
 
   it('wires startServer with loopback, ephemeral port, corsOrigins, identity seed, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
     const close = vi.fn().mockResolvedValue(undefined);
+    const core = { accessor: 'CORE' };
     startServerMock.mockResolvedValue({
       host: '127.0.0.1',
       port: 54321,
+      core,
       close,
     });
 
@@ -81,9 +89,36 @@ describe('startDesktopServer', () => {
     });
     expect(args.seeds).toBe('HOST_HEADERS_SEED');
 
+    // The telemetry appender attaches to the embedded server's DI scope; with
+    // consent denied (null handle) close just closes the server.
+    expect(wireDesktopTelemetryMock).toHaveBeenCalledWith(core);
+
     expect(handle.origin).toBe('http://127.0.0.1:54321');
     expect(handle.port).toBe(54321);
     await handle.close();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('close shuts telemetry down before closing the server', async () => {
+    const telemetryShutdown = vi.fn().mockResolvedValue(undefined);
+    wireDesktopTelemetryMock.mockResolvedValue({ shutdown: telemetryShutdown });
+    const close = vi.fn().mockResolvedValue(undefined);
+    startServerMock.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 54321,
+      core: { accessor: 'CORE' },
+      close,
+    });
+
+    const handle = await startDesktopServer({
+      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
+    });
+    await handle.close();
+
+    expect(telemetryShutdown).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(telemetryShutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      close.mock.invocationCallOrder[0]!,
+    );
   });
 });

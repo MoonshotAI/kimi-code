@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { app, Menu, nativeImage, Tray } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
+import { trackDesktopEvent } from './track';
+
 // System tray (macOS menu-bar / Windows notification area). Desktop-only — the
 // web client has no equivalent surface. A single context menu covers both
 // interactions: on macOS a plain click on a status item with a context menu
@@ -272,6 +274,8 @@ export function trayAttentionItemLabel(item: TrayAttentionItem, locale: TrayLoca
 
 function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: TrayLocale): Menu {
   const strings = TRAY_STRINGS[locale];
+  // Pending total as of menu build time, reported with every tray click.
+  const pendingCount = attention.unread + attention.approvals + attention.questions;
   const template: MenuItemConstructorOptions[] = [];
   if (attention.items.length > 0) {
     // The attention sessions themselves, clickable.
@@ -279,12 +283,21 @@ function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: T
     for (const item of attention.items.slice(0, MAX_MENU_ITEMS)) {
       template.push({
         label: trayAttentionItemLabel(item, locale),
-        click: () => actions.openSession(item.sessionId),
+        click: () => {
+          trackDesktopEvent('tray_action', { action: 'open-session', pending_count: pendingCount });
+          actions.openSession(item.sessionId);
+        },
       });
     }
     const rest = attention.items.length - MAX_MENU_ITEMS;
     if (rest > 0) {
-      template.push({ label: strings.moreOverflow(rest), click: () => actions.showMainWindow() });
+      template.push({
+        label: strings.moreOverflow(rest),
+        click: () => {
+          trackDesktopEvent('tray_action', { action: 'show-window', pending_count: pendingCount });
+          actions.showMainWindow();
+        },
+      });
     }
     template.push({ type: 'separator' });
   } else {
@@ -296,9 +309,21 @@ function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: T
     }
   }
   template.push(
-    { label: strings.showMainWindow, click: () => actions.showMainWindow() },
+    {
+      label: strings.showMainWindow,
+      click: () => {
+        trackDesktopEvent('tray_action', { action: 'show-window', pending_count: pendingCount });
+        actions.showMainWindow();
+      },
+    },
     { type: 'separator' },
-    { label: strings.quit, click: () => actions.quit() },
+    {
+      label: strings.quit,
+      click: () => {
+        trackDesktopEvent('tray_action', { action: 'quit', pending_count: pendingCount });
+        actions.quit();
+      },
+    },
   );
   return Menu.buildFromTemplate(template);
 }

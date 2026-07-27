@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
+import { track } from '../../lib/track';
 import OpenInMenu from './OpenInMenu.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
@@ -138,11 +139,13 @@ onUnmounted(() => {
 });
 
 function onCopyAll(): void {
+  track('session_menu_action', { action: 'copyAll' });
   emit('copyAll');
   closeMenu();
 }
 
 function onCopyFinalSummary(): void {
+  track('session_menu_action', { action: 'copyFinalSummary' });
   emit('copyFinalSummary');
   closeMenu();
 }
@@ -153,6 +156,7 @@ function onCopyFinalSummary(): void {
 const copiedId = ref(false);
 function copySessionId(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'copySessionId' });
   void copyTextToClipboard(props.sessionId).then((ok) => {
     if (!ok) return;
     copiedId.value = true;
@@ -174,6 +178,7 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 async function startRename(): Promise<void> {
   closeMenu();
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'rename' });
   renaming.value = true;
   renameValue.value = props.sessionTitle ?? '';
   await nextTick();
@@ -206,6 +211,7 @@ function cancelRename(): void {
 // ---------------------------------------------------------------------------
 function forkSession(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'fork' });
   closeMenu();
   emit('forkSession', props.sessionId);
 }
@@ -215,6 +221,7 @@ function forkSession(): void {
 // ---------------------------------------------------------------------------
 function exportSession(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'export' });
   closeMenu();
   emit('exportSession', props.sessionId);
 }
@@ -225,8 +232,22 @@ function exportSession(): void {
 // ---------------------------------------------------------------------------
 function startArchive(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'archive' });
   closeMenu();
   emit('archiveSession', props.sessionId);
+}
+
+// Git changes / PR header buttons — tracked with the same session_menu_action
+// vocabulary as the ⋮ menu items.
+function onOpenChanges(): void {
+  track('session_menu_action', { action: 'openChanges' });
+  emit('openChanges');
+}
+
+function onOpenPr(): void {
+  if (!props.pr) return;
+  track('session_menu_action', { action: 'openPr' });
+  emit('openPr', props.pr.url);
 }
 
 // Dev-environment marker: only compiled into dev-server builds
@@ -354,7 +375,7 @@ async function onOpenInApp(appId: string): Promise<void> {
       v-if="isGitRepo"
       type="button"
       class="ch-git"
-      @click="emit('openChanges')"
+      @click="onOpenChanges"
     >
       <Icon class="ch-branch-icon" name="git-fork" size="sm" />
       <span
@@ -379,7 +400,7 @@ async function onOpenInApp(appId: string): Promise<void> {
       type="button"
       class="ch-pill ch-pr"
       :class="prStateClass(pr.state)"
-      @click="pr && emit('openPr', pr.url)"
+      @click="onOpenPr"
     >
       <Icon name="git-pull-request" size="sm" />
       <span>PR #{{ pr.number }} · {{ prStateLabel(pr.state) }}</span>

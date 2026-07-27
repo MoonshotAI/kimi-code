@@ -2,7 +2,10 @@ import { EventEmitter } from 'node:events';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { netFetchMock } = vi.hoisted(() => ({ netFetchMock: vi.fn() }));
+const { netFetchMock, trackMock } = vi.hoisted(() => ({
+  netFetchMock: vi.fn(),
+  trackMock: vi.fn(),
+}));
 
 // updater.ts imports electron / electron-updater / ./window only for the
 // production wiring (initAutoUpdater); the unit under test is the injected
@@ -10,6 +13,7 @@ const { netFetchMock } = vi.hoisted(() => ({ netFetchMock: vi.fn() }));
 vi.mock('electron', () => ({ app: { isPackaged: false }, net: { fetch: netFetchMock } }));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
+vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock }));
 
 import { fetchReleaseNotes, startAutoUpdater, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
 import { markQuitting } from '../../src/main/window';
@@ -48,6 +52,7 @@ function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDo
 
 beforeEach(() => {
   vi.useFakeTimers();
+  trackMock.mockClear();
 });
 
 afterEach(() => {
@@ -87,6 +92,20 @@ describe('startAutoUpdater', () => {
     const { updater } = setup({ autoDownload: true });
     expect(updater.autoDownload).toBe(true);
     expect(updater.autoInstallOnAppQuit).toBe(true);
+  });
+
+  it('tracks state transitions, not per-chunk download progress', () => {
+    const { updater } = setup();
+    updater.emit('update-available', { version: '1.2.3', releaseDate: '2026-07-27' });
+    updater.emit('download-progress', { percent: 10.2 });
+    updater.emit('download-progress', { percent: 55.6 });
+    updater.emit('update-downloaded', { version: '1.2.3', releaseDate: '2026-07-27' });
+
+    expect(trackMock.mock.calls).toEqual([
+      ['update_status_changed', { state: 'available', version: '1.2.3' }],
+      ['update_status_changed', { state: 'downloading', version: '1.2.3' }],
+      ['update_status_changed', { state: 'downloaded', version: '1.2.3' }],
+    ]);
   });
 
   it('setAutoDownload flips the flag, starts a waiting update on enable, and never cancels in-flight', () => {

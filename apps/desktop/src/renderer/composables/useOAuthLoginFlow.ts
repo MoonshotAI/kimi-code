@@ -12,6 +12,8 @@
 
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 
+import { track } from '../lib/track';
+
 export type OAuthLoginStep = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
 
 export interface OAuthFlowData {
@@ -76,6 +78,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
   function reachSuccess(dwellMs: number): void {
     stopTimers();
     step.value = 'success';
+    track('oauth_login_step', { stage: 'success', ok: true });
     successTimer = setTimeout(() => {
       successTimer = null;
       options.onSuccess?.();
@@ -107,6 +110,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
           stopTimers();
           pollError.value = true;
           step.value = 'error';
+          track('oauth_login_step', { stage: 'error', ok: false });
           return;
         }
         scheduleNextPoll(intervalSec);
@@ -118,6 +122,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
       } else if (result.status === 'expired' || result.status === 'cancelled') {
         stopTimers();
         step.value = 'expired';
+        track('oauth_login_step', { stage: 'expired', ok: false });
       } else {
         // pending — keep polling
         scheduleNextPoll(intervalSec);
@@ -132,6 +137,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     consecutivePollFailures = 0;
     flowCancelled = false;
     step.value = 'starting';
+    track('oauth_login_step', { stage: 'starting' });
 
     const result = await options.onStartOAuthLogin();
     if (disposed) {
@@ -145,6 +151,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     }
     if (!result) {
       step.value = 'error';
+      track('oauth_login_step', { stage: 'error', ok: false });
       return;
     }
 
@@ -166,6 +173,7 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     };
     secondsLeft.value = result.expiresIn;
     step.value = 'device-code';
+    track('oauth_login_step', { stage: 'device-code' });
     startCountdown();
     scheduleNextPoll(result.interval);
   }

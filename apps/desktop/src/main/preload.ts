@@ -246,6 +246,10 @@ export type KimiDesktopApi = {
   /** Current vibrancy preference. Default ON — only an explicit false from
    *  the main process disables. */
   getVibrancy: () => Promise<boolean>;
+  /** Emit a telemetry event through the main process's cloud pipeline. The
+   *  event whitelist is enforced main-side (track.ts); no-op until telemetry
+   *  is wired (consent off / external-server mode). */
+  track: (event: string, properties?: Record<string, unknown>) => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -389,6 +393,11 @@ export const api: KimiDesktopApi = {
     }
   },
   getVibrancy: async () => (await ipcRenderer.invoke('kimi:get-vibrancy')) !== false,
+  track: (event, properties) => {
+    if (typeof event === 'string' && event !== '') {
+      ipcRenderer.send('kimi:track', event, properties);
+    }
+  },
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);

@@ -32,6 +32,7 @@ import { autoUpdater } from 'electron-updater';
 import { IPC } from './ipc-channels';
 import { isUpdateAutoDownloadEnabled, setUpdateAutoDownloadEnabled } from './ui-state';
 import { markQuitting, sendToRenderer } from './window';
+import { trackDesktopEvent } from './track';
 
 export type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
 
@@ -123,12 +124,18 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
 
   let current: UpdateStatus = { state: 'idle' };
   const setStatus = (next: UpdateStatus): void => {
+    const previousState = current.state;
     // Release notes belong to a version: carried over while the version
     // stays, dropped as soon as a different version (or none) shows up.
     const keepNotes =
       next.version !== undefined && next.version === current.version ? current.releaseNotes : undefined;
     current = { ...next, releaseNotes: next.releaseNotes ?? keepNotes };
     send(current);
+    // State transitions only — download-progress re-enters `downloading` per
+    // chunk and would drown the stream.
+    if (current.state !== previousState) {
+      trackDesktopEvent('update_status_changed', { state: current.state, version: current.version });
+    }
   };
 
   updater.autoDownload = deps.autoDownload ?? false;

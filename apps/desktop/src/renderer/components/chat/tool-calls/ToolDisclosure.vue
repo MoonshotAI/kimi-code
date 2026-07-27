@@ -43,6 +43,7 @@
 import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, StatusDot } from '@moonshot-ai/web-ui';
+import { track } from '../../../lib/track';
 
 const props = withDefaults(
   defineProps<{
@@ -62,6 +63,9 @@ const headEl = ref<HTMLElement | null>(null);
 
 function toggle(): void {
   if (!props.expandable) return;
+  // Only user toggles reach here (head click / chevron button) — programmatic
+  // open-state changes by the tool renderers don't emit 'toggle'.
+  track('ui_element_toggled', { element: 'tool_call', expanded: !props.open });
   emit('toggle');
   const el = headEl.value;
   if (el) nextTick(() => pinScroll(el));

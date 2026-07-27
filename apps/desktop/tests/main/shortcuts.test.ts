@@ -4,6 +4,7 @@ const register = vi.fn<(accel: string, cb: () => void) => boolean>();
 const unregister = vi.fn<(accel: string) => void>();
 const unregisterAll = vi.fn<() => void>();
 const showMainWindow = vi.fn<() => void>();
+const trackDesktopEvent = vi.fn();
 
 vi.mock('electron', () => ({
   globalShortcut: { register, unregister, unregisterAll },
@@ -36,6 +37,10 @@ vi.mock('../../src/main/log', () => ({
   log: { warn: vi.fn() },
 }));
 
+vi.mock('../../src/main/track', () => ({
+  trackDesktopEvent,
+}));
+
 async function importShortcuts(): Promise<typeof import('../../src/main/shortcuts')> {
   return import('../../src/main/shortcuts');
 }
@@ -46,6 +51,7 @@ beforeEach(() => {
   unregister.mockReset();
   unregisterAll.mockReset();
   showMainWindow.mockReset();
+  trackDesktopEvent.mockReset();
 });
 
 // Registration is push-driven: nothing is grabbed at startup, the renderer
@@ -200,5 +206,26 @@ describe('global summon-app shortcut', () => {
     setGlobalShortcut(DEFAULT_BINDING);
     unregisterGlobalShortcuts();
     expect(unregisterAll).toHaveBeenCalledOnce();
+  });
+
+  it('tracks global_shortcut_invoked when the accelerator fires', async () => {
+    const { setGlobalShortcut } = await importShortcuts();
+    register.mockReturnValue(true);
+    setGlobalShortcut(DEFAULT_BINDING);
+    register.mock.calls[0]?.[1]?.();
+    expect(trackDesktopEvent).toHaveBeenCalledWith('global_shortcut_invoked');
+  });
+
+  it('tracks a register failure as invalid when the chord cannot be expressed', async () => {
+    const { setGlobalShortcut } = await importShortcuts();
+    expect(setGlobalShortcut('mod+unknown')).toBe(false);
+    expect(trackDesktopEvent).toHaveBeenCalledWith('global_shortcut_register_failed', { reason: 'invalid' });
+  });
+
+  it('tracks a register failure as conflicted when the OS refuses the chord', async () => {
+    const { setGlobalShortcut } = await importShortcuts();
+    register.mockReturnValue(false);
+    expect(setGlobalShortcut(DEFAULT_BINDING)).toBe(false);
+    expect(trackDesktopEvent).toHaveBeenCalledWith('global_shortcut_register_failed', { reason: 'conflicted' });
   });
 });

@@ -13,6 +13,11 @@ import { dirname, join } from 'node:path';
 
 import { dialog } from 'electron';
 
+// track.ts is type-only at import time (its agent-core-v2 imports are
+// `import type`, erased at build), so pulling it in here adds no runtime
+// module to this file's deliberately tiny load-time graph.
+import { trackDesktopEvent } from './track';
+
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 
 type Level = 'INFO' | 'WARN' | 'ERROR';
@@ -154,6 +159,9 @@ export function installCrashGuards(): void {
       return;
     }
     log.error('uncaughtException', error);
+    // No-op before the appender is wired (early-boot crashes) — the file log
+    // above is the record of those.
+    trackDesktopEvent('app_crashed', { kind: 'uncaught_exception', error_name: error.name });
     surfaceUncaught(error);
   });
   process.on('unhandledRejection', (reason) => {
@@ -165,6 +173,10 @@ export function installCrashGuards(): void {
     // rejection to the fatal uncaught-exception path, so route genuinely
     // unexpected rejections through the same surfacing as exceptions.
     log.error('unhandledRejection', reason);
+    trackDesktopEvent('app_crashed', {
+      kind: 'unhandled_rejection',
+      error_name: reason instanceof Error ? reason.name : undefined,
+    });
     surfaceUncaught(reason);
   });
 }

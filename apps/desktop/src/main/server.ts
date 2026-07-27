@@ -14,6 +14,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_MSH_PLATFORM } from '../shared/identity';
+import { wireDesktopTelemetry } from './telemetry';
 
 export interface DesktopServerHandle {
   readonly origin: string;
@@ -96,10 +97,18 @@ export async function startDesktopServer(
     seeds: hostRequestHeadersSeed(desktopHostHeaders(opts.identity)),
   });
 
+  // kap-server attaches no telemetry appender itself (everything falls into
+  // the null appender); wire the cloud appender here, before the renderer can
+  // create a session, and flush it before the server goes down.
+  const telemetry = await wireDesktopTelemetry(handle.core);
+
   return {
     origin: `http://${handle.host}:${handle.port}`,
     port: handle.port,
     token: readServerToken(),
-    close: () => handle.close(),
+    close: async () => {
+      await telemetry?.shutdown();
+      await handle.close();
+    },
   };
 }

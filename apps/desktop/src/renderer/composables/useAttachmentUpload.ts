@@ -13,6 +13,7 @@
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { getKimiWebApi } from '../api';
+import { track } from '../lib/track';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -78,7 +79,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     return 'file';
   }
 
-  async function addFiles(files: File[]): Promise<void> {
+  async function addFiles(files: File[], via: 'drop' | 'click' | 'paste'): Promise<void> {
     const upload = uploadImage();
     if (!upload) return;
     // Capture the session at upload time; async completion must update the same
@@ -88,6 +89,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
     for (const file of files) {
       const kind = attachmentKind(file.type);
+      track('attachment_added', { via, kind });
       const localId = nextLocalId();
       // Only media gets a thumbnail object URL; files render an icon chip.
       const previewUrl = kind === 'file' ? undefined : URL.createObjectURL(file);
@@ -157,7 +159,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleFileInputChange(e: Event): void {
     const input = e.target as HTMLInputElement;
     const files = Array.from(input.files ?? []);
-    void addFiles(files);
+    void addFiles(files, 'click');
     // Reset so re-selecting the same file fires change again.
     input.value = '';
   }
@@ -198,7 +200,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     if (files.length === 0) return; // No files — let normal text paste proceed unmodified.
 
     e.preventDefault();
-    void addFiles(files);
+    void addFiles(files, 'paste');
   }
 
   // Drag-drop handlers. WindowDragDepth tracks nested dragenter/dragleave pairs
@@ -228,7 +230,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     e.preventDefault();
     e.stopPropagation();
     const files = Array.from(e.dataTransfer?.files ?? []);
-    void addFiles(files);
+    void addFiles(files, 'drop');
   }
 
   // Window-level drag & drop. Without a document-wide handler, dropping a file
@@ -264,7 +266,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     if (!uploadImage()) return;
     e.preventDefault();
     const files = Array.from(e.dataTransfer?.files ?? []);
-    void addFiles(files);
+    void addFiles(files, 'drop');
   }
 
   /** Revoke every object URL and drop all attachments for the current session

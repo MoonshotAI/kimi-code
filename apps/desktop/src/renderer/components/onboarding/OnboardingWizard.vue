@@ -8,12 +8,13 @@
      values instead of theme tokens — same exemption class as the illustrative
      mockups in the design-system view. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAppearance, type ColorScheme } from '@moonshot-ai/web-core';
 import { Button } from '@moonshot-ai/web-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
 import { type OAuthLoginStartResult } from '../../composables/useOAuthLoginFlow';
+import { track } from '../../lib/track';
 import BrandLogo from './BrandLogo.vue';
 import OnboardingLoginStep from './OnboardingLoginStep.vue';
 
@@ -51,6 +52,16 @@ function next(): void {
 }
 function back(): void {
   if (stepIndex.value > 0) stepIndex.value--;
+}
+
+// Telemetry: one event per step entry (the immediate fire covers the initial
+// mount); the ghost skip path adds `skipped` — on step 1 it abandons the whole
+// wizard, on step 2 just the login.
+watch(step, (s) => track('onboarding_step', { step: s }), { immediate: true });
+
+function skip(): void {
+  track('onboarding_step', { step: step.value, skipped: true });
+  emit('complete');
 }
 
 // -------------------------------------------------------------------------
@@ -180,7 +191,7 @@ function onLoginSuccess(): void {
           <Button
             v-if="!(step === 'login' && props.authReady)"
             variant="ghost"
-            @click="emit('complete')"
+            @click="skip"
           >
             {{ step === 'login' ? t('onboarding.login.skip') : t('onboarding.skip') }}
           </Button>

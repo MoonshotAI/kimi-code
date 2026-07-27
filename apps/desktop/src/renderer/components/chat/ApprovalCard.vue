@@ -7,6 +7,8 @@ import type { ApprovalDecision } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
 import HighlightedCode from '../HighlightedCode.vue';
+import { approvalDecisionName, type ApprovalVia } from '../../lib/approvalTelemetry';
+import { track } from '../../lib/track';
 
 const props = defineProps<{
   block: ApprovalBlock;
@@ -127,11 +129,13 @@ function openFeedback(): void {
 function submitFeedback(): void {
   if (props.busy) return;
   const fb = feedbackText.value.trim();
+  // The feedback UI has no number-key equivalent (key 4 only OPENS the box),
+  // so a submitted decide always counts as via 'button'.
   if (planReview.value) {
     // Revise: keep plan mode active and pass optional feedback to the agent.
-    act('feedback', { decision: 'rejected', selectedLabel: 'Revise', feedback: fb || undefined });
+    act('feedback', { decision: 'rejected', selectedLabel: 'Revise', feedback: fb || undefined }, 'button');
   } else {
-    act('feedback', { decision: 'rejected', feedback: fb || undefined });
+    act('feedback', { decision: 'rejected', feedback: fb || undefined }, 'button');
   }
   feedbackOpen.value = false;
   feedbackText.value = '';
@@ -175,26 +179,32 @@ watch(
 function act(
   action: string,
   response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
+  via: ApprovalVia,
 ): void {
   // A second click (or number key) while the first decide is in flight must
   // not fire a duplicate request.
   if (props.busy) return;
   pendingAction.value = action;
+  track('approval_decision', { decision: approvalDecisionName(action, response.selectedLabel), via });
   emit('decide', response);
 }
 
-function approve(): void { act('approve', { decision: 'approved' }); }
-function approveSession(): void { act('approveSession', { decision: 'approved', scope: 'session' }); }
-function reject(): void { act('reject', { decision: 'rejected' }); }
+function approve(via: ApprovalVia): void { act('approve', { decision: 'approved' }, via); }
+function approveSession(via: ApprovalVia): void { act('approveSession', { decision: 'approved', scope: 'session' }, via); }
+function reject(via: ApprovalVia): void { act('reject', { decision: 'rejected' }, via); }
 
 // plan_review actions
-function approvePlan(): void { act('approvePlan', { decision: 'approved' }); }
-function approveOption(label: string): void { act(`option:${label}`, { decision: 'approved', selectedLabel: label }); }
+function approvePlan(via: ApprovalVia): void { act('approvePlan', { decision: 'approved' }, via); }
+function approveOption(label: string, via: ApprovalVia): void {
+  act(`option:${label}`, { decision: 'approved', selectedLabel: label }, via);
+}
 function revisePlan(): void {
   if (props.busy) return;
   openFeedback();
 }
-function rejectAndExitPlan(): void { act('rejectAndExit', { decision: 'rejected', selectedLabel: 'Reject and Exit' }); }
+function rejectAndExitPlan(via: ApprovalVia): void {
+  act('rejectAndExit', { decision: 'rejected', selectedLabel: 'Reject and Exit' }, via);
+}
 
 // ---------------------------------------------------------------------------
 // Number key shortcuts. Generic cards: 1=approve, 2=session, 3=reject,
@@ -227,19 +237,19 @@ function handleKeydown(e: KeyboardEvent): void {
   const pr = planReview.value;
   if (pr) {
     if (pr.options.length === 0) {
-      if (e.key === '1') { e.preventDefault(); approvePlan(); }
+      if (e.key === '1') { e.preventDefault(); approvePlan('number-key'); }
       else if (e.key === '2') { e.preventDefault(); revisePlan(); }
-      else if (e.key === '3') { e.preventDefault(); rejectAndExitPlan(); }
+      else if (e.key === '3') { e.preventDefault(); rejectAndExitPlan('number-key'); }
       return;
     }
-    if (e.key === '1' && pr.options[0]) { e.preventDefault(); approveOption(pr.options[0].label); }
-    else if (e.key === '2' && pr.options[1]) { e.preventDefault(); approveOption(pr.options[1].label); }
-    else if (e.key === '3' && pr.options[2]) { e.preventDefault(); approveOption(pr.options[2].label); }
+    if (e.key === '1' && pr.options[0]) { e.preventDefault(); approveOption(pr.options[0].label, 'number-key'); }
+    else if (e.key === '2' && pr.options[1]) { e.preventDefault(); approveOption(pr.options[1].label, 'number-key'); }
+    else if (e.key === '3' && pr.options[2]) { e.preventDefault(); approveOption(pr.options[2].label, 'number-key'); }
     return;
   }
-  if (e.key === '1') { e.preventDefault(); approve(); }
-  else if (e.key === '2') { e.preventDefault(); approveSession(); }
-  else if (e.key === '3') { e.preventDefault(); reject(); }
+  if (e.key === '1') { e.preventDefault(); approve('number-key'); }
+  else if (e.key === '2') { e.preventDefault(); approveSession('number-key'); }
+  else if (e.key === '3') { e.preventDefault(); reject('number-key'); }
   else if (e.key === '4') { e.preventDefault(); openFeedback(); }
 }
 
@@ -368,7 +378,7 @@ onUpdated(updatePlanScrollState);
               type="button"
               class="popt"
               :disabled="busy"
-              @click="approveOption(opt.label)"
+              @click="approveOption(opt.label, 'button')"
             >
               <span class="popt-key">{{ i + 1 }}</span>
               <span class="popt-text">
@@ -413,16 +423,16 @@ onUpdated(updatePlanScrollState);
 
           <!-- plan_review actions -->
           <template v-else-if="planReview">
-            <Button v-if="planReview.options.length === 0" class="amain" size="md" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan"><span class="knum">1</span>{{ t('approval.approvePlan') }}</Button>
+            <Button v-if="planReview.options.length === 0" class="amain" size="md" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan('button')"><span class="knum">1</span>{{ t('approval.approvePlan') }}</Button>
             <Button size="md" variant="ghost" :disabled="busy" @click="revisePlan"><span v-if="planReview.options.length === 0" class="knum">2</span>{{ t('approval.revise') }}</Button>
-            <Button size="md" variant="ghost" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan"><span v-if="planReview.options.length === 0" class="knum">3</span>{{ t('approval.rejectAndExit') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan('button')"><span v-if="planReview.options.length === 0" class="knum">3</span>{{ t('approval.rejectAndExit') }}</Button>
           </template>
 
           <!-- default actions row -->
           <template v-else>
-            <Button class="amain" size="md" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve"><span class="knum">1</span>{{ t('approval.approve') }}</Button>
-            <Button size="md" variant="ghost" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession"><span class="knum">2</span>{{ t('approval.approveSession') }}</Button>
-            <Button size="md" variant="ghost" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject"><span class="knum">3</span>{{ t('approval.reject') }}</Button>
+            <Button class="amain" size="md" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve('button')"><span class="knum">1</span>{{ t('approval.approve') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession('button')"><span class="knum">2</span>{{ t('approval.approveSession') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject('button')"><span class="knum">3</span>{{ t('approval.reject') }}</Button>
             <Button size="md" variant="ghost" :disabled="busy" @click="openFeedback"><span class="knum">4</span>{{ t('approval.feedback') }}</Button>
           </template>
         </div>

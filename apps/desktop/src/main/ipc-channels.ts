@@ -35,6 +35,7 @@ export const IPC = {
   vibrancy: 'kimi:vibrancy',
   getVibrancy: 'kimi:get-vibrancy',
   showWindow: 'kimi:show-window',
+  track: 'kimi:track',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';

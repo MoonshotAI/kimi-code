@@ -12,6 +12,7 @@ import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
+import { trackDesktopEvent } from './track';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
@@ -60,6 +61,9 @@ export function connect(win: BrowserWindow): Promise<void> {
 }
 
 async function connectOnce(win: BrowserWindow): Promise<void> {
+  const startedAt = Date.now();
+  // Mirrors resolveConnectTarget: a non-empty KIMI_SERVER_URL means external.
+  const mode = process.env['KIMI_SERVER_URL']?.trim() ? 'external' : 'embedded';
   try {
     let origin: string;
     let token: string | undefined;
@@ -99,9 +103,20 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     if (!win.isDestroyed()) {
       await win.loadURL(rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled()));
     }
+    trackDesktopEvent('startup_connect_result', {
+      mode,
+      ok: true,
+      duration_ms: Date.now() - startedAt,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[kimi-desktop] connect failed: ${message}`);
+    trackDesktopEvent('startup_connect_result', {
+      mode,
+      ok: false,
+      duration_ms: Date.now() - startedAt,
+      error_class: error instanceof Error ? error.name : 'unknown',
+    });
     if (!win.isDestroyed()) {
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }

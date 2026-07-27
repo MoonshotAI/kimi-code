@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { join } from 'node:path';
+import type { MenuItemConstructorOptions } from 'electron';
 import {
   asTrayAttention,
   dockBadgeText,
@@ -9,6 +10,40 @@ import {
   trayIconPath,
   type TrayAttention,
 } from '../../src/main/tray';
+
+const mocks = vi.hoisted(() => ({
+  trackDesktopEvent: vi.fn(),
+  buildFromTemplate: vi.fn((template: unknown) => template),
+}));
+
+// createTray instantiates the real Tray/Menu; mock Electron so the menu-click
+// handlers can run in the node test environment.
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: true,
+    getAppPath: () => '/app',
+    getLocale: () => 'en-US',
+  },
+  Menu: { buildFromTemplate: mocks.buildFromTemplate },
+  nativeImage: {
+    createFromPath: () => ({ isEmpty: () => false, setTemplateImage: vi.fn() }),
+  },
+  Tray: class {
+    setTitle = vi.fn();
+    setToolTip = vi.fn();
+    setContextMenu = vi.fn();
+    on = vi.fn();
+    destroy = vi.fn();
+  },
+}));
+
+vi.mock('../../src/main/track', () => ({
+  trackDesktopEvent: mocks.trackDesktopEvent,
+}));
+
+// createTray reads process.resourcesPath (undefined outside Electron; typed
+// readonly, so go through defineProperty).
+Object.defineProperty(process, 'resourcesPath', { value: '/resources' });
 
 function attention(partial: Partial<TrayAttention> = {}): TrayAttention {
   return { unread: 0, approvals: 0, questions: 0, items: [], ...partial };
@@ -184,5 +219,89 @@ describe('trayAttentionItemLabel', () => {
     const item = { sessionId: 's1', title: '   ', unread: true, approvals: 0, questions: 0 };
     expect(trayAttentionItemLabel(item, 'zh')).toBe('未命名会话');
     expect(trayAttentionItemLabel(item, 'en')).toBe('Untitled session');
+  });
+});
+
+describe('tray telemetry', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function importTray(): Promise<typeof import('../../src/main/tray')> {
+    return import('../../src/main/tray');
+  }
+
+  function fakeActions(): {
+    showMainWindow: ReturnType<typeof vi.fn<() => void>>;
+    openSession: ReturnType<typeof vi.fn<(sessionId: string) => void>>;
+    quit: ReturnType<typeof vi.fn<() => void>>;
+  } {
+    return {
+      showMainWindow: vi.fn<() => void>(),
+      openSession: vi.fn<(sessionId: string) => void>(),
+      quit: vi.fn<() => void>(),
+    };
+  }
+
+  function lastTemplate(): MenuItemConstructorOptions[] {
+    const template = mocks.buildFromTemplate.mock.calls.at(-1)?.[0];
+    expect(template, 'tray menu was (re)built').toBeDefined();
+    return template as MenuItemConstructorOptions[];
+  }
+
+  // Our click handlers ignore the Electron callback args.
+  function clickItem(item: MenuItemConstructorOptions | undefined): void {
+    expect(item, 'menu item exists').toBeDefined();
+    (item?.click as (() => void) | undefined)?.();
+  }
+
+  it('tracks open-session clicks from the attention entries, with the pending total', async () => {
+    const { createTray, setTrayAttention } = await importTray();
+    const actions = fakeActions();
+    createTray(actions);
+    setTrayAttention(
+      attention({
+        unread: 3,
+        items: [{ sessionId: 's1', title: 'Fix tests', unread: true, approvals: 0, questions: 0 }],
+      }),
+    );
+    clickItem(lastTemplate().find((item) => item.label === 'Fix tests'));
+    expect(actions.openSession).toHaveBeenCalledWith('s1');
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
+      action: 'open-session',
+      pending_count: 3,
+    });
+  });
+
+  it('tracks show-window and quit with the pending total', async () => {
+    const { createTray, setTrayAttention } = await importTray();
+    const actions = fakeActions();
+    createTray(actions);
+    setTrayAttention(attention({ unread: 2, approvals: 1 }));
+    const template = lastTemplate();
+    clickItem(template.find((item) => item.label === 'Show Main Window'));
+    expect(actions.showMainWindow).toHaveBeenCalledOnce();
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
+      action: 'show-window',
+      pending_count: 3,
+    });
+    clickItem(template.find((item) => item.label === 'Quit'));
+    expect(actions.quit).toHaveBeenCalledOnce();
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
+      action: 'quit',
+      pending_count: 3,
+    });
+  });
+
+  it('reports a zero pending count when nothing needs attention', async () => {
+    const { createTray } = await importTray();
+    const actions = fakeActions();
+    createTray(actions);
+    clickItem(lastTemplate().find((item) => item.label === 'Show Main Window'));
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
+      action: 'show-window',
+      pending_count: 0,
+    });
   });
 });

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   errorHtml: vi.fn(() => '<error>'),
   isOnboarded: vi.fn(() => false),
   isVibrancyEnabled: vi.fn(() => true),
+  trackDesktopEvent: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -43,6 +44,9 @@ vi.mock('../../src/main/ui-state', () => ({
 vi.mock('../../src/main/screens', () => ({
   dataUrl: mocks.dataUrl,
   errorHtml: mocks.errorHtml,
+}));
+vi.mock('../../src/main/track', () => ({
+  trackDesktopEvent: mocks.trackDesktopEvent,
 }));
 
 // connect.ts computes `rendererDistRoot()` via `process.resourcesPath` in
@@ -183,5 +187,39 @@ describe('connect', () => {
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', undefined, undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
+  });
+
+  it('tracks startup_connect_result for embedded success and failure', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(fakeHandle());
+    const win1 = fakeWindow();
+    const win2 = fakeWindow();
+
+    await connect(win1 as unknown as BrowserWindow);
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
+      'startup_connect_result',
+      expect.objectContaining({ mode: 'embedded', ok: false, error_class: 'Error' }),
+    );
+
+    await connect(win2 as unknown as BrowserWindow);
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
+      'startup_connect_result',
+      expect.objectContaining({ mode: 'embedded', ok: true }),
+    );
+  });
+
+  it('tracks startup_connect_result with external mode', async () => {
+    const { connect } = await importConnect();
+    process.env['KIMI_SERVER_URL'] = 'http://127.0.0.1:58627';
+    const win = fakeWindow();
+
+    await connect(win as unknown as BrowserWindow);
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
+      'startup_connect_result',
+      expect.objectContaining({ mode: 'external', ok: true }),
+    );
   });
 });

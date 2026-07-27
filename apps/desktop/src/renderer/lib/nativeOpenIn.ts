@@ -7,6 +7,7 @@
 // is a desktop-only feature by design (see docs/native-todos.md).
 
 import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from './storage';
+import { track } from './track';
 import { ref, type Ref } from 'vue';
 
 // Colored app icons, extracted from the apps' own .icns bundles (the
@@ -83,7 +84,9 @@ export async function openInNativeApp(appId: string, path: string): Promise<bool
   if (!canOpenInNative()) return false;
   try {
     const result = await bridge()!.openInApp!(appId, path);
-    return result.ok === true;
+    if (result.ok !== true) return false;
+    track('native_feature_used', { feature: 'open_in' });
+    return true;
   } catch {
     return false;
   }
