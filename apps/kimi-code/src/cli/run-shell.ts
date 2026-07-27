@@ -31,7 +31,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
-import { isKimiV2Enabled } from './experimental-v2';
+import { isKimiTuiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -80,11 +80,10 @@ export async function runShell(
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
-  // Experimental agent-core-v2 route (same gate as `kimi -p`): the harness is
-  // the SDK's v2-backed client; methods not yet migrated throw
-  // `not_implemented`, so the TUI currently fails fast at the first unmigrated
-  // startup call instead of silently mixing engines.
-  const harness = isKimiV2Enabled()
+  // Experimental agent-core-v2 route, gated by the dedicated KIMI_CODE_TUI_V2
+  // switch (NOT the master experimental flag): the harness is the SDK's
+  // v2-backed client, so the whole TUI runs on the agent-core-v2 engine.
+  const harness = isKimiTuiV2Enabled()
     ? createKimiHarnessV2(harnessOptions)
     : createKimiHarness(harnessOptions);
   log.info('kimi-code starting', {
