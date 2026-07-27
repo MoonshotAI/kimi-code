@@ -8,5 +8,6 @@ pub mod output;
 pub mod runtime;
 pub mod tool_naming;
 pub mod transport_http;
+pub mod transport_sse;
 pub mod transport_stdio;
 pub mod types;

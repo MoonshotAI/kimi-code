@@ -21,6 +21,7 @@ use crate::mcp::connection_manager::{
 };
 use crate::mcp::tool_naming::{build_mcp_tool_name, parse_mcp_tool_name};
 use crate::mcp::transport_http::MCPHttpTransport;
+use crate::mcp::transport_sse::{MCPSseTransport, SseConnectOptions};
 use crate::mcp::transport_stdio::{MCPStdioTransport, StdioSpawnOptions};
 use crate::mcp::types::{MCPTool, MCPToolCallResult};
 
@@ -47,6 +48,7 @@ pub struct McpServerSpec {
 enum McpConnection {
     Stdio(MCPStdioTransport),
     Http(MCPHttpTransport),
+    Sse(MCPSseTransport),
 }
 
 /// A prefixed, callable tool surfaced by a connected server.
@@ -201,6 +203,12 @@ impl McpRuntime {
                     .insert(server, McpConnection::Http(transport));
                 call_result
             }
+            Some(McpConnection::Sse(mut transport)) => {
+                let call_result = transport.call_tool(&tool, arguments).await;
+                self.connections
+                    .insert(server, McpConnection::Sse(transport));
+                call_result
+            }
             None => Err(format!("MCP server is not connected: {server}")),
         }
     }
@@ -216,9 +224,7 @@ impl McpRuntime {
         let outcome = match spec.config.transport {
             McpTransport::Stdio => self.connect_stdio(&spec, startup_timeout_ms).await,
             McpTransport::Http => self.connect_http(&spec, startup_timeout_ms).await,
-            McpTransport::Sse => {
-                Err("SSE transport is not supported by the native MCP runtime".to_string())
-            }
+            McpTransport::Sse => self.connect_sse(&spec, startup_timeout_ms).await,
         };
         match outcome {
             Ok((connection, tools)) => {
@@ -295,6 +301,30 @@ impl McpRuntime {
         Ok((McpConnection::Http(transport), tools))
     }
 
+    async fn connect_sse(
+        &self,
+        spec: &McpServerSpec,
+        startup_timeout_ms: Option<u64>,
+    ) -> Result<(McpConnection, Vec<MCPTool>), String> {
+        let url = spec
+            .config
+            .url
+            .clone()
+            .ok_or_else(|| "MCP sse server has no url".to_string())?;
+        let mut transport = MCPSseTransport::connect(
+            &url,
+            SseConnectOptions {
+                api_key: spec.bearer_token.clone(),
+                client_version: self.client_version.clone(),
+                startup_timeout_ms,
+                tool_call_timeout_ms: spec.config.tool_timeout_ms,
+            },
+        )
+        .await?;
+        let tools = transport.list_tools().await?.tools;
+        Ok((McpConnection::Sse(transport), tools))
+    }
+
     async fn drop_connection(&mut self, name: &str) {
         if let Some(connection) = self.connections.remove(name) {
             drop_connection_value(connection).await;
@@ -311,6 +341,8 @@ async fn drop_connection_value(connection: McpConnection) {
             let _ = tokio::task::spawn_blocking(move || drop(transport)).await;
         }
         McpConnection::Http(transport) => drop(transport),
+        // Drop aborts the SSE reader task; nothing blocking to offload.
+        McpConnection::Sse(transport) => drop(transport),
     }
 }
 
@@ -455,12 +487,14 @@ rl.on('line', (line) => {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn sse_transport_reports_unsupported() {
+    async fn unreachable_sse_server_reports_failed() {
         let mut runtime = McpRuntime::new(false, None, None);
         let spec = McpServerSpec {
             config: McpServerConfig {
                 transport: McpTransport::Sse,
-                url: Some("https://example.com/sse".to_string()),
+                // Unroutable port on loopback: fails fast, no external I/O.
+                url: Some("http://127.0.0.1:1/sse".to_string()),
+                startup_timeout_ms: Some(3_000),
                 ..Default::default()
             },
             ..Default::default()
@@ -469,6 +503,6 @@ rl.on('line', (line) => {
             .register("legacy", spec, McpConfigSource::Other)
             .await;
         assert_eq!(entry.status, McpServerStatus::Failed);
-        assert!(entry.error.as_deref().unwrap_or("").contains("SSE"));
+        assert!(entry.error.is_some());
     }
 }
