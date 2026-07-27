@@ -18,7 +18,6 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#/kosong/contract/message';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/_base/di/scope';
@@ -30,12 +29,15 @@ import {
 } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import type { ContentPart } from '#/kosong/contract/message';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-const LARGE = 'A'.repeat(5000);
+// LARGE must exceed the 4 KB offload threshold **after base64 decoding**.
+// Decoded size = base64Length * 3/4, so we need base64Length > 4096 * 4/3 ≈ 5462.
+const LARGE = 'A'.repeat(6000);
 const SMALL = 'AQID';
 
 function dataUri(mimeType: string, payload: string): string {

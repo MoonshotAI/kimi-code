@@ -8,16 +8,14 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { ContentPart } from '#/kosong/contract/message';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import {
-  BLOBREF_PROTOCOL,
-  IAgentBlobService,
-  MISSING_MEDIA_PLACEHOLDER,
-} from './agentBlobService';
+
+import { BLOBREF_PROTOCOL, IAgentBlobService, MISSING_MEDIA_PLACEHOLDER } from './agentBlobService';
 import { ByteLruCache } from './byteLruCache';
 
 const DEFAULT_THRESHOLD = 4096;
@@ -82,6 +80,15 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     part: ContentPart,
     transformUrl: (url: string) => Promise<string>,
   ): Promise<ContentPart> {
+    // Text parts: the text itself may be a data URI (offload) or a blobref
+    // (load).  The Rust implementation applies the transform to Text content
+    // in `rewrite_media_urls`; the original TS code skipped Text parts because
+    // `asMediaContainer` only matches object-valued properties.
+    if (part.type === 'text') {
+      const newText = await transformUrl(part.text);
+      return newText === part.text ? part : { ...part, text: newText };
+    }
+
     let updated: Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(part)) {
       const mediaObj = asMediaContainer(value);
@@ -93,7 +100,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
       const newUrl = await transformUrl(url);
       if (newUrl === url) continue;
 
-      if (updated === undefined) updated = { ...part };
+      updated ??= { ...part };
       updated[key] = { ...(value as object), url: newUrl };
     }
     return updated === undefined ? part : (updated as unknown as ContentPart);
@@ -113,7 +120,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     const cached = this.cache.get(hash);
     if (cached !== undefined) return cached;
 
-    const payload = await this.blobs.get(this.storageScope, hash).catch(() => undefined);
+    const payload = await this.blobs.get(this.storageScope, hash).catch(() => {});
     if (payload === undefined) return undefined;
 
     const buffer = Buffer.from(payload);
@@ -129,14 +136,24 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
 
     const mimeType = match[1]!;
     const payload = value.slice(match[0].length);
-    if (payload.length < this.threshold) return value;
+    // Compare decoded byte length against the threshold, matching the Rust
+    // implementation (`(base64_payload.len() * 3) / 4`).  The base64 encoding
+    // is ~33 % larger than the raw bytes, so using `payload.length` directly
+    // would offload smaller payloads than intended and disagree with the Rust
+    // engine on the boundary.
+    const decodedLen = (payload.length * 3) / 4;
+    if (decodedLen < this.threshold) return value;
 
     return this.writeBlob(mimeType, payload);
   }
 
   private async writeBlob(mimeType: string, base64Payload: string): Promise<string> {
-    const hash = createHash('sha256').update(base64Payload, 'utf8').digest('hex');
+    // Decode first, then hash the raw bytes — matching the Rust implementation
+    // (`Sha256::digest(&binary)`).  The original code hashed the base64 *string*
+    // as UTF-8, which produced a different digest from the Rust engine and broke
+    // cross-engine content-addressed blob lookup.
     const binary = Buffer.from(base64Payload, 'base64');
+    const hash = createHash('sha256').update(binary).digest('hex');
     await this.blobs.put(this.storageScope, hash, binary);
     this.cache.set(hash, binary);
     return formatBlobRef(mimeType, hash);
@@ -152,9 +169,12 @@ function parseBlobRef(url: string): { mimeType: string; hash: string } | undefin
   const rest = url.slice(BLOBREF_PROTOCOL.length);
   const semiIdx = rest.indexOf(';');
   if (semiIdx === -1) return undefined;
+  const mimeType = rest.slice(0, semiIdx);
   const hash = rest.slice(semiIdx + 1);
-  if (hash.length === 0) return undefined;
-  return { mimeType: rest.slice(0, semiIdx), hash };
+  // Both fields must be non-empty, matching the Rust validation
+  // (`if mime_type.is_empty() || hash.is_empty()`).
+  if (mimeType.length === 0 || hash.length === 0) return undefined;
+  return { mimeType, hash };
 }
 
 function formatDataUri(mimeType: string, payload: Buffer): string {
