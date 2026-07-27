@@ -203,28 +203,6 @@ describe('menuTemplate', () => {
     expect(template.some((item) => item.role === 'windowMenu')).toBe(true);
   });
 
-  it('mirrors the pet visibility flag into the View-menu checkbox on macOS', () => {
-    const viewMenu = menuTemplate(true, 'en', true).find((item) => item.label === 'View');
-    const petItem = submenuItems(viewMenu as MenuItemConstructorOptions).find(
-      (item) => item.label === 'Kimi Pet',
-    );
-    expect(petItem).toMatchObject({ type: 'checkbox', checked: true });
-
-    const unchecked = menuTemplate(true, 'en', false).find((item) => item.label === 'View');
-    const petItemOff = submenuItems(unchecked as MenuItemConstructorOptions).find(
-      (item) => item.label === 'Kimi Pet',
-    );
-    expect(petItemOff).toMatchObject({ type: 'checkbox', checked: false });
-  });
-
-  it('omits the pet checkbox on other platforms', () => {
-    const viewMenu = menuTemplate(false, 'en', true).find((item) => item.label === 'View');
-    const petItem = submenuItems(viewMenu as MenuItemConstructorOptions).find(
-      (item) => item.label === 'Kimi Pet',
-    );
-    expect(petItem).toBeUndefined();
-  });
-
   it('app menu carries Settings (⌘,) and Check for Updates, bilingually', () => {
     const zhAppMenu = menuTemplate(true, 'zh')[0] as MenuItemConstructorOptions;
     const zhItems = submenuItems(zhAppMenu);
@@ -252,7 +230,7 @@ describe('menuTemplate', () => {
   });
 
   it('menu accelerators follow the pushed renderer bindings; null hides them', () => {
-    const template = menuTemplate(true, 'en', false, {
+    const template = menuTemplate(true, 'en', {
       openSettings: 'shift+mod+p',
       newSession: 'alt+mod+n',
       openFolder: null,
@@ -272,7 +250,7 @@ describe('menuTemplate', () => {
     // template removes key equivalents outright: no accelerator, no role. The
     // edit menu keeps both so copy/paste stays functional (its accelerators
     // are reserved anyway).
-    const template = menuTemplate(true, 'en', false, {}, true);
+    const template = menuTemplate(true, 'en', {}, true);
     const edit = template.find((item) => item.id === 'edit-menu');
     expect(edit).toBeDefined();
     const editItems = new Set(walkItems(submenuItems(edit as MenuItemConstructorOptions)));

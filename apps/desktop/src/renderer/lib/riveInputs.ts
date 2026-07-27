@@ -1,9 +1,9 @@
 // Structural helpers for poking a Rive instance's state-machine inputs by
-// name. The desktop pet drives the official mascot asset defensively: input
-// names are what the strings in the .riv suggest, and anything the asset
-// doesn't actually expose must no-op instead of throwing. Kept renderer-
-// framework-free and structural (no @rive-app imports) so it's unit-testable
-// without the wasm runtime.
+// name. The mascot component (components/KimiMascot.vue) drives the official
+// mascot asset defensively: input names are what the strings in the .riv
+// suggest, and anything the asset doesn't actually expose must no-op instead
+// of throwing. Kept framework-free and structural (no @rive-app imports) so
+// it's unit-testable without the wasm runtime.
 
 export interface RiveInputLike {
   name: string;

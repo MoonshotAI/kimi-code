@@ -160,22 +160,6 @@ function asUpdateCheckResult(value: unknown): UpdateCheckResult | null {
   }
 }
 
-/** Pointer position in global display coordinates (pet-window drag). */
-export type ScreenPoint = { screenX: number; screenY: number };
-
-function asScreenPoint(value: unknown): value is ScreenPoint {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const candidate = value as { screenX?: unknown; screenY?: unknown };
-  return (
-    typeof candidate.screenX === 'number' &&
-    Number.isFinite(candidate.screenX) &&
-    typeof candidate.screenY === 'number' &&
-    Number.isFinite(candidate.screenY)
-  );
-}
-
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   /** Dock tile preference ('light'|'dark'|'auto'); the main process swaps the
@@ -252,12 +236,6 @@ export type KimiDesktopApi = {
    *  resolves false when the OS refused the new binding (the previous
    *  working shortcut was restored), so the panel can roll back. */
   setGlobalShortcutSuspended: (suspended: boolean) => Promise<boolean>;
-  /** Desktop-pet window drag lifecycle (pet.html only). Positions are global
-   *  screen coordinates from PointerEvent.screenX/screenY; the main process
-   *  moves the window keeping the offset captured at drag start. */
-  petDragStart: (pos: ScreenPoint) => void;
-  petDragMove: (pos: ScreenPoint) => void;
-  petDragEnd: () => void;
   /** Bring the native window back on screen (notification clicks): with
    *  macOS hide-on-close it may be alive but hidden, and the renderer's own
    *  window.focus() can't un-hide it. */
@@ -401,19 +379,6 @@ export const api: KimiDesktopApi = {
     }
     const result: unknown = await ipcRenderer.invoke('kimi:global-shortcut-suspend', suspended);
     return result === true;
-  },
-  petDragStart: (pos) => {
-    if (asScreenPoint(pos)) {
-      ipcRenderer.send('kimi:pet-drag-start', pos);
-    }
-  },
-  petDragMove: (pos) => {
-    if (asScreenPoint(pos)) {
-      ipcRenderer.send('kimi:pet-drag-move', pos);
-    }
-  },
-  petDragEnd: () => {
-    ipcRenderer.send('kimi:pet-drag-end');
   },
   showWindow: () => {
     ipcRenderer.send('kimi:show-window');

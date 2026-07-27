@@ -38,9 +38,6 @@ const WHITELIST = [
   'onUpdateStatus',
   'openExternal',
   'openInApp',
-  'petDragEnd',
-  'petDragMove',
-  'petDragStart',
   'getOsAppearance',
   'onOsAppearanceChanged',
   'setDockIconChoice',
@@ -156,25 +153,13 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setOnboarded();
     expect(send).toHaveBeenCalledWith('kimi:set-onboarded');
 
-    // Pet drag: validated screen points forward; junk never reaches main.
-    exposed.petDragStart({ screenX: 100, screenY: 200 });
-    expect(send).toHaveBeenCalledWith('kimi:pet-drag-start', { screenX: 100, screenY: 200 });
-    exposed.petDragMove({ screenX: 120, screenY: 220 });
-    expect(send).toHaveBeenCalledWith('kimi:pet-drag-move', { screenX: 120, screenY: 220 });
-    exposed.petDragStart({ screenX: '100', screenY: 200 });
-    exposed.petDragMove({ screenX: Number.NaN, screenY: 0 });
-    expect(send).toHaveBeenCalledTimes(8);
-    exposed.petDragEnd();
-    expect(send).toHaveBeenCalledWith('kimi:pet-drag-end');
-    expect(send).toHaveBeenCalledTimes(9);
-
     exposed.showWindow();
     expect(send).toHaveBeenCalledWith('kimi:show-window');
 
     exposed.setDockIconChoice('dark');
     expect(send).toHaveBeenCalledWith('kimi:dock-icon-choice', 'dark');
     exposed.setDockIconChoice('bogus');
-    expect(send).toHaveBeenCalledTimes(11); // invalid choice ignored
+    expect(send).toHaveBeenCalledTimes(8); // invalid choice ignored
 
     invoke.mockResolvedValueOnce('dark');
     await expect(exposed.getOsAppearance()).resolves.toBe('dark');
@@ -256,7 +241,7 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setVibrancy(false);
     expect(send).toHaveBeenCalledWith('kimi:vibrancy', false);
     exposed.setVibrancy('yes'); // junk ignored
-    expect(send).toHaveBeenCalledTimes(12);
+    expect(send).toHaveBeenCalledTimes(9);
 
     // getVibrancy: only an explicit false from the main process disables.
     invoke.mockResolvedValueOnce(false);

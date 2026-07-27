@@ -76,7 +76,7 @@
   - 做法：`kimi:get-server-token` IPC 已存在未用，desktop 可直接问主进程要，省掉 hash 注入与 localStorage 持久化。
 
 - [x] **onboarded 标记主进程持久化**（已完成，desktop 专属）
-  - 实现：新增 `src/main/ui-state.ts`——`<userData>/ui-state.json` 存 `{onboarded:true}`（照 window-state/pet-state 模式，函数带可选路径参数便于测试）。读路径走 URL 注入：`connect.ts` 建窗时 `rendererUrl(..., isOnboarded())` 拼 `?kimi_onboarded=1`（protocol.ts 第 4 参）；写路径走 IPC `kimi:set-onboarded`（ipc-channels/ipc/preload 已接，preload 白名单测试同步）。renderer 侧 `useKimiWebClient.ts` 启动时 `注入值 || localStorage值` OR 合并读（标记只会 false→true），完成/跳过向导时 localStorage + IPC 双写；**无桥降级**——探测不到 `window.kimiDesktop`（web、老桥）时只用 localStorage，两端文件零分叉。
+  - 实现：新增 `src/main/ui-state.ts`——`<userData>/ui-state.json` 存 `{onboarded:true}`（照 window-state 模式，函数带可选路径参数便于测试）。读路径走 URL 注入：`connect.ts` 建窗时 `rendererUrl(..., isOnboarded())` 拼 `?kimi_onboarded=1`（protocol.ts 第 4 参）；写路径走 IPC `kimi:set-onboarded`（ipc-channels/ipc/preload 已接，preload 白名单测试同步）。renderer 侧 `useKimiWebClient.ts` 启动时 `注入值 || localStorage值` OR 合并读（标记只会 false→true），完成/跳过向导时 localStorage + IPC 双写；**无桥降级**——探测不到 `window.kimiDesktop`（web、老桥）时只用 localStorage，两端文件零分叉。
   - 动机：dev server `strictPort: false` 端口顺延会换 origin，localStorage 按 origin 隔离导致向导每次 dev 都重弹；dev 与打包版共享同一 userData 目录，主进程文件天然互通。
   - 测试：`tests/main/ui-state.test.ts`（缺失/损坏文件、往返、保留其它 key、目录创建、幂等）；`tests/main/preload.test.ts` 白名单 + 通道断言。
 
@@ -90,47 +90,15 @@
   - **web 无对应物**：浏览器没有菜单栏/托盘，桥缺方法即整体 no-op（`setTrayAttention` / `onTraySelectSession` 缺一即退，兼容旧桥）。composable 不同步 apps/web（同 useFullscreen 先例）；`App.vue` 分叉块再添一块（import + `useTrayAttention(client)`），整目录 re-copy 时需保留。
   - 测试：`tests/main/tray.test.ts`（`asTrayAttention` 含 items 校验、`trayAttentionTitle` / `trayAttentionSummary` / `trayAttentionItemLabel` 纯函数，en/zh 双语言断言）；`tests/main/preload.test.ts` 白名单 + 通道/畸形丢弃/转发断言；`tests/renderer/useTrayAttention.test.ts`（items 构建、可见集过滤、幻影未读排除、`pendingInteraction` 兜底与详情接管、locale 映射推送、无桥 no-op、首推 + 变更推、stop 后停推、相同 payload 去重不重复推、点击路由 + 退订）。真机验证（dev:desktop:debug + CDP 驱动 + 读菜单栏 AX 树）：菜单栏数字随推送 5→1→0 增减、清零后图标复原、托盘菜单按会话列出、点击跳转会话，均通过。
 
-- [x] **桌面宠物「小蓝」**（已完成，desktop 专属，macOS only）
-  - 实现：新增 `src/main/pet.ts`——208×180 透明无边框 always-on-top 窗口（`skipTaskbar`、
-    `hasShadow:false`、`focusable:false` 不抢焦点，macOS 下鼠标事件照常投递），
-    `setVisibleOnAllWorkspaces(true)` 跟随切 Space；启动时创建一次，主窗口关闭后仍在，
-    随应用退出。内容为 renderer 多页构建的第二入口 `pet.html`（`vite.renderer.config.ts`
-    的 `rollupOptions.input` 加了 `pet`；dev 走 `<dev server>/pet.html`，prod 走
-    `app://renderer/pet.html`，protocol.ts 带扩展名直出不沾 SPA fallback），页面是纯 TS
-    （`src/renderer/pet/`，不挂 Vue、不连 server、URL 不带 token）。
-  - 形象用**官方 Rive 资产**（与 kimi.com 头像同源）：`src/renderer/assets/pet/
-    kimi_avatar_default.riv`（抓自 kimi-web-seo CDN，画板 `KimiAvator_homepage`，状态机
-    自带 idle 眨眼/转眼 loop 与点击/悬停反应），runtime + wasm 走 `KimiDoodle.vue` 同款
-    懒加载（`@rive-app/canvas` + 本地 `rive.wasm`/`rive_fallback.wasm` `?url`，
-    `RuntimeLoader.setWasmUrl` 避免走 CDN）；加载前/失败/reduce-motion 时显示静态
-    内联 SVG 团子兜底（logo path 提取，眼睛转正+对齐+居中）。输入驱动在
-    `pet/riveInputs.ts`（结构化防御式，资产没有的输入一律 no-op）：`light/dark`
-    数字输入跟 `prefers-color-scheme`、`hoverspace` 布尔跟 pointer 悬停、点击 fire
-    `click_avator` trigger；点击/拖拽仍按 4px 死区区分。画板实为 72×100 竖版
-    （浏览器探针读 `rive.bounds`），canvas CSS 框按 104×144 精确匹配，无
-    letterbox。
-  - 拖拽：renderer `pointerdown/move` 发 `kimi:pet-drag-start/move/end`（payload 是
-    `PointerEvent.screenX/screenY` 全局坐标，零漂移；preload 加 `petDragStart/petDragMove/
-    petDragEnd`，结构校验），主进程按住时offset 恒定做 `setPosition`，drag-end 持久化到
-    `userData/pet-state.json`（照 window-state.json 模式）。IPC handler 校验
-    `event.sender === petWindow.webContents`，窗口 closed 时摘除监听。
-  - 开关：系统菜单 View →「Kimi Pet」勾选项（macOS only，暂为英文硬编码——用户明确
-    暂缓双语，后续随菜单整体 l10n 补回；点击调 `pet.ts` 的 `togglePetVisibility()`
-    并把勾选态吸附到实际结果；app.ts 在 createPetWindow 后用
-    `setMenuPetVisible(isPetVisible())` 播种初值——buildMenu 先于宠物窗创建）。可见性与
-    位置一起存 `pet-state.json`（`{x, y, visible}`；**默认隐藏**——无文件、畸形 JSON、
-    老的仅位置文件都按 `visible: false` 处理，仅显式 `visible: true` 恢复显示）。隐藏用
-    `hide()` 而不是销毁——Rive runtime 不重建，窗口被 occlude 后渲染自动暂停。
-  - **app.ts 必修**：`showMainWindow()` 与 `activate` 原来按 `getAllWindows()[0]` /
-    `length === 0` 判断主窗口，宠物窗会混进来——已改走 `window.ts` 的 `getMainWindow()`。
-  - **web 无对应物**：浏览器没有桌面浮窗；`pet.html` 与 `pet/` 不在 web 快照内，整目录
-    re-copy 同步时必须保留（同 OpenIn 先例）。
-  - 测试：`tests/main/pet.test.ts`（窗口 flags、右下角定位、dragOffset、asScreenPoint、
-    petUrl、pet-state.json 位置+可见性读写、畸形与旧格式回落）；`tests/main/preload.test.ts`
-    白名单 + 通道/畸形丢弃断言；`tests/renderer/pet-rive-inputs.test.ts`（跨状态机查输入、
-    trigger fire、类型不匹配的写入拒绝）。
-  - 明确未做：无 Windows/Linux、无全局指针跟随（眼睛追鼠标需主进程轮询
-    `screen.getCursorScreenPoint()`）、无窗口级跳跃/走路。
+- [x] **小蓝 mascot 组件（KimiMascot.vue）**（desktop 专属）
+  - 原桌面宠物功能（`src/main/pet.ts` 浮窗 + View 菜单勾选 + `kimi:pet-drag-*` 拖拽 IPC +
+    `pet-state.json` 持久化）已整体移除；canvas 渲染部分保留为独立组件
+    `components/KimiMascot.vue`（官方 Rive 资产 `assets/mascot/kimi_avatar_default.riv`，
+    kimi.com 头像同源，runtime 懒加载 + 静态 SVG 兜底均照 `KimiDoodle.vue` 模式；`useIsDark`
+    驱动 `light/dark` 输入，hover→`hoverspace`，click→`click_avator` trigger，输入驱动走
+    `lib/riveInputs.ts`），暂未接入任何 UI，留待复用。
+  - **web 无对应物**：组件、lib 与资产不同步 apps/web，整目录 re-copy 同步时必须保留。
+  - 测试：`tests/renderer/riveInputs.test.ts`（跨状态机查输入、trigger fire、类型不匹配的写入拒绝）。
 
 - [x] **自动更新（electron-updater + CDN generic feed）**（已完成，desktop 专属）
   - 实现：新增 `src/main/updater.ts`——electron-updater generic provider 轮询 `https://code.kimi.com/kimi-code/desktop/` 的 latest*.yml（feed 在 `electron-builder.config.cjs` 的 `publish` 配置里）；`autoDownload=false`（用户点击才下载；2026-07 起可在设置中开启后台自动下载，见下方"后台自动下载"条）、`autoInstallOnAppQuit=true`（自然退出时静默装）；启动 10s 首查、之后每 4h；状态机 idle→available→downloading→downloaded/error 经 `kimi:update-status` 推送 renderer，status 含 version/percent/releaseDate。只打扰用户该知道的：后台检查失败仅 `console.warn` 保持 idle，仅用户发起的下载失败进 error 态（可重试）；feed 回滚（`update-not-available`）时清掉未开始下载的 available / 失败待重试的 error 态，进行中的下载/安装不动。dev（未打包）整体 no-op。IPC：renderer 初值走 `kimi:update-get-status`，动作走 `kimi:update-download` / `kimi:update-install`（`quitAndInstall(true, true)`）。
@@ -145,7 +113,7 @@
 
 - [x] **App 菜单：设置… / 检查更新…**（已完成，desktop 专属）
   - 实现：`src/main/menu.ts` App 菜单在 About 之后新增两项（双语，走 `MENU_STRINGS` 字符串表，同 tray.ts 模式；`{version}` / `{message}` 占位符 `.replace()` 填充，措辞与计数无关规避复数规则）。「设置…」（`CmdOrCtrl+,`）：`showMainWindow()` + `kimi:menu-action` 发 `'open-settings'`，renderer `App.vue` 订阅 preload 早已暴露的 `onMenuAction` 打开 SettingsDialog（此通道此前 renderer 从未监听；无桥 web 端整段 no-op）。「检查更新…」：主进程 `runMenuUpdateCheck()`——先 `showMainWindow()` 保证弹窗有可见父窗（macOS 关窗=隐藏，挂在隐藏窗上的 dialog 永不出现），`requestUpdateCheck()` 后四种结果都弹原生 `dialog.showMessageBox`：available 给「立即下载/稍后」（点了走 `requestUpdateDownload()`，进度/完成仍经 `kimi:update-status` 侧栏黄 pill；本次跳过只隐藏 available 态，下载/完成态照常显示，跳过版本不影响），latest / unsupported（dev）/ error 各一条文案。与后台定时检查的失败静默策略相反——菜单点击是显式用户意图，必须有反馈。
-  - 顺带修复：dev 与打包产物的 role 菜单项文案（About / Quit `<name>`）都显示包名 `kimi-code-app`——role 默认文案取 `app.getName()`，它读 asar 里的 package.json `name`（包名按硬约束不能改）；菜单栏粗体标题取 Info.plist `CFBundleName`（productName）一直是对的。修法是 `menuTemplate` 给 about / quit role 显式配双语 label（`关于 Kimi Code` / `About Kimi Code`、`退出 Kimi Code` / `Quit Kimi Code`），**不用** `app.setName()`——那会改变由 app 名派生的默认 userData 目录，老用户升级后 localStorage（设置/草稿/onboarding/本次跳过版本）与 window/pet state 全部"被重置"（2026-07 review 实锤后改为此方案）。
+  - 顺带修复：dev 与打包产物的 role 菜单项文案（About / Quit `<name>`）都显示包名 `kimi-code-app`——role 默认文案取 `app.getName()`，它读 asar 里的 package.json `name`（包名按硬约束不能改）；菜单栏粗体标题取 Info.plist `CFBundleName`（productName）一直是对的。修法是 `menuTemplate` 给 about / quit role 显式配双语 label（`关于 Kimi Code` / `About Kimi Code`、`退出 Kimi Code` / `Quit Kimi Code`），**不用** `app.setName()`——那会改变由 app 名派生的默认 userData 目录，老用户升级后 localStorage（设置/草稿/onboarding/本次跳过版本）与 window state 全部"被重置"（2026-07 review 实锤后改为此方案）。
   - **web 分叉块**：`App.vue` 的 menuAction 订阅块两端已同步（web 无桥恒 no-op），整目录 re-copy 时需保留 desktop 侧。
   - 测试：`tests/main/menu.test.ts` +2 用例（两项的双语 label + accelerator、非 mac 平台保留）。
 

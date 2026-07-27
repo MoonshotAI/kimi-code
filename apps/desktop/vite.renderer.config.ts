@@ -70,12 +70,9 @@ export default defineConfig({
     outDir,
     emptyOutDir: true,
     rollupOptions: {
+      // The preset sets no input of its own, so this is the only source.
       input: {
-        // Multi-page build: `index.html` is the app, `pet.html` the desktop-pet
-        // window (loaded as `app://renderer/pet.html` — see src/main/pet.ts).
-        // The preset sets no input of its own, so this is the only source.
         main: fileURLToPath(new URL('./src/renderer/index.html', import.meta.url)),
-        pet: fileURLToPath(new URL('./src/renderer/pet.html', import.meta.url)),
       },
     },
   },

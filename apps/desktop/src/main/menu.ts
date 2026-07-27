@@ -1,9 +1,8 @@
 import { app, dialog, Menu, shell } from 'electron';
-import type { MenuItem, MenuItemConstructorOptions } from 'electron';
+import type { MenuItemConstructorOptions } from 'electron';
 
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
-import { togglePetVisibility } from './pet';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
@@ -128,20 +127,6 @@ function effectiveMenuLocale(): TrayLocale {
   } catch {
     return 'en';
   }
-}
-
-// Desktop-pet checkbox state lives here because buildMenu() runs before the
-// pet window exists; app.ts seeds it right after createPetWindow(). Passed
-// through menuTemplate (defaulted) so the builder stays pure/testable.
-let petVisible = false;
-
-/** Mirror the desktop pet's visibility into the View-menu checkbox. */
-export function setMenuPetVisible(visible: boolean): void {
-  if (visible === petVisible) {
-    return;
-  }
-  petVisible = visible;
-  buildMenu();
 }
 
 // Menu items whose accelerators mirror the renderer's customizable bindings
@@ -324,7 +309,6 @@ async function runMenuUpdateCheck(): Promise<void> {
 export function menuTemplate(
   isMac: boolean,
   locale: TrayLocale,
-  pet = false,
   shortcutOverrides: Record<string, string | null> = {},
   suspended = false,
 ): MenuItemConstructorOptions[] {
@@ -418,27 +402,6 @@ export function menuTemplate(
   const viewMenu: MenuItemConstructorOptions = {
     label: 'View',
     submenu: [
-      // Desktop-pet visibility (macOS only — the pet window is darwin-gated).
-      // en-only for now; bilingual comes back with the menu-l10n pass (the
-      // infrastructure above landed after this label). Electron auto-toggles
-      // the checkbox on click; snap it to the actual resulting visibility so
-      // the two can never drift apart — and write the module state back too,
-      // or the next locale-triggered buildMenu() would re-render the checkbox
-      // from the stale value.
-      ...(isMac
-        ? [
-            {
-              label: 'Kimi Pet',
-              type: 'checkbox' as const,
-              checked: pet,
-              click: (menuItem: MenuItem) => {
-                menuItem.checked = togglePetVisibility();
-                petVisible = menuItem.checked;
-              },
-            },
-            { type: 'separator' as const },
-          ]
-        : []),
       { role: 'reload' },
       { role: 'forceReload' },
       { role: 'toggleDevTools' },
@@ -562,7 +525,6 @@ export function buildMenu(): void {
       menuTemplate(
         process.platform === 'darwin',
         effectiveMenuLocale(),
-        petVisible,
         menuShortcutOverrides,
         menuSuspended,
       ),

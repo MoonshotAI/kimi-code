@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { findInput, fireTrigger, setInputValue, type RiveLike } from '../../src/renderer/pet/riveInputs';
+import { findInput, fireTrigger, setInputValue, type RiveLike } from '../../src/renderer/lib/riveInputs';
 
 function fakeRive(inputsByMachine: Record<string, { name: string; value?: unknown; fire?: () => void }[]>): RiveLike {
   return {

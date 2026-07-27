@@ -34,9 +34,6 @@ export const IPC = {
   setOnboarded: 'kimi:set-onboarded',
   vibrancy: 'kimi:vibrancy',
   getVibrancy: 'kimi:get-vibrancy',
-  petDragStart: 'kimi:pet-drag-start',
-  petDragMove: 'kimi:pet-drag-move',
-  petDragEnd: 'kimi:pet-drag-end',
   showWindow: 'kimi:show-window',
 } as const;
 

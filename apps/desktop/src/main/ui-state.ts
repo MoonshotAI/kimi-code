@@ -3,8 +3,8 @@
 // localStorage is origin-scoped —
 // the Vite dev server's shifting port (strictPort: false) would keep resetting
 // it — so durable flags live in <userData>/ui-state.json instead, shared by
-// dev and packaged builds (same userData dir). Mirrors the window-state.json /
-// pet-state.json pattern; functions take an optional file path for tests.
+// dev and packaged builds (same userData dir). Mirrors the window-state.json
+// pattern; functions take an optional file path for tests.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
