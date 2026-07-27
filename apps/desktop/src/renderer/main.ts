@@ -32,6 +32,18 @@ app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
 // `inject(KimiWebClientFacadeKey)` instead of importing the composable. Provided
 // before mount so the facade is ready when children inject during render.
 app.provide(KimiWebClientFacadeKey, useKimiWebClient());
+
+// macOS desktop: flag the root for the traffic-light / drag-region layout,
+// then seed the vibrancy paint class (composables/useVibrancy.ts) — the
+// window carries a native vibrancy material (see src/main/window.ts) that
+// must read through the sidebar column unless the user switched it off.
+// Seeded BEFORE mount so an opted-out user never renders the tint classes
+// for even one frame.
+if (isMacosDesktop) {
+  document.documentElement.classList.add('macos-desktop');
+  initVibrancy();
+}
+
 app.mount('#app');
 
 // In the desktop app, mirror <html data-color-scheme> to the host's nativeTheme
@@ -49,13 +61,4 @@ if (isDesktop) {
     });
     report();
   }
-}
-
-// macOS desktop: flag the root for the traffic-light / drag-region layout,
-// then seed the vibrancy paint class (composables/useVibrancy.ts) — the
-// window carries a native vibrancy material (see src/main/window.ts) that
-// must read through the sidebar column unless the user switched it off.
-if (isMacosDesktop) {
-  document.documentElement.classList.add('macos-desktop');
-  initVibrancy();
 }
