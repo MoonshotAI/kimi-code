@@ -375,12 +375,12 @@ export class SessionEventHandler {
     if (pluginCommandPluginId !== undefined) {
       this.pluginCommandTurns.delete(String(event.turnId));
       if (reportPluginUsage) {
-        this.pluginUpdateNotifier.handlePluginCommandCompleted(pluginCommandPluginId);
+        void this.pluginUpdateNotifier.handlePluginCommandCompleted(pluginCommandPluginId);
       }
     }
     if (reportPluginUsage) {
       for (const toolName of this.pluginMcpToolsUsedInTurn) {
-        this.pluginUpdateNotifier.handleMcpToolCompleted(toolName);
+        void this.pluginUpdateNotifier.handleMcpToolCompleted(toolName);
       }
     }
     this.pluginMcpToolsUsedInTurn.clear();

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import {
   PluginUpdateNotifier,
   type PluginUpdateNotifierSession,
@@ -32,18 +33,24 @@ function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummar
   };
 }
 
+function makeMarketplaceEntry(
+  id: string,
+  displayName: string,
+  version: string,
+): PluginMarketplace['plugins'][number] {
+  return {
+    id,
+    displayName,
+    source: `https://code.kimi.com/kimi-code/plugins/official/${id}.zip`,
+    tier: 'official',
+    version,
+  };
+}
+
 function makeMarketplace(version = '3.4.0'): PluginMarketplace {
   return {
-    source: 'test',
-    plugins: [
-      {
-        id: 'kimi-datasource',
-        displayName: 'Kimi Datasource',
-        source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
-        tier: 'official',
-        version,
-      },
-    ],
+    source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    plugins: [makeMarketplaceEntry('kimi-datasource', 'Kimi Datasource', version)],
   };
 }
 
@@ -100,24 +107,15 @@ describe('PluginUpdateNotifier', () => {
     const harness = makeHarness();
     const notifier = makeNotifier(harness);
 
-    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    });
+    await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
 
     harness.notify.mockClear();
-    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
-    // The follow-up check runs but hits the persisted "already notified"
-    // record instead of notifying again.
-    await vi.waitFor(() => {
-      expect(harness.session.listPlugins).toHaveBeenCalledTimes(2);
-    });
+    // Follow-up checks run but hit the persisted "already notified" record
+    // instead of notifying again.
+    await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
     expect(harness.notify).not.toHaveBeenCalled();
-
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(harness.session.listPlugins).toHaveBeenCalledTimes(3);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
     expect(harness.notify).not.toHaveBeenCalled();
   });
 
@@ -125,9 +123,8 @@ describe('PluginUpdateNotifier', () => {
     const harness = makeHarness();
     const notifier = makeNotifier(harness);
 
-    notifier.handleMcpToolCompleted('Bash');
-    notifier.handleMcpToolCompleted('mcp__github__create_issue');
-    await Promise.resolve();
+    await notifier.handleMcpToolCompleted('Bash');
+    await notifier.handleMcpToolCompleted('mcp__github__create_issue');
 
     expect(harness.session.listMcpServers).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
@@ -137,14 +134,8 @@ describe('PluginUpdateNotifier', () => {
     const harness = makeHarness({ installed: [makePluginSummary({ version: '3.4.0' })] });
     const notifier = makeNotifier(harness);
 
-    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
-    await vi.waitFor(() => {
-      expect(harness.session.listPlugins).toHaveBeenCalled();
-    });
-    // Let the post-check microtasks drain before asserting silence.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    expect(harness.session.listPlugins).toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
   });
 
@@ -152,11 +143,24 @@ describe('PluginUpdateNotifier', () => {
     const harness = makeHarness({ installed: [makePluginSummary({ id: 'local-only' })] });
     const notifier = makeNotifier(harness);
 
-    notifier.handlePluginCommandCompleted('local-only');
-    await vi.waitFor(() => {
-      expect(harness.loadMarketplace).toHaveBeenCalled();
-    });
+    await notifier.handlePluginCommandCompleted('local-only');
     // No marketplace entry — the check bails before even listing plugins.
+    expect(harness.session.listPlugins).not.toHaveBeenCalled();
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not notify when the catalog is not the official marketplace', async () => {
+    const harness = makeHarness({
+      marketplace: {
+        source: 'https://example.test/custom-marketplace.json',
+        plugins: [makeMarketplaceEntry('kimi-datasource', 'Kimi Datasource', '3.4.0')],
+      },
+    });
+    const notifier = makeNotifier(harness);
+
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    // A custom catalog may advertise anything under any id — the check bails
+    // before comparing versions.
     expect(harness.session.listPlugins).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
   });
@@ -169,14 +173,7 @@ describe('PluginUpdateNotifier', () => {
     });
     const notifier = makeNotifier(harness);
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(harness.session.listPlugins).toHaveBeenCalled();
-    });
-    // Let the post-check microtasks drain before asserting silence.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
     // Provenance is not official, so the marketplace version is irrelevant.
     expect(harness.notify).not.toHaveBeenCalled();
   });
@@ -192,20 +189,16 @@ describe('PluginUpdateNotifier', () => {
     const harness = makeHarness({ mcpServers: [serverName] });
     const notifier = makeNotifier(harness);
 
-    notifier.handleMcpToolCompleted(truncatedToolName);
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    });
+    await notifier.handleMcpToolCompleted(truncatedToolName);
+    expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
   });
 
   it('notifies after a plugin command turn ends', async () => {
     const harness = makeHarness();
     const notifier = makeNotifier(harness);
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
     // Plugin commands resolve the plugin id directly — no MCP server lookup.
     expect(harness.session.listMcpServers).not.toHaveBeenCalled();
   });
@@ -214,35 +207,24 @@ describe('PluginUpdateNotifier', () => {
     const first = makeHarness({ marketplace: makeMarketplace('3.4.0') });
     const notifier = makeNotifier(first);
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(first.notify).toHaveBeenCalledTimes(1);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(first.notify).toHaveBeenCalledTimes(1);
 
     // A new notifier (fresh app run) against the same state file stays silent
     // for the already-notified version…
     const second = makeHarness({ marketplace: makeMarketplace('3.4.0') });
     const secondNotifier = makeNotifier(second);
-    secondNotifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(second.session.listPlugins).toHaveBeenCalled();
-    });
-    // Let the post-check microtasks drain before asserting silence.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await secondNotifier.handlePluginCommandCompleted('kimi-datasource');
     expect(second.notify).not.toHaveBeenCalled();
 
     // …but reminds once the marketplace moves to a newer version.
     const third = makeHarness({ marketplace: makeMarketplace('3.5.0') });
     const thirdNotifier = makeNotifier(third);
-    thirdNotifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(third.notify).toHaveBeenCalledWith(
-        'Update detected: Kimi Datasource 3.5.0 is available. ' +
-          'Run /plugins to install the latest version from the Official Marketplace.',
-      );
-    });
+    await thirdNotifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(third.notify).toHaveBeenCalledWith(
+      'Update detected: Kimi Datasource 3.5.0 is available. ' +
+        'Run /plugins to install the latest version from the Official Marketplace.',
+    );
   });
 
   it('swallows marketplace failures and retries on the next invocation', async () => {
@@ -256,20 +238,12 @@ describe('PluginUpdateNotifier', () => {
     });
     const notifier = makeNotifier(harness);
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(harness.loadMarketplace).toHaveBeenCalledTimes(1);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(harness.loadMarketplace).toHaveBeenCalledTimes(1);
     expect(harness.notify).not.toHaveBeenCalled();
-    // Let the rejected check fully settle before invoking again.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    });
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
   });
 
   it('refreshes the memoized MCP server map when a lookup misses', async () => {
@@ -280,43 +254,24 @@ describe('PluginUpdateNotifier', () => {
 
     // The plugin's MCP server is not registered yet (the plugin gets
     // installed later in the same app run, applied on /reload or /new).
-    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
-    await vi.waitFor(() => {
-      expect(harness.session.listMcpServers).toHaveBeenCalled();
-    });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    expect(harness.session.listMcpServers).toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
 
     // After the reload the new server shows up; the next completion must
     // refresh the memoized map instead of silently staying unresolved.
     servers = ['plugin-kimi-datasource:data'];
-    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    });
+    await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
   });
 
   it('keeps every notified plugin when a turn uses two outdated plugins', async () => {
     const harness = makeHarness({
       marketplace: {
-        source: 'test',
+        source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
         plugins: [
-          {
-            id: 'kimi-datasource',
-            displayName: 'Kimi Datasource',
-            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
-            tier: 'official',
-            version: '3.4.0',
-          },
-          {
-            id: 'another-plugin',
-            displayName: 'Another Plugin',
-            source: 'https://code.kimi.com/kimi-code/plugins/official/another-plugin.zip',
-            tier: 'official',
-            version: '2.0.0',
-          },
+          makeMarketplaceEntry('kimi-datasource', 'Kimi Datasource', '3.4.0'),
+          makeMarketplaceEntry('another-plugin', 'Another Plugin', '2.0.0'),
         ],
       },
       installed: [
@@ -330,12 +285,12 @@ describe('PluginUpdateNotifier', () => {
     });
     const notifier = makeNotifier(harness);
 
-    notifier.handlePluginCommandCompleted('kimi-datasource');
-    notifier.handlePluginCommandCompleted('another-plugin');
+    await Promise.all([
+      notifier.handlePluginCommandCompleted('kimi-datasource'),
+      notifier.handlePluginCommandCompleted('another-plugin'),
+    ]);
 
-    await vi.waitFor(() => {
-      expect(harness.notify).toHaveBeenCalledTimes(2);
-    });
+    expect(harness.notify).toHaveBeenCalledTimes(2);
     // Both entries must survive in the persisted state — no lost update.
     const state = await readPluginUpdateNoticeState(stateFile);
     expect(state.notified).toEqual({

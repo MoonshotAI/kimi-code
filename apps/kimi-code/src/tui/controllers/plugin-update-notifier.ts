@@ -1,5 +1,6 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import {
   computeUpdateStatus,
   loadPluginMarketplace,
@@ -86,38 +87,42 @@ function matchPluginByToolName(
  * version, so a plugin is re-notified only when the marketplace advertises a
  * newer version than the one already shown.
  *
- * All entry points are fire-and-forget: the notice is a background nicety and
- * any failure (offline marketplace, missing state file, …) is swallowed.
+ * Entry points are fire-and-forget in production (never reject — the notice
+ * is a background nicety and any failure, e.g. an offline marketplace, is
+ * swallowed) and return an awaitable promise so tests can settle the queue
+ * deterministically.
  */
 export class PluginUpdateNotifier {
   private marketplacePromise: Promise<PluginMarketplace> | undefined;
   private mcpServerPluginIds: Map<string, string> | undefined;
   private readonly inFlight = new Set<string>();
-  private queue: Promise<unknown> = Promise.resolve();
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: PluginUpdateNotifierDeps) {}
 
-  handleMcpToolCompleted(toolName: string): void {
+  handleMcpToolCompleted(toolName: string): Promise<void> {
     // Cheap bail before touching the RPC layer — most tools are not MCP tools,
     // let alone plugin ones.
-    if (!isPluginMcpToolName(toolName)) return;
-    void this.resolvePluginId(toolName)
+    if (!isPluginMcpToolName(toolName)) return Promise.resolve();
+    return this.resolvePluginId(toolName)
       .then((pluginId) => {
-        if (pluginId !== undefined) this.enqueue(pluginId);
+        if (pluginId !== undefined) return this.enqueue(pluginId);
+        return undefined;
       })
       .catch(() => {});
   }
 
-  handlePluginCommandCompleted(pluginId: string): void {
-    this.enqueue(pluginId);
+  handlePluginCommandCompleted(pluginId: string): Promise<void> {
+    return this.enqueue(pluginId);
   }
 
-  private enqueue(pluginId: string): void {
+  private enqueue(pluginId: string): Promise<void> {
     // Serialize the read-modify-write cycle on the notice state file: two
     // concurrent checks (e.g. a turn that used two outdated plugins) would
     // otherwise read the same snapshot and the last write would drop the
     // other plugin's entry.
     this.queue = this.queue.then(() => this.checkAndNotify(pluginId)).catch(() => {});
+    return this.queue;
   }
 
   private async resolvePluginId(toolName: string): Promise<string | undefined> {
@@ -158,6 +163,10 @@ export class PluginUpdateNotifier {
       const session = this.deps.getSession();
       if (session === undefined) return;
       const marketplace = await this.loadCatalog();
+      // Only the default official catalog can back an "Official Marketplace"
+      // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
+      // advertise anything under any id.
+      if (marketplace.source !== KIMI_CODE_PLUGIN_MARKETPLACE_URL) return;
       const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
       if (entry === undefined) return;
       const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);
