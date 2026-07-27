@@ -599,7 +599,9 @@ describe('image blocks with invalid data', () => {
     expect(secondContent.some((part) => (part as { type?: string }).type === 'image_url')).toBe(
       false,
     );
-    expect(JSON.stringify(secondContent)).toContain('image omitted for provider compatibility');
+    expect(JSON.stringify(secondContent)).toContain(
+      'removed before sending because the provider could not accept it',
+    );
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 

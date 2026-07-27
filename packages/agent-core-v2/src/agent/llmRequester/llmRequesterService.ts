@@ -74,7 +74,7 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/
 import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
-import type { ApiErrorEvent } from '#/app/telemetry/events';
+import type { ApiErrorEvent, MediaStrippedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
@@ -332,6 +332,41 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<AgentLLMRequestFinish> {
     const shaped = this.toolSelect.shapeHistory(request.messages);
     let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
+    // Strip is the last-resort recovery: when it fires, the provider never saw
+    // any of the images, so the warn carries the rejection's status/message
+    // (the classification chain swallows both) and a telemetry event records
+    // how often sessions hit this silent-failure mode.
+    const reportMediaStripped = (
+      message: string,
+      reason: MediaStrippedEvent['reason'],
+      raw: unknown,
+    ): void => {
+      const statusCode = raw instanceof APIStatusError ? raw.statusCode : undefined;
+      const errorMessage = (raw instanceof Error ? raw.message : String(raw)).slice(0, 300);
+      this.log.warn(message, {
+        model: request.model.name,
+        statusCode,
+        errorMessage,
+        ...request.logFields,
+      });
+      let mediaCount = 0;
+      for (const msg of shaped) {
+        for (const part of msg.content) {
+          if (part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url') {
+            mediaCount += 1;
+          }
+        }
+      }
+      const properties: MediaStrippedEvent = {
+        reason,
+        model: request.model.name,
+        alias: request.modelAlias,
+        status_code: statusCode,
+        turn_id: request.source?.type === 'turn' ? request.source.turnId : undefined,
+        media_count: mediaCount,
+      };
+      this.telemetry.track2('media_stripped', properties);
+    };
     const requestInput = (projection: RequestProjection) => {
       return {
         systemPrompt: request.systemPrompt,
@@ -472,12 +507,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
             this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
             projection = 'media-degraded';
           } else {
-            this.log.warn(
+            reportMediaStripped(
               'provider rejected degraded-media request as too large; resending with rejected media stripped',
-              {
-                model: request.model.name,
-                ...request.logFields,
-              },
+              'degraded_too_large',
+              raw,
             );
             mediaStripSnapshot = this.projector.captureMediaStripSnapshot(shaped);
             this.markMediaStrippedRecoveryTurn(mediaStripSnapshot, request.source);
@@ -487,12 +520,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         }
         if (projection !== 'media-stripped' && isImageFormatError(raw)) {
           signal?.throwIfAborted();
-          this.log.warn(
+          reportMediaStripped(
             'provider rejected an image in the request; resending with rejected media stripped',
-            {
-              model: request.model.name,
-              ...request.logFields,
-            },
+            'image_format',
+            raw,
           );
           mediaStripSnapshot = this.projector.captureMediaStripSnapshot(shaped);
           this.markMediaStrippedRecoveryTurn(mediaStripSnapshot, request.source);

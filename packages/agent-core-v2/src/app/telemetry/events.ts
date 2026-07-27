@@ -122,6 +122,15 @@ export interface ApiErrorEvent {
   trace_id?: string;
 }
 
+export interface MediaStrippedEvent {
+  reason: 'too_large' | 'degraded_too_large' | 'image_format';
+  model: string;
+  alias?: string;
+  status_code?: number;
+  turn_id?: number;
+  media_count: number;
+}
+
 export interface SkillInvokedEvent {
   skill_name: string;
   trigger: 'user-slash' | 'model-tool' | 'nested-skill';
@@ -531,6 +540,19 @@ export const telemetryEventDefinitions = {
     properties: {
       skill_name: 'Skill name',
       trigger: 'How the skill was triggered',
+    },
+  }),
+  media_stripped: defineAgentTelemetryEvent<MediaStrippedEvent>({
+    owner: 'kimi-code',
+    comment:
+      'The provider rejected media in the request; every media part present was replaced by a text placeholder for the resend.',
+    properties: {
+      reason: 'Which rejection led to the strip',
+      model: 'Model id the request targeted',
+      alias: 'Model alias the request targeted',
+      status_code: 'HTTP status code of the rejecting response when available',
+      turn_id: 'Per-agent turn index when the request belongs to a turn; omitted for out-of-turn operations',
+      media_count: 'Number of media parts in context at strip time',
     },
   }),
   flow_invoked: defineAgentTelemetryEvent<FlowInvokedEvent>({
