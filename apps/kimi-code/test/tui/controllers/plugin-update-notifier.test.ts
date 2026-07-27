@@ -27,6 +27,7 @@ function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummar
     commandCount: 0,
     hasErrors: false,
     source: 'zip-url',
+    originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     ...overrides,
   };
 }
@@ -158,6 +159,43 @@ describe('PluginUpdateNotifier', () => {
     // No marketplace entry — the check bails before even listing plugins.
     expect(harness.session.listPlugins).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not notify for a same-id fork installed from a local path', async () => {
+    const harness = makeHarness({
+      installed: [
+        makePluginSummary({ source: 'local-path', originalSource: undefined }),
+      ],
+    });
+    const notifier = makeNotifier(harness);
+
+    notifier.handlePluginCommandCompleted('kimi-datasource');
+    await vi.waitFor(() => {
+      expect(harness.session.listPlugins).toHaveBeenCalled();
+    });
+    // Let the post-check microtasks drain before asserting silence.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    // Provenance is not official, so the marketplace version is irrelevant.
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('resolves plugin tools whose qualified name core truncated before the separator', async () => {
+    // Server part exactly 50 chars: the 64-char truncation cuts the whole
+    // `__` separator and tool name, leaving `mcp__<server>_<hash>`.
+    const serverName = `plugin-kimi-datasource:${'s'.repeat(27)}`;
+    const sanitized = `plugin-kimi-datasource_${'s'.repeat(27)}`;
+    expect(`mcp__${sanitized}`.length).toBe(55);
+    const truncatedToolName = `mcp__${sanitized}_a1b2c3d4`;
+
+    const harness = makeHarness({ mcpServers: [serverName] });
+    const notifier = makeNotifier(harness);
+
+    notifier.handleMcpToolCompleted(truncatedToolName);
+    await vi.waitFor(() => {
+      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
+    });
   });
 
   it('notifies after a plugin command turn ends', async () => {

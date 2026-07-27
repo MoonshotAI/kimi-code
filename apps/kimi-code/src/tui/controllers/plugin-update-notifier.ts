@@ -9,6 +9,7 @@ import {
   readPluginUpdateNoticeState,
   writePluginUpdateNoticeState,
 } from '#/utils/plugin-update-notice-state';
+import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
 /**
  * The slice of the SDK session the notifier reads. Structurally satisfied by
@@ -49,12 +50,32 @@ function sanitizeMcpServerName(name: string): string {
   return name.replaceAll(/[^a-zA-Z0-9_-]/g, '_').replaceAll(/_+/g, '_');
 }
 
-function mcpToolServerSegment(toolName: string): string | undefined {
-  if (!toolName.startsWith(MCP_TOOL_NAME_PREFIX)) return undefined;
-  const rest = toolName.slice(MCP_TOOL_NAME_PREFIX.length);
-  const separator = rest.indexOf('__');
-  if (separator <= 0) return undefined;
-  return rest.slice(0, separator);
+/**
+ * Find the plugin behind a qualified MCP tool name by longest-prefix match
+ * against known server names. Prefix matching (rather than splitting on the
+ * `__` separator) survives core's 64-char truncation, which can cut the
+ * separator before appending the hash suffix; the boundary check keeps a
+ * shorter server name from matching another server's name, and longest match
+ * wins when one server name is a prefix of another. A name truncated inside
+ * the server part itself cannot be attributed reliably and stays unresolved.
+ */
+function matchPluginByToolName(
+  toolName: string,
+  serverPluginIds: Map<string, string>,
+): string | undefined {
+  let best: string | undefined;
+  let bestLength = 0;
+  for (const [serverName, pluginId] of serverPluginIds) {
+    const prefix = `${MCP_TOOL_NAME_PREFIX}${serverName}`;
+    if (!toolName.startsWith(prefix)) continue;
+    const boundary = toolName.charAt(prefix.length);
+    if (boundary !== '' && boundary !== '_') continue;
+    if (prefix.length > bestLength) {
+      best = pluginId;
+      bestLength = prefix.length;
+    }
+  }
+  return best;
 }
 
 /**
@@ -100,14 +121,12 @@ export class PluginUpdateNotifier {
   }
 
   private async resolvePluginId(toolName: string): Promise<string | undefined> {
-    const segment = mcpToolServerSegment(toolName);
-    if (segment === undefined) return undefined;
-    const hit = (await this.getMcpServerPluginIds()).get(segment);
+    const hit = matchPluginByToolName(toolName, await this.getMcpServerPluginIds());
     if (hit !== undefined) return hit;
     // The map is memoized, but this notifier is reused across /reload, /new,
     // and session switches, so plugins installed or enabled later in the same
     // app run are missing from it. Refresh once on a miss before giving up.
-    return (await this.loadMcpServerPluginIds()).get(segment);
+    return matchPluginByToolName(toolName, await this.loadMcpServerPluginIds());
   }
 
   private async getMcpServerPluginIds(): Promise<Map<string, string>> {
@@ -143,6 +162,9 @@ export class PluginUpdateNotifier {
       if (entry === undefined) return;
       const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);
       if (installed === undefined) return;
+      // Only official installs are tracked against the Official Marketplace —
+      // a local/GitHub fork that happens to share a catalog id is not it.
+      if (!isOfficialPluginInstall(installed)) return;
       const status = computeUpdateStatus(entry.version, installed.version, true);
       if (status.kind !== 'update') return;
       const state = await readPluginUpdateNoticeState(this.deps.stateFile);

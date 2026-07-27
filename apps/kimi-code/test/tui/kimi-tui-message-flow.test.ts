@@ -4111,6 +4111,45 @@ command = "vim"
     });
   });
 
+  it('does not show the quota note for a same-id fork installed from a local path', async () => {
+    const session = makeSession({
+      installPlugin: vi.fn(async () => ({
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '3.3.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hasErrors: false,
+        source: 'local-path',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install ./plugins/kimi-datasource-fork');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    // The manifest id matches a billed plugin, but a local-path install is
+    // not the official quota-consuming build.
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Installed Kimi Datasource');
+    });
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Note: This plugin consumes your quota.',
+    );
+  });
+
   it('does not install when the third-party trust prompt is dismissed', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
