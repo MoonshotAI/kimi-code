@@ -351,10 +351,12 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async enterWorkflowMode({ agentId, ...payload }: AgentScopedPayload<EnterWorkflowModePayload>) {
+    this.requireWorkflowsEnabled();
     return (await this.getAgent(agentId)).enterWorkflowMode(payload);
   }
 
   async exitWorkflowMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    this.requireWorkflowsEnabled();
     return (await this.getAgent(agentId)).exitWorkflowMode(payload);
   }
 

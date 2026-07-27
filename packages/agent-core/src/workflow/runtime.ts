@@ -250,7 +250,7 @@ export async function runWorkflowScript(
   abortPromise.catch(() => {});
 
   try {
-    const result = await Promise.race([compiled.run(api), abortPromise]);
+    const result = await Promise.race([compiled.run(api, { syncTimeoutMs: 100 }), abortPromise]);
     // The script may resolve normally even while an abort raced in (e.g. a
     // try/catch swallowed the abort error) — abort verdicts win.
     const verdict = abortVerdict();

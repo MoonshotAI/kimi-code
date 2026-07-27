@@ -1,9 +1,8 @@
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
-
 import { TextViewerComponent } from '../components/dialogs/text-viewer';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { showWorkflowsBrowser, workflowsBrowserOpen } from '../controllers/workflows-browser';
 import { formatErrorMessage } from '../utils/event-payload';
+import { WorkflowV2Client } from '../workflow-v2-client';
 import type { SlashCommandHost } from './dispatch';
 
 const USAGE =
@@ -14,15 +13,16 @@ export async function handleWorkflowCommand(host: SlashCommandHost, args: string
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
+  const client = new WorkflowV2Client(host.requireSession());
   const trimmed = args.trim();
   // No args → open the runs browser (like /tasks), so the user sees active runs immediately.
   if (trimmed === '') {
     if (workflowsBrowserOpen()) return;
-    await showWorkflowsBrowser(host);
+    await showWorkflowsBrowser(host, client);
     return;
   }
   if (trimmed === 'list') {
-    await listWorkflows(host);
+    await listWorkflows(host, client);
     return;
   }
 
@@ -30,32 +30,32 @@ export async function handleWorkflowCommand(host: SlashCommandHost, args: string
   const subArgs = rest.join(' ');
   switch (subcommand) {
     case 'run':
-      await runWorkflow(host, subArgs, `/workflow ${trimmed}`);
+      await runWorkflow(host, client, subArgs, `/workflow ${trimmed}`);
       return;
     case 'runs':
       if (workflowsBrowserOpen()) return;
-      await showWorkflowsBrowser(host);
+      await showWorkflowsBrowser(host, client);
       return;
     case 'show':
-      await showWorkflowScript(host, subArgs);
+      await showWorkflowScript(host, client, subArgs);
       return;
     case 'cancel':
-      await cancelWorkflowRun(host, subArgs);
+      await cancelWorkflowRun(host, client, subArgs);
       return;
     case 'save':
-      await saveWorkflowRun(host, subArgs);
+      await saveWorkflowRun(host, client, subArgs);
       return;
     case 'reload':
-      await reloadWorkflows(host);
+      await reloadWorkflows(host, client);
       return;
     case 'on':
     case 'off':
-      await toggleWorkflowMode(host, subcommand === 'on');
+      await toggleWorkflowMode(host, client, subcommand === 'on');
       return;
     default:
       // `/workflow <name> [args…]` is shorthand for `/workflow run <name> [args…]`.
       if (subcommand !== undefined && !subcommand.startsWith('-')) {
-        await runWorkflow(host, trimmed, `/workflow ${trimmed}`);
+        await runWorkflow(host, client, trimmed, `/workflow ${trimmed}`);
         return;
       }
       host.showError(USAGE);
