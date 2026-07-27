@@ -201,3 +201,30 @@ command = "   "
     expect(text).toContain('command');
   });
 });
+
+describe('TUI config status_line round-trip', () => {
+  it('preserves an active status_line across save and reload', async () => {
+    await saveTuiConfig(
+      {
+        ...DEFAULT_TUI_CONFIG,
+        statusLine: { items: ['model', 'git'], command: '~/.kimi-code/statusline.sh' },
+      },
+      filePath,
+    );
+
+    const reloaded = await loadTuiConfig(filePath);
+    expect(reloaded.statusLine).toEqual({
+      items: ['model', 'git'],
+      command: '~/.kimi-code/statusline.sh',
+    });
+  });
+
+  it('keeps the status_line section commented out when unset', async () => {
+    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('# [status_line]');
+    expect(text).toContain('# items =');
+    expect(text).toContain('# command =');
+  });
+});

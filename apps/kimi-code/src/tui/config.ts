@@ -195,6 +195,28 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
+  // An active status_line must round-trip: any preference save rewrites the
+  // whole file, so the section is emitted live when set and left as a
+  // commented-out guide when unset.
+  const statusItems = config.statusLine?.items;
+  const statusCommand = config.statusLine?.command;
+  const statusLines: string[] = [];
+  if (statusItems !== null && statusItems !== undefined) {
+    statusLines.push(`items = ${JSON.stringify(statusItems)}`);
+  }
+  if (statusCommand) {
+    statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
+  }
+  const statusSection =
+    statusLines.length > 0
+      ? `[status_line]\n${statusLines.join('\n')}\n`
+      : `# [status_line]
+# Pick and order the built-in footer slots: ${STATUS_LINE_ITEMS.join(', ')}
+# items = ${JSON.stringify([...STATUS_LINE_ITEMS])}
+# Or render your own: a command whose first stdout line replaces footer line 1.
+# It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
+# command = "~/.kimi-code/statusline.sh"
+`;
   return `# ~/.kimi-code/tui.toml
 # Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
@@ -212,13 +234,7 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
 
-# [status_line]
-# Pick and order the built-in footer slots: ${STATUS_LINE_ITEMS.join(', ')}
-# items = ${JSON.stringify([...STATUS_LINE_ITEMS])}
-# Or render your own: a command whose first stdout line replaces footer line 1.
-# It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
-# command = "~/.kimi-code/statusline.sh"
-`;
+${statusSection}`;
 }
 
 function escapeTomlBasicString(value: string): string {

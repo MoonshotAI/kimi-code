@@ -39,19 +39,40 @@ export function runStatusLineCommand(
       resolve(value);
     };
 
+    const isWin = process.platform === 'win32';
     let child;
     try {
-      child = spawn('sh', ['-c', command], {
+      child = spawn(isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : 'sh', isWin ? ['/d', '/s', '/c', command] : ['-c', command], {
         stdio: ['pipe', 'pipe', 'ignore'],
         env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
+        // Own process group on POSIX so a timeout can drop the whole tree,
+        // not just the shell wrapper.
+        detached: !isWin,
       });
     } catch {
       finish(null);
       return;
     }
 
+    const killTree = (): void => {
+      if (child.pid === undefined) return;
+      if (isWin) {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        } catch {
+          // best effort
+        }
+      } else {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }
+    };
+
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTree();
       finish(null);
     }, timeoutMs);
     timer.unref?.();
