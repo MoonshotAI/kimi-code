@@ -21,6 +21,10 @@ export interface ExportSessionPayload {
   readonly sessionId: string;
   readonly outputPath?: string | undefined;
   readonly includeGlobalLog?: boolean | undefined;
+  /** Bundle the desktop app's own log (`<home>/logs/kimi-code-desktop.log`)
+      when the exporting host is the desktop app (REST `desktop: true`). The
+      file is read server-side; missing files are skipped silently. */
+  readonly includeDesktopLog?: boolean | undefined;
   readonly version: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
@@ -39,6 +43,7 @@ export interface ExportSessionManifest {
   readonly workspaceDir?: string | undefined;
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
+  readonly desktopLogPath?: string | undefined;
   readonly webLogPath?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;

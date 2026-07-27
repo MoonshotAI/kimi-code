@@ -119,6 +119,9 @@ export function registerSessionExportRoute(
             sessionId: req.params.session_id,
             outputPath,
             includeGlobalLog: true,
+            // Desktop hosts ask for their own app log via `desktop: true`;
+            // the file is read server-side (missing files are skipped).
+            includeDesktopLog: req.body.desktop === true,
             version: options.serverVersion,
           },
           {

@@ -74,6 +74,10 @@ export const exportSessionRequestSchema = z
         message: `web_log must not exceed ${MAX_SESSION_EXPORT_WEB_LOG_BYTES} UTF-8 bytes`,
       })
       .optional(),
+    // Desktop hosts set this to bundle the on-disk desktop app log
+    // (`<home>/logs/kimi-code-desktop.log`) into the archive; the server reads
+    // the file itself, so no log content crosses the request.
+    desktop: z.boolean().optional(),
   })
   .strict();
 export type ExportSessionRequest = z.infer<typeof exportSessionRequestSchema>;
