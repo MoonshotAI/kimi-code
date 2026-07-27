@@ -445,6 +445,28 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(notice.text).toContain('photo.avif');
   });
 
+  it('replaces a zero-byte uploaded image file with a text notice instead of an empty data URL', async () => {
+    // A clipboard failure can hand the client a zero-byte File (issue #2209):
+    // inlining it as `data:image/png;base64,` would poison every later
+    // request in the session. The route degrades it to a notice instead.
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const uploaded = await uploadFile(Buffer.alloc(0), 'image/png', 'image.png');
+    expect(uploaded.size).toBe(0);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('no image data (0 bytes)');
+    expect(notice.text).toContain('image.png');
+  });
+
   it('replaces a remote image URL with an unsupported extension with a text notice', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
