@@ -11,6 +11,8 @@ import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { AgentActivityView } from '#/agent/activityView/activityViewService';
@@ -72,6 +74,7 @@ function harness(
   ix.stub(IEventBus, bus as unknown as IEventBus);
   ix.stub(IAgentLoopService, loop);
   ix.stub(IAgentTaskService, tasks);
+  ix.set(IAgentStateService, new AgentStateService());
   ix.stub(IAgentFullCompactionService, {
     _serviceBrand: undefined,
     compacting,

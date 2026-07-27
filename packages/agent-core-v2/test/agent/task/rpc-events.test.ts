@@ -15,12 +15,12 @@ import {
   type AgentTaskInfo,
   IAgentTaskService,
 } from '#/agent/task/task';
-import { TaskStopTool } from '#/agent/task/tools/task-stop';
+import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/subagent/tools/subagent-task';
-import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
+} from '#/agent/tools/agent/subagent-task';
+import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';

@@ -4,6 +4,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
@@ -31,6 +33,12 @@ const toolB: UserToolRegistration = {
   name: 'Echo',
   description: 'Echo the input.',
   parameters: { type: 'object', properties: { text: { type: 'string' } } },
+};
+const deferredTool: UserToolRegistration = {
+  name: 'DashboardCreate',
+  description: 'Create a dashboard.',
+  parameters: { type: 'object', properties: { title: { type: 'string' } } },
+  disclosure: 'deferred',
 };
 
 interface ProfileStub {
@@ -75,6 +83,7 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
@@ -116,6 +125,22 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
 
+  it('preserves deferred disclosure in the wire model and runtime registry', async () => {
+    svc.register(deferredTool);
+
+    expect(modelOf(wire).get(deferredTool.name)).toEqual(deferredTool);
+    expect(registry.list().find((tool) => tool.name === deferredTool.name)?.disclosure).toBe(
+      'deferred',
+    );
+    expect(await readRecords()).toEqual([
+      {
+        type: 'tools.register_user_tool',
+        ...deferredTool,
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
   it('unregister persists a flat record and removes the tool live', async () => {
     svc.register(toolA);
     svc.unregister(toolA.name);
@@ -139,6 +164,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixChild.set(IAgentStateService, new AgentStateService());
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
@@ -177,6 +203,19 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(modelOf(wire)).toBe(before);
   });
 
+  it('treats a disclosure change as a new registration state', () => {
+    svc.register(toolA);
+    const before = modelOf(wire);
+
+    svc.register({ ...toolA, disclosure: 'deferred' });
+
+    expect(modelOf(wire)).not.toBe(before);
+    expect(modelOf(wire).get(toolA.name)?.disclosure).toBe('deferred');
+    expect(registry.list().find((tool) => tool.name === toolA.name)?.disclosure).toBe(
+      'deferred',
+    );
+  });
+
   it('replay rebuilds the model silently and onDidRestore re-registers tools after replay', async () => {
     svc.register(toolA);
     svc.register(toolB);
@@ -185,6 +224,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(IAgentStateService, new AgentStateService());
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);

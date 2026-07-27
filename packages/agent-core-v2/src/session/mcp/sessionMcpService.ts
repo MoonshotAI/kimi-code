@@ -11,9 +11,8 @@
  * entries). Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import { MCP_SECTION, type McpSection } from '#/agent/mcp/configSection';
@@ -130,6 +129,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionMcpService,
   SessionMcpService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionMcp',
 );

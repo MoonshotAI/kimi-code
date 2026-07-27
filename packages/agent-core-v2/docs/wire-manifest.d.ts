@@ -524,6 +524,7 @@ interface ToolsRegisterUserToolPayload {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  disclosure?: 'inline' | 'deferred';
 }
 
 /**

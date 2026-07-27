@@ -17,9 +17,9 @@ import path from 'node:path';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -152,7 +152,7 @@ describe('PluginService (plugin boundary)', () => {
       LifecycleScope.App,
       IPluginService,
       PluginService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'plugin',
     );
     readInstalled.mockClear();

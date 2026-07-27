@@ -22,8 +22,7 @@ import {
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
 import { IConfigService } from '#/app/config/config';
@@ -104,6 +103,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebFetchService,
   WebFetchService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'web',
 );

@@ -12,8 +12,7 @@
  * route resumes the session); forking a missing source throws.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -54,6 +53,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionBtwService,
   SessionBtwService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'session-btw',
 );

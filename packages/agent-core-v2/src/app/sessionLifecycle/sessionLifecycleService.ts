@@ -29,10 +29,9 @@
  * rejects for a fatal explicit-source error, exactly the case that should
  * fail fast, and on that failure the half-materialized handle is disposed
  * instead of poisoning the session cache (the skill catalog, by contrast, is
- * kicked fire-and-forget). The session-level eager services whose
- * subscriptions must exist before the first agent / turn (external hooks,
- * cron, the secondary-model startup warning) are force-instantiated at the
- * same point.
+ * kicked fire-and-forget). The session-level services whose subscriptions
+ * must exist before the first agent / turn (external hooks, cron, the
+ * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -40,13 +39,13 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 import { ulid } from 'ulid';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
@@ -77,10 +76,7 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
-import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -222,9 +218,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       void handle.accessor.get(ISessionSkillCatalog).ready;
       await handle.accessor.get(ISessionAgentProfileCatalog).ready;
       await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-      handle.accessor.get(ISessionExternalHooksService);
-      handle.accessor.get(ISessionCronService);
-      handle.accessor.get(ISessionSecondaryModelWarningService);
     } catch (error) {
       handle.dispose();
       throw error;
@@ -619,7 +612,7 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLifecycleService,
   SessionLifecycleService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionLifecycle',
 );
 

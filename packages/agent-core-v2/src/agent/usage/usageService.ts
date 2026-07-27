@@ -4,8 +4,10 @@
  * Accumulates the agent's token usage in the `wire` `UsageModel`, mutating it
  * only through the `usage.record` Op (`wire.dispatch(recordUsage(...))`) and
  * deriving `status()` snapshots from `wire.getModel`. The per-turn accumulator
- * (`currentTurn`) is live-only service state — it is not persisted and resets
- * on resume, matching v1. The usage slice of `agent.status.updated` is
+ * (`currentTurnId` / `currentTurn`) is live-only service state — it is not
+ * persisted and resets on resume, matching v1 — and is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it. The usage
+ * slice of `agent.status.updated` is
  * published here after each live record (replay stays silent, like v1's
  * restore), and the `onDidRecord` event notifies agent-scoped consumers of the
  * live record. Bound at Agent scope.
@@ -13,11 +15,12 @@
 
 import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
 
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import type { UsageRecordedContext, UsageStatus } from './usage';
@@ -30,20 +33,45 @@ import {
   type UsageRecordScope,
 } from './usageOps';
 
+export const usageCurrentTurnIdKey = defineState<number | undefined>(
+  'usage.currentTurnId',
+  () => undefined as number | undefined,
+);
+export const usageCurrentTurnKey = defineState<TokenUsage | undefined>(
+  'usage.currentTurn',
+  () => undefined as TokenUsage | undefined,
+);
+
 export class AgentUsageService extends Disposable implements IAgentUsageService {
   declare readonly _serviceBrand: undefined;
 
   private readonly _onDidRecord = this._register(new Emitter<UsageRecordedContext>());
   readonly onDidRecord: Event<UsageRecordedContext> = this._onDidRecord.event;
 
-  private currentTurnId: number | undefined;
-  private currentTurn: TokenUsage | undefined;
-
   constructor(
     @IWireService private readonly wire: IWireService,
+    @IAgentStateService private readonly states: IAgentStateService,
     @IEventBus private readonly eventBus?: IEventBus,
   ) {
     super();
+    this.states.register(usageCurrentTurnIdKey);
+    this.states.register(usageCurrentTurnKey);
+  }
+
+  private get currentTurnId(): number | undefined {
+    return this.states.get(usageCurrentTurnIdKey);
+  }
+
+  private set currentTurnId(value: number | undefined) {
+    this.states.set(usageCurrentTurnIdKey, value);
+  }
+
+  private get currentTurn(): TokenUsage | undefined {
+    return this.states.get(usageCurrentTurnKey);
+  }
+
+  private set currentTurn(value: TokenUsage | undefined) {
+    this.states.set(usageCurrentTurnKey, value);
   }
 
   record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void {
@@ -74,6 +102,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUsageService,
   AgentUsageService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'usage',
 );

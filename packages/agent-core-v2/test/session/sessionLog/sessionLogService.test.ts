@@ -4,9 +4,9 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -20,6 +20,8 @@ import {
 import { AppLogService } from '#/_base/log/logService';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 let homeDir: string;
 let sessionDir: string;
@@ -28,9 +30,16 @@ beforeEach(async () => {
   _clearScopedRegistryForTests();
   registerScopedService(
     LifecycleScope.Session,
+    ISessionStateService,
+    SessionStateService,
+    ScopeActivation.OnScopeCreated,
+    'state',
+  );
+  registerScopedService(
+    LifecycleScope.Session,
     ILogService,
     SessionLogService,
-    InstantiationType.Delayed,
+    ScopeActivation.OnDemand,
     'log',
   );
   homeDir = await mkdtemp(join(tmpdir(), 'session-log-'));
@@ -132,8 +141,9 @@ describe('SessionLogService', () => {
 describe('ILogService cross-scope resolution', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.App, ILogService, AppLogService, InstantiationType.Delayed, 'log');
-    registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, InstantiationType.Delayed, 'log');
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.App, ILogService, AppLogService, ScopeActivation.OnDemand, 'log');
+    registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, ScopeActivation.OnDemand, 'log');
   });
 
   it('resolves the single token to the nearest scope binding', () => {

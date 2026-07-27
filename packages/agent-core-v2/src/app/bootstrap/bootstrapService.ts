@@ -15,8 +15,7 @@
 
 import { basename, join, relative } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   IBootstrapOptions,
@@ -96,4 +95,4 @@ export class BootstrapService implements IBootstrapService {
   }
 }
 
-registerScopedService(LifecycleScope.App, IBootstrapService, BootstrapService, InstantiationType.Eager, 'bootstrap');
+registerScopedService(LifecycleScope.App, IBootstrapService, BootstrapService, ScopeActivation.OnScopeCreated, 'bootstrap');

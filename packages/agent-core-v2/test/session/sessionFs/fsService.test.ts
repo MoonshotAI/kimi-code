@@ -3,9 +3,9 @@ import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -16,6 +16,8 @@ import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { ISessionFsService } from '#/session/sessionFs/fs';
 import { SessionFsService } from '#/session/sessionFs/fsService';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -298,9 +300,16 @@ beforeEach(() => {
   _clearScopedRegistryForTests();
   registerScopedService(
     LifecycleScope.Session,
+    ISessionStateService,
+    SessionStateService,
+    ScopeActivation.OnScopeCreated,
+    'state',
+  );
+  registerScopedService(
+    LifecycleScope.Session,
     ISessionFsService,
     SessionFsService,
-    InstantiationType.Delayed,
+    ScopeActivation.OnDemand,
     'sessionFs',
   );
 });

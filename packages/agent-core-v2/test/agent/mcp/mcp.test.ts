@@ -28,6 +28,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 
 import { createTestAgent, mcpServices, type TestAgentContext } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -205,6 +207,7 @@ describe('AgentMcpService', () => {
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.set(IAgentStateService, new AgentStateService());
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
       log: recordingWireLog([], (record) => {
@@ -246,9 +249,10 @@ describe('AgentMcpService', () => {
   });
 
   it('resolves through the IAgentMcpService binding with no manager', () => {
-    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
-    createService(new FakeMcpManager());
+    const created = createService(new FakeMcpManager());
+    ix.set(IAgentMcpService, created);
     const svc = ix.get(IAgentMcpService);
+    expect(svc).toBe(created);
     expect(svc.list()).toEqual([]);
   });
 

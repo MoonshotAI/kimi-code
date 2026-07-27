@@ -2,25 +2,53 @@
  * `workspaceContext` domain (L1) — `ISessionWorkspaceContext` implementation.
  *
  * Holds the session work directory and additional dirs, resolves relative
- * paths, and checks whether a path falls within the workspace. Bound at
- * Session scope.
+ * paths, and checks whether a path falls within the workspace. The plain-data
+ * state (`workDir`, `additionalDirs`) is registered into `sessionState`
+ * (`ISessionStateService`) and read/written through it. Bound at Session
+ * scope.
  */
 
 import { isAbsolute, relative, resolve } from 'node:path';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
 
+export const workspaceContextWorkDirKey = defineState<string>('workspaceContext.workDir', () => '');
+export const workspaceContextAdditionalDirsKey = defineState<string[]>(
+  'workspaceContext.additionalDirs',
+  () => [],
+);
+
 export class SessionWorkspaceContextService implements ISessionWorkspaceContext {
   declare readonly _serviceBrand: undefined;
-  private _workDir: string;
-  private _additionalDirs: string[] = [];
 
-  constructor(@ISessionContext ctx: ISessionContext) {
-    this._workDir = resolve(ctx.cwd);
+  constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
+    @ISessionContext ctx: ISessionContext,
+  ) {
+    this.states.register(workspaceContextWorkDirKey);
+    this.states.register(workspaceContextAdditionalDirsKey);
+    this.setWorkDir(ctx.cwd);
+  }
+
+  private get _workDir(): string {
+    return this.states.get(workspaceContextWorkDirKey);
+  }
+
+  private set _workDir(value: string) {
+    this.states.set(workspaceContextWorkDirKey, value);
+  }
+
+  private get _additionalDirs(): string[] {
+    return this.states.get(workspaceContextAdditionalDirsKey);
+  }
+
+  private set _additionalDirs(value: string[]) {
+    this.states.set(workspaceContextAdditionalDirsKey, value);
   }
 
   get workDir(): string {
@@ -77,6 +105,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionWorkspaceContext,
   SessionWorkspaceContextService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'workspaceContext',
 );

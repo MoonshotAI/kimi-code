@@ -1,11 +1,11 @@
 /**
- * Media tool production registration — the Eager Agent-scope service that
- * keeps `ReadMediaFile` in the tool registry in sync with the bound model.
+ * Media tool production registration — the Agent-scope service that keeps
+ * `ReadMediaFile` in the tool registry in sync with the bound model.
  *
- * Media tools cannot ride the module-level `registerTool(...)` contribution
- * table: its `when` predicates run once, when the Agent's tool registry is
- * constructed, and at that point no model is bound yet — the capabilities are
- * still `UNKNOWN_CAPABILITY`, so a capability gate would permanently skip the
+ * Media tools cannot ride the module-level `registerAgentToolService(...)`
+ * contribution table: its activation runs when the Agent is created, and at
+ * that point no model is bound yet — the capabilities are still
+ * `UNKNOWN_CAPABILITY`, so a capability gate would permanently skip the
  * tool. Registration instead re-runs whenever the resolved model changes:
  * every profile/model update publishes `agent.status.updated`, and this
  * service re-invokes {@link registerMediaTools} when the model alias or its
@@ -17,14 +17,19 @@
  * converts `video_url` takes the inline fallback when no upload hook
  * exists.
  *
- * `AgentLifecycleService.create` force-instantiates this service right after
- * the builtin-tools registrar, before any `opts.binding` bind runs, so the
- * first `agent.status.updated` is always observed.
+ * The plain-data state (`registeredKey`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; `registration` stays an
+ * instance field (the live `IDisposable` tool-registration handle, not plain
+ * data).
+ *
+ * Agent scope creation instantiates this service before any `opts.binding`
+ * bind runs, so the first `agent.status.updated` is always observed.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -40,11 +45,15 @@ import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
 
+export const mediaRegisteredKeyKey = defineState<string | undefined>(
+  'media.registeredKey',
+  () => undefined as string | undefined,
+);
+
 export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaToolsRegistrar {
   declare readonly _serviceBrand: undefined;
 
   private registration: IDisposable | undefined;
-  private registeredKey: string | undefined;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -55,12 +64,22 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentStateService private readonly states: IAgentStateService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     super();
+    this.states.register(mediaRegisteredKeyKey);
     this.refresh();
     this._register(eventBus.subscribe('agent.status.updated', () => this.refresh()));
     this._register(toDisposable(() => this.registration?.dispose()));
+  }
+
+  private get registeredKey(): string | undefined {
+    return this.states.get(mediaRegisteredKeyKey);
+  }
+
+  private set registeredKey(value: string | undefined) {
+    this.states.set(mediaRegisteredKeyKey, value);
   }
 
   private refresh(): void {
@@ -117,6 +136,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMediaToolsRegistrar,
   AgentMediaToolsRegistrar,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'media',
 );

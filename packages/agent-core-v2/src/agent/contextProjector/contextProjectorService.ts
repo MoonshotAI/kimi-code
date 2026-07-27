@@ -11,7 +11,9 @@
  * assistant step that kept only an empty thinking part — dropped whole) are
  * reported through an optional sink and surfaced once here as a
  * single deduped warning plus a `context_projection_repaired` telemetry event,
- * so a silently-mangled history always leaves a trace.
+ * so a silently-mangled history always leaves a trace. The mutable
+ * repair-dedup signature (`lastRepairSignature`) is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it.
  *
  * `projectMediaDegraded` / `projectMediaStripped` are the fallback
  * projections for the two deterministic provider rejections: media-degraded
@@ -24,12 +26,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { defineState } from '#/_base/state/stateRegistry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message } from '#/kosong/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -38,15 +41,29 @@ import {
   type MediaStripSnapshot,
 } from './contextProjector';
 
+export const contextProjectorLastRepairSignatureKey = defineState<string | null>(
+  'contextProjector.lastRepairSignature',
+  () => null,
+);
+
 export class AgentContextProjectorService implements IAgentContextProjectorService {
   declare readonly _serviceBrand: undefined;
-
-  private lastRepairSignature: string | null = null;
 
   constructor(
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-  ) {}
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(contextProjectorLastRepairSignatureKey);
+  }
+
+  private get lastRepairSignature(): string | null {
+    return this.states.get(contextProjectorLastRepairSignatureKey);
+  }
+
+  private set lastRepairSignature(value: string | null) {
+    this.states.set(contextProjectorLastRepairSignatureKey, value);
+  }
 
   project(messages: readonly ContextMessage[]): readonly Message[] {
     return this.projectWithTrace(messages, project);
@@ -611,6 +628,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextProjectorService,
   AgentContextProjectorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextProjector',
 );

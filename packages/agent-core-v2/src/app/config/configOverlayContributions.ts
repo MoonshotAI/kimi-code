@@ -10,8 +10,8 @@
  * Service is instantiated.
  *
  * This decouples overlay registration from Service lifetime: an overlay must
- * not depend on an `Eager` Service being constructed, since the DI layer does
- * not auto-instantiate `Eager` services (see `ModelService` /
+ * not depend on a Service being constructed, because top-level contributions
+ * are available before any scope activation (see `ModelService` /
  * `kimiModelEnvOverlay`).
  */
 

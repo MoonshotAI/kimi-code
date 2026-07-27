@@ -10,8 +10,12 @@
  * on top of `IEventService` + `IAgentRecordService` — not here.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -103,5 +107,5 @@ export class WSGateway implements IWSGateway {
   }
 }
 
-registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, InstantiationType.Eager, 'gateway');
-registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, InstantiationType.Eager, 'gateway');
+registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, ScopeActivation.OnScopeCreated, 'gateway');
+registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, ScopeActivation.OnScopeCreated, 'gateway');

@@ -18,15 +18,13 @@
  *    full adapter config (identity resolution knows only
  *    `(protocol, providerType)`; composition needs the real config) and
  *    delegates to the registered base's contrib factory.
- *  - `resolveCapability` — the fixed fallback chain: pair definition → trait
- *    capability hooks (last declarer wins) → the base's own catalog →
- *    `UNKNOWN_CAPABILITY`.
+ *  - `resolveCapability` — the fixed fallback chain: trait capability hooks
+ *    (last declarer wins) → the base's own catalog → `UNKNOWN_CAPABILITY`.
  *
  * Bound at App scope, eager.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { ChatProviderError } from '#/kosong/contract/errors';
@@ -106,18 +104,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     modelName: string,
     providerType?: string,
   ): ExplainedCapability {
-    const definition =
-      providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
-    if (definition?.capability !== undefined) {
-      return {
-        capability: definition.capability,
-        source: {
-          kind: 'builtin',
-          detail: `provider definition '${providerType}' (pair with protocol '${protocol}')`,
-        },
-      };
-    }
-
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     let traitCapability: ModelCapability | undefined;
     for (const { trait, context } of identity.traits) {
@@ -170,6 +156,6 @@ registerScopedService(
   LifecycleScope.App,
   IProtocolAdapterRegistry,
   ProtocolAdapterRegistry,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'provider',
 );

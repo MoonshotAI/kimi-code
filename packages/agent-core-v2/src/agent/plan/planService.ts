@@ -26,8 +26,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -35,6 +34,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/agent/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -83,6 +83,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService telemetry: ITelemetryService,
+    @IAgentStateService states: IAgentStateService,
   ) {
     super();
 
@@ -104,7 +105,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       }),
     );
 
-    this._register(new PlanModeInjection(dynamicInjector, this, this.context));
+    this._register(new PlanModeInjection(dynamicInjector, this, this.context, states));
     this._register(this.registerPlanGuard(toolExecutor));
   }
 
@@ -303,6 +304,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'plan',
 );

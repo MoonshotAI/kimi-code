@@ -7,9 +7,8 @@
  * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
@@ -244,6 +243,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentConversationUndoService,
   AgentConversationUndoService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'undo',
 );

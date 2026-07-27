@@ -12,9 +12,8 @@
  * listeners — this gate only adjudicates risk. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionData } from '#/agent/permissionPolicy/types';
@@ -104,6 +103,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionGate,
   AgentPermissionGate,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'permissionGate',
 );

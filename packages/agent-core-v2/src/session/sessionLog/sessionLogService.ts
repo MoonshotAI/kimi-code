@@ -6,24 +6,42 @@
  * path already identifies the session). Registered to the single `ILogService`
  * token at Session scope, so every Session/Agent consumer injecting
  * `@ILogService` lands here (Agent has no own binding and falls back to this).
- * Flushes synchronously when the Session scope is disposed.
+ * Flushes synchronously when the Session scope is disposed. The plain-data
+ * state (`rootLevel`) is registered into `sessionState`
+ * (`ISessionStateService`) and read/written through it.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import { ILogService, type LogLevel } from '#/_base/log/log';
 import { createFileLogWriter, type FileLogWriter } from '#/_base/log/fileLog';
 import { ILogOptions, resolveSessionLogPath } from '#/_base/log/logConfig';
 import { BoundLogger, type LogLevelState } from '#/_base/log/logService';
 
+export const sessionLogRootLevelKey = defineState<LogLevelState>('sessionLog.rootLevel', () => ({
+  level: 'info',
+}));
+
+/**
+ * Registers the root level into `sessionState` and hands the stored object to
+ * the `BoundLogger` base, so base and subclass share one `LogLevelState`.
+ * Runs inside the `super(...)` arguments, where `this` is not yet available.
+ */
+function seedRootLevel(states: ISessionStateService, level: LogLevel): LogLevelState {
+  states.register(sessionLogRootLevelKey);
+  states.set(sessionLogRootLevelKey, { level });
+  return states.get(sessionLogRootLevelKey);
+}
+
 export class SessionLogService extends BoundLogger implements ILogService {
   declare readonly _serviceBrand: undefined;
   private readonly sink: FileLogWriter;
-  private readonly rootLevel: LogLevelState;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ILogOptions options: ILogOptions,
     @ISessionContext session: ISessionContext,
   ) {
@@ -33,10 +51,12 @@ export class SessionLogService extends BoundLogger implements ILogService {
       files: options.sessionFiles,
       format: { omitContextKeys: ['sessionId'] },
     });
-    const rootLevel: LogLevelState = { level: options.level };
-    super(sink, rootLevel, { sessionId: session.sessionId });
+    super(sink, seedRootLevel(states, options.level), { sessionId: session.sessionId });
     this.sink = sink;
-    this.rootLevel = rootLevel;
+  }
+
+  private get rootLevel(): LogLevelState {
+    return this.states.get(sessionLogRootLevelKey);
   }
 
   get level(): LogLevel {
@@ -66,6 +86,6 @@ registerScopedService(
   LifecycleScope.Session,
   ILogService,
   SessionLogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'log',
 );

@@ -1,6 +1,5 @@
 import { Disposable } from "#/_base/di/lifecycle";
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 
@@ -36,6 +35,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSystemReminderService,
   AgentSystemReminderService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'systemReminder',
 );

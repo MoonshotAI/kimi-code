@@ -6,16 +6,20 @@
  * and on the first inject after deactivation it emits the exit reminder. It reads
  * the live plan state through `IAgentPlanService.status()` and the recent history
  * through `IAgentContextMemoryService`, so no derived-state closures are needed.
- * The telemetry `mode` restore on replay is NOT part of this provider — it lives
+ * The plain-data state (`wasActive`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it. The telemetry `mode`
+ * restore on replay is NOT part of this provider — it lives
  * in `AgentPlanService.restoreTelemetryMode`.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import type { PlanFilePath } from '#/agent/plan/plan';
+import { IAgentStateService } from '#/agent/state/agentState';
 import PLAN_MODE_EXIT_REMINDER from './plan-mode-exit-reminder.md?raw';
 import PLAN_MODE_FULL_REMINDER from './plan-mode-full-reminder.md?raw';
 import PLAN_MODE_INLINE_FULL_REMINDER from './plan-mode-inline-full-reminder.md?raw';
@@ -28,26 +32,29 @@ const PLAN_MODE_DEDUP_MIN_TURNS = 2;
 const PLAN_MODE_FULL_REFRESH_TURNS = 5;
 const PLAN_MODE_INJECTION_VARIANT = 'plan_mode';
 
+export const planWasActiveKey = defineState<boolean>('plan.wasActive', () => false);
+
 export class PlanModeInjection extends Disposable {
   constructor(
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentPlanService private readonly plan: IAgentPlanService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(planWasActiveKey);
 
-    let wasActive = false;
     this._register(
       dynamicInjector.register(PLAN_MODE_INJECTION_VARIANT, async ({ lastInjectedAt: injectedAt }) => {
         const data = await this.plan.status();
         if (data === null) {
-          if (!wasActive) return undefined;
-          wasActive = false;
+          if (!this.states.get(planWasActiveKey)) return undefined;
+          this.states.set(planWasActiveKey, false);
           return PLAN_MODE_EXIT_REMINDER;
         }
         const planFilePath = data.path;
-        if (!wasActive) {
-          wasActive = true;
+        if (!this.states.get(planWasActiveKey)) {
+          this.states.set(planWasActiveKey, true);
           if (data.content.trim().length > 0) {
             return reentryReminder(planFilePath);
           }

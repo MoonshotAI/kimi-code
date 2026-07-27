@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
   resetUnexpectedErrorHandler,
@@ -224,7 +223,7 @@ describe('ITelemetryService (scoped)', () => {
       LifecycleScope.App,
       ITelemetryService,
       TelemetryService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'telemetry',
     );
   });

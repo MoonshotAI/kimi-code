@@ -13,14 +13,18 @@
  * UserPromptSubmit hook results through `contextMemory`, drives Stop hook
  * continuations by enqueueing a mergeable `StepRequest` onto `loop`, and
  * passes the current session id from `sessionContext`
- * into hook runner payloads.
+ * into hook runner payloads. The one mutable latch
+ * (`stopHookContinuationUsed`, the Stop-hook re-entry guard) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it; the
+ * hook listener registrations stay ordinary disposables on the instance.
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -65,10 +69,13 @@ declare module '#/app/event/eventBus' {
   }
 }
 
+export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
+  'externalHooks.stopHookContinuationUsed',
+  () => false,
+);
+
 export class AgentExternalHooksService extends Disposable implements IAgentExternalHooksService {
   declare readonly _serviceBrand: undefined;
-
-  private stopHookContinuationUsed = false;
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
@@ -76,9 +83,19 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(externalHooksStopHookContinuationUsedKey);
     this.registerListeners();
+  }
+
+  private get stopHookContinuationUsed(): boolean {
+    return this.states.get(externalHooksStopHookContinuationUsedKey);
+  }
+
+  private set stopHookContinuationUsed(value: boolean) {
+    this.states.set(externalHooksStopHookContinuationUsedKey, value);
   }
 
   private fireAndForget(
@@ -398,6 +415,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentExternalHooksService,
   AgentExternalHooksService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'externalHooks',
 );

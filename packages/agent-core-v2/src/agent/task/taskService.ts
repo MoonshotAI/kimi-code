@@ -26,6 +26,14 @@
  * remain governed by the Session lifecycle. Scope disposal paths that bypass
  * graceful close synchronously cancel/abort work and immediately attempt a
  * best-effort force-stop to reduce the risk of surviving child processes.
+ * The plain-data task state (`ghosts`, `scheduledNotificationKeys`,
+ * `deliveredNotificationKeys`, `activeTaskReminderPending`) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it; the
+ * live `tasks` registry stays a plain field because a `ManagedTask` holds
+ * resources (promise chains, an `AbortController`, task handles) that must
+ * not be snapshotted, as do the `persistence` construction-time helper and
+ * the notification delivery machinery (`buildingNotificationKeys`,
+ * `pendingNotificationRequests`, `notificationRestoreQueue`).
  * Notification delivery follows conversation undo through the checkpoint and
  * reconciliation contracts. Bound at Agent scope.
  */
@@ -33,13 +41,13 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
+import { defineState } from '#/_base/state/stateRegistry';
 import {
   abortable,
   userCancellationReason,
@@ -53,6 +61,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -84,9 +93,9 @@ import {
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { TaskModel, taskStarted, taskTerminated } from './taskOps';
-import { formatTaskList } from '#/agent/task/tools/task-list';
-import '#/agent/task/tools/task-output';
-import '#/agent/task/tools/task-stop';
+import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
+import '#/agent/tools/task/task-output/taskOutputTool';
+import '#/agent/tools/task/task-stop/taskStopTool';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;
@@ -221,18 +230,31 @@ export class TaskNotificationStepRequest extends MessageStepRequest {
   }
 }
 
+export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
+  'task.ghosts',
+  () => new Map(),
+);
+export const taskScheduledNotificationKeysKey = defineState<Set<string>>(
+  'task.scheduledNotificationKeys',
+  () => new Set(),
+);
+export const taskDeliveredNotificationKeysKey = defineState<Set<string>>(
+  'task.deliveredNotificationKeys',
+  () => new Set(),
+);
+export const taskActiveTaskReminderPendingKey = defineState<boolean>(
+  'task.activeTaskReminderPending',
+  () => false,
+);
+
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
   private readonly tasks = new Map<string, ManagedTask>();
-  private readonly ghosts = new Map<string, AgentTaskInfo>();
   private readonly buildingNotificationKeys = new Set<string>();
-  private readonly scheduledNotificationKeys = new Set<string>();
-  private readonly deliveredNotificationKeys = new Set<string>();
   private readonly pendingNotificationRequests = new Map<string, TaskNotificationStepRequest>();
   private readonly persistence: AgentTaskPersistence;
   private notificationRestoreQueue: Promise<void> = Promise.resolve();
-  private activeTaskReminderPending = false;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -250,8 +272,13 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(taskGhostsKey);
+    this.states.register(taskScheduledNotificationKeysKey);
+    this.states.register(taskDeliveredNotificationKeysKey);
+    this.states.register(taskActiveTaskReminderPendingKey);
     const fallbackRoot =
       scopeContext.agentId === 'main'
         ? { dir: session.sessionDir, scope: session.scope() }
@@ -295,6 +322,26 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         this.activeBackgroundTaskReminder(),
       ),
     );
+  }
+
+  private get ghosts(): Map<string, AgentTaskInfo> {
+    return this.states.get(taskGhostsKey);
+  }
+
+  private get scheduledNotificationKeys(): Set<string> {
+    return this.states.get(taskScheduledNotificationKeysKey);
+  }
+
+  private get deliveredNotificationKeys(): Set<string> {
+    return this.states.get(taskDeliveredNotificationKeysKey);
+  }
+
+  private get activeTaskReminderPending(): boolean {
+    return this.states.get(taskActiveTaskReminderPendingKey);
+  }
+
+  private set activeTaskReminderPending(value: boolean) {
+    this.states.set(taskActiveTaskReminderPendingKey, value);
   }
 
   private async restoreAfterReplay(): Promise<void> {
@@ -1402,6 +1449,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTaskService,
   AgentTaskService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'task',
 );

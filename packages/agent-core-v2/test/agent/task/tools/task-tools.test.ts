@@ -16,21 +16,15 @@ import type {
   RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import {
-  TaskListInputSchema,
-  TaskListTool,
-} from '#/agent/task/tools/task-list';
-import {
-  TaskOutputInputSchema,
-  TaskOutputTool,
-} from '#/agent/task/tools/task-output';
-import {
-  TaskStopInputSchema,
-  TaskStopTool,
-} from '#/agent/task/tools/task-stop';
+import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
+import { TaskListTool } from '#/agent/tools/task/task-list/taskListTool';
+import { TaskOutputInputSchema } from '#/agent/tools/task/task-output/task-output';
+import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
+import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
+import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import type { ITaskHandle } from '#/app/task/task';
-import type { ProcessTaskInfo } from '#/os/backends/node-local/tools/process-task';
-import type { SubagentTaskInfo } from '#/session/subagent/tools/subagent-task';
+import type { ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
+import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { TaskListTool as V1TaskListTool } from '../../../../../agent-core/src/tools/background/task-list';
 import { TaskOutputTool as V1TaskOutputTool } from '../../../../../agent-core/src/tools/background/task-output';
 import { TaskStopTool as V1TaskStopTool } from '../../../../../agent-core/src/tools/background/task-stop';

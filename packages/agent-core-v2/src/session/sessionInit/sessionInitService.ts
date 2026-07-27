@@ -21,8 +21,7 @@
  * `SESSION_INIT_FAILED`) so callers can tell "aborted" from "failed".
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -144,6 +143,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionInitService,
   SessionInitService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'session-init',
 );

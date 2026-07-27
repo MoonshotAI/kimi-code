@@ -22,7 +22,7 @@ import type {
 } from '#/agent/goal/types';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
-import type { ToolInfo } from '#/tool/toolContract';
+import type { ToolDisclosure, ToolInfo } from '#/tool/toolContract';
 import type { ResolvedConfig } from '#/app/config/config';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { ExperimentalFeatureState } from '#/app/flag/flag';
@@ -171,6 +171,7 @@ export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+  readonly disclosure?: ToolDisclosure;
 }
 export interface UnregisterToolPayload {
   readonly name: string;

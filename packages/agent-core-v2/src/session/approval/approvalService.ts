@@ -5,8 +5,7 @@
  * pending state of its own (the kernel holds it). Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import {
@@ -55,4 +54,4 @@ function requestId(req: ApprovalRequest): string {
   return req.id ?? req.toolCallId ?? `${req.toolName}:${String(Date.now())}`;
 }
 
-registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, InstantiationType.Eager, 'approval');
+registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, ScopeActivation.OnScopeCreated, 'approval');

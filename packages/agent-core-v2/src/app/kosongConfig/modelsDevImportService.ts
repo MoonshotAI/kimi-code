@@ -36,8 +36,7 @@ import {
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -382,6 +381,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelsDevImportService,
   ModelsDevImportService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'kosongConfig',
 );

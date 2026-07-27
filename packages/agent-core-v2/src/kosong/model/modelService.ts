@@ -6,9 +6,8 @@
  * persists the change events it fires. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event, type IWaitUntil } from '#/_base/event';
 
 import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
@@ -110,4 +109,4 @@ export class ModelService extends Disposable implements IModelService {
   }
 }
 
-registerScopedService(LifecycleScope.App, IModelService, ModelService, InstantiationType.Eager, 'model');
+registerScopedService(LifecycleScope.App, IModelService, ModelService, ScopeActivation.OnScopeCreated, 'model');

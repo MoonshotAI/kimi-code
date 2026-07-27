@@ -13,8 +13,7 @@
  * or bucket is ever rewritten here. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   collectAliasIds,
@@ -53,6 +52,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceAliases,
   WorkspaceAliasesService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'workspaceAliases',
 );

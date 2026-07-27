@@ -30,6 +30,8 @@ import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterServi
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
@@ -233,6 +235,7 @@ function createService(
     eventBus,
   });
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
+  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return {

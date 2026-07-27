@@ -3,11 +3,14 @@
  *
  * Agent-scope one-shot latch: `arm` (flag-gated) stores the next fault,
  * `take` (the llmRequester's per-attempt consumption point) consumes and
- * records it. Bound at Agent scope.
+ * records it. Both state slots (`armed`, `fired`) are registered into
+ * `agentState` (`IAgentStateService`) and read/written through it. Bound at
+ * Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import { ErrorCodes, Error2 } from '#/errors';
 
@@ -18,13 +21,34 @@ import {
   type FaultKind,
 } from './faultInjection';
 
+export const faultInjectionArmedKey = defineState<FaultKind | undefined>(
+  'faultInjection.armed',
+  () => undefined as FaultKind | undefined,
+);
+export const faultInjectionFiredKey = defineState<FaultKind[]>('faultInjection.fired', () => []);
+
 export class FaultInjectionService implements IFaultInjectionService {
   declare readonly _serviceBrand: undefined;
 
-  private armed: FaultKind | undefined;
-  private readonly fired: FaultKind[] = [];
+  constructor(
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(faultInjectionArmedKey);
+    this.states.register(faultInjectionFiredKey);
+  }
 
-  constructor(@IFlagService private readonly flags: IFlagService) {}
+  private get armed(): FaultKind | undefined {
+    return this.states.get(faultInjectionArmedKey);
+  }
+
+  private set armed(value: FaultKind | undefined) {
+    this.states.set(faultInjectionArmedKey, value);
+  }
+
+  private get fired(): FaultKind[] {
+    return this.states.get(faultInjectionFiredKey);
+  }
 
   arm(kind: FaultKind): void {
     if (!this.flags.enabled(FAULT_INJECTION_FLAG_ID)) {
@@ -60,6 +84,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IFaultInjectionService,
   FaultInjectionService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'faultInjection',
 );

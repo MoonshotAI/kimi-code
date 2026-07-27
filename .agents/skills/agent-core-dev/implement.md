@@ -5,7 +5,7 @@ Write the contract leaf, implementation leaf (with its registration), and the pa
 ## Standard recipe for a new `IXxxService`
 
 1. **Contract leaf** — `src/<domain>/<domain>.ts`: interface (with `_serviceBrand`) + `createDecorator` identity.
-2. **Impl leaf** — `src/<domain>/<domain>Service.ts`: class with `@IX` constructor deps; top-level `registerScopedService(scope, IX, Impl, type, '<domain>')`.
+2. **Impl leaf** — `src/<domain>/<domain>Service.ts`: class with `@IX` constructor deps; top-level `registerScopedService(scope, IX, Impl, activation, '<domain>')`. The fourth argument is activation; the fifth is the domain.
 3. **Entry** — `src/index.ts`: load each leaf precisely — `export * from './<domain>/<domain>';` for the contract and `import './<domain>/<domain>Service';` for the impl (importing the impl runs the registration). **No `src/<domain>/index.ts` barrel.**
 4. **Tests** — see test.md.
 
@@ -31,8 +31,7 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -41,11 +40,11 @@ export class Greeter implements IGreeter {
 }
 
 registerScopedService(
-  LifecycleScope.App,     // lifetime: process-wide
-  IGreeter,                // identity
-  Greeter,                 // implementation
-  InstantiationType.Eager, // when to construct: immediately
-  'greet',                 // domain name (for diagnostics)
+  LifecycleScope.App,               // lifetime: process-wide
+  IGreeter,                          // identity
+  Greeter,                           // implementation
+  ScopeActivation.OnScopeCreated,   // construct when the App scope is created
+  'greet',                           // domain name (for diagnostics)
 );
 ```
 
@@ -95,10 +94,16 @@ const meta = accessor.get(ISessionMetadata);   // type is ISessionMetadata
 
 ## §3 Scoped registration (not global)
 
-Swap the `scope` argument to bind to a different tier:
+Swap the `scope` argument to bind to a different tier. Use `ScopeActivation.OnDemand` when the service should be constructed only on its first `get()`:
 
 ```ts
-registerScopedService(LifecycleScope.Session, ISessionMetadata, SessionMetadata, InstantiationType.Delayed, 'sessionMetadata');
+registerScopedService(
+  LifecycleScope.Session,
+  ISessionMetadata,
+  SessionMetadata,
+  ScopeActivation.OnDemand,
+  'sessionMetadata',
+);
 ```
 
 Remember the visibility rule from orient.md: a service may inject services from its own scope or any ancestor; never from a descendant.
@@ -124,19 +129,44 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
 - The container calls `dispose()` automatically when the service is torn down; child resources release in turn.
 - Disposal order is deterministic (orient.md): child scopes first, then reverse construction order within a scope.
 
-## §5 Eager vs delayed instantiation
+## §5 Scope activation
+
+`ScopeActivation` is the only construction-timing choice for scoped services:
 
 ```ts
-// Eager: constructed when the scope is created
-registerScopedService(LifecycleScope.App, ILogService, LogService, InstantiationType.Eager, 'log');
-
-// Delayed: constructed on first get
-registerScopedService(LifecycleScope.App, IScopeRegistry, ScopeRegistry, InstantiationType.Delayed, 'gateway');
+export enum ScopeActivation {
+  OnScopeCreated = 0,
+  OnDemand = 1,
+}
 ```
 
-A `Delayed` service returns a **Proxy** that constructs the real instance on first property access. Listeners registered on its `onDid…` / `onWill…` events before construction are not lost — the container records them and replays the subscriptions once the instance exists.
+```ts
+// Default: construct the real instance while the App scope is created.
+registerScopedService(
+  LifecycleScope.App,
+  ILogService,
+  LogService,
+  ScopeActivation.OnScopeCreated,
+  'log',
+);
 
-> Rule of thumb: `Eager` for dependency-free, frequently-used, or "early side effect" services (e.g. `ILogService`); default to `Delayed` otherwise.
+// Construct the real instance on the first get(IScopeRegistry).
+registerScopedService(
+  LifecycleScope.App,
+  IScopeRegistry,
+  ScopeRegistry,
+  ScopeActivation.OnDemand,
+  'gateway',
+);
+```
+
+`ScopeActivation.OnScopeCreated` is the default fourth argument. Scope creation constructs every registration using this mode, after constructing its dependencies. If any constructor fails, scope creation fails. Use it for ordinary services and for constructor side effects that must exist when the scope becomes ready.
+
+`ScopeActivation.OnDemand` stores the descriptor without constructing the service. The first `get()` constructs and caches the real instance directly; later `get()` calls return that same instance. Use it only when construction should wait until the service is actually requested.
+
+Both modes use the same dependency graph and reject cycles with `CyclicDependencyError`.
+
+The complete registration signature is `registerScopedService(scope, id, ctor, activation = ScopeActivation.OnScopeCreated, domain?)`: activation is the fourth argument and domain is the fifth.
 
 ## §6 Using a service inside a plain function (`invokeFunction`)
 
@@ -227,9 +257,9 @@ v2's stance: **the dependency graph must be acyclic.**
 2. **Decouple with an event.** If A only needs to know about a change in B, have B emit via `IEventService` and A subscribe, rather than A holding a reference to B.
 3. **Re-partition scope.** One of them may belong at a different tier — moving it makes the cycle disappear.
 
-### Delayed as a cycle-breaker (legacy escape hatch — forbidden)
+### Activation does not break cycles
 
-A legacy mechanism lets a `Delayed` edge turn a "soft cycle" into a non-synchronous Proxy. **Do not use it to bypass cyclic dependencies** — it exists for historical compatibility, not to paper over your design. On `CyclicDependencyError`, refactor per the above.
+Both `ScopeActivation.OnScopeCreated` and `ScopeActivation.OnDemand` construct through the same synchronous dependency graph. Changing activation cannot make a cycle valid. On `CyclicDependencyError`, refactor per the above.
 
 ## Interface cheat sheet
 
@@ -237,7 +267,7 @@ A legacy mechanism lets a `Delayed` edge turn a "soft cycle" into a non-synchron
 |---|---|---|
 | `createDecorator<T>(name)` → `ServiceIdentifier<T>` | §1 | identity (runtime key + compile-time type + param decorator) |
 | `@IService` | §2, §7 | declare a dependency on a constructor param |
-| `registerScopedService(scope, id, ctor, type, domain)` | §1, §3, §5 | bind an impl to a lifetime tier |
+| `registerScopedService(scope, id, ctor, activation, domain)` | §1, §3, §5 | bind an impl to a lifetime tier and construction time |
 | `ServicesAccessor.get(IX)` | §2, §6 | resolve an instance by interface |
 | `IInstantiationService.invokeFunction(fn, …)` | §6, §8 | obtain a temporary accessor inside a function |
 | `IInstantiationService.createInstance(ctor, …args)` | §7 | build a non-singleton object with deps injected |
@@ -245,6 +275,7 @@ A legacy mechanism lets a `Delayed` edge turn a "soft cycle" into a non-synchron
 | `getScopedServiceDescriptors(scope)` | §8 | retrieve all descriptors registered at a tier |
 | `Disposable` / `DisposableStore` / `IDisposable` | §4 | resource management and disposal |
 | `Scope` / `LifecycleScope` | §3, §8 | the lifetime tree |
+| `ScopeActivation` | §3, §5 | choose scope-created or first-`get()` construction |
 | `SyncDescriptor` | (tests / low-level) | package a constructor + static args into a pending descriptor |
 
 > Legacy export (not used in v2, just recognize it): `refineServiceDecorator` is a VS Code leftover DI helper. v2 src/test has zero references; always use `registerScopedService`.
@@ -255,4 +286,4 @@ A legacy mechanism lets a `Delayed` edge turn a "soft cycle" into a non-synchron
 - `@IX` decorates constructor params only; parameter order depends on construction (static-first for `createInstance`, `@IX`-first for scoped services — see service-authoring.md).
 - Both interface and impl carry `_serviceBrand`; the `createDecorator` name is globally unique.
 - `ServicesAccessor` is valid only during `invokeFunction` — never stash it for async use.
-- No cyclic dependencies — refactor (extract / event / re-scope); do not break the cycle with `Delayed`.
+- No cyclic dependencies — refactor (extract / event / re-scope); activation does not change cycle detection.

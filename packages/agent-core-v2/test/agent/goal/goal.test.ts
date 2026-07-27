@@ -14,8 +14,16 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { type AgentGoalService } from '#/agent/goal/goalService';
-import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/update-goal';
-import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
+import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
+import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
+import {
+  createMaxStepsExceededError,
+  IAgentLoopService,
+  type AfterStepContext,
+  type EnqueueReceipt,
+  type Step,
+  type Turn,
+} from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
@@ -1542,6 +1550,26 @@ describe('AgentGoalService core workflow hooks', () => {
       terminalReason: 'Paused after runtime error: boom',
     });
     expect(loopService.launches).toEqual([]);
+  });
+
+  it('continues the goal when a goal turn hits the per-turn step limit', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(4);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn, { reason: 'failed', error: createMaxStepsExceededError(1) });
+
+    expect(goals.getGoal().goal).toMatchObject({ status: 'active', turnsUsed: 1 });
+    expect(loopService.launches).toHaveLength(1);
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_continuation',
+    });
+    const prompt = JSON.stringify(context.get().at(-1)?.content);
+    expect(prompt).toContain('per-turn step limit');
+    expect(prompt).toContain('Pick up where that turn stopped');
   });
 
   it('blocks active goals when the user prompt hook blocks the turn', async () => {

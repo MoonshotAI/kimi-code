@@ -8,8 +8,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentCatalogRuntimeOptions } from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
 import { parseAgentFileText } from '#/app/agentFileCatalog/agentFile';
@@ -67,6 +66,6 @@ registerScopedService(
   LifecycleScope.Session,
   IExplicitFileAgentSource,
   ExplicitFileAgentSource,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionAgentProfileCatalog',
 );

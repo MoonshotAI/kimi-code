@@ -8,8 +8,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -117,6 +116,6 @@ registerScopedService(
   LifecycleScope.App,
   IFlagService,
   FlagService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'flag',
 );

@@ -9,13 +9,12 @@
  * itself only drains the queue and dispatches errors; it never enqueues. A
  * hook-set `stopTurn` still wins over the continuation: the turn ends at the
  * step boundary and the turn-scoped request is discarded by the run-end
- * cleanup. Bound at Agent scope; Eager so the hook registers before the
- * first turn runs (same rationale as `stepRetry`).
+ * cleanup. Bound at Agent scope and constructed with the scope so the hook
+ * registers before the first turn runs (same rationale as `stepRetry`).
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentLoopContinuationService } from './loopContinuation';
 import { IAgentLoopService } from './loop';
@@ -43,6 +42,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentLoopContinuationService,
   AgentLoopContinuationService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'loop',
 );
