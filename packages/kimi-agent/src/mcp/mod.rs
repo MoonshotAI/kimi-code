@@ -2,7 +2,6 @@
 ///
 /// Provides core protocol types, HTTP/stdio transports, connection management,
 /// and tool naming. Ported from `packages/agent-core/src/mcp/`.
-
 pub mod config;
 pub mod connection_manager;
 pub mod output;
