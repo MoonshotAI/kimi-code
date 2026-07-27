@@ -4,9 +4,11 @@ import { join } from 'node:path';
 
 import {
   createKimiHarness,
+  createKimiHarnessV2,
   flushDiagnosticLogsSync,
   log,
   type KimiHarness,
+  type KimiHarnessOptions,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 import {
@@ -29,6 +31,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
+import { isKimiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -60,7 +63,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = createKimiHarness({
+  const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
@@ -76,7 +79,14 @@ export async function runShell(
       });
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
-  });
+  };
+  // Experimental agent-core-v2 route (same gate as `kimi -p`): the harness is
+  // the SDK's v2-backed client; methods not yet migrated throw
+  // `not_implemented`, so the TUI currently fails fast at the first unmigrated
+  // startup call instead of silently mixing engines.
+  const harness = isKimiV2Enabled()
+    ? createKimiHarnessV2(harnessOptions)
+    : createKimiHarness(harnessOptions);
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,

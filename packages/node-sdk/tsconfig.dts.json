@@ -13,7 +13,9 @@
     "src/**/*.ts",
     "../agent-core/src/**/*.ts",
     "../agent-core/src/prompt-modules.d.ts",
+    "../agent-core-v2/src/**/*.ts",
     "../kaos/src/**/*.ts",
+    "../klient/src/**/*.ts",
     "../kosong/src/**/*.ts",
     "../oauth/src/**/*.ts"
   ],
