@@ -17,8 +17,8 @@
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
  * (used by `userTool`; intentionally not persisted, re-derived on resume); the
- * live overlay is cached in a field and falls back to the Model when unset, so
- * no restore-ordering coupling with `userTool` arises. Profile and client
+ * live overlay is held in `agentState` and falls back to the Model when unset,
+ * so no restore-ordering coupling with `userTool` arises. Profile and client
  * policy are persisted independently. The `agent.status.updated`
  * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
  * `usageOps`). `chdir` and
@@ -43,12 +43,18 @@
  * typo in one agent file cannot legitimize the same typo in another, and
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
- * Bound at Agent scope.
+ * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
+ * / the two emitted-warning dedupe sets) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
+ * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
+ * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
+ * fields because the container only holds pure data structures. Bound at
+ * Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -80,12 +86,14 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
 import { IEventBus } from '#/app/event/eventBus';
+import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
 import { prepareSystemPromptContext } from './context';
 import type {
   ApplyProfileOptions,
@@ -101,6 +109,7 @@ import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -139,14 +148,27 @@ function describeInactiveToolPattern(
   }
 }
 
+export const profileActiveToolNamesOverlayKey = defineState<readonly string[] | undefined>(
+  'profile.activeToolNamesOverlay',
+  () => undefined as readonly string[] | undefined,
+);
+export const profileAgentsMdWarningKey = defineState<string | undefined>(
+  'profile.agentsMdWarning',
+  () => undefined as string | undefined,
+);
+export const profileEmittedThinkingEffortWarningsKey = defineState<Set<string>>(
+  'profile.emittedThinkingEffortWarnings',
+  () => new Set(),
+);
+export const profileEmittedToolPatternWarningsKey = defineState<Set<string>>(
+  'profile.emittedToolPatternWarnings',
+  () => new Set(),
+);
+
 export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
-  private activeToolNamesOverlay: readonly string[] | undefined;
-  private agentsMdWarning: string | undefined;
-  private readonly emittedThinkingEffortWarnings = new Set<string>();
-  private readonly emittedToolPatternWarnings = new Set<string>();
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -175,8 +197,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
+    @IAgentStateService private readonly states: IAgentStateService,
+    @IHostIdentity private readonly hostIdentity: IHostIdentity,
   ) {
     super();
+    this.states.register(profileActiveToolNamesOverlayKey);
+    this.states.register(profileAgentsMdWarningKey);
+    this.states.register(profileEmittedThinkingEffortWarningsKey);
+    this.states.register(profileEmittedToolPatternWarningsKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
@@ -191,6 +219,30 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
+  }
+
+  private get activeToolNamesOverlay(): readonly string[] | undefined {
+    return this.states.get(profileActiveToolNamesOverlayKey);
+  }
+
+  private set activeToolNamesOverlay(value: readonly string[] | undefined) {
+    this.states.set(profileActiveToolNamesOverlayKey, value);
+  }
+
+  private get agentsMdWarning(): string | undefined {
+    return this.states.get(profileAgentsMdWarningKey);
+  }
+
+  private set agentsMdWarning(value: string | undefined) {
+    this.states.set(profileAgentsMdWarningKey, value);
+  }
+
+  private get emittedThinkingEffortWarnings(): Set<string> {
+    return this.states.get(profileEmittedThinkingEffortWarningsKey);
+  }
+
+  private get emittedToolPatternWarnings(): Set<string> {
+    return this.states.get(profileEmittedToolPatternWarningsKey);
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -728,6 +780,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
     const known = new Set<string>();
+    // The registry only holds tools the bound Profile activated; the
+    // contribution table is the full static universe, so a valid-but-inactive
+    // name never trips the unknown-tool warning.
+    for (const contribution of getAgentToolContributions()) known.add(contribution.options.name);
     for (const ref of this.toolRegistry.listReferences()) known.add(ref.name);
     for (const builtin of this.builtinProfiles.list()) {
       for (const name of literalToolNames([
@@ -794,6 +850,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       now: new Date().toISOString(),
       skills,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
+      productName: this.hostIdentity.productName,
+      replyStyleGuide: this.hostIdentity.replyStyleGuide,
     };
   }
 
@@ -832,6 +890,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentProfileService,
   AgentProfileService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'profile',
 );

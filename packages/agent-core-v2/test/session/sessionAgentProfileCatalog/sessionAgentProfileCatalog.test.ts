@@ -10,21 +10,49 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { LifecycleScope } from '#/_base/di/scope';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  _clearScopedRegistryForTests,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  IAgentProfileCatalogService,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { AgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalogService';
 import { IAgentCatalogRuntimeOptions } from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/app/agentFileCatalog/configSection';
-import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
+import {
+  IUserFileAgentSource,
+  UserFileAgentSource,
+} from '#/app/agentFileCatalog/userFileAgentSource';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import '#/index';
-import { IExplicitFileAgentSource } from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import {
+  ExplicitFileAgentSource,
+  IExplicitFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';
+import {
+  ExtraFileAgentSource,
+  IExtraFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
+import {
+  IProjectFileAgentSource,
+  ProjectFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/projectFileAgentSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
@@ -182,6 +210,46 @@ function waitForEvent(event: Event<unknown>): Promise<void> {
 }
 
 describe('SessionAgentProfileCatalogService', () => {
+  beforeEach(() => {
+    // `import '#/index'` fills the registry with the whole product graph,
+    // including OnScopeCreated services with unstubbed dependencies, so clear
+    // it and re-register only the real services this suite constructs; their
+    // other dependencies are seeded as stubs by `makeSession`. Builtin agent
+    // profile contributions accumulate in a separate module-level list at
+    // import time and are unaffected by the clear.
+    _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionStateService,
+      SessionStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IAgentProfileCatalogService,
+      AgentProfileCatalogService,
+    );
+    registerScopedService(LifecycleScope.App, IUserFileAgentSource, UserFileAgentSource);
+    registerScopedService(LifecycleScope.App, IHostFileSystem, HostFileSystem);
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionAgentProfileCatalog,
+      SessionAgentProfileCatalogService,
+    );
+    registerScopedService(
+      LifecycleScope.Session,
+      IExplicitFileAgentSource,
+      ExplicitFileAgentSource,
+    );
+    registerScopedService(LifecycleScope.Session, IExtraFileAgentSource, ExtraFileAgentSource);
+    registerScopedService(
+      LifecycleScope.Session,
+      IProjectFileAgentSource,
+      ProjectFileAgentSource,
+    );
+  });
+
   it('lists builtin profiles when no agent directories exist', async () => {
     await withFixture(async (fixture) => {
       const { host, session } = makeSession(fixture);

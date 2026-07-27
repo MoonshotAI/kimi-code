@@ -1,13 +1,29 @@
+/**
+ * `mcp` domain (L5) — `IAgentMcpService` implementation.
+ *
+ * Mirrors the session-level MCP connection manager's server set into the
+ * agent's tool registry: registers qualified tools for connected servers,
+ * keeps them registered across reconnects, swaps in the OAuth tool for
+ * `needs-auth` servers, journals tool discoveries on the wire (queued until
+ * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
+ * events. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
+ * is registered into `agentState` (`IAgentStateService`) and read/written
+ * through it; `mcpTools` stays a plain instance field (its values hold
+ * disposable resource handles, not plain data), as does `pendingDiscoveries`
+ * (a closure queue of deferred discovery writes). Bound at Agent scope.
+ */
+
 import { createHash } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
@@ -66,12 +82,19 @@ interface McpToolRegistration {
   readonly serverName: string;
 }
 
+export const mcpMcpToolsByServerKey = defineState<Map<string, string[]>>(
+  'mcp.mcpToolsByServer',
+  () => new Map(),
+);
+export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
+  'mcp.discoveryWritesReady',
+  () => false,
+);
+
 export class AgentMcpService extends Disposable implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
-  private readonly mcpToolsByServer = new Map<string, string[]>();
   private readonly pendingDiscoveries: Array<() => void> = [];
-  private discoveryWritesReady = false;
 
   constructor(
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
@@ -81,8 +104,11 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(mcpMcpToolsByServerKey);
+    this.states.register(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
     this._register(
       toolExecutor.onWillExecuteTool((event) => {
@@ -95,6 +121,18 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         await next();
       }),
     );
+  }
+
+  private get mcpToolsByServer(): Map<string, string[]> {
+    return this.states.get(mcpMcpToolsByServerKey);
+  }
+
+  private get discoveryWritesReady(): boolean {
+    return this.states.get(mcpDiscoveryWritesReadyKey);
+  }
+
+  private set discoveryWritesReady(value: boolean) {
+    this.states.set(mcpDiscoveryWritesReadyKey, value);
   }
 
   get oauthService() {
@@ -374,6 +412,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMcpService,
   AgentMcpService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'mcp',
 );

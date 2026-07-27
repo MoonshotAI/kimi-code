@@ -3,22 +3,26 @@
  * push anymore: the v2 socket (`/api/v2/ws`) that fed the core/session/agent
  * event streams was removed server-side, so Service panels and the pending
  * interactions card fetch on demand and the sidebar polls.
- * Layout: header / icon rail / view. The `chat` view is the classic trio
- * (left sidebar with workspaces + sessions, chat, inspector); the `models`
- * view is the full-width model catalog; the `services` view is the
- * full-width app-scope Service reflection (`AppServicesView`).
+ * Layout: header / icon rail / view. The `chat` view is a strip of the
+ * left sidebar (workspaces + sessions), the session pane (session Services
+ * / State tabs), the chat column, and the right dock (`RightPanel`) merging
+ * the transcript audit and the agent inspector under Audit / Agent tabs;
+ * the `models` view is the full-width model catalog; the `services` view is
+ * the full-width app-scope Service reflection (`AppServicesView`).
  */
 
 import { useEffect, useState } from 'react';
 
 import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
 
+import type { AuditTrail } from './audit/trail';
 import { AppServicesView } from './components/AppServicesView';
 import { ChatView } from './components/ChatView';
-import { Inspector } from './components/Inspector';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
+import { RightPanel } from './components/RightPanel';
 import { ServerSwitcher } from './components/ServerSwitcher';
+import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
 import { useConnection } from './connection';
 import { errorMessage } from './ui';
@@ -30,6 +34,8 @@ export function App() {
   const [view, setView] = useState<AppView>('chat');
   const [ready, setReady] = useState(false);
   const [resumeError, setResumeError] = useState<unknown>(null);
+  /** Audit trail of the chat view's transcript channel, rendered in the right dock. */
+  const [trail, setTrail] = useState<AuditTrail | null>(null);
 
   // Resume (materialize) the session on the server when it is selected, so
   // session / agent scoped Services become reachable.
@@ -86,18 +92,25 @@ export function App() {
         ) : (
           <>
             <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
+            <SessionPane sessionId={sessionId} ready={ready} />
             {resumeError !== null ? (
               <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
                 Failed to open session: {errorMessage(resumeError)}
               </div>
             ) : (
-              <ChatView sessionId={sessionId} agentId={agentId} ready={ready} />
+              <ChatView
+                sessionId={sessionId}
+                agentId={agentId}
+                ready={ready}
+                onTrailChange={setTrail}
+              />
             )}
-            <Inspector
+            <RightPanel
               sessionId={sessionId}
               agentId={agentId}
               onAgentChange={setAgentId}
               ready={ready}
+              trail={trail}
             />
           </>
         )}

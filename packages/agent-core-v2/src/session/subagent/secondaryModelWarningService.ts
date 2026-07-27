@@ -15,11 +15,11 @@
  * backstop. Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   type IAgentScopeHandle,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
@@ -138,6 +138,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSecondaryModelWarningService,
   SessionSecondaryModelWarningService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'subagent',
 );

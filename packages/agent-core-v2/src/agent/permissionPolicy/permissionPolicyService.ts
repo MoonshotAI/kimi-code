@@ -29,8 +29,7 @@ import {
   type PermissionPolicyEvaluation,
 } from './permissionPolicy';
 import type { PermissionPolicy } from "./types";
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 export class AgentPermissionPolicyService
   extends Disposable
@@ -75,6 +74,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionPolicyService,
   AgentPermissionPolicyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'permissionPolicy',
 );

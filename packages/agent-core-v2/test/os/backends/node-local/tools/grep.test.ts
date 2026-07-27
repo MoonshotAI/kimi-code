@@ -2,7 +2,7 @@ import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
@@ -10,17 +10,17 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
+import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
+import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import {
-  AgentBuiltinToolsRegistrar,
-  IAgentBuiltinToolsRegistrar,
-} from '#/agent/toolRegistry/builtinToolsRegistrar';
-import {
-  _clearToolContributionsForTests,
-  getToolContributions,
-  registerTool,
+  _clearAgentToolContributionsForTests,
+  getAgentToolContributions,
+  registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
 import {
@@ -36,11 +36,13 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import {
   type GrepInput,
   GrepInputSchema,
-  GrepTool as ProductionGrepTool,
-} from '#/os/backends/node-local/tools/grep';
+  IGrepTool,
+} from '#/agent/tools/os/grep/grep';
+import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
+import { registerStateServices } from '../../../../state/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async () => ({ path: '/mock/rg', source: 'system-path' })),
@@ -281,17 +283,22 @@ afterEach(() => {
 });
 
 describe('GrepTool', () => {
-  it('registers contribution metadata through the production DI path', () => {
-    const savedContributions = [...getToolContributions()];
+  it('registers contribution metadata through the production DI path', async () => {
+    const savedContributions = [...getAgentToolContributions()];
     const disposables = new DisposableStore();
     try {
-      _clearToolContributionsForTests();
-      registerTool(ProductionGrepTool, { source: 'user', disclosure: 'deferred' });
+      _clearAgentToolContributionsForTests();
+      registerAgentToolService(IGrepTool, ProductionGrepTool, {
+        name: 'Grep',
+        source: 'user',
+        disclosure: 'deferred',
+      });
 
       const ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
           const kaos = createFakeKaos();
+          registerStateServices(reg);
           reg.defineInstance(IHostProcessService, createTestProcessService(kaos));
           reg.defineInstance(IHostFileSystem, createTestFs(kaos));
           reg.defineInstance(IHostEnvironment, createTestEnv(kaos));
@@ -301,12 +308,19 @@ describe('GrepTool', () => {
             _serviceBrand: undefined,
             catalog: { getSkillRoots: () => [] },
           } as unknown as ISessionSkillCatalog);
+          reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-          reg.define(IAgentBuiltinToolsRegistrar, AgentBuiltinToolsRegistrar);
+          reg.define(IAgentToolActivationService, AgentToolActivationService);
+          reg.definePartialInstance(IAgentProfileService, {
+            data: () => ({}) as unknown as ProfileData,
+          });
+          reg.definePartialInstance(IEventBus, {
+            subscribe: () => toDisposable(() => {}),
+          });
         },
       });
 
-      ix.get(IAgentBuiltinToolsRegistrar);
+      await ix.get(IAgentToolActivationService).activate();
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
       const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');
 
@@ -315,9 +329,9 @@ describe('GrepTool', () => {
       expect(info).toMatchObject({ source: 'user', disclosure: 'deferred' });
     } finally {
       disposables.dispose();
-      _clearToolContributionsForTests();
+      _clearAgentToolContributionsForTests();
       for (const contribution of savedContributions) {
-        registerTool(contribution.ctor, contribution.options);
+        registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }
     }
   });

@@ -13,7 +13,7 @@
  */
 
 import { RateLimiter, TIER_LIMITS, type LangSearchTier } from './rateLimiter';
-import type { WebSearchProvider, WebSearchResult } from '../tools/web-search';
+import type { WebSearchProvider, WebSearchResult } from '#/agent/tools/web-search/web-search';
 
 export type { LangSearchTier } from './rateLimiter';
 

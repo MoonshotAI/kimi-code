@@ -8,8 +8,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { discoverAgentFiles } from '#/app/agentFileCatalog/agentFileDiscovery';
 import {
@@ -62,6 +61,6 @@ registerScopedService(
   LifecycleScope.Session,
   IProjectFileAgentSource,
   ProjectFileAgentSource,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionAgentProfileCatalog',
 );

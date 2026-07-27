@@ -8,7 +8,7 @@
  */
 
 import type { RerankProvider } from '../rerank';
-import type { WebSearchProvider, WebSearchResult } from '../tools/web-search';
+import type { WebSearchProvider, WebSearchResult } from '#/agent/tools/web-search/web-search';
 
 export class RerankingWebSearchProvider implements WebSearchProvider {
   constructor(

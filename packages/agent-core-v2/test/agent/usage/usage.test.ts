@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import {
   IAgentUsageService,
   type UsageRecordedContext,
@@ -34,6 +36,7 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
   log = ix.get(IAppendLogStore);
@@ -59,6 +62,7 @@ function createFreshWire(logKey: string): { readonly fresh: IWireService; readon
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
   freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  freshIx.set(IAgentStateService, new AgentStateService());
   const freshLog = freshIx.get(IAppendLogStore);
   const fresh = registerTestAgentWire(freshIx, testWireScope(SCOPE, logKey), {
     log: freshLog,

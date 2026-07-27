@@ -10,8 +10,7 @@
  * error code.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { AgentProfile } from './agentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from './agentProfileCatalog';
@@ -52,6 +51,6 @@ registerScopedService(
   LifecycleScope.App,
   IAgentProfileCatalogService,
   AgentProfileCatalogService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'agentProfileCatalog',
 );

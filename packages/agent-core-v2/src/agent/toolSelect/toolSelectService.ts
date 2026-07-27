@@ -6,18 +6,21 @@
  * loadable-tools announcement text. Reads live tools from `toolRegistry`,
  * active-tool and capability state from `profile`, gates through `flag`,
  * hooks into `toolExecutor`, and listens to context lifecycle events through
- * `event`. Bound at Agent scope.
+ * `event`. The mutable load-tracking state (`pendingLoaded`) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it. Bound
+ * at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -38,9 +41,13 @@ import {
   type ShapedToolEntry,
 } from './toolSelect';
 
+export const toolSelectPendingLoadedKey = defineState<Set<string>>(
+  'toolSelect.pendingLoaded',
+  () => new Set(),
+);
+
 export class AgentToolSelectService extends Disposable implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
-  private readonly pendingLoaded = new Set<string>();
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -50,8 +57,10 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(toolSelectPendingLoadedKey);
     this._register(
       toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
     );
@@ -66,12 +75,21 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     this._register(
       eventBus.subscribe('context.spliced', (splice) => {
         if (splice.deleteCount === 0 || this.pendingLoaded.size === 0) return;
-        const landed = collectLoadedDynamicToolNames(this.context.get());
-        for (const name of this.pendingLoaded) {
-          if (!landed.has(name)) this.pendingLoaded.delete(name);
-        }
+        this.dropPendingLoadedNotLanded();
       }),
     );
+  }
+
+  private get pendingLoaded(): Set<string> {
+    return this.states.get(toolSelectPendingLoadedKey);
+  }
+
+  private dropPendingLoadedNotLanded(): void {
+    if (this.pendingLoaded.size === 0) return;
+    const landed = collectLoadedDynamicToolNames(this.context.get());
+    for (const name of this.pendingLoaded) {
+      if (!landed.has(name)) this.pendingLoaded.delete(name);
+    }
   }
 
   enabled(): boolean {
@@ -316,6 +334,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolSelectService,
   AgentToolSelectService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolSelect',
 );

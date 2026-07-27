@@ -22,8 +22,7 @@
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog } from '#/kosong/model/catalog';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -284,6 +283,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSwarmService,
   SessionSwarmService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionSwarm',
 );

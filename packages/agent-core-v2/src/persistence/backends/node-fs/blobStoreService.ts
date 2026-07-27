@@ -6,8 +6,7 @@
  * scope strings to namespace their data.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IBlobStore, type BlobReadRange } from '#/persistence/interface/blobStore';
 
@@ -46,6 +45,6 @@ registerScopedService(
   LifecycleScope.App,
   IBlobStore,
   BlobStoreService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'blobStore',
 );

@@ -60,8 +60,7 @@
 
 import { basename, isAbsolute } from 'pathe';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -310,6 +309,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceService,
   WorkspaceService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'workspace',
 );

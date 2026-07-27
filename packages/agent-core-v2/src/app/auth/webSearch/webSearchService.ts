@@ -18,9 +18,9 @@
  * headers. When a rerank backend is configured via `IRerankService`, the
  * resolved provider is wrapped in a `RerankingWebSearchProvider` so its
  * results are reordered by semantic relevance to the query. When none of the
- * sources is configured it yields `undefined` so the self-registering
- * `WebSearch` tool stays hidden. Owns no tool registration —
- * the `WebSearch` tool self-registers via `registerTool(...)` and reads this
+ * sources is configured it yields `undefined` so the contributed `WebSearch`
+ * tool stays hidden. Owns no tool registration — the `WebSearch` tool
+ * contributes itself via `registerAgentToolService(...)` and reads this
  * service from the Agent-scope accessor. Tests and hosts that need a custom
  * backend bind `IWebSearchProviderService` directly. Bound at App scope.
  */
@@ -30,8 +30,7 @@ import {
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -46,7 +45,7 @@ import { LangSearchWebSearchProvider } from './providers/langsearch-web-search';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
 import { RateLimiter, TIER_LIMITS, type LangSearchTier } from './providers/rateLimiter';
 import { RerankingWebSearchProvider } from './providers/reranking-web-search';
-import type { WebSearchProvider } from './tools/web-search';
+import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { IWebSearchProviderService } from './webSearch';
 
 export class WebSearchProviderService implements IWebSearchProviderService {
@@ -163,6 +162,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebSearchProviderService,
   WebSearchProviderService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'auth',
 );

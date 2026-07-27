@@ -2,6 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
+// Imported first on purpose: OnScopeCreated services activate in registry
+// (module evaluation) order, and `onBeforeExecuteTool` veto listeners fire in
+// construction order. The plan guard must register before the permission gate
+// (reached via `#/index` in the harness) so plan-file writes are allowed before
+// deny rules adjudicate.
+import '#/agent/plan/planService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, isAbsolute, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -941,11 +947,11 @@ describe('Plan service', () => {
     it('keeps the preserved injection index aligned after undo removes earlier messages', async () => {
       await plan.enter('test-plan', false);
 
-      ctx.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+      ctx.appendUserTurn('draft the plan');
       await injectDynamic();
       ctx.appendAssistantTurn(1, 'Plan drafted.');
 
-      ctx.undoHistory(1);
+      await ctx.undoHistory(1);
       ctx.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
       await injectDynamic();
 

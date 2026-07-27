@@ -14,13 +14,11 @@ import {
 } from '#/tool/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
-import { CreateGoalTool } from '#/agent/goal/tools/create-goal';
-import { GetGoalTool } from '#/agent/goal/tools/get-goal';
-import { SetGoalBudgetTool } from '#/agent/goal/tools/set-goal-budget';
-import {
-  UpdateGoalTool,
-  UpdateGoalToolInputSchema,
-} from '#/agent/goal/tools/update-goal';
+import { CreateGoalTool } from '#/agent/tools/goal/create-goal/createGoalTool';
+import { GetGoalTool } from '#/agent/tools/goal/get-goal/getGoalTool';
+import { SetGoalBudgetTool } from '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
+import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
+import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
@@ -28,7 +26,7 @@ import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
-import { getToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -446,7 +444,7 @@ describe('goal tool main-agent gating', () => {
   }
 
   it.each(gatedTools)('%s is contributed with a main-agent-only guard', (name, ctor) => {
-    const contribution = getToolContributions().find((c) => c.ctor === ctor);
+    const contribution = getAgentToolContributions().find((c) => c.ctor === ctor);
     expect(contribution, `${name} contribution`).toBeDefined();
     const when = contribution?.options.when;
     expect(when, `${name} must gate on agent identity`).toBeDefined();

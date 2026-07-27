@@ -23,10 +23,9 @@ import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-
 import {
   type GlobInput,
   GlobInputSchema,
-  GlobTool,
   MAX_MATCHES,
-  splitCompletePaths,
-} from '#/os/backends/node-local/tools/glob';
+} from '#/agent/tools/os/glob/glob';
+import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';

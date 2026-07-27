@@ -5,9 +5,11 @@
  * events to the caller-declared subtree and to non-`.gitignore`d paths,
  * debounces them into fixed windows and re-exposes them as workspace-relative
  * `FsChangeEvent`s. The os watcher is started lazily on the first non-empty
- * subscription and stopped when the subscription set becomes empty. Path
- * confinement is lexical (`ISessionWorkspaceContext.isWithin`), matching
- * `sessionFs`.
+ * subscription and stopped when the subscription set becomes empty. The
+ * plain-data state (`watched`, `pending`, `rawCount`, `truncated`,
+ * `gitignoreLoaded`) is registered into `sessionState` (`ISessionStateService`)
+ * and read/written through it. Path confinement is lexical
+ * (`ISessionWorkspaceContext.isWithin`), matching `sessionFs`.
  */
 
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -16,8 +18,8 @@ import ignore, { type Ignore } from 'ignore';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -25,6 +27,7 @@ import {
   type IHostFsWatchHandle,
   IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
+import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { FsChangeEntry, FsChangeEvent } from './fsWatch';
 
@@ -40,20 +43,28 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+export const sessionFsWatchWatchedKey = defineState<Set<string>>(
+  'sessionFsWatch.watched',
+  () => new Set<string>(),
+);
+export const sessionFsWatchPendingKey = defineState<FsChangeEntry[]>('sessionFsWatch.pending', () => []);
+export const sessionFsWatchRawCountKey = defineState<number>('sessionFsWatch.rawCount', () => 0);
+export const sessionFsWatchTruncatedKey = defineState<boolean>('sessionFsWatch.truncated', () => false);
+export const sessionFsWatchGitignoreLoadedKey = defineState<boolean>(
+  'sessionFsWatch.gitignoreLoaded',
+  () => false,
+);
+
 export class SessionFsWatchService extends Disposable implements ISessionFsWatchService {
   declare readonly _serviceBrand: undefined;
 
   private readonly emitter = this._register(new Emitter<FsChangeEvent>());
   readonly onDidChangeFiles: Event<FsChangeEvent> = this.emitter.event;
 
-  private watched = new Set<string>();
   private handle: IHostFsWatchHandle | undefined;
   private handleSub: IDisposable | undefined;
 
   private debounceTimer: NodeJS.Timeout | undefined;
-  private pending: FsChangeEntry[] = [];
-  private rawCount = 0;
-  private truncated = false;
 
   private readonly debounceMs = readPositiveIntEnv(
     'KIMI_CODE_FS_WATCH_DEBOUNCE_MS',
@@ -65,14 +76,59 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   );
 
   private readonly matcher: Ignore = ignore().add('.git/');
-  private gitignoreLoaded = false;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IHostFsWatchService private readonly hostFsWatch: IHostFsWatchService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
   ) {
     super();
+    this.states.register(sessionFsWatchWatchedKey);
+    this.states.register(sessionFsWatchPendingKey);
+    this.states.register(sessionFsWatchRawCountKey);
+    this.states.register(sessionFsWatchTruncatedKey);
+    this.states.register(sessionFsWatchGitignoreLoadedKey);
+  }
+
+  private get watched(): Set<string> {
+    return this.states.get(sessionFsWatchWatchedKey);
+  }
+
+  private set watched(value: Set<string>) {
+    this.states.set(sessionFsWatchWatchedKey, value);
+  }
+
+  private get pending(): FsChangeEntry[] {
+    return this.states.get(sessionFsWatchPendingKey);
+  }
+
+  private set pending(value: FsChangeEntry[]) {
+    this.states.set(sessionFsWatchPendingKey, value);
+  }
+
+  private get rawCount(): number {
+    return this.states.get(sessionFsWatchRawCountKey);
+  }
+
+  private set rawCount(value: number) {
+    this.states.set(sessionFsWatchRawCountKey, value);
+  }
+
+  private get truncated(): boolean {
+    return this.states.get(sessionFsWatchTruncatedKey);
+  }
+
+  private set truncated(value: boolean) {
+    this.states.set(sessionFsWatchTruncatedKey, value);
+  }
+
+  private get gitignoreLoaded(): boolean {
+    return this.states.get(sessionFsWatchGitignoreLoadedKey);
+  }
+
+  private set gitignoreLoaded(value: boolean) {
+    this.states.set(sessionFsWatchGitignoreLoadedKey, value);
   }
 
   get watchedPaths(): readonly string[] {
@@ -226,6 +282,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsWatchService,
   SessionFsWatchService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionFsWatch',
 );

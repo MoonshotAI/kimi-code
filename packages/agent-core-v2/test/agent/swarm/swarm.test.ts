@@ -14,7 +14,8 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
 import { SwarmModel } from '#/agent/swarm/swarmOps';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
-import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/agent-swarm';
+import { AgentSwarmToolInputSchema } from '#/agent/tools/agent-swarm/agent-swarm';
+import { AgentSwarmTool } from '#/agent/tools/agent-swarm/agentSwarmTool';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {

@@ -70,6 +70,20 @@ export function isOfficialPluginSource(source: string): boolean {
   }
 }
 
+/**
+ * Returns true when an installed plugin provably came from a trusted official
+ * source — a zip download under the official CDN plugin path. Local paths,
+ * GitHub repos, and third-party URLs do not qualify, even when their manifest
+ * id matches an official plugin.
+ */
+export function isOfficialPluginInstall(plugin: PluginSummary): boolean {
+  return (
+    plugin.source === 'zip-url' &&
+    plugin.originalSource !== undefined &&
+    isOfficialPluginSource(plugin.originalSource)
+  );
+}
+
 function hostFromUrl(raw: string): string | undefined {
   try {
     const url = new URL(raw);

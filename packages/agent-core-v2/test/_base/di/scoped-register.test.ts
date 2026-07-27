@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { createDecorator } from '#/_base/di/instantiation';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   getScopedServiceDescriptors,
   registerScopedService,
@@ -38,27 +38,62 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
     _clearScopedRegistryForTests();
   });
 
+  it('uses stable activation values', () => {
+    expect(ScopeActivation.OnScopeCreated).toBe(0);
+    expect(ScopeActivation.OnDemand).toBe(1);
+  });
+
   it('filters registrations by scope layer', () => {
-    registerScopedService(LifecycleScope.App, IApp, AppSvc, InstantiationType.Delayed, 'app-domain');
-    registerScopedService(LifecycleScope.Session, ISession, SessionSvc, InstantiationType.Delayed, 'session-domain');
-    registerScopedService(LifecycleScope.Agent, IAgent, AgentSvc, InstantiationType.Eager, 'agent-domain');
+    registerScopedService(
+      LifecycleScope.App,
+      IApp,
+      AppSvc,
+      ScopeActivation.OnDemand,
+      'app-domain',
+    );
+    registerScopedService(
+      LifecycleScope.Session,
+      ISession,
+      SessionSvc,
+      ScopeActivation.OnDemand,
+      'session-domain',
+    );
+    registerScopedService(
+      LifecycleScope.Agent,
+      IAgent,
+      AgentSvc,
+      ScopeActivation.OnScopeCreated,
+      'agent-domain',
+    );
 
     expect(getScopedServiceDescriptors(LifecycleScope.App).map((e) => e.id)).toEqual([IApp]);
     expect(getScopedServiceDescriptors(LifecycleScope.Session).map((e) => e.id)).toEqual([ISession]);
     expect(getScopedServiceDescriptors(LifecycleScope.Agent).map((e) => e.id)).toEqual([IAgent]);
   });
 
-  it('records the domain and delayed-instantiation flag', () => {
-    registerScopedService(LifecycleScope.Session, ISession, SessionSvc, InstantiationType.Delayed, 'session-domain');
-    registerScopedService(LifecycleScope.Agent, IAgent, AgentSvc, InstantiationType.Eager, 'agent-domain');
+  it('records domain and scope activation', () => {
+    registerScopedService(
+      LifecycleScope.Session,
+      ISession,
+      SessionSvc,
+      ScopeActivation.OnDemand,
+      'session-domain',
+    );
+    registerScopedService(
+      LifecycleScope.Agent,
+      IAgent,
+      AgentSvc,
+      ScopeActivation.OnScopeCreated,
+      'agent-domain',
+    );
 
     const [sessionEntry] = getScopedServiceDescriptors(LifecycleScope.Session);
     const [agentEntry] = getScopedServiceDescriptors(LifecycleScope.Agent);
 
     expect(sessionEntry?.domain).toBe('session-domain');
-    expect(sessionEntry?.descriptor.supportsDelayedInstantiation).toBe(true);
+    expect(sessionEntry?.activation).toBe(ScopeActivation.OnDemand);
     expect(agentEntry?.domain).toBe('agent-domain');
-    expect(agentEntry?.descriptor.supportsDelayedInstantiation).toBe(false);
+    expect(agentEntry?.activation).toBe(ScopeActivation.OnScopeCreated);
   });
 
   it('allows the same id to coexist at different scopes', () => {

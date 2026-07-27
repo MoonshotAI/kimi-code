@@ -1,4 +1,4 @@
-import type { WebSearchProvider, WebSearchResult } from '../tools/web-search';
+import type { WebSearchProvider, WebSearchResult } from '#/agent/tools/web-search/web-search';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean | undefined }): Promise<string>;

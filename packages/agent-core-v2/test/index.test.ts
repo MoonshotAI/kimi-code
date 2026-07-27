@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   WIRE_PROTOCOL_VERSION,
+  CHECKPOINTED_MODELS,
   IAgentContextMemoryService,
   IAgentContextSizeService,
   IAgentGoalService,
@@ -23,6 +24,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { todoSet, TodoModel } from '#/session/todo/todoOps';
 import { OP_REGISTRY } from '#/wire/op';
+import { MODEL_CROSS_REDUCERS } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import { registerTestAgentWire, restoreTestAgentWire } from './wire/stubs';
@@ -162,7 +164,42 @@ describe('v1 wire vocabulary', () => {
 
     await restoreTestAgentWire(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel)).toEqual([{ title: 'restore me', status: 'in_progress' }]);
+    expect(fresh.getModel(TodoModel).current).toEqual([
+      { title: 'restore me', status: 'in_progress' },
+    ]);
+  });
+});
+
+describe('conversation-time checkpoint registration', () => {
+  // Models that react to context.* records but deliberately stay on world time
+  // (ephemeral notice state that must not travel through undo) are exempt.
+  // Registering a new context-reacting model without `defineCheckpointedModel`
+  // fails this test — add the name here only with a justification.
+  const CHECKPOINT_EXEMPT_MODELS: ReadonlySet<string> = new Set([
+    // goalForkNotice is one-shot reminder bookkeeping, not conversation state.
+    'goalForkNotice',
+  ]);
+  const CONTEXT_OPS = [
+    'context.append_message',
+    'context.apply_compaction',
+    'context.clear',
+    'context.undo',
+  ];
+
+  it('registers every context-reacting model as checkpointed or explicitly exempt', () => {
+    const violations: string[] = [];
+    let entries = 0;
+    for (const opType of CONTEXT_OPS) {
+      for (const entry of MODEL_CROSS_REDUCERS.get(opType) ?? []) {
+        entries += 1;
+        if (CHECKPOINTED_MODELS.includes(entry.model)) continue;
+        if (CHECKPOINT_EXEMPT_MODELS.has(entry.model.name)) continue;
+        violations.push(`${entry.model.name} (on ${opType})`);
+      }
+    }
+    // Guard against a vacuous pass when module loading changes.
+    expect(entries).toBeGreaterThan(0);
+    expect(violations).toEqual([]);
   });
 });
 

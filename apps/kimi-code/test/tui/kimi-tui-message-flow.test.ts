@@ -8,7 +8,12 @@ import {
   resetCapabilitiesCache,
   setCapabilities,
 } from '@moonshot-ai/pi-tui';
-import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  Event,
+  GoalSnapshot,
+} from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
@@ -309,6 +314,29 @@ async function makeDriver(
   driver.persistInputHistory = vi.fn(async () => {});
   await driver.init();
   return { driver, session, harness };
+}
+
+function makeActiveGoalSnapshot(): GoalSnapshot {
+  return {
+    goalId: 'g1',
+    objective: 'Ship the feature',
+    status: 'active',
+    turnsUsed: 3,
+    tokensUsed: 100,
+    wallClockMs: 1000,
+    budget: {
+      tokenBudget: null,
+      turnBudget: null,
+      wallClockBudgetMs: null,
+      remainingTokens: null,
+      remainingTurns: null,
+      remainingWallClockMs: null,
+      tokenBudgetReached: false,
+      turnBudgetReached: false,
+      wallClockBudgetReached: false,
+      overBudget: false,
+    },
+  };
 }
 
 function renderTranscript(driver: MessageDriver): string {
@@ -1643,6 +1671,91 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([{ text: 'queued message', agentId: 'main' }]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+  });
+
+  it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('hello mid-goal');
+
+    expect(session.steer).toHaveBeenCalledWith('hello mid-goal');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello mid-goal',
+      }),
+    ]);
+  });
+
+  it('resets the streaming phase when steering mid-goal input fails', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('hello mid-goal');
+
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to steer: session closed');
+  });
+
+  it('steers a queued message at a turn boundary while a goal is active', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('mid-goal note');
+    expect(driver.state.queuedMessages).toEqual([{ text: 'mid-goal note', agentId: 'main' }]);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      (item) => {
+        driver.sendQueuedMessage(session, item);
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(session.steer).toHaveBeenCalledWith('mid-goal note');
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('prompts the queued message as a new turn when no goal is active', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('after the turn');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      (item) => {
+        driver.sendQueuedMessage(session, item);
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after the turn');
+    });
+    expect(session.steer).not.toHaveBeenCalled();
   });
 
   it('cancels active streaming from Escape and Ctrl-C editor shortcuts', async () => {
@@ -4081,6 +4194,75 @@ command = "vim"
     });
   });
 
+  it('shows a quota note after installing a quota-consuming official plugin', async () => {
+    const session = makeSession({
+      installPlugin: vi.fn(async () => ({
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '3.3.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hasErrors: false,
+        source: 'zip-url',
+        originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    // Official sources skip the trust prompt, so the install runs immediately.
+    driver.handleUserInput(
+      '/plugins install https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
+      expect(transcript).toContain('Note: This plugin consumes your quota.');
+    });
+  });
+
+  it('does not show the quota note for a same-id fork installed from a local path', async () => {
+    const session = makeSession({
+      installPlugin: vi.fn(async () => ({
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '3.3.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hasErrors: false,
+        source: 'local-path',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install ./plugins/kimi-datasource-fork');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    // The manifest id matches a billed plugin, but a local-path install is
+    // not the official quota-consuming build.
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Installed Kimi Datasource');
+    });
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Note: This plugin consumes your quota.',
+    );
+  });
+
   it('does not install when the third-party trust prompt is dismissed', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
@@ -4147,6 +4329,7 @@ command = "vim"
       const transcript = stripSgr(renderTranscript(driver));
       expect(transcript).toContain('Installed Demo');
       expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
+      expect(transcript).not.toContain('Note: This plugin consumes your quota.');
     });
     // Installing closes the panel so the success notice / reload tip is visible.
     await vi.waitFor(() => {

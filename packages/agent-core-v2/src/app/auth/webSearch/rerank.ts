@@ -10,7 +10,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { RateLimiter } from './providers/rateLimiter';
-import type { WebSearchResult } from './tools/web-search';
+import type { WebSearchResult } from '#/agent/tools/web-search/web-search';
 
 export interface RerankProvider {
   rerank(query: string, results: WebSearchResult[], signal?: AbortSignal): Promise<WebSearchResult[]>;

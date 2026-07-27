@@ -11,7 +11,7 @@
  */
 
 import type { RerankProvider } from '../rerank';
-import type { WebSearchResult } from '../tools/web-search';
+import type { WebSearchResult } from '#/agent/tools/web-search/web-search';
 import { RateLimiter, TIER_LIMITS, type LangSearchTier } from './rateLimiter';
 
 export interface LangSearchRerankProviderOptions {

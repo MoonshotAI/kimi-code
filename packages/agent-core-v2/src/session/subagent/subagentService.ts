@@ -11,9 +11,13 @@
  * picks its summary policy from the profile catalog. Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -75,6 +79,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSubagentService,
   SessionSubagentService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'subagent',
 );

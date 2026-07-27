@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `SyncDescriptor` packaging a constructor + static args for lazy instantiation.
+ * `di` domain (L0) — `SyncDescriptor` packaging a constructor and its static arguments.
  */
 
 export class SyncDescriptor<T> {
@@ -11,7 +11,6 @@ export class SyncDescriptor<T> {
     ctor: new (...args: any[]) => T,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public readonly staticArguments: ReadonlyArray<any> = [],
-    public readonly supportsDelayedInstantiation: boolean = false,
   ) {
     this.ctor = ctor;
   }
