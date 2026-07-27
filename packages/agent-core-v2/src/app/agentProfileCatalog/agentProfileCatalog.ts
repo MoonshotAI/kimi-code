@@ -11,8 +11,9 @@
  * Every profile is self-contained: `systemPrompt(context)` returns the complete
  * prompt (base + role overlay are merged at definition time, not at spawn
  * time). Profiles stay independent of concrete model aliases, but may declare
- * a symbolic primary/secondary preference used as the default when spawned as
- * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
+ * a model-preference slot name (from `[subagent_models]`, or `'primary'` for
+ * the caller's model) used as the default when spawned as a subagent.
+ * The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
  * default profile used when an Agent is bound to a Model without naming a
  * profile.
  *
@@ -38,7 +39,7 @@ import type { ISessionProcessRunner } from '#/session/process/processRunner';
 
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
 
-export type AgentModelPreference = 'primary' | 'secondary';
+export type AgentModelPreference = string;
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;

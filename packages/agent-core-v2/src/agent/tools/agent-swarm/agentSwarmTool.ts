@@ -22,6 +22,8 @@
  * pattern used by every agent tool. Bound at Agent scope.
  */
 
+import { z } from 'zod';
+
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -32,7 +34,11 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import {
+  ISessionSwarmService,
+  type SessionSwarmModelBinding,
+  type SessionSwarmTask,
+} from '#/session/swarm/sessionSwarm';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import {
@@ -44,6 +50,7 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import {
   buildSubagentModelDescriptions,
   resolveSubagentBinding,
+  resolveSubagentModelListForPresentation,
   resolveSubagentTimeoutMs,
 } from '#/session/subagent/configSection';
 import {
@@ -86,7 +93,78 @@ interface SwarmRunResult {
 export class AgentSwarmTool implements IAgentSwarmTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'AgentSwarm' as const;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
+
+  private parametersCache:
+    | {
+        readonly kind: 'unavailable' | 'legacy' | 'slots';
+        readonly slotNames: readonly string[];
+        readonly parameters: Record<string, unknown>;
+      }
+    | undefined;
+
+  get parameters(): Record<string, unknown> {
+    const slots = resolveSubagentModelListForPresentation(this.config, this.flags);
+    const kind =
+      slots === undefined
+        ? 'unavailable'
+        : slots === null
+          ? 'legacy'
+          : 'slots';
+    const cached = this.parametersCache;
+    if (
+      cached?.kind === kind &&
+      (slots === undefined ||
+        slots === null ||
+        (cached.slotNames.length === slots.length &&
+          slots.every((slot, index) => cached.slotNames[index] === slot.name)))
+    ) {
+      return cached.parameters;
+    }
+
+    let parameters: Record<string, unknown>;
+    if (slots === undefined) {
+      parameters = toInputJsonSchema(
+        AgentSwarmToolInputSchema.extend({
+          model: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              'Subagent model selection is unavailable because the configured model slots are invalid. Review the session warning and fix the configuration before spawning subagents.',
+            ),
+        }),
+      );
+    } else if (slots !== null) {
+      const names = [...slots.map((s) => s.name), 'primary'];
+      const dynamicSchema = AgentSwarmToolInputSchema.extend({
+        model: z
+          .enum(names as [string, ...string[]])
+          .optional()
+          .describe(
+            'Which model to run the item-spawned subagents on: "primary" (the main model) or a named slot from the configured subagent models. This explicit choice overrides the selected agent type\'s model_preference; without either, the configured default slot (or the first configured slot) is used. Resumed subagents always keep their own model.',
+          ),
+      });
+      parameters = toInputJsonSchema(dynamicSchema);
+    } else {
+      const legacySchema = AgentSwarmToolInputSchema.extend({
+        model: z
+          .enum(['secondary', 'primary'] as [string, ...string[]])
+          .optional()
+          .describe(
+            'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Resumed subagents always keep their own model.',
+          ),
+      });
+      parameters = toInputJsonSchema(legacySchema);
+    }
+
+    this.parametersCache = {
+      kind,
+      slotNames: slots?.map((slot) => slot.name) ?? [],
+      parameters,
+    };
+    return parameters;
+  }
 
   private readonly callerAgentId: string;
 
@@ -152,7 +230,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    let binding: { model: string; thinking?: string } | undefined;
+    let binding: SessionSwarmModelBinding | undefined;
     if ((args.items?.length ?? 0) > 0) {
       await this.catalog.ready;
       const own = this.profile.data();
@@ -209,7 +287,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       tasks,
     });
     return renderSwarmResults(
-      results.map(({ task, ...result }) => ({ spec: task.data as AgentSwarmSpec, ...result })),
+      results.map(({ task, ...result }) => ({ spec: task.data, ...result })),
     );
   }
 }

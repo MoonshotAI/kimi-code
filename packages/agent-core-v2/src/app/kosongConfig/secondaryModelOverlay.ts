@@ -32,7 +32,7 @@
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
 import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
 import { isPlainObject } from '#/app/config/toml';
-import type { ModelOverride } from '#/kosong/model/model';
+import { type ModelOverride, type ModelsSection } from '#/kosong/model/model';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -40,6 +40,9 @@ import {
   SECONDARY_MODEL_SECTION,
   type SecondaryModelConfig,
 } from './configSection';
+import {
+  markRuntimeOnlyModelRecord,
+} from './runtimeOnlyModels';
 
 /**
  * The reserved registry id of the synthesized derived entry. Listing edges
@@ -73,6 +76,7 @@ function withoutKey(value: unknown, key: string): unknown {
 }
 
 export const secondaryModelOverlay: ConfigEffectiveOverlay = {
+  phase: 'derived',
   apply(effective, _getEnv, validate) {
     const secondary = effective[SECONDARY_MODEL_SECTION] as SecondaryModelConfig | undefined;
     const patch = secondaryModelPatch(secondary);
@@ -88,10 +92,12 @@ export const secondaryModelOverlay: ConfigEffectiveOverlay = {
       ...baseFields,
       overrides: { ...asRecord(baseOverrides), ...patch },
     };
-    effective[MODELS_SECTION] = validate(MODELS_SECTION, {
+    const next = validate(MODELS_SECTION, {
       ...models,
       [SECONDARY_DERIVED_MODEL_ID]: derived,
-    });
+    }) as ModelsSection;
+    markRuntimeOnlyModelRecord(next[SECONDARY_DERIVED_MODEL_ID]);
+    effective[MODELS_SECTION] = next;
     return [MODELS_SECTION];
   },
 

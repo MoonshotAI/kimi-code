@@ -6,6 +6,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -13,7 +14,6 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
 import { SwarmModel } from '#/agent/swarm/swarmOps';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { AgentSwarmToolInputSchema } from '#/agent/tools/agent-swarm/agent-swarm';
 import { AgentSwarmTool } from '#/agent/tools/agent-swarm/agentSwarmTool';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -94,9 +94,18 @@ function stubConfig(section?: {
   model?: string;
   defaultEffort?: string;
 }): IConfigService {
+  const value = (key: unknown): unknown =>
+    key === 'subagentModels' ? undefined : section;
   return {
     _serviceBrand: undefined,
-    get: () => section,
+    get: value,
+    inspect: (key: unknown) => ({
+      value: value(key),
+      defaultValue: undefined,
+      userValue: value(key),
+      memoryValue: undefined,
+    }),
+    diagnostics: () => [],
   } as unknown as IConfigService;
 }
 
@@ -818,8 +827,8 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [
-          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
-          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
+          expect.objectContaining({ binding: expect.objectContaining({ model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low', source: 'legacy-secondary', slotName: 'secondary' }) }),
+          expect.objectContaining({ binding: expect.objectContaining({ model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low', source: 'legacy-secondary', slotName: 'secondary' }) }),
         ],
       }),
     );
@@ -848,21 +857,28 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [
-          expect.objectContaining({ binding: { model: 'main-model', thinking: 'high' } }),
-          expect.objectContaining({ binding: { model: 'main-model', thinking: 'high' } }),
+          expect.objectContaining({ binding: expect.objectContaining({ model: 'main-model', thinking: 'high', source: 'primary' }) }),
+          expect.objectContaining({ binding: expect.objectContaining({ model: 'main-model', thinking: 'high', source: 'primary' }) }),
         ],
       }),
     );
   });
 
-  it('advertises both selectable models in the description only when configured', async () => {
+  it('advertises the exact legacy model choices when configured', async () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain('Available models (pass via model):');
-    expect(configured.description).toContain('- secondary: provider/secondary (default)');
-    expect(configured.description).toContain('- primary: main-model');
+    expect(configured.description).toContain(
+      [
+        'Available models (pass via model):',
+        '- secondary (default): provider/secondary | The configured secondary model; prefer it for routine subagent tasks.',
+        '- primary: main-model — the main model you are running on; use it for hard, quality-sensitive subagent tasks',
+      ].join('\n'),
+    );
+  });
 
+  it('omits model choices when no subagent model is configured', async () => {
+    const host = mockSwarmHost();
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 
     expect(unconfigured.description).not.toContain('Available models');

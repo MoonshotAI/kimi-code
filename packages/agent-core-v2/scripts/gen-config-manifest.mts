@@ -314,7 +314,7 @@ export async function buildConfigManifest(): Promise<string> {
     '# One [table] per registered config section, in the on-disk config.toml shape',
     '# (snake_case keys). Un-commented assignments are registered defaults;',
     '# commented "# field: type" lines describe the remaining schema fields.',
-    '# Values resolve as: default -> config.toml -> env overlay -> memory.',
+    '# Values resolve as: default -> config.toml -> env overlay -> memory -> derived overlay.',
     '',
     `# Index (${sections.length} sections · ${overlays.length} overlay(s))`,
   ];

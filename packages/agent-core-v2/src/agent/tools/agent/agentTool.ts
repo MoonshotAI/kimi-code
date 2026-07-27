@@ -27,6 +27,8 @@
  * dynamically registered tools. Bound at Agent scope.
  */
 
+import { z } from 'zod';
+
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   isAbortError,
@@ -83,6 +85,7 @@ import {
   buildSubagentModelDescriptions,
   formatSubagentTimeoutDescription,
   resolveSubagentBinding,
+  resolveSubagentModelListForPresentation,
   resolveSubagentTimeoutMs,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
@@ -94,7 +97,7 @@ import {
   RESUME_WITH_TYPE_UNAVAILABLE,
   RESUMED_LABEL,
   SUBAGENT_STOPPED_MESSAGE,
-  SubagentToolInputSchema,
+  SubagentToolInputObjectSchema,
   USER_INTERRUPTED_SUBAGENT_MESSAGE,
   type SubagentToolInput,
 } from './agent';
@@ -107,7 +110,78 @@ import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(SubagentToolInputSchema);
+
+  private parametersCache:
+    | {
+        readonly kind: 'unavailable' | 'legacy' | 'slots';
+        readonly slotNames: readonly string[];
+        readonly parameters: Record<string, unknown>;
+      }
+    | undefined;
+
+  get parameters(): Record<string, unknown> {
+    const slots = resolveSubagentModelListForPresentation(this.config, this.flags);
+    const kind =
+      slots === undefined
+        ? 'unavailable'
+        : slots === null
+          ? 'legacy'
+          : 'slots';
+    const cached = this.parametersCache;
+    if (
+      cached?.kind === kind &&
+      (slots === undefined ||
+        slots === null ||
+        (cached.slotNames.length === slots.length &&
+          slots.every((slot, index) => cached.slotNames[index] === slot.name)))
+    ) {
+      return cached.parameters;
+    }
+
+    let parameters: Record<string, unknown>;
+    if (slots === undefined) {
+      parameters = toInputJsonSchema(
+        SubagentToolInputObjectSchema.extend({
+          model: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              'Subagent model selection is unavailable because the configured model slots are invalid. Review the session warning and fix the configuration before spawning subagents.',
+            ),
+        }),
+      );
+    } else if (slots !== null) {
+      const names = [...slots.map((s) => s.name), 'primary'];
+      const dynamicSchema = SubagentToolInputObjectSchema.extend({
+        model: z
+          .enum(names as [string, ...string[]])
+          .optional()
+          .describe(
+            'Which model to run the subagent on: "primary" (the main model) or a named slot from the configured subagent models. This explicit choice overrides the selected agent type\'s model_preference; without either, the configured default slot (or the first configured slot) is used. Ignored when resuming — resumed subagents keep their own model.',
+          ),
+      });
+      parameters = toInputJsonSchema(dynamicSchema);
+    } else {
+      const legacySchema = SubagentToolInputObjectSchema.extend({
+        model: z
+          .enum(['secondary', 'primary'] as [string, ...string[]])
+          .optional()
+          .describe(
+            'Which model to run the subagent on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Ignored when resuming — resumed subagents keep their own model.',
+          ),
+      });
+      parameters = toInputJsonSchema(legacySchema);
+    }
+
+    this.parametersCache = {
+      kind,
+      slotNames: slots?.map((slot) => slot.name) ?? [],
+      parameters,
+    };
+    return parameters;
+  }
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -281,7 +355,7 @@ export class SubagentTool implements ISubagentTool {
           labels: subagentLabels(this.callerAgentId),
         });
       } catch (error) {
-        throw wrapSubagentModelError(error, binding.model, own.modelAlias);
+        throw wrapSubagentModelError(error, binding.model, own.modelAlias, binding.source, binding.slotName);
       }
       created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
       created.accessor

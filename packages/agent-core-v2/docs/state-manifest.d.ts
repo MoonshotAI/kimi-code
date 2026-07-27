@@ -188,7 +188,7 @@ export interface SessionStateSnapshot {
         readonly tools?: readonly string[];
         readonly disallowedTools?: readonly string[];
         readonly subagents?: readonly string[];
-        readonly modelPreference?: 'primary' | 'secondary';
+        readonly modelPreference?: string;
         systemPrompt: (context: /* AgentProfileContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
           readonly cwd?: string;
           readonly cwdListing?: string;
@@ -254,7 +254,7 @@ export interface SessionStateSnapshot {
     readonly tools?: readonly string[];
     readonly disallowedTools?: readonly string[];
     readonly subagents?: readonly string[];
-    readonly modelPreference?: 'primary' | 'secondary';
+    readonly modelPreference?: string;
     systemPrompt: (context: /* AgentProfileContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
       readonly cwd?: string;
       readonly cwdListing?: string;

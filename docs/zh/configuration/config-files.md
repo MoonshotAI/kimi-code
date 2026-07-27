@@ -106,6 +106,7 @@ timeout = 5
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
+| `subagent_models` | `table` | — | 子 Agent 的命名模型槽位 → [`subagent_models`](#subagent_models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
@@ -115,7 +116,7 @@ timeout = 5
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
+以下各节对 `providers`、`models`、`subagent_models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -188,11 +189,45 @@ display_name = "Kimi for Coding (custom)"
 
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
-## `secondary_model`
+## `subagent_models`
 
-次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
+命名子 Agent 模型槽位允许主 Agent 根据你提供的说明，为每项委派任务自主选择模型。每个 `[subagent_models."<name>"]` 条目指向一个已配置的 `[models]` alias。实验功能启用后，`Agent` 与 `AgentSwarm` 会向主 Agent 展示每个槽位的名称、模型、说明和推荐用途，并同时提供代表主模型的 `primary`。
 
 该功能目前是实验功能，默认关闭。在 `kimi web` 下，通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用；在 `kimi -p` 下，选择 v2 引擎本就需要 `KIMI_CODE_EXPERIMENTAL_FLAG=1`，该 master flag 也会启用本功能。交互式 TUI 会忽略该配置。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | — | 必填，已配置 `[models]` 中的模型 id |
+| `description` | `string` | — | 必填，主 Agent 选择槽位时读取的说明；应写明模型在成本、速度、质量或其他方面的取舍 |
+| `recommended_for` | `string[]` | `[]` | 可选，与说明一起展示的任务类别 |
+| `default` | `boolean` | `false` | 工具调用与所选 Agent profile 都未指定模型时，将此槽位设为默认值。最多一个槽位可设为 `true`；若均未设置，则以首个槽位为默认值 |
+| 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对使用该槽位的子 Agent 生效的补丁 |
+
+```toml
+[subagent_models.fast]
+model = "fast-model"
+description = "适合常规搜索与格式整理的低成本、低延迟模型。"
+recommended_for = ["search", "formatting"]
+default = true
+default_effort = "low"
+
+[subagent_models.quality]
+model = "quality-model"
+description = "适合架构与复杂代码的高推理质量模型。"
+recommended_for = ["architecture", "complex_code"]
+```
+
+`Agent` 或 `AgentSwarm` 显式传入的 `model` 优先级最高，其次是所选 Agent profile 的 `model_preference`，最后是配置的默认槽位。传入 `primary` 可使用调用方的主模型。恢复已有子 Agent 时始终保留其原模型。
+
+除 `model`、`description`、`recommended_for` 和 `default` 外的字段都会形成模型补丁。带补丁的槽位会在内存中获得一个私有派生模型条目；不带补丁的槽位直接绑定 `model`。派生条目不会写入 `config.toml`，也不会出现在模型选择列表中。如果槽位会与 `[models.__sm__fast]` 这类用户模型冲突，该槽位会被拒绝并产生启动警告，不会覆盖或选择用户模型。无效槽位不会出现在主 Agent 看到的模型选项中，因此普通对话仍可继续；使用该无效配置派生子 Agent 时则会安全拒绝。
+
+槽位名称必须以字母开头，并且只能包含字母、数字和下划线。`primary` 以及以 `__` 开头的名称为保留名称。
+
+## `secondary_model`
+
+次主力模型是[命名子 Agent 模型](#subagent_models)的旧版单槽位形式，仅在 `[subagent_models]` 为空时使用：新派生的子 Agent 默认绑定该模型，主 Agent 可在 `secondary` 与 `primary` 之间选择。两个配置段均未设置时，子 Agent 继承主 Agent 的模型。
+
+该配置使用上文所述的同一实验 flag 与产品支持范围。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

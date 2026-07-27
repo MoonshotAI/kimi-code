@@ -106,6 +106,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
 | `models` | `table` | — | Model alias table → [`models`](#models) |
+| `subagent_models` | `table` | — | Named model slots for subagents → [`subagent_models`](#subagent_models) |
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
@@ -115,7 +116,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `tools`, `image`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `subagent_models`, `thinking`, `loop_control`, `background`, `tools`, `image`, `services`, and `permission`.
 
 ## `providers`
 
@@ -188,11 +189,45 @@ display_name = "Kimi for Coding (custom)"
 
 You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model).
 
-## `secondary_model`
+## `subagent_models`
 
-The secondary model is a second model pointer next to the primary `default_model` — typically a cheaper model that features can bind to when they do not need the main model. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"secondary"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model.
+Named subagent model slots let the main agent choose a model for each delegated task from descriptions you provide. Each `[subagent_models."<name>"]` entry points to a configured `[models]` alias. When the experiment is enabled, `Agent` and `AgentSwarm` show the main agent every slot's name, model, description, and recommended uses, together with `primary` for the main model.
 
 This feature is experimental and disabled by default. Under `kimi web`, enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`. Under `kimi -p`, `KIMI_CODE_EXPERIMENTAL_FLAG=1` is already required to select the v2 engine and also enables this feature. The interactive TUI ignores the configuration.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | — | Required model id from your configured `[models]` |
+| `description` | `string` | — | Required guidance the main agent reads when choosing a slot; describe the model's cost, speed, quality, or other relevant trade-offs |
+| `recommended_for` | `string[]` | `[]` | Optional task categories shown alongside the description |
+| `default` | `boolean` | `false` | Makes this slot the default when neither the tool call nor the selected agent profile chooses one. At most one slot may set it; without one, the first configured slot is the default |
+| Other fields | — | — | Accepts every field of [`[models."<alias>".overrides]`](#models) (`max_context_size`, `max_output_size`, `support_efforts`, …) as a patch applied only to subagents using this slot |
+
+```toml
+[subagent_models.fast]
+model = "fast-model"
+description = "Low-cost, low-latency model for routine searches and formatting."
+recommended_for = ["search", "formatting"]
+default = true
+default_effort = "low"
+
+[subagent_models.quality]
+model = "quality-model"
+description = "Highest reasoning quality for architecture and complex code."
+recommended_for = ["architecture", "complex_code"]
+```
+
+An explicit `model` passed to `Agent` or `AgentSwarm` takes priority over the selected agent profile's `model_preference`; the profile preference takes priority over the configured default slot. Pass `primary` to use the caller's main model. A resumed subagent always keeps its existing model.
+
+Every field besides `model`, `description`, `recommended_for`, and `default` forms a model patch. A patched slot receives a private derived model entry in memory, while an unpatched slot binds its `model` directly. Derived entries are never written to `config.toml` or shown in model pickers. A slot that would collide with a user-owned derived entry such as `[models.__sm__fast]` is rejected and produces a startup warning instead of overwriting or selecting that model. Invalid slots are omitted from the model choices shown to the main agent, so ordinary conversation remains available, while attempts to spawn with the invalid configuration fail closed.
+
+Slot names must start with a letter and contain only letters, numbers, and underscores. `primary` and names starting with `__` are reserved.
+
+## `secondary_model`
+
+The secondary model is the legacy single-slot form of [named subagent models](#subagent_models). It is used only when `[subagent_models]` is empty: newly spawned subagents bind to it by default, and the main agent can choose between `secondary` and `primary`. When neither section is configured, subagents inherit the main agent's model.
+
+It uses the same experimental flag and surface support described above.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |

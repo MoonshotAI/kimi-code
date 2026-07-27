@@ -78,11 +78,20 @@ User      config.toml (persisted user preferences)
 Operational env overlay (e.g. KIMI_MODEL_*, KIMI_CODE_EXPERIMENTAL_*)
    ↓
 Memory    per-run intent (CLI flags); never persisted; highest
+   ↓
+Derived overlays    synthesize runtime-only values from the fully resolved inputs
 ```
 
 `set(domain, patch, target?)` writes the `User` layer (persisted) by default;
 pass `ConfigTarget.Memory` for a per-run override that is never written to disk.
 `inspect(domain)` reports the value at each layer.
+
+Effective overlays declare a phase. Environment overlays run before Memory so
+the per-run layer remains the highest user/operator input. Derived overlays run
+after Memory and may synthesize runtime-only sibling values from the fully
+resolved inputs. `[secondary_model]` and `[subagent_models]` use the derived
+phase so patched recipes supplied through `ConfigTarget.Memory` materialize the
+same model entries as persisted recipes.
 
 ## Layout
 
@@ -232,7 +241,7 @@ This means registration order is never a correctness concern — you do not need
 - `rawSnake` — snake_case clone of the file; the write base, never carries the env overlay.
 - `raw` — camelCase, env-free; the read/set/replace base.
 - `validated` — validated `raw`, env-free; the base every live env re-application starts from, so a degraded or removed env value falls back to the file instead of a stale overlay.
-- `effective` — `validated` plus the env overlay, recomputed on load/set; `get()`/`getAll()` re-apply the overlay on a fresh `validated` copy per read rather than caching it.
+- `effective` — `validated` plus section env bindings and environment overlays, then Memory input, then derived overlays; recomputed on load/set. `get()`/`getAll()` rebuild the same sequence from a fresh `validated` copy per read rather than caching live env values.
 
 ### `KIMI_MODEL_*` env overlay
 
@@ -270,3 +279,37 @@ The authoritative, always-current list of registered sections — rendered in th
 - Reading config / calling `configure(...)` / switching model at runtime must not rewrite `config.toml`; runtime state lives in memory and the session wireRecord, not the file.
 - Never persist env overlays (`__kimi_env__` / `__kimi_env_model__` / shell API key / experimental env); overlays live only in `effective` / `Memory`.
 - Registering from an Agent-scope service is fine — the late-registration mechanism keeps validation correct; do not add an eager bootstrap.
+
+## `[subagent_models]` — named model slots
+
+When model slots are configured under `[subagent_models]`, the Agent and AgentSwarm
+tool schemas dynamically expose the slot names as the `model` parameter enum.
+Each slot references a `[models]` alias and can layer patch fields that are
+synthesised into a derived model entry (e.g. `__sm__fast`).
+
+```toml
+[subagent_models.fast]
+model = "fast-model"
+description = "Fast, budget-friendly model. Best for routine / low-risk tasks."
+recommended_for = ["routine", "data_processing"]
+
+[subagent_models.quality]
+model = "quality-model"
+description = "Highest reasoning quality. Best for architecture, complex logic."
+recommended_for = ["architecture", "complex_code"]
+default = true
+
+[subagent_models.large_context]
+model = "large-context-model"
+description = "Long-context model for codebase-wide refactors."
+max_context_size = 262144
+default_effort = "medium"
+```
+
+Key rules:
+- Slot names must match `^[a-zA-Z][a-zA-Z0-9_]*$`, must not be `"primary"` or start with `__`.
+- At most one slot may have `default = true`; otherwise the first slot is the default.
+- Patch fields (anything other than `model` / `description` / `recommended_for` / `default` — i.e. any ModelOverride field such as `max_output_size`, `max_context_size`, `default_effort`, `capabilities`, etc.) synthesise a derived `[models.__sm__<slot>]` entry. User-defined `[models.__sm__*]` entries collide with derived ones and are rejected.
+- Memory-layer slot recipes use the same derived synthesis as persisted recipes; Memory remains above config/env input and is never written to disk.
+- An explicit tool-call slot overrides the agent type's `model_preference`; the caller can still opt into `"primary"`.
+- The derived model IDs are stripped from `/api/v1/models` (kap-server).

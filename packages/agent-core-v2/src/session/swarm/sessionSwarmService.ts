@@ -155,6 +155,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const binding = options.binding ?? {
       model: callerData.modelAlias,
       thinking: callerData.thinkingLevel,
+      source: 'primary' as const,
     };
     let child: IAgentScopeHandle;
     try {
@@ -169,7 +170,13 @@ export class SessionSwarmService implements ISessionSwarmService {
         labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
       });
     } catch (error) {
-      throw wrapSubagentModelError(error, binding.model, callerData.modelAlias);
+      throw wrapSubagentModelError(
+        error,
+        binding.model,
+        callerData.modelAlias,
+        binding.source,
+        binding.slotName,
+      );
     }
     child.accessor
       .get(IAgentPermissionModeService)

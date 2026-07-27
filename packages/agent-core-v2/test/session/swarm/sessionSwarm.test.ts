@@ -1110,7 +1110,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/secondary', thinking: 'low' },
+      binding: {
+        model: 'provider/secondary',
+        thinking: 'low',
+        source: 'legacy-secondary',
+        slotName: 'secondary',
+      },
     };
 
     await expect(
@@ -1137,7 +1142,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/bad', thinking: 'low' },
+      binding: {
+        model: 'provider/bad',
+        thinking: 'low',
+        source: 'legacy-secondary',
+        slotName: 'secondary',
+      },
     };
 
     await expect(
@@ -1148,7 +1158,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).resolves.toMatchObject([
       {
         status: 'failed',
-        error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+        error: expect.stringContaining('check that it names a valid [models] entry'),
       },
     ]);
     expect(createAgent).not.toHaveBeenCalled();

@@ -112,6 +112,7 @@ export interface RegisterSectionOptions<T> {
 }
 
 export interface ConfigEffectiveOverlay {
+  readonly phase?: 'environment' | 'derived';
   apply(
     effective: Record<string, unknown>,
     getEnv: (name: string) => string | undefined,

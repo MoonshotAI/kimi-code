@@ -72,7 +72,12 @@ const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
-const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+interface CachedToolArgsValidator {
+  readonly parameters: Record<string, unknown>;
+  readonly validator: ToolArgsValidator;
+}
+
+const validators = new WeakMap<ExecutableTool, CachedToolArgsValidator>();
 
 export interface ToolExecutionTask {
   readonly accesses: ToolAccesses;
@@ -775,16 +780,25 @@ export function parseToolCallArguments(raw: unknown): {
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
-  let validator = validators.get(tool);
-  if (validator === undefined) {
+  let parameters: Record<string, unknown>;
+  try {
+    parameters = tool.parameters;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  let cached = validators.get(tool);
+  if (cached === undefined || cached.parameters !== parameters) {
     try {
-      validator = compileToolArgsValidator(tool.parameters);
-      validators.set(tool, validator);
+      cached = {
+        parameters,
+        validator: compileToolArgsValidator(parameters),
+      };
+      validators.set(tool, cached);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return validateToolArgs(validator, args as JsonType);
+  return validateToolArgs(cached.validator, args as JsonType);
 }
 
 function toolCallDisplayFieldsFromExecution(

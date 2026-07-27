@@ -24,21 +24,21 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import {
+  ConfigTarget,
+  IConfigRegistry,
+  IConfigService,
+} from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
-import '#/app/skillCatalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
-import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
-import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
-import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
@@ -51,6 +51,7 @@ import {
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
   THINKING_SECTION,
+  type SecondaryModelConfig,
 } from '#/app/kosongConfig/configSection';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
@@ -61,15 +62,18 @@ import {
   type AgentTaskConfig,
 } from '#/agent/task/configSection';
 import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
-import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSecondaryModel,
   resolveSubagentBinding,
+  resolveSubagentModelList,
   resolveSubagentTimeoutMs,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
+  buildSubagentModelDescriptions,
+  SUBAGENT_MODELS_SECTION,
+  type SubagentModelsConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import {
@@ -81,8 +85,6 @@ import {
   type ServicesConfig,
 } from '#/app/auth/configSection';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
-import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-import '#/agent/mcp/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
@@ -91,6 +93,14 @@ import {
   type McpSection,
 } from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
+import {
+  IKosongConfigService,
+} from '#/app/kosongConfig/kosongConfig';
+import { KosongConfigService } from '#/app/kosongConfig/kosongConfigService';
+import { IModelService } from '#/kosong/model/model';
+import { ModelService } from '#/kosong/model/modelService';
+import { IProviderService } from '#/kosong/provider/provider';
+import { ProviderService } from '#/kosong/provider/providerService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -1386,6 +1396,20 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('lets a memory timeout override the environment layer', async () => {
+    const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env);
+    await config.set(
+      SUBAGENT_SECTION,
+      { timeoutMs: 3000 },
+      ConfigTarget.Memory,
+    );
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
   it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
     const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env, '[subagent]\ntimeout_ms = 5000\n');
@@ -1423,30 +1447,35 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
+  it('resolves the spawn binding: default slot by default, primary on request, inherit when unconfigured', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noModel = await createConfig({});
+    // No model configured → inherit caller model
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      source: 'primary',
     });
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      source: 'primary',
     });
     noModel.disposables.dispose();
 
     const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
-    // Pointer-only recipe: bind the pointed entry directly; thinking resolves
-    // naturally (no inheriting the caller's level).
+    // Pointer-only recipe: default slot is the legacy "secondary" slot → bind pointed entry
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/secondary',
       thinking: undefined,
+      source: 'legacy-secondary',
+      slotName: 'secondary',
     });
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      source: 'primary',
     });
     withModel.disposables.dispose();
 
@@ -1454,16 +1483,18 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
-    // Patch fields bind the synthesized derived entry; default_effort is the
-    // explicit subagent thinking.
+    // Patch fields → derived __secondary__ entry; default slot is "secondary"
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
+      source: 'legacy-secondary',
+      slotName: 'secondary',
     });
-    // default_effort only applies together with the secondary model.
+    // primary explicitly overrides
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      source: 'primary',
     });
     withEffort.disposables.dispose();
 
@@ -1471,9 +1502,12 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
     );
+    // Patch field → derived entry; default slot is "secondary"
     expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: undefined,
+      source: 'legacy-secondary',
+      slotName: 'secondary',
     });
     withFactPatch.disposables.dispose();
   });
@@ -1488,6 +1522,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      source: 'primary',
     });
 
     disposables.dispose();
@@ -1504,13 +1539,12 @@ describe('subagent config section', () => {
 
     expect(toErrorPayload(result)).toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
-      message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      message: expect.stringContaining('check that it names a valid [models] entry'),
       details: {
         model: 'provider/bad',
-        secondaryModel: 'provider/bad',
-        secondaryModelConfig: {
-          section: 'secondaryModel.model',
-          environment: SECONDARY_MODEL_ENV,
+        subagentModel: 'provider/bad',
+        subagentModelConfig: {
+          section: '[subagent_models]',
         },
       },
       cause: {
@@ -1619,6 +1653,954 @@ describe('secondaryModel config section', () => {
     const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
     expect(after[SECONDARY_DERIVED_MODEL_ID]).toBeUndefined();
     expect(domains).toContain(MODELS_SECTION);
+
+    disposables.dispose();
+  });
+});
+
+describe('subagentModels config section', () => {
+  async function createConfig(
+    env: Record<string, string>,
+    toml?: string,
+    storage = new InMemoryStorageService(),
+  ) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IProviderService, new SyncDescriptor(ProviderService));
+    ix.set(IModelService, new SyncDescriptor(ModelService));
+    ix.set(IKosongConfigService, new SyncDescriptor(KosongConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, ix, storage };
+  }
+
+  const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+
+  it('returns null from resolveSubagentModelList when flag is off', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[subagent_models.fast]\nmodel = "provider/fast"\ndescription = "Fast model"\n',
+    );
+    expect(resolveSubagentModelList(config, secondaryModelFlags(false))).toBeNull();
+    disposables.dispose();
+  });
+
+  it('returns null when flag is on but neither section is populated', async () => {
+    const { config, disposables } = await createConfig({});
+    expect(resolveSubagentModelList(config, secondaryModelFlags())).toBeNull();
+    disposables.dispose();
+  });
+
+  it('reads named model slots from [subagent_models]', async () => {
+    const { config, disposables } = await createConfig({});
+    await config.set(SUBAGENT_MODELS_SECTION, {
+      fast: { model: 'provider/fast', description: 'Fast and affordable' },
+      quality: {
+        model: 'provider/quality',
+        description: 'Highest reasoning quality',
+        recommendedFor: ['architecture', 'complex_code'],
+      },
+    } satisfies SubagentModelsConfig);
+    const list = resolveSubagentModelList(config, secondaryModelFlags());
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    expect(list.length).toBe(2);
+
+    const fast = list.find((s) => s.name === 'fast')!;
+    expect(fast.model).toBe('provider/fast');
+    expect(fast.baseModel).toBe('provider/fast');
+    expect(fast.description).toBe('Fast and affordable');
+    expect(fast.recommendedFor).toEqual([]);
+
+    const quality = list.find((s) => s.name === 'quality')!;
+    expect(quality.model).toBe('provider/quality');
+    expect(quality.baseModel).toBe('provider/quality');
+    expect(quality.description).toBe('Highest reasoning quality');
+    expect(quality.recommendedFor).toEqual(['architecture', 'complex_code']);
+
+    disposables.dispose();
+  });
+
+  it('falls back to legacy [secondary_model] when [subagent_models] is empty', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+    const list = resolveSubagentModelList(config, secondaryModelFlags());
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    expect(list.length).toBe(1);
+    const s0 = list[0]!;
+    expect(s0.name).toBe('secondary');
+    expect(s0.baseModel).toBe('provider/secondary');
+    expect(s0.thinking).toBe('low');
+
+    disposables.dispose();
+  });
+
+  it('explicit named slot returns the correct binding', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast model"',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality model"',
+      ].join('\n'),
+    );
+    const flags = secondaryModelFlags();
+
+    expect(resolveSubagentBinding(config, flags, own, 'fast')).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'fast',
+    });
+    expect(resolveSubagentBinding(config, flags, own, 'quality')).toEqual({
+      model: 'provider/quality',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'quality',
+    });
+
+    disposables.dispose();
+  });
+
+  it('treats a named slot called secondary as a named-slot binding', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.secondary]',
+        'model = "provider/fast"',
+        'description = "Named secondary slot"',
+      ].join('\n'),
+    );
+
+    expect(
+      resolveSubagentBinding(
+        config,
+        secondaryModelFlags(),
+        own,
+        'secondary',
+      ),
+    ).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'secondary',
+    });
+
+    disposables.dispose();
+  });
+
+  it('primary always returns caller model', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast model"',
+      ].join('\n'),
+    );
+    const flags = secondaryModelFlags();
+
+    expect(resolveSubagentBinding(config, flags, own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+      source: 'primary',
+    });
+
+    disposables.dispose();
+  });
+
+  it('unknown slot throws with structured details', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast model"',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality model"',
+      ].join('\n'),
+    );
+    const flags = secondaryModelFlags();
+
+    let err: unknown;
+    try {
+      resolveSubagentBinding(config, flags, own, 'unknown');
+      expect.fail('Expected resolveSubagentBinding to throw');
+    } catch (error) {
+      err = error;
+    }
+    const err2 = err as Error2;
+    expect(err2.code).toBe('config.invalid');
+    expect(err2.details).toBeDefined();
+    expect((err2.details as Record<string, unknown>)['requestedSlot']).toBe('unknown');
+    const availableSlots = (err2.details as Record<string, unknown>)['availableSlots'] as string[];
+    expect(availableSlots).toEqual(expect.arrayContaining(['fast', 'quality']));
+
+    disposables.dispose();
+  });
+
+  it('omitted model selects default slot', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast model"',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality model"',
+        'default = true',
+      ].join('\n'),
+    );
+    const flags = secondaryModelFlags();
+
+    expect(resolveSubagentBinding(config, flags, own)).toEqual({
+      model: 'provider/quality',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'quality',
+    });
+
+    disposables.dispose();
+  });
+
+  it('builds multi-line model descriptions from [subagent_models]', async () => {
+    const { config, disposables } = await createConfig({});
+    await config.set(SUBAGENT_MODELS_SECTION, {
+      fast: { model: 'provider/fast', description: 'Fast and affordable. Best for routine tasks.' },
+      quality: {
+        model: 'provider/quality',
+        description: 'Highest reasoning',
+        recommendedFor: ['architecture', 'complex_code'],
+      },
+    } satisfies SubagentModelsConfig);
+    const desc = buildSubagentModelDescriptions(config, secondaryModelFlags(), 'provider/main');
+    expect(desc).toBe(
+      [
+        'Available models (pass via model):',
+        '- fast (default): provider/fast | Fast and affordable. Best for routine tasks.',
+        '- quality: provider/quality | Recommended for: architecture, complex_code | Highest reasoning',
+        '- primary: provider/main — the main model you are running on; use it for hard, quality-sensitive subagent tasks',
+      ].join('\n'),
+    );
+    disposables.dispose();
+  });
+
+  it('marks the legacy fallback slot as default', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\n',
+    );
+    const desc = buildSubagentModelDescriptions(config, secondaryModelFlags(), 'provider/main');
+    expect(desc).toBeDefined();
+    expect(desc!).toContain('- secondary (default): provider/secondary');
+    disposables.dispose();
+  });
+
+  it('returns undefined from buildSubagentModelDescriptions when flag is off', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[subagent_models.fast]\nmodel = "provider/fast"\ndescription = "Fast"\n',
+    );
+    expect(
+      buildSubagentModelDescriptions(config, secondaryModelFlags(false), 'provider/main'),
+    ).toBeUndefined();
+    disposables.dispose();
+  });
+
+  it('resolves the spawn binding to legacy secondary when [subagent_models] empty', async () => {
+    // Backward compat: calling with "secondary" should still work through legacy path.
+    // default_effort is a patch field → derived __secondary__ entry
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+    const flags = secondaryModelFlags();
+    expect(resolveSubagentBinding(config, flags, own, 'secondary')).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      thinking: 'low',
+      source: 'legacy-secondary',
+      slotName: 'secondary',
+    });
+    disposables.dispose();
+  });
+
+  it('produces per-slot derived ID for slots with patch fields', async () => {
+    const { config, disposables } = await createConfig({});
+    await config.set(SUBAGENT_MODELS_SECTION, {
+      patched: { model: 'provider/base', description: 'Patched model', maxOutputSize: 8192 },
+    } satisfies SubagentModelsConfig);
+    const list = resolveSubagentModelList(config, secondaryModelFlags());
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    const p0 = list[0]!;
+    expect(p0.model).toBe('__sm__patched');
+    expect(p0.baseModel).toBe('provider/base');
+    disposables.dispose();
+  });
+
+  it('resolves a memory-layer patched slot through its derived model', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+      ].join('\n'),
+    );
+    await config.set(
+      SUBAGENT_MODELS_SECTION,
+      {
+        fast: {
+          model: 'base',
+          description: 'Fast model',
+          maxOutputSize: 8192,
+        },
+      } satisfies SubagentModelsConfig,
+      ConfigTarget.Memory,
+    );
+
+    expect(
+      config.get<Record<string, { overrides?: { maxOutputSize?: number } }>>(
+        MODELS_SECTION,
+      )['__sm__fast'],
+    ).toEqual({
+      provider: 'example',
+      model: 'fast',
+      overrides: {
+        maxOutputSize: 8192,
+      },
+    });
+    expect(
+      resolveSubagentBinding(
+        config,
+        secondaryModelFlags(),
+        own,
+        'fast',
+      ),
+    ).toEqual({
+      model: '__sm__fast',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'fast',
+    });
+
+    disposables.dispose();
+  });
+
+  it('publishes a memory-layer patched slot to the model registry', async () => {
+    const { config, disposables, ix } = await createConfig(
+      {},
+      [
+        '[providers.example]',
+        'type = "openai"',
+        'api_key = "YOUR_API_KEY"',
+        '',
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+      ].join('\n'),
+    );
+    await ix.get(IKosongConfigService).ready;
+
+    await config.set(
+      SUBAGENT_MODELS_SECTION,
+      {
+        fast: {
+          model: 'base',
+          description: 'Fast model',
+          maxOutputSize: 8192,
+        },
+      } satisfies SubagentModelsConfig,
+      ConfigTarget.Memory,
+    );
+
+    expect(ix.get(IModelService).get('__sm__fast')).toEqual({
+      provider: 'example',
+      model: 'fast',
+      overrides: {
+        maxOutputSize: 8192,
+      },
+    });
+
+    disposables.dispose();
+  });
+
+  it('keeps a memory-layer derived model out of persisted registry writes', async () => {
+    const { config, disposables, ix, storage } = await createConfig(
+      {},
+      [
+        '[providers.example]',
+        'type = "openai"',
+        'api_key = "YOUR_API_KEY"',
+        '',
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+      ].join('\n'),
+    );
+    await ix.get(IKosongConfigService).ready;
+    await config.set(
+      SUBAGENT_MODELS_SECTION,
+      {
+        fast: {
+          model: 'base',
+          description: 'Fast model',
+          maxOutputSize: 8192,
+        },
+      } satisfies SubagentModelsConfig,
+      ConfigTarget.Memory,
+    );
+
+    await ix.get(IModelService).set('quality', {
+      provider: 'example',
+      model: 'quality',
+    });
+
+    const persisted = new TextDecoder().decode(
+      await storage.read('', 'config.toml'),
+    );
+    expect(persisted).toContain('[models.quality]');
+    expect(persisted).not.toContain('__sm__fast');
+    expect(
+      config.inspect<Record<string, unknown>>(MODELS_SECTION).userValue,
+    ).not.toHaveProperty('__sm__fast');
+    expect(
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'fast').model,
+    ).toBe('__sm__fast');
+
+    disposables.dispose();
+  });
+
+  it('keeps a memory-layer derived model out of the persisted default pointer', async () => {
+    const { config, disposables, ix, storage } = await createConfig(
+      {},
+      [
+        'default_model = "base"',
+        '',
+        '[providers.example]',
+        'type = "openai"',
+        'api_key = "YOUR_API_KEY"',
+        '',
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+      ].join('\n'),
+    );
+    await ix.get(IKosongConfigService).ready;
+    await config.set(
+      SUBAGENT_MODELS_SECTION,
+      {
+        fast: {
+          model: 'base',
+          description: 'Fast model',
+          maxOutputSize: 8192,
+        },
+      } satisfies SubagentModelsConfig,
+      ConfigTarget.Memory,
+    );
+
+    await ix.get(IModelService).setDefaultModel('__sm__fast');
+
+    const persisted = new TextDecoder().decode(
+      await storage.read('', 'config.toml'),
+    );
+    expect(persisted).toContain('default_model = "base"');
+    expect(persisted).not.toContain('default_model = "__sm__fast"');
+    expect(config.inspect<string>('defaultModel').userValue).toBe('base');
+
+    disposables.dispose();
+  });
+
+  it('preserves a user model that collides with an active derived slot', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+        '',
+        '[subagent_models.fast]',
+        'model = "base"',
+        'description = "Fast model"',
+        'max_output_size = 8192',
+      ].join('\n'),
+    );
+
+    await config.replace(MODELS_SECTION, {
+      base: {
+        provider: 'example',
+        model: 'fast',
+      },
+      __sm__fast: {
+        provider: 'example',
+        model: 'user-owned',
+      },
+    });
+
+    expect(
+      config.inspect<Record<string, unknown>>(MODELS_SECTION).userValue,
+    ).toHaveProperty('__sm__fast');
+    expect(() =>
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'fast'),
+    ).toThrowError(
+      '[subagent_models.fast] would overwrite user-defined model "__sm__fast"',
+    );
+
+    disposables.dispose();
+  });
+
+  it('treats explicitly undefined optional fields as an unpatched slot', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+        '',
+        '[models.__sm__fast]',
+        'provider = "example"',
+        'model = "user-owned"',
+      ].join('\n'),
+    );
+    await config.set(
+      SUBAGENT_MODELS_SECTION,
+      {
+        fast: {
+          model: 'base',
+          description: 'Fast model',
+          maxOutputSize: undefined,
+        },
+      } satisfies SubagentModelsConfig,
+      ConfigTarget.Memory,
+    );
+
+    expect(
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'fast'),
+    ).toEqual({
+      model: 'base',
+      thinking: undefined,
+      source: 'named-slot',
+      slotName: 'fast',
+    });
+
+    disposables.dispose();
+  });
+
+  it('round-trips [subagent_models] through TOML write then read', async () => {
+    const { config, disposables, storage } = await createConfig({});
+    const flags = secondaryModelFlags();
+    await config.set(SUBAGENT_MODELS_SECTION, {
+      cheapFast: {
+        model: 'provider/fast',
+        description: 'Fast and affordable',
+        recommendedFor: ['routine', 'data_processing'],
+        defaultEffort: 'low',
+        maxOutputSize: 8192,
+      },
+      quality: {
+        model: 'provider/quality',
+        description: 'Highest reasoning',
+        default: true,
+      },
+    } satisfies SubagentModelsConfig);
+
+    // Assert from the first config.
+    const list1 = resolveSubagentModelList(config, flags);
+    expect(list1).not.toBeNull();
+    if (!list1) throw new Error('unreachable');
+    expect(list1.length).toBe(2);
+
+    const fast = list1.find((s) => s.name === 'cheapFast')!;
+    expect(fast.baseModel).toBe('provider/fast');
+    expect(fast.description).toBe('Fast and affordable');
+    expect(fast.recommendedFor).toEqual(['routine', 'data_processing']);
+    expect(fast.thinking).toBe('low');
+    expect(fast.model).toBe('__sm__cheapFast');
+
+    const quality = list1.find((s) => s.name === 'quality')!;
+    expect(quality.isDefault).toBe(true);
+    expect(quality.baseModel).toBe('provider/quality');
+
+    // Dispose and recreate from the same storage to prove persistence.
+    disposables.dispose();
+
+    const disposables2 = new DisposableStore();
+    const ix2 = disposables2.add(new TestInstantiationService());
+    ix2.stub(ILogService, stubLog());
+    ix2.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix2.stub(IFileSystemStorageService, storage);
+    ix2.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix2.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix2.set(IConfigService, new SyncDescriptor(ConfigService));
+    const newConfig = ix2.get(IConfigService);
+    await newConfig.ready;
+
+    const list2 = resolveSubagentModelList(newConfig, flags);
+    expect(list2).not.toBeNull();
+    if (!list2) throw new Error('unreachable');
+    expect(list2.length).toBe(2);
+
+    const fast2 = list2.find((s) => s.name === 'cheapFast')!;
+    expect(fast2.baseModel).toBe('provider/fast');
+    expect(fast2.description).toBe('Fast and affordable');
+
+    const quality2 = list2.find((s) => s.name === 'quality')!;
+    expect(quality2.isDefault).toBe(true);
+
+    disposables2.dispose();
+  });
+
+  it('moves the persisted default marker when replacing retained slots', async () => {
+    const first = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast"',
+        'default = true',
+        '',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality"',
+      ].join('\n'),
+    );
+    await first.config.replace(SUBAGENT_MODELS_SECTION, {
+      fast: {
+        model: 'provider/fast',
+        description: 'Fast',
+      },
+      quality: {
+        model: 'provider/quality',
+        description: 'Quality',
+        default: true,
+      },
+    } satisfies SubagentModelsConfig);
+    first.disposables.dispose();
+
+    const second = await createConfig({}, undefined, first.storage);
+    const slots = resolveSubagentModelList(
+      second.config,
+      secondaryModelFlags(),
+    );
+    expect(slots?.find((slot) => slot.name === 'fast')?.isDefault).toBe(false);
+    expect(slots?.find((slot) => slot.name === 'quality')?.isDefault).toBe(true);
+    second.disposables.dispose();
+  });
+
+  it('removes a persisted model patch when replacing a retained slot', async () => {
+    const first = await createConfig(
+      {},
+      [
+        '[models.base]',
+        'provider = "example"',
+        'model = "fast"',
+        '',
+        '[subagent_models.fast]',
+        'model = "base"',
+        'description = "Fast"',
+        'max_output_size = 8192',
+      ].join('\n'),
+    );
+    await first.config.replace(SUBAGENT_MODELS_SECTION, {
+      fast: {
+        model: 'base',
+        description: 'Fast',
+      },
+    } satisfies SubagentModelsConfig);
+    first.disposables.dispose();
+
+    const second = await createConfig({}, undefined, first.storage);
+    expect(
+      resolveSubagentBinding(
+        second.config,
+        secondaryModelFlags(),
+        own,
+        'fast',
+      ).model,
+    ).toBe('base');
+    second.disposables.dispose();
+  });
+
+  it.each([
+    [
+      'missing a description',
+      '[subagent_models.fast]\nmodel = "provider/fast"\n',
+    ],
+    [
+      'using a reserved slot name',
+      '[subagent_models.primary]\nmodel = "provider/fast"\ndescription = "Fast"\n',
+    ],
+    [
+      'declaring multiple defaults',
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast"',
+        'default = true',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality"',
+        'default = true',
+      ].join('\n'),
+    ],
+  ])('fails closed when persisted named slots are %s', async (_case, toml) => {
+    const { config, disposables } = await createConfig({}, toml);
+
+    expect(() =>
+      resolveSubagentBinding(config, secondaryModelFlags(), own),
+    ).toThrowError("Ignored invalid config section 'subagentModels'");
+
+    disposables.dispose();
+  });
+
+  it('reads [subagent_models] from real TOML with snake_case fields', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.budget_research]',
+        'model = "provider/budget"',
+        'description = "Affordable research model"',
+        'recommended_for = ["large_scale_research", "data_collection"]',
+        'default_effort = "low"',
+        'max_output_size = 4096',
+        'default = true',
+      ].join('\n'),
+    );
+    const list = resolveSubagentModelList(config, secondaryModelFlags());
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    expect(list.length).toBe(1);
+    const slot = list[0]!;
+    expect(slot.name).toBe('budget_research');
+    expect(slot.baseModel).toBe('provider/budget');
+    expect(slot.description).toBe('Affordable research model');
+    expect(slot.recommendedFor).toEqual(['large_scale_research', 'data_collection']);
+    expect(slot.thinking).toBe('low');
+    expect(slot.model).toBe('__sm__budget_research');
+    expect(slot.isDefault).toBe(true);
+    disposables.dispose();
+  });
+
+  it('preserves user-chosen slot keys through TOML round-trip', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[subagent_models.my_custom_slot]',
+        'model = "provider/main"',
+        'description = "Custom slot"',
+      ].join('\n'),
+    );
+    const list = resolveSubagentModelList(config, secondaryModelFlags());
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    expect(list[0]!.name).toBe('my_custom_slot');
+    disposables.dispose();
+  });
+
+  it('removes a slot on config.replace and persists — reload confirms it', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      [
+        '[subagent_models.fast]',
+        'model = "provider/fast"',
+        'description = "Fast"',
+        '[subagent_models.quality]',
+        'model = "provider/quality"',
+        'description = "Quality"',
+        'default = true',
+      ].join('\n'),
+    );
+    const flags = secondaryModelFlags();
+
+    // Replace: drop "fast", keep only "quality"
+    await config.replace(SUBAGENT_MODELS_SECTION, {
+      quality: {
+        model: 'provider/quality',
+        description: 'Quality',
+        default: true,
+      },
+    } satisfies SubagentModelsConfig);
+
+    // Dispose the first ConfigService and create a fresh one from the same storage.
+    disposables.dispose();
+
+    const disposables2 = new DisposableStore();
+    const ix2 = disposables2.add(new TestInstantiationService());
+    ix2.stub(ILogService, stubLog());
+    ix2.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix2.stub(IFileSystemStorageService, storage);
+    ix2.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix2.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix2.set(IConfigService, new SyncDescriptor(ConfigService));
+    const newConfig = ix2.get(IConfigService);
+    await newConfig.ready;
+
+    const list = resolveSubagentModelList(newConfig, flags);
+    expect(list).not.toBeNull();
+    if (!list) throw new Error('unreachable');
+    expect(list.length).toBe(1);
+    expect(list[0]!.name).toBe('quality');
+    expect(list[0]!.baseModel).toBe('provider/quality');
+    // "fast" must be gone — the replace semantic removed it and persisted it
+
+    disposables2.dispose();
+  });
+
+  it('rejects a colliding slot without replacing the user-owned model', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[models.provider_fast]',
+        'provider = "kimi"',
+        'model = "fast-model"',
+        '[models.__sm__fast]',
+        'provider = "kimi"',
+        'model = "custom-fast"',
+        '[subagent_models.fast]',
+        'model = "provider_fast"',
+        'description = "Fast model"',
+        'max_output_size = 8192',
+      ].join('\n'),
+    );
+
+    expect(() =>
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'fast'),
+    ).toThrowError(
+      '[subagent_models.fast] would overwrite user-defined model "__sm__fast"',
+    );
+    expect(
+      config.inspect<Record<string, { model?: string }>>(MODELS_SECTION)
+        .userValue?.['__sm__fast'],
+    ).toEqual({
+      provider: 'kimi',
+      model: 'custom-fast',
+    });
+    expect(config.diagnostics()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'warning',
+          message: expect.stringContaining(
+            '[subagent_models.fast] would overwrite user-defined model "__sm__fast"',
+          ),
+        }),
+      ]),
+    );
+    disposables.dispose();
+  });
+
+  it('strips a derived model using the current config persistence state', async () => {
+    const first = await createConfig(
+      {},
+      [
+        '[models.fast_base]',
+        'provider = "example"',
+        'model = "fast"',
+        '[subagent_models.fast]',
+        'model = "fast_base"',
+        'description = "Fast"',
+        'max_output_size = 4096',
+      ].join('\n'),
+    );
+    const second = await createConfig(
+      {},
+      [
+        '[models.quality_base]',
+        'provider = "example"',
+        'model = "quality"',
+        '[subagent_models.quality]',
+        'model = "quality_base"',
+        'description = "Quality"',
+        'max_output_size = 8192',
+      ].join('\n'),
+    );
+
+    await first.config.replace(
+      MODELS_SECTION,
+      first.config.get(MODELS_SECTION),
+    );
+
+    const persisted = new TextDecoder().decode(
+      await first.storage.read('', 'config.toml'),
+    );
+    expect(persisted).toContain('[models.fast_base]');
+    expect(persisted).not.toContain('__sm__fast');
+
+    first.disposables.dispose();
+    second.disposables.dispose();
+  });
+
+  it('strips a JSON-cloned derived model on write when provenance identity is lost', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      [
+        '[models.fast_base]',
+        'provider = "example"',
+        'model = "fast"',
+        '[subagent_models.fast]',
+        'model = "fast_base"',
+        'description = "Fast"',
+        'max_output_size = 4096',
+      ].join('\n'),
+    );
+
+    await config.replace(
+      MODELS_SECTION,
+      structuredClone(config.get(MODELS_SECTION)),
+    );
+
+    const persisted = new TextDecoder().decode(
+      await storage.read('', 'config.toml'),
+    );
+    expect(persisted).toContain('[models.fast_base]');
+    expect(persisted).not.toContain('__sm__fast');
+
+    disposables.dispose();
+  });
+
+  it('keeps a user-owned derived-looking model through a cloned round-trip write', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      [
+        '[models.fast_base]',
+        'provider = "example"',
+        'model = "fast"',
+        '[models.__sm__fast]',
+        'provider = "example"',
+        'model = "user-owned"',
+        '[subagent_models.fast]',
+        'model = "fast_base"',
+        'description = "Fast"',
+        'max_output_size = 4096',
+      ].join('\n'),
+    );
+
+    await config.replace(
+      MODELS_SECTION,
+      structuredClone(config.get(MODELS_SECTION)),
+    );
+
+    const persisted = new TextDecoder().decode(
+      await storage.read('', 'config.toml'),
+    );
+    expect(persisted).toContain('[models.__sm__fast]');
+    expect(persisted).toContain('model = "user-owned"');
 
     disposables.dispose();
   });

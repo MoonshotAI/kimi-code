@@ -69,6 +69,7 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
+import { DERIVED_MODEL_PREFIX } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -230,16 +231,20 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       const items = await (await loadCatalog(core)).listModels();
-      // Presentation filter: the secondary-model derived entry is synthesized
-      // runtime state, not a configured alias — keep it out of pickers (the
-      // catalog still resolves it by id, and the overlay's strip keeps any
-      // default-model pointer to it out of config.toml).
-      reply.send(
-        okEnvelope(
-          { items: items.filter((item) => item.model !== SECONDARY_DERIVED_MODEL_ID) },
-          req.id,
-        ),
-      );
+      const inspection = core.accessor
+        .get(IConfigService)
+        .inspect<ModelsSection>(MODELS_SECTION);
+      const userModels = inspection.userValue ?? {};
+      const memoryModels = inspection.memoryValue ?? {};
+      const visible = items.filter((item) => {
+        if (item.model === SECONDARY_DERIVED_MODEL_ID) return false;
+        if (!item.model.startsWith(DERIVED_MODEL_PREFIX)) return true;
+        return (
+          Object.hasOwn(userModels, item.model) ||
+          Object.hasOwn(memoryModels, item.model)
+        );
+      });
+      reply.send(okEnvelope({ items: visible }, req.id));
     },
   );
   app.get(
@@ -964,4 +969,3 @@ async function handleImportRegistry(
     throw err;
   }
 }
-

@@ -2,18 +2,19 @@
  * `config` domain (L2) — `IConfigRegistry` and `IConfigService` implementations.
  *
  * Owns the section registry and the layered global config state: resolves a
- * value by precedence across defaults, the user config file, and per-run memory
- * overrides (highest, never persisted), and persists writes only for the `User`
- * target — validating the merged patch and re-validating the stripped result,
- * so a strip can never smuggle an unvalidated raw value (e.g. an env-masked
- * invalid field) to disk. Maintains five layered views of a domain — `rawSnake` (snake_case
- * write base keyed by the on-disk section key, kept for lossless round-trip),
+ * value by precedence across defaults, the user config file, environment
+ * overlays, and per-run memory overrides (highest user input, never persisted),
+ * then applies derived overlays to the resolved inputs. Persists writes only
+ * for the `User` target — validating the merged patch and re-validating the
+ * stripped result, so a strip can never smuggle an unvalidated raw value (e.g.
+ * an env-masked invalid field) to disk. Maintains five layered views of a
+ * domain — `rawSnake` (snake_case write base keyed by the on-disk section key,
+ * kept for lossless round-trip),
  * `raw` (camelCase, env-free), `validated` (validated `raw`, env-free — the
  * base every live env re-application starts from and never mutates, so a
  * degraded or removed env value falls back to the file instead of a stale
- * overlay), `effective`
- * (`validated` plus the env overlay, recomputed on load/set), and `memory`
- * (per-run overrides)
+ * overlay), `effective` (validated + environment overlays + memory + derived
+ * overlays, recomputed on load/set), and `memory` (per-run input overrides)
  * — plus a `delivered` snapshot per domain used as the diff base for
  * `onDidSectionChange`. Reads config paths and the environment overlay through
  * `bootstrap`, persists the TOML document through the `storage` TOML
@@ -263,9 +264,6 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   get<T = unknown>(domain: string): T {
-    if (Object.prototype.hasOwnProperty.call(this.memory, domain)) {
-      return this.memory[domain] as T;
-    }
     return this.freshEffective()[domain] as T;
   }
 
@@ -280,13 +278,19 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   getAll(): ResolvedConfig {
-    return { ...this.freshEffective(), ...this.memory };
+    return this.freshEffective();
   }
 
   private freshEffective(): ResolvedConfig {
+    return this.buildEffective(false);
+  }
+
+  private buildEffective(reportErrors: boolean): ResolvedConfig {
     const effective: ResolvedConfig = { ...this.validated };
-    this.applySectionEnvBindings(effective, false);
-    this.applyEnvOverlay(effective, false);
+    this.applySectionEnvBindings(effective, reportErrors);
+    this.applyEffectiveOverlays(effective, 'environment', reportErrors);
+    Object.assign(effective, this.memory);
+    this.applyEffectiveOverlays(effective, 'derived', reportErrors);
     return effective;
   }
 
@@ -308,7 +312,7 @@ export class ConfigService extends Disposable implements IConfigService {
       } else {
         this.memory[domain] = validated;
       }
-      this.commit('set', [domain]);
+      this.refreshEffective('set', [domain]);
       return;
     }
     await this.enqueueStateTransition(async () => {
@@ -339,7 +343,7 @@ export class ConfigService extends Disposable implements IConfigService {
       } else {
         this.memory[domain] = this.registry.validate(domain, value);
       }
-      this.commit('set', [domain]);
+      this.refreshEffective('set', [domain]);
       return;
     }
     await this.enqueueStateTransition(async () => {
@@ -411,11 +415,16 @@ export class ConfigService extends Disposable implements IConfigService {
     source: ConfigChangeSource = 'reload',
     domains?: readonly string[],
   ): void {
-    const previous = this.effective;
     this.validated = this.buildValidated(this.raw);
-    const next = { ...this.validated };
-    this.applySectionEnvBindings(next, true);
-    this.applyEnvOverlay(next);
+    this.refreshEffective(source, domains);
+  }
+
+  private refreshEffective(
+    source: ConfigChangeSource,
+    domains?: readonly string[],
+  ): void {
+    const previous = this.effective;
+    const next = this.buildEffective(true);
     this.effective = next;
 
     // Commit candidates: the explicitly touched domains PLUS anything the
@@ -435,9 +444,7 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private deliveredValue(domain: string): unknown {
-    return Object.prototype.hasOwnProperty.call(this.memory, domain)
-      ? this.memory[domain]
-      : this.effective[domain];
+    return this.effective[domain];
   }
 
   private commit(source: ConfigChangeSource, domains: readonly string[]): void {
@@ -493,18 +500,23 @@ export class ConfigService extends Disposable implements IConfigService {
     }
   }
 
-  private applyEnvOverlay(effective: ResolvedConfig, reportErrors = true): void {
+  private applyEffectiveOverlays(
+    effective: ResolvedConfig,
+    phase: NonNullable<ConfigEffectiveOverlay['phase']>,
+    reportErrors = true,
+  ): void {
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     const validate = (domain: string, value: unknown): unknown =>
       this.registry.validate(domain, value);
     for (const overlay of this.registry.listEffectiveOverlays()) {
+      if ((overlay.phase ?? 'environment') !== phase) continue;
       try {
         overlay.apply(effective, getEnv, validate);
       } catch (error) {
         if (reportErrors) {
           this.diagnosticsList.push({
             severity: 'warning',
-            message: `Ignoring config environment overlay: ${describeUnknownError(error)}`,
+            message: `Ignoring ${phase} config overlay: ${describeUnknownError(error)}`,
           });
         }
       }
@@ -512,13 +524,7 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private reapplyOverlays(): void {
-    const before = this.effective;
-    this.validated = this.buildValidated(this.raw);
-    const next = { ...this.validated };
-    this.applySectionEnvBindings(next, true);
-    this.applyEnvOverlay(next);
-    this.effective = next;
-    this.commit('reload', [...new Set([...Object.keys(before), ...Object.keys(next)])]);
+    this.rebuildEffective('reload');
   }
 
   private revalidateDomain(domain: string): void {
@@ -547,21 +553,7 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
 
-    this.applyEnvOverlay(this.effective);
-    if (section.env !== undefined) {
-      const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      try {
-        const next = applySectionEnv(this.effective[domain], section.env, getEnv);
-        this.effective[domain] = this.registry.validate(domain, next);
-      } catch (error) {
-        this.diagnosticsList.push({
-          domain,
-          severity: 'warning',
-          message: `Ignoring env overlay for '${domain}': ${describeUnknownError(error)}`,
-        });
-      }
-    }
-    this.commit('reload', [domain]);
+    this.refreshEffective('reload', [domain]);
   }
 
   private async persist(domain: string): Promise<void> {

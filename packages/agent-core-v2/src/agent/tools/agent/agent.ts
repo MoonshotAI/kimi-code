@@ -17,6 +17,37 @@ import { type AgentTool } from '#/tool/toolContract';
 export const DEFAULT_PROFILE_NAME = 'coder';
 export const RESUMED_LABEL = 'subagent';
 
+export const SubagentToolInputObjectSchema = z.object({
+  prompt: z.string().describe('Full task prompt for the subagent'),
+  description: z.string().describe('Short task description (3-5 words) for UI display'),
+  subagent_type: z
+    .string()
+    .optional()
+    .describe(
+      'One of the available agent types (see "Available agent types" in this tool description). Defaults to "coder" when omitted.',
+    ),
+  resume: z
+    .string()
+    .optional()
+    .describe(
+      'Optional agent ID to resume instead of creating a new instance. When set, do not also pass subagent_type — the resumed agent keeps its own type, and supplying both is rejected.',
+    ),
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Which model to run the subagent on. Choose from the slot names listed under "Available models" in this tool description (e.g. "fast", "quality"), or "primary" for the main model. When named slots are absent, the legacy choices are "secondary" and "primary". This explicit choice overrides the selected agent type\'s model_preference. Only effective when subagent model selection is enabled; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
+    ),
+});
+
 export const SubagentToolInputSchema = z.preprocess(
   (input) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -35,34 +66,7 @@ export const SubagentToolInputSchema = z.preprocess(
     }
     return normalized;
   },
-  z.object({
-    prompt: z.string().describe('Full task prompt for the subagent'),
-    description: z.string().describe('Short task description (3-5 words) for UI display'),
-    subagent_type: z
-      .string()
-      .optional()
-      .describe(
-        'One of the available agent types (see "Available agent types" in this tool description). Defaults to "coder" when omitted.',
-      ),
-    resume: z
-      .string()
-      .optional()
-      .describe(
-        'Optional agent ID to resume instead of creating a new instance. When set, do not also pass subagent_type — the resumed agent keeps its own type, and supplying both is rejected.',
-      ),
-    run_in_background: z
-      .boolean()
-      .optional()
-      .describe(
-        'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
-      ),
-    model: z
-      .enum(['secondary', 'primary'])
-      .optional()
-      .describe(
-        'Which model to run the subagent on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
-      ),
-  }),
+  SubagentToolInputObjectSchema,
 );
 
 export type SubagentToolInput = z.infer<typeof SubagentToolInputSchema>;

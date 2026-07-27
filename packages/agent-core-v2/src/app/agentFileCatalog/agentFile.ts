@@ -34,6 +34,11 @@ export interface ParseAgentFileOptions {
 
 const AGENT_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+// Mirrors the `[subagent_models]` slot-name grammar (configSection.ts). The
+// parser is pure and cannot know the configured slots, so it validates shape
+// only; whether the name resolves to a slot is checked at spawn time.
+const MODEL_PREFERENCE_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
 export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDefinition {
   let parsed;
   try {
@@ -118,9 +123,11 @@ function parseModelPreference(
   filePath: string,
 ): AgentFileDefinition['modelPreference'] {
   if (value === undefined || value === null) return undefined;
-  if (value === 'primary' || value === 'secondary') return value;
+  if (typeof value === 'string' && MODEL_PREFERENCE_PATTERN.test(value.trim())) {
+    return value.trim();
+  }
   throw new AgentFileParseError(
-    `Frontmatter field "model_preference" in ${filePath} must be "primary" or "secondary"`,
+    `Frontmatter field "model_preference" in ${filePath} must be "primary" or a [subagent_models] slot name (letters, digits, and underscores, starting with a letter)`,
   );
 }
 

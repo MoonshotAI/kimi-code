@@ -302,6 +302,41 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('validates against the current parameters after a tool schema changes', async () => {
+    const tool = new TestTool('dynamic', {
+      parameters: {
+        type: 'object',
+        properties: { model: { type: 'string', enum: ['fast'] } },
+        required: ['model'],
+        additionalProperties: false,
+      },
+    });
+    registry.register(tool);
+    await execute([
+      toolCall('call_fast', 'dynamic', { model: 'fast' }),
+    ]);
+    tool.parameters = {
+      type: 'object',
+      properties: { model: { type: 'string', enum: ['quality'] } },
+      required: ['model'],
+      additionalProperties: false,
+    };
+
+    const results = await execute([
+      toolCall('call_quality', 'dynamic', { model: 'quality' }),
+    ]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        output: 'dynamic result',
+      }),
+    ]);
+    expect(tool.calls.map((call) => call.args)).toEqual([
+      { model: 'fast' },
+      { model: 'quality' },
+    ]);
+  });
+
   it('routes malformed JSON args through schema validation', async () => {
     const tool = new TestTool('strict', {
       parameters: {
@@ -1010,7 +1045,7 @@ function deferred<T = void>(): {
 
 class TestTool implements ExecutableTool<Record<string, unknown>> {
   readonly description = 'Test tool.';
-  readonly parameters: Record<string, unknown>;
+  parameters: Record<string, unknown>;
   readonly calls: Array<ExecutableToolContext & { readonly args: Record<string, unknown> }> = [];
 
   constructor(

@@ -1,7 +1,7 @@
 /**
  * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` implementation.
  *
- * When enabled through `flag`, runs the secondary-model check once per session
+ * When enabled through `flag`, runs the subagent-model check once per session
  * when the main agent appears (`agentLifecycle` onDidCreate, or an
  * already-present main at construction):
  * resolves the pointed entry through the kosong `modelCatalog` and, when the
@@ -9,7 +9,7 @@
  * `supportEfforts` (what the derived entry will carry) — on failure, caches a
  * warning and publishes it as a `warning` event on the main agent's
  * `eventBus`, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). Never throws: a broken secondary model
+ * (`GET /sessions/{id}/warnings`). Never throws: a broken subagent model
  * demotes to a notice here, with spawn-time resolution
  * (`resolveSubagentBinding` + `wrapSubagentModelError`) staying as the
  * backstop. Bound at Session scope.
@@ -30,14 +30,16 @@ import {
   SECONDARY_MODEL_ENV,
 } from '#/app/kosongConfig/configSection';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { secondaryModelPatch } from '#/app/kosongConfig/secondaryModelOverlay';
 import { normalizeRequestedThinkingEffort } from '#/kosong/model/thinking';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
 
-import { resolveSecondaryModel } from './configSection';
+import {
+  resolveSubagentModelList,
+  type ResolvedSubagentModelList,
+} from './configSection';
 import {
   ISessionSecondaryModelWarningService,
   SECONDARY_MODEL_EFFORT_WARNING_CODE,
@@ -88,36 +90,66 @@ export class SessionSecondaryModelWarningService
   }
 
   private computeWarning(): SecondaryModelWarning | undefined {
-    const secondary = resolveSecondaryModel(this.config, this.flags);
-    if (secondary?.model === undefined) return undefined;
-    let model: Model;
+    let slots: ResolvedSubagentModelList;
     try {
-      model = this.modelCatalog.get(secondary.model);
+      slots = resolveSubagentModelList(this.config, this.flags);
     } catch (error) {
       return {
         code: SECONDARY_MODEL_INVALID_WARNING_CODE,
         message:
-          `Secondary model "${secondary.model}" (from [secondary_model].model / ${SECONDARY_MODEL_ENV}) ` +
-          `could not be resolved: ${error instanceof Error ? error.message : String(error)}. ` +
-          'Subagent spawning will fail until this is fixed.',
+          `Subagent model configuration could not be resolved: ` +
+          formatWarningReason(error),
       };
     }
-    // The effort check targets what subagents actually bind: with patch
-    // fields the derived entry carries the patched `supportEfforts`, without
-    // them the pointed entry's own list applies.
-    const patch = secondaryModelPatch(secondary);
-    return effortWarning(
-      secondary.model,
-      secondary.defaultEffort,
-      patch?.supportEfforts ?? model.supportEfforts,
-    );
+    if (slots === null) return undefined;
+
+    for (const slot of slots) {
+      let model: Model;
+      try {
+        model = this.modelCatalog.get(slot.baseModel);
+      } catch (error) {
+        const source =
+          slot.source === 'legacy-secondary'
+            ? `[secondary_model].model / ${SECONDARY_MODEL_ENV}`
+            : `[subagent_models.${slot.name}].model`;
+        return {
+          code: SECONDARY_MODEL_INVALID_WARNING_CODE,
+          message:
+            `Subagent model slot "${slot.name}" points at "${slot.baseModel}"` +
+            ` (from ${source}) which could not be resolved:` +
+            ` ${formatWarningReason(error)} ` +
+            'Subagent spawning will fail until this is fixed.',
+        };
+      }
+      const eff = effortWarning(
+        slot.baseModel,
+        slot.thinking,
+        slot.patchedSupportEfforts ?? model.supportEfforts,
+        slot.source === 'legacy-secondary'
+          ? { section: '[secondary_model].default_effort', env: SECONDARY_MODEL_EFFORT_ENV }
+          : { section: `[subagent_models.${slot.name}].default_effort` },
+      );
+      if (eff !== undefined) return eff;
+    }
+    return undefined;
   }
+}
+
+function formatWarningReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return /[.!?]$/.test(message) ? message : `${message}.`;
+}
+
+interface EffortWarningSource {
+  section: string;
+  env?: string;
 }
 
 function effortWarning(
   alias: string,
   effort: string | undefined,
   supportEfforts: readonly string[] | undefined,
+  source: EffortWarningSource,
 ): SecondaryModelWarning | undefined {
   const requested = normalizeRequestedThinkingEffort(effort);
   if (requested === undefined || requested === 'off' || requested === 'on') return undefined;
@@ -125,10 +157,14 @@ function effortWarning(
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
   if (known.length === 0 || known.includes(requested)) return undefined;
+  const origin =
+    source.env !== undefined
+      ? `${source.section} / ${source.env}`
+      : source.section;
   return {
     code: SECONDARY_MODEL_EFFORT_WARNING_CODE,
     message:
-      `Secondary model default effort "${requested}" (from [secondary_model].default_effort / ${SECONDARY_MODEL_EFFORT_ENV}) ` +
+      `Subagent model effort "${requested}" (from ${origin}) ` +
       `is not listed for model "${alias}" (known: ${known.join(', ')}). ` +
       'Subagents may clamp or reject it.',
   };

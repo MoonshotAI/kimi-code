@@ -46,6 +46,10 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from './configSection';
+import {
+  isRuntimeOnlyModelRecord,
+  withoutRuntimeOnlyModels,
+} from './runtimeOnlyModels';
 
 /** Persist attempts per write; see `replaceWithRetry` for why this stays small. */
 const PERSIST_MAX_ATTEMPTS = 3;
@@ -176,14 +180,25 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   private enqueuePersistModels(): Promise<void> {
     return this.enqueue(async () => {
-      const next = this.models.list();
-      if (deepEqual(this.config.get<ModelsSection>(MODELS_SECTION) ?? {}, next)) return;
+      const next = withoutRuntimeOnlyModels(this.models.list());
+      const current = withoutRuntimeOnlyModels(
+        this.config.get<ModelsSection>(MODELS_SECTION) ?? {},
+      );
+      if (deepEqual(current, next)) return;
       await this.replaceWithRetry(MODELS_SECTION, next);
     });
   }
 
   private enqueuePersistDefaultPointer(domain: string, value: string | undefined): Promise<void> {
     return this.enqueue(async () => {
+      if (
+        domain === DEFAULT_MODEL_SECTION &&
+        value !== undefined &&
+        isRuntimeOnlyModelRecord(this.models.get(value))
+      ) {
+        this.reassertEffectiveDefaultModel(value);
+        return;
+      }
       if (this.config.get<string>(domain) === value) return;
       await this.replaceWithRetry(domain, value);
       // An effective overlay may pin the section (e.g. `KIMI_MODEL_NAME`
@@ -203,11 +218,19 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
           .setDefaultProvider(effective)
           .catch((error) => this.logPersistFailure(error));
       } else if (domain === DEFAULT_MODEL_SECTION) {
-        void this.models
-          .setDefaultModel(effective)
-          .catch((error) => this.logPersistFailure(error));
+        this.reassertEffectiveDefaultModel(value);
       }
     });
+  }
+
+  private reassertEffectiveDefaultModel(current: string | undefined): void {
+    const effective = this.config.get<string>(DEFAULT_MODEL_SECTION);
+    if (effective === current) return;
+    // Fire-and-forget: this is called from the persist chain, and awaiting
+    // the re-assert would deadlock on its own queued persistence listener.
+    void this.models
+      .setDefaultModel(effective)
+      .catch((error) => this.logPersistFailure(error));
   }
 
   /**

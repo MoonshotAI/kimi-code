@@ -72,12 +72,22 @@ describe('parseAgentFileText', () => {
     expect(def.modelPreference).toBe('primary');
   });
 
-  it('rejects an unsupported model preference', () => {
-    expect(() =>
-      parse(
-        '---\nname: solo\ndescription: d\nmodel_preference: provider/model\n---\n\nbody\n',
-      ),
-    ).toThrow(/"model_preference"/);
+  it('accepts a slot-shaped string as model preference', () => {
+    const def = parse(
+      '---\nname: solo\ndescription: d\nmodel_preference: pascal\n---\n\nbody\n',
+    );
+
+    expect(def.modelPreference).toBe('pascal');
+  });
+
+  it('rejects a model preference that cannot name a slot', () => {
+    for (const bad of ['fast model', 'fast-model', '__sm__fast', '1fast', '""']) {
+      expect(() =>
+        parse(
+          `---\nname: solo\ndescription: d\nmodel_preference: ${bad}\n---\n\nbody\n`,
+        ),
+      ).toThrow(AgentFileParseError);
+    }
   });
 
   it('rejects missing frontmatter', () => {

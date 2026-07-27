@@ -154,6 +154,7 @@ import {
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
 import { secondaryModelOverlay } from '#/app/kosongConfig/secondaryModelOverlay';
+import { subagentModelsOverlay } from '#/session/subagent/configSection';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
@@ -2351,16 +2352,19 @@ function applyTestAgentOptionsToConfig(config: KimiConfig, options: TestAgentOpt
 }
 
 function configService(readConfig: () => KimiConfig): IConfigService {
-  // Mirror the production overlay chain: the secondary-model recipe
-  // materializes its derived entry into the effective models view, so
-  // spawn-time binding resolves it exactly as in production. Top-level
-  // shallow clone only — `apply` replaces (never mutates) section values.
+  const memory = new Map<string, unknown>();
   const effectiveConfig = () => {
     const effective = { ...configWithEnvOverrides(readConfig()) } as Record<string, unknown>;
-    secondaryModelOverlay.apply(effective, () => undefined, (_domain, value) => value);
+    for (const [domain, value] of memory) effective[domain] = value;
+    for (const overlay of [secondaryModelOverlay, subagentModelsOverlay]) {
+      try {
+        overlay.apply(effective, () => undefined, (_domain, value) => value);
+      } catch {
+        continue;
+      }
+    }
     return effective as unknown as KimiConfig;
   };
-  const memory = new Map<string, unknown>();
   const sectionEmitter = new Emitter<{
     readonly domain: string;
     readonly source: 'set';
@@ -2368,9 +2372,7 @@ function configService(readConfig: () => KimiConfig): IConfigService {
     readonly previousValue: unknown;
   }>();
   const valueFor = (domain: string): unknown =>
-    memory.has(domain)
-      ? memory.get(domain)
-      : (effectiveConfig() as Record<string, unknown>)[domain];
+    (effectiveConfig() as Record<string, unknown>)[domain];
   const replace = (domain: string, value: unknown): Promise<void> => {
     const previousValue = valueFor(domain);
     memory.set(domain, value);
@@ -2388,8 +2390,8 @@ function configService(readConfig: () => KimiConfig): IConfigService {
       return {
         value,
         defaultValue: undefined,
-        userValue: undefined,
-        memoryValue: value,
+        userValue: (readConfig() as Record<string, unknown>)[domain],
+        memoryValue: memory.get(domain),
       };
     },
     getAll: () => effectiveConfig() as never,

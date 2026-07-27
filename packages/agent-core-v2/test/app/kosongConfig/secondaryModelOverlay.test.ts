@@ -19,6 +19,7 @@ import {
   SECONDARY_DERIVED_MODEL_ID,
   secondaryModelOverlay,
 } from '#/app/kosongConfig/secondaryModelOverlay';
+import { markRuntimeOnlyModelRecord } from '#/app/kosongConfig/runtimeOnlyModels';
 
 function apply(effective: Record<string, unknown>): readonly string[] {
   return secondaryModelOverlay.apply(effective, () => undefined, (_domain, value) => value);
@@ -91,7 +92,12 @@ describe('secondaryModelOverlay.strip', () => {
   const strip = secondaryModelOverlay.strip!;
 
   it('removes the derived entry from models writes and leaves other domains alone', () => {
-    const models = { k2: baseEntry, [SECONDARY_DERIVED_MODEL_ID]: { ...baseEntry } };
+    const derived = { ...baseEntry };
+    markRuntimeOnlyModelRecord(derived);
+    const models = {
+      k2: baseEntry,
+      [SECONDARY_DERIVED_MODEL_ID]: derived,
+    };
     expect(strip(MODELS_SECTION, models, {})).toEqual({ k2: baseEntry });
     expect(strip('thinking', { effort: 'low' }, {})).toEqual({ effort: 'low' });
   });
@@ -103,9 +109,15 @@ describe('secondaryModelOverlay.strip', () => {
 
   it('rolls back a defaultModel pointer set to the derived id', () => {
     expect(strip('defaultModel', 'k2', {})).toBe('k2');
-    // Restore the raw pointer when one exists…
-    expect(strip('defaultModel', SECONDARY_DERIVED_MODEL_ID, { default_model: 'k2' })).toBe('k2');
-    // …or drop the section when the raw config never had one.
-    expect(strip('defaultModel', SECONDARY_DERIVED_MODEL_ID, {})).toBeUndefined();
+    expect(
+      strip(
+        'defaultModel',
+        SECONDARY_DERIVED_MODEL_ID,
+        { default_model: 'k2' },
+      ),
+    ).toBe('k2');
+    expect(
+      strip('defaultModel', SECONDARY_DERIVED_MODEL_ID, {}),
+    ).toBeUndefined();
   });
 });

@@ -156,6 +156,42 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(body.data.items.map((item) => item.model)).toEqual(['k2', 'turbo', 'gpt4o']);
   });
 
+  it('hides subagent-model derived entries from /models', async () => {
+    await boot(
+      `${CATALOG_TOML}\n[subagent_models.fast]\nmodel = "turbo"\ndescription = "Fast model"\nmax_output_size = 8192\n`,
+    );
+    const { status, body } = await getJson<{ items: { model: string }[] }>('/api/v1/models');
+    expect(status).toBe(200);
+    expect(body.data.items.map((item) => item.model)).toEqual(['k2', 'turbo', 'gpt4o']);
+  });
+
+  it('keeps a user-owned derived-looking model visible when a slot collides', async () => {
+    await boot(
+      [
+        CATALOG_TOML,
+        '[models.__sm__fast]',
+        'provider = "kimi"',
+        'model = "user-fast"',
+        '',
+        '[subagent_models.fast]',
+        'model = "turbo"',
+        'description = "Fast model"',
+        'max_output_size = 8192',
+        '',
+      ].join('\n'),
+    );
+
+    const { status, body } = await getJson<{ items: { model: string }[] }>('/api/v1/models');
+
+    expect(status).toBe(200);
+    expect(body.data.items.map((item) => item.model)).toEqual([
+      'k2',
+      'turbo',
+      'gpt4o',
+      '__sm__fast',
+    ]);
+  });
+
   it('lists models without refreshing providers', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],

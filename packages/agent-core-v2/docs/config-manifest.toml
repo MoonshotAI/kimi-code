@@ -6,9 +6,9 @@
 # One [table] per registered config section, in the on-disk config.toml shape
 # (snake_case keys). Un-commented assignments are registered defaults;
 # commented "# field: type" lines describe the remaining schema fields.
-# Values resolve as: default -> config.toml -> env overlay -> memory.
+# Values resolve as: default -> config.toml -> env overlay -> memory -> derived overlay.
 
-# Index (22 sections · 3 overlay(s))
+# Index (23 sections · 4 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -28,12 +28,14 @@
 #   secondaryModel           src/app/kosongConfig/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   subagentModels           src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
 #   (overlay) secondaryModelOverlay  src/app/kosongConfig/secondaryModelOverlay.ts
+#   (overlay) subagentModelsOverlay  src/session/subagent/configSection.ts
 
 # ##########################################################################
 # background
@@ -351,6 +353,32 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+
+# ##########################################################################
+# subagentModels (config.toml: subagent_models)
+#   owner: src/session/subagent/configSection.ts
+#   scope: core
+#   hooks: custom fromToml · custom toToml
+# ##########################################################################
+
+[subagent_models]
+
+# one [subagent_models."<name>"] table per entry:
+# [subagent_models."<name>"]
+  # max_context_size: integer
+  # max_input_size: integer
+  # max_output_size: integer
+  # capabilities: string[]
+  # display_name: string
+  # reasoning_key: string
+  # adaptive_thinking: boolean
+  # support_efforts: string[]
+  # default_effort: string
+  # off_effort: string
+  # model: string
+  # description: string
+  # recommended_for: string[]
+  # default: boolean
 
 # ##########################################################################
 # task
