@@ -148,6 +148,7 @@ kimi
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；在 `kimi` 上以 `thinking.keep` 发送，在 `anthropic`（Claude 以及 Kimi 的 Anthropic 兼容模式）上以 `context_management` 的 `clear_thinking_20251015` 编辑发送（开启 keep 会让 Anthropic 请求走 beta Messages API）；覆盖 `[thinking] keep`（其默认值为 `"all"`）；仅在 Thinking 开启时注入 | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检——不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
+| `KIMI_TITLE_SPINNER` | agent 忙碌时让终端标题动起来，使工作状态在终端标签页上可见；空闲时恢复静态标题 | `moon`（默认）、`sparkle`、`braille`、`orbit`、`pulse`、`line`、`hourglass`、`phase`（显示 streaming 相位而非旋转）、`off`（不动画）；未知值回退到 `moon` |
 
 ## 诊断日志
 

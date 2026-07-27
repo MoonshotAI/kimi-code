@@ -1,0 +1,112 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { TITLE_SPINNER_STYLES } from '#/tui/constant/title-spinners';
+import {
+  TerminalTitleSpinnerController,
+  type TerminalTitleSpinnerHost,
+} from '#/tui/controllers/terminal-title-spinner';
+
+interface FakeHostState {
+  busy: boolean;
+  phase: string;
+  staticTitle: string;
+}
+
+function createHost(state: FakeHostState): { host: TerminalTitleSpinnerHost; titles: string[] } {
+  const titles: string[] = [];
+  const host: TerminalTitleSpinnerHost = {
+    setTitle: vi.fn((label: string) => {
+      titles.push(label);
+    }),
+    staticTitle: () => state.staticTitle,
+    isBusy: () => state.busy,
+    streamingPhase: () => state.phase,
+  };
+  return { host, titles };
+}
+
+describe('TerminalTitleSpinnerController', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('writes the static title and runs no timer when idle', () => {
+    const { host, titles } = createHost({ busy: false, phase: 'idle', staticTitle: 'My Session' });
+    const controller = new TerminalTitleSpinnerController(host, 'moon');
+    controller.sync();
+    expect(titles).toEqual(['My Session']);
+    vi.advanceTimersByTime(2000);
+    expect(titles).toEqual(['My Session']);
+  });
+
+  it('animates the title with the selected style while busy', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: 'Fix bug' });
+    const frames = TITLE_SPINNER_STYLES['line']!.frames;
+    const interval = TITLE_SPINNER_STYLES['line']!.interval;
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    expect(titles[0]).toBe(`${frames[0]} Fix bug`);
+    vi.advanceTimersByTime(interval);
+    expect(titles[1]).toBe(`${frames[1]} Fix bug`);
+    controller.dispose();
+  });
+
+  it('runs a single timer across repeated syncs while busy', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: 'x' });
+    const interval = TITLE_SPINNER_STYLES['line']!.interval;
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    controller.sync();
+    controller.sync();
+    const writesBefore = titles.length;
+    vi.advanceTimersByTime(interval);
+    // Exactly one timer tick fires, so exactly one extra write happens.
+    expect(titles.length).toBe(writesBefore + 1);
+    controller.dispose();
+  });
+
+  it('off keeps the static title even while busy', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: 'S' });
+    const controller = new TerminalTitleSpinnerController(host, 'off');
+    controller.sync();
+    vi.advanceTimersByTime(2000);
+    expect(titles).toEqual(['S']);
+  });
+
+  it('phase maps the streaming phase to a glyph without any timer', () => {
+    const state: FakeHostState = { busy: true, phase: 'thinking', staticTitle: 'S' };
+    const { host, titles } = createHost(state);
+    const controller = new TerminalTitleSpinnerController(host, 'phase');
+    controller.sync();
+    expect(titles[0]).toBe('✦ S');
+    state.phase = 'shell';
+    controller.sync();
+    expect(titles[1]).toBe('▸ S');
+    vi.advanceTimersByTime(5000);
+    expect(titles).toHaveLength(2);
+  });
+
+  it('dispose stops the timer and restores the static title', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: 'Done' });
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    controller.dispose();
+    expect(titles.at(-1)).toBe('Done');
+    const countAfterDispose = titles.length;
+    vi.advanceTimersByTime(2000);
+    expect(titles).toHaveLength(countAfterDispose);
+  });
+
+  it('unknown style falls back to the default spinner', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: 'T' });
+    const controller = new TerminalTitleSpinnerController(host, 'definitely-not-a-style');
+    const firstFrame = TITLE_SPINNER_STYLES['moon']!.frames[0];
+    controller.sync();
+    expect(titles[0]).toBe(`${firstFrame} T`);
+    controller.dispose();
+  });
+});

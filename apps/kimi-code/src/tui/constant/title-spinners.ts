@@ -50,6 +50,8 @@ export function resolveTitleSpinnerId(raw: string | undefined): string {
   const id = raw?.trim().toLowerCase();
   if (id === OFF_TITLE_SPINNER_ID) return OFF_TITLE_SPINNER_ID;
   if (id === PHASE_TITLE_SPINNER_ID) return PHASE_TITLE_SPINNER_ID;
-  if (id !== undefined && id in TITLE_SPINNER_STYLES) return id;
+  // Own-property check only: an inherited key such as `constructor` or
+  // `toString` must not be accepted as a style (its value has no `frames`).
+  if (id !== undefined && Object.hasOwn(TITLE_SPINNER_STYLES, id)) return id;
   return DEFAULT_TITLE_SPINNER_ID;
 }

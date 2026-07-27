@@ -99,15 +99,6 @@ import {
   PRODUCT_NAME,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
-import {
-  OFF_TITLE_SPINNER_ID,
-  PHASE_TITLE_GLYPHS,
-  PHASE_TITLE_SPINNER_ID,
-  resolveTitleSpinnerId,
-  TITLE_SPINNER_ENV,
-  TITLE_SPINNER_STYLES,
-  type TitleSpinnerStyle,
-} from './constant/title-spinners';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
@@ -117,6 +108,7 @@ import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { TerminalTitleSpinnerController } from './controllers/terminal-title-spinner';
 import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -322,9 +314,6 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
-  private titleSpinnerTimer: ReturnType<typeof setInterval> | null = null;
-  private titleSpinnerFrame = 0;
-  private readonly titleSpinnerId = resolveTitleSpinnerId(process.env[TITLE_SPINNER_ENV]);
   private clipboardImageHintController: ClipboardImageHintController | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
@@ -351,6 +340,7 @@ export class KimiTUI {
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
   readonly editorKeyboard: EditorKeyboardController;
+  readonly titleSpinner: TerminalTitleSpinnerController;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -432,6 +422,16 @@ export class KimiTUI {
     this.tasksBrowserController = new TasksBrowserController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
+    this.titleSpinner = new TerminalTitleSpinnerController({
+      setTitle: (label) => this.state.terminal.setTitle(label),
+      staticTitle: () => {
+        const trimmed = this.state.appState.sessionTitle?.trim() ?? '';
+        return trimmed.length > 0 ? trimmed.slice(0, MAX_TERMINAL_TITLE_LENGTH) : PRODUCT_NAME;
+      },
+      isBusy: () =>
+        this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting,
+      streamingPhase: () => this.state.appState.streamingPhase,
+    });
     this.buildLayout();
   }
 
@@ -850,7 +850,7 @@ export class KimiTUI {
     this.tasksBrowserController.close();
     this.btwPanelController.clear();
     this.stopActivitySpinner();
-    this.stopTerminalTitleSpinner();
+    this.titleSpinner.dispose();
     this.streamingUI.disposeActiveCompactionBlock();
     this.streamingUI.resetToolUi();
     this.disposeTranscriptChildren();
@@ -1517,7 +1517,7 @@ export class KimiTUI {
     if (busyChanged) {
       this.updateQueueDisplay();
       this.sessionEventHandler.retryQueuedGoalPromotion();
-      this.syncTerminalTitleSpinner();
+      this.titleSpinner.sync();
     }
     if (additionalDirsChanged) this.setupAutocomplete();
     this.state.ui.requestRender();
@@ -1697,61 +1697,7 @@ export class KimiTUI {
   }
 
   updateTerminalTitle(): void {
-    this.syncTerminalTitleSpinner();
-  }
-
-  /**
-   * Reflects the current busy state on the terminal title. While the agent is
-   * working (streaming a turn or compacting) the title is prefixed with an
-   * animated glyph so progress stays visible on the terminal tab even when the
-   * window is not focused; when idle, the static session title (or product
-   * name) is restored. The style is resolved once from `KIMI_TITLE_SPINNER`:
-   * a cycling registry entry runs a single timer, `phase` derives a static
-   * glyph from the streaming phase (no timer), and `off` keeps the plain title.
-   */
-  private syncTerminalTitleSpinner(): void {
-    const busy = this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting;
-    if (!busy || this.titleSpinnerId === OFF_TITLE_SPINNER_ID) {
-      this.stopTerminalTitleSpinner();
-      this.state.terminal.setTitle(this.staticTerminalTitle());
-      return;
-    }
-    if (this.titleSpinnerId === PHASE_TITLE_SPINNER_ID) {
-      this.state.terminal.setTitle(this.phaseTerminalTitle());
-      return;
-    }
-    const style = TITLE_SPINNER_STYLES[this.titleSpinnerId];
-    if (style === undefined) {
-      this.state.terminal.setTitle(this.staticTerminalTitle());
-      return;
-    }
-    this.state.terminal.setTitle(this.frameTerminalTitle(style));
-    this.titleSpinnerTimer ??= setInterval(() => {
-      this.titleSpinnerFrame = (this.titleSpinnerFrame + 1) % style.frames.length;
-      this.state.terminal.setTitle(this.frameTerminalTitle(style));
-    }, style.interval);
-  }
-
-  private stopTerminalTitleSpinner(): void {
-    if (this.titleSpinnerTimer !== null) {
-      clearInterval(this.titleSpinnerTimer);
-      this.titleSpinnerTimer = null;
-    }
-  }
-
-  private staticTerminalTitle(): string {
-    const trimmed = this.state.appState.sessionTitle?.trim() ?? '';
-    return trimmed.length > 0 ? trimmed.slice(0, MAX_TERMINAL_TITLE_LENGTH) : PRODUCT_NAME;
-  }
-
-  private frameTerminalTitle(style: TitleSpinnerStyle): string {
-    const frame = style.frames[this.titleSpinnerFrame % style.frames.length] ?? '';
-    return `${frame} ${this.staticTerminalTitle()}`;
-  }
-
-  private phaseTerminalTitle(): string {
-    const glyph = PHASE_TITLE_GLYPHS[this.state.appState.streamingPhase];
-    return glyph === undefined ? this.staticTerminalTitle() : `${glyph} ${this.staticTerminalTitle()}`;
+    this.titleSpinner.sync();
   }
 
   resetSessionRuntime(): void {

@@ -36,6 +36,13 @@ describe('resolveTitleSpinnerId', () => {
   it('default id is a registered style', () => {
     expect(TITLE_SPINNER_STYLES[DEFAULT_TITLE_SPINNER_ID]).toBeDefined();
   });
+
+  it('rejects inherited object keys instead of treating them as styles', () => {
+    expect(resolveTitleSpinnerId('constructor')).toBe(DEFAULT_TITLE_SPINNER_ID);
+    expect(resolveTitleSpinnerId('toString')).toBe(DEFAULT_TITLE_SPINNER_ID);
+    expect(resolveTitleSpinnerId('hasOwnProperty')).toBe(DEFAULT_TITLE_SPINNER_ID);
+    expect(resolveTitleSpinnerId('__proto__')).toBe(DEFAULT_TITLE_SPINNER_ID);
+  });
 });
 
 describe('TITLE_SPINNER_STYLES', () => {
