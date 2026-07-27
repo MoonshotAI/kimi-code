@@ -1533,6 +1533,48 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
+    it('assembles one merged text part through generate() when chunks pad empty reasoning', async () => {
+      // End-to-end invariant behind the per-token-line-breaks bug: after the
+      // stream is drained and merged, the reply must be a single text part.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'some-reasoning-model',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield {
+          id: 'c1',
+          choices: [{ index: 0, delta: { content: '', reasoning_content: 'think 1' } }],
+        };
+        yield {
+          id: 'c1',
+          choices: [{ index: 0, delta: { content: 'Hello', reasoning_content: '' } }],
+        };
+        yield {
+          id: 'c1',
+          choices: [{ index: 0, delta: { content: ' world', reasoning_content: '' } }],
+        };
+        yield { id: 'c1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const result = await generate(
+        provider,
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+      );
+
+      expect(result.message.content).toEqual([
+        { type: 'think', think: 'think 1' },
+        { type: 'text', text: 'Hello world' },
+      ]);
+    });
+
     it('preserves the empty reasoning marker on streaming tool-call chunks', async () => {
       // Reasoning endpoints may require the reasoning field to be replayed on
       // tool-call continuation; the empty marker must survive so the outbound
