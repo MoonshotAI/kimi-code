@@ -343,7 +343,9 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出，按顺序匹配，第一条命中即生效。
+`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出。
+
+匹配先按 `decision` 分类，再按顺序：先查所有 `deny` 规则，再查所有 `ask`，最后查所有 `allow`；同一类之内第一条命中即生效。因此命中的 `deny` 会压过命中的 `ask` 和 `allow`，命中的 `ask` 会压过命中的 `allow`，与各条规则在文件中的先后位置无关。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -371,6 +373,23 @@ pattern = "Bash(rm -rf*)"
 decision = "ask"
 pattern = "Bash"
 ```
+
+::: warning
+同一个工具上，兜底规则无法与更窄的 `allow` 规则搭配使用。由于范围更宽的那条规则是按类别而非按位置被查到的，它会把你放行的调用一并吞掉：
+
+```toml
+# 不生效：下面这条兜底规则同样会作用于 `Bash(git status)`。
+[[permission.rules]]
+decision = "allow"
+pattern = "Bash(git status*)"
+
+[[permission.rules]]
+decision = "deny" # 换成 "ask" 效果相同，两者都压过 `allow`
+pattern = "Bash"
+```
+
+兜底规则通常也没有必要：未命中任何规则的工具调用本来就会走到确认提示，除非该工具默认放行（`Read`、`Grep` 这类只读工具即是）。只写窄规则即可——`allow` 用于希望静默放行的调用，`deny` 用于永远不想执行的调用，其余交给确认提示处理。
+:::
 
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
