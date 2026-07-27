@@ -92,6 +92,7 @@ export interface WireSession {
     permission_mode?: string;
     plan_mode?: boolean;
     swarm_mode?: boolean;
+    workflow_mode?: boolean;
     goal_objective?: string;
     goal_control?: 'pause' | 'resume' | 'cancel';
   };
@@ -108,6 +109,7 @@ export interface WireSessionRuntimeStatus {
   permission: string;
   plan_mode: boolean;
   swarm_mode: boolean;
+  workflow_mode: boolean;
   context_tokens: number;
   max_context_tokens: number;
   context_usage: number;
@@ -221,6 +223,7 @@ export interface WirePromptSubmission {
   permission_mode?: string;
   plan_mode?: boolean;
   swarm_mode?: boolean;
+  workflow_mode?: boolean;
   goal_objective?: string;
   goal_control?: 'pause' | 'resume' | 'cancel';
 }
@@ -873,3 +876,92 @@ export type WireEvent =
   | WireEventModelCatalogChanged
   // Unknown / future events
   | WireEventUnknown;
+
+// ---------------------------------------------------------------------------
+// Workflows
+// ---------------------------------------------------------------------------
+
+export interface WireWorkflowPhase {
+  title: string;
+  detail?: string;
+}
+
+export interface WireWorkflowSummary {
+  name: string;
+  description: string;
+  when_to_use?: string;
+  argument_hint?: string;
+  phases: WireWorkflowPhase[];
+  path: string;
+  source: string;
+}
+
+export interface WireWorkflowDetail extends WireWorkflowSummary {
+  script: string;
+}
+
+export type WireWorkflowRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface WireWorkflowRunRecord {
+  run_id: string;
+  workflow_name: string;
+  description: string;
+  phases: WireWorkflowPhase[];
+  status: WireWorkflowRunStatus;
+  phase?: string;
+  phase_index?: number;
+  agent_calls: number;
+  logs: string[];
+  error?: string;
+  result_json?: string;
+  started_at: number;
+  ended_at?: number;
+  task_id?: string;
+  script_path?: string;
+  source: string;
+  script: string;
+  args: string;
+  caller_agent_id: string;
+}
+
+export interface WireListWorkflowsResponse {
+  items: WireWorkflowSummary[];
+}
+
+export interface WireGetWorkflowResponse {
+  workflow: WireWorkflowDetail | null;
+}
+
+export interface WireRunWorkflowResponse {
+  run_id: string;
+  task_id: string;
+  workflow_name: string;
+}
+
+export interface WireListWorkflowRunsResponse {
+  items: WireWorkflowRunRecord[];
+}
+
+export interface WireGetWorkflowRunResponse {
+  run: WireWorkflowRunRecord | null;
+}
+
+export interface WireCancelWorkflowRunResponse {
+  cancelled: boolean;
+}
+
+export interface WireSaveWorkflowBody {
+  script: string;
+  scope: 'project' | 'user';
+  overwrite?: boolean;
+}
+
+export interface WireSaveWorkflowResponse {
+  path: string;
+  name: string;
+}
+
+export interface WireReloadWorkflowsResponse {
+  workflows: WireWorkflowSummary[];
+  skipped: Array<{ path: string; reason: string }>;
+}

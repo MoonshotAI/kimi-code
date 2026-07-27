@@ -84,6 +84,8 @@ extra_workflow_dirs = ["~/team-workflows"]
 
 ## 运行 Workflow
 
+### Kimi Code CLI（终端界面）
+
 `/workflow` 斜杠命令（别名 `/workflows`）用于在终端界面中管理 Workflow：
 
 | 命令 | 说明 |
@@ -104,6 +106,21 @@ extra_workflow_dirs = ["~/team-workflows"]
 
 无论运行来自 `/workflow run` 还是来自模型，执行前都会先弹出确认对话框，展示 Workflow 的名称、描述和阶段、token 消耗警告、已配置的限制，以及查看完整脚本的选项。只有在你明确确认后，Workflow 才会运行。
 
+### Kimi Code Web UI
+
+Workflow 管理功能同样在 **Kimi Code Web UI** 中提供，通过专用的图形界面完成。在聊天输入框中使用 `/workflow` 命令，或点击 composer 工具栏中 Mode 菜单下的 **Workflow** 开关即可打开。
+
+**Workflow Hub** 对话框包含两个标签页：
+
+- **Catalog（目录）**：浏览所有已发现的 Workflow（内置、项目和用户 Workflow）。每个条目显示名称、描述、来源标签、阶段列表和 **Run Now（立即运行）** 按钮。点击 Workflow 可展开完整详情，包括脚本内容。
+- **Runs（运行记录）**：监控活跃和历史的 Workflow 运行。每条记录显示状态标签（运行中/已完成/失败/已取消）、当前阶段、Agent 调用次数、时间戳和最近日志行。活跃的运行可直接在对话框中取消。
+
+当 Workflow 正在运行时，聊天 dock 底部会显示一个**运行状态条**，展示 Workflow 名称、当前阶段和取消按钮。它会每 2 秒自动刷新，让你无需打开 Hub 即可跟进进度。
+
+Composer 的 Mode 菜单中新增了 **Workflow 模式**开关（与 Plan、Swarm 和 Goal 并列）。启用后，composer 工具栏会显示 "Workflow" 标签，Agent 会收到 "You are in dynamic workflow mode" 系统指令，倾向于为大型或多步骤任务编写 Workflow 脚本。
+
+Web UI 中的所有 Workflow 操作均使用与 CLI 相同的后端接口，因此从任一界面启动的运行都能在两端看到。
+
 ## 监控运行
 
 Workflow 在后台运行，不会阻塞你的会话。`/workflow runs` 打开运行浏览器，列出每次运行的状态、当前阶段（`N/M`）、已发起的 `agent()` 调用次数和日志输出，运行结束后还会展示最终结果或错误。浏览器中的快捷键可以取消运行、保存脚本或查看脚本。
@@ -112,9 +129,9 @@ Workflow 的开始和完成事件也会直接出现在会话中，并且每次�
 
 ## Dynamic Workflow 模式
 
-通过 `/workflow on` 启用后，**Dynamic Workflow 模式**会让模型先分析任务，对于大型或多阶段的复杂任务，使用 `Workflow` 工具主动创建动态 Workflow 脚本提交给你审批，而不是直接执行。提案与普通 Workflow 走相同的确认流程——在你批准之前不会运行任何内容。
+通过 `/workflow on` 或 Web UI composer 的 Mode 菜单中的 **Workflow** 开关启用后，**Dynamic Workflow 模式**会让模型先分析任务，对于大型或多阶段的复杂任务，使用 `Workflow` 工具主动创建动态 Workflow 脚本提交给你审批，而不是直接执行。提案与普通 Workflow 走相同的确认流程——在你批准之前不会运行任何内容。
 
-Um `Dynamic Workflow` no terminal footer mostra que o modo está ativo. Desative a qualquer momento com `/workflow off`.
+终端底部（CLI）的 `Dynamic Workflow` 标签或 composer 工具栏（Web UI）中的 `Workflow` 徽章会显示该模式已激活。可通过 `/workflow off` 或模式开关随时禁用它。
 
 Dynamic Workflow 模式与所有现有模式兼容：
 

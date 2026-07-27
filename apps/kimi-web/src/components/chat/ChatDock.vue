@@ -33,6 +33,7 @@ const props = defineProps<{
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
+  workflowMode?: boolean;
   activationBadges?: ActivationBadges;
   models?: AppModel[];
   starredIds?: string[];
@@ -66,6 +67,7 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
+  toggleWorkflow: [];
   openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
@@ -276,6 +278,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       :plan-mode="planMode"
       :swarm-mode="swarmMode"
       :goal-mode="goalMode"
+      :workflow-mode="workflowMode"
       :goal="goal"
       :activation-badges="activationBadges"
       :models="models"
@@ -291,6 +294,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       @toggle-plan="emit('togglePlan')"
       @toggle-swarm="emit('toggleSwarm')"
       @toggle-goal="emit('toggleGoal')"
+      @toggle-workflow="emit('toggleWorkflow')"
       @open-btw="emit('openBtw')"
       @create-goal="emit('createGoal', $event)"
       @control-goal="emit('controlGoal', $event)"

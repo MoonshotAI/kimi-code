@@ -22,6 +22,8 @@ export default {
   goalDesc: '持续跟踪一个目标，直到任务完成',
   swarmLabel: 'Swarm',
   swarmDesc: '并行运行多个智能体，适合大范围探索',
+  workflowLabel: '工作流',
+  workflowDesc: '让智能体执行多阶段工作流脚本',
   modeOff: '未启用',
   goalPlaceholder: '让智能体完成什么目标？',
   goalStart: '开始',

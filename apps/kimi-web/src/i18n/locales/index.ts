@@ -55,7 +55,9 @@ import en_settings from './en/settings';
 import zh_settings from './zh/settings';
 import en_header from './en/header';
 import zh_header from './zh/header';
+import en_workflow from './en/workflow';
 import en_sideChat from './en/sideChat';
+import zh_workflow from './zh/workflow';
 import zh_sideChat from './zh/sideChat';
 
 export const messages = {
@@ -80,6 +82,7 @@ export const messages = {
     filePreview: en_filePreview,
     mention: en_mention,
     warnings: en_warnings,
+    workflow: en_workflow,
     commands: en_commands,
     tools: en_tools,
     layout: en_layout,
@@ -111,6 +114,7 @@ export const messages = {
     filePreview: zh_filePreview,
     mention: zh_mention,
     warnings: zh_warnings,
+    workflow: zh_workflow,
     commands: zh_commands,
     tools: zh_tools,
     layout: zh_layout,

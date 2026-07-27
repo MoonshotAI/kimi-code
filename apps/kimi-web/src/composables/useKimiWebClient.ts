@@ -111,6 +111,7 @@ const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
 const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
+const WORKFLOW_MODE_STORAGE_KEY = STORAGE_KEYS.workflowMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
@@ -192,6 +193,10 @@ function saveSwarmModeToStorage(): void {
 
 function saveGoalModeToStorage(): void {
   saveModeMapToStorage(GOAL_MODE_STORAGE_KEY, rawState.goalModeBySession);
+}
+
+function saveWorkflowModeToStorage(): void {
+  saveModeMapToStorage(WORKFLOW_MODE_STORAGE_KEY, rawState.workflowModeBySession);
 }
 
 function loadActiveWorkspaceFromStorage(): string | null {
@@ -318,6 +323,8 @@ export interface ExtendedState extends KimiClientState {
   swarmModeBySession: Record<string, boolean>;
   /** Goal-mode (one-shot "next send creates a goal") toggle per session. */
   goalModeBySession: Record<string, boolean>;
+  /** Workflow-mode toggle per session. */
+  workflowModeBySession: Record<string, boolean>;
   loading: boolean;
   sessionLoading: boolean;
   queuedBySession: Record<string, QueuedPrompt[]>;
@@ -396,6 +403,7 @@ const rawState: ExtendedState = reactive({
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
+  workflowModeBySession: loadModeMapFromStorage(WORKFLOW_MODE_STORAGE_KEY),
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
@@ -434,10 +442,11 @@ const rawState: ExtendedState = reactive({
 // first prompt is sent (see startSessionAndSendPrompt), then cleared. Not
 // persisted — the draft is ephemeral.
 // ---------------------------------------------------------------------------
-const draftModes = reactive<{ planMode: boolean; swarmMode: boolean; goalMode: boolean }>({
+const draftModes = reactive<{ planMode: boolean; swarmMode: boolean; goalMode: boolean; workflowMode: boolean }>({
   planMode: false,
   swarmMode: false,
   goalMode: false,
+  workflowMode: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -619,10 +628,12 @@ function forgetSession(sessionId: string): void {
   delete rawState.planModeBySession[sessionId];
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
+  delete rawState.workflowModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
+  saveWorkflowModeToStorage();
 }
 
 // Models + Providers reactive state and helpers live in
@@ -860,6 +871,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     }
     if (event.planMode !== undefined) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [event.sessionId]: event.planMode };
+    }
+    if (event.workflowMode !== undefined) {
+      rawState.workflowModeBySession = { ...rawState.workflowModeBySession, [event.sessionId]: event.workflowMode };
     }
     if (event.thinking !== undefined) {
       rawState.thinkingBySession = {
@@ -2073,11 +2087,16 @@ const goalMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   return sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
 });
+const workflowMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.workflowModeBySession[sid] ?? false) : draftModes.workflowMode;
+});
 
 const activationBadges = computed<ActivationBadges>(() => {
   const swarmCounts = countSwarmMembers(swarms.value);
   return {
     plan: planMode.value,
+    workflow: workflowMode.value,
     goal: goal.value && goal.value.status !== 'complete'
       ? {
           status: goal.value.status,
@@ -2604,6 +2623,7 @@ const workspaceState = useWorkspaceState(rawState, {
   savePlanModeToStorage,
   saveSwarmModeToStorage,
   saveGoalModeToStorage,
+  saveWorkflowModeToStorage,
   draftModes,
   saveUnread,
   saveActiveWorkspaceToStorage,
@@ -2811,6 +2831,7 @@ export function useKimiWebClient() {
     planMode,
     swarmMode,
     goalMode,
+    workflowMode,
     queued,
     warnings,
     questions,
@@ -2900,6 +2921,8 @@ export function useKimiWebClient() {
     toggleSwarmMode: workspaceState.toggleSwarmMode,
     setGoalMode: workspaceState.setGoalMode,
     toggleGoalMode: workspaceState.toggleGoalMode,
+    setWorkflowMode: workspaceState.setWorkflowMode,
+    toggleWorkflowMode: workspaceState.toggleWorkflowMode,
     createGoal: workspaceState.createGoal,
     controlGoal: workspaceState.controlGoal,
     enqueue: workspaceState.enqueue,

@@ -30,6 +30,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IWorkflowModeService } from '#/agent/workflow/workflowMode';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -119,6 +120,13 @@ export class SessionLegacyService implements ISessionLegacyService {
         else swarm.exit();
       }
     }
+    if (agentConfig.workflow_mode !== undefined) {
+      const wfMode = agent.accessor.get(IWorkflowModeService);
+      if (wfMode.isActive !== agentConfig.workflow_mode) {
+        if (agentConfig.workflow_mode) wfMode.enter('manual');
+        else wfMode.exit();
+      }
+    }
     if (agentConfig.goal_objective !== undefined) {
       await agent.accessor
         .get(IAgentGoalService)
@@ -162,6 +170,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
+    const wfMode = agent.accessor.get(IWorkflowModeService);
 
     const model = profile.getModel();
     const caps = profile.getModelCapabilities() as {
@@ -182,6 +191,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
+      workflow_mode: wfMode.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens,
       context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,

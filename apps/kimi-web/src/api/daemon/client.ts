@@ -20,6 +20,9 @@ import type {
   AppTask,
   AppTaskStatus,
   AppTerminal,
+  AppWorkflowDetail,
+  AppWorkflowRunRecord,
+  AppWorkflowSummary,
   AppWorkspace,
   ApprovalResponse,
   FsBrowseResult,
@@ -51,6 +54,9 @@ import {
   toWireApprovalResponse,
   toWirePromptSubmission,
   toWireQuestionResponse,
+  toAppWorkflowDetail,
+  toAppWorkflowRunRecord,
+  toAppWorkflowSummary,
   toAppWorkspace,
   wireEventSeq,
   wireEventSessionId,
@@ -81,6 +87,15 @@ import type {
   WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
   WireSessionSnapshot,
+  WireListWorkflowsResponse,
+  WireGetWorkflowResponse,
+  WireRunWorkflowResponse,
+  WireListWorkflowRunsResponse,
+  WireGetWorkflowRunResponse,
+  WireCancelWorkflowRunResponse,
+  WireSaveWorkflowBody,
+  WireSaveWorkflowResponse,
+  WireReloadWorkflowsResponse,
   WireWorkspace,
   WireLogoutResult,
 } from './wire';
@@ -416,6 +431,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       permissionMode?: string;
       planMode?: boolean;
       swarmMode?: boolean;
+      workflowMode?: boolean;
       goalObjective?: string;
       goalControl?: 'pause' | 'resume' | 'cancel';
       thinking?: string;
@@ -429,6 +445,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     if (input.permissionMode !== undefined) agentConfig['permission_mode'] = input.permissionMode;
     if (input.planMode !== undefined) agentConfig['plan_mode'] = input.planMode;
     if (input.swarmMode !== undefined) agentConfig['swarm_mode'] = input.swarmMode;
+    if (input.workflowMode !== undefined) agentConfig['workflow_mode'] = input.workflowMode;
     if (input.goalObjective !== undefined) agentConfig['goal_objective'] = input.goalObjective;
     if (input.goalControl !== undefined) agentConfig['goal_control'] = input.goalControl;
     if (input.thinking !== undefined) agentConfig['thinking'] = input.thinking;
@@ -456,6 +473,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,
+      workflowMode: data.workflow_mode === true,
       contextTokens: data.context_tokens ?? 0,
       maxContextTokens: data.max_context_tokens ?? 0,
       contextUsage: data.context_usage ?? 0,
@@ -1387,6 +1405,92 @@ export class DaemonKimiWebApi implements KimiWebApi {
    *  those natively without the Authorization header, so the URL alone 401s. */
   async getFileBlob(fileId: string): Promise<Blob> {
     return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Workflows
+  // -------------------------------------------------------------------------
+
+  async listWorkflows(sessionId: string): Promise<AppWorkflowSummary[]> {
+    const data = await this.http.get<WireListWorkflowsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows`,
+    );
+    return data.items.map(toAppWorkflowSummary);
+  }
+
+  async getWorkflow(sessionId: string, name: string): Promise<AppWorkflowDetail | null> {
+    const data = await this.http.get<WireGetWorkflowResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/${encodeURIComponent(name)}`,
+    );
+    return data.workflow ? toAppWorkflowDetail(data.workflow) : null;
+  }
+
+  async runWorkflow(
+    sessionId: string,
+    input: { name?: string; script?: string; args?: string },
+  ): Promise<{ runId: string; taskId: string; workflowName: string }> {
+    const body: Record<string, unknown> = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.script !== undefined) body.script = input.script;
+    if (input.args !== undefined) body.args = input.args;
+    const data = await this.http.post<WireRunWorkflowResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/run`,
+      body,
+    );
+    return {
+      runId: data.run_id,
+      taskId: data.task_id,
+      workflowName: data.workflow_name,
+    };
+  }
+
+  async listWorkflowRuns(sessionId: string): Promise<AppWorkflowRunRecord[]> {
+    const data = await this.http.get<WireListWorkflowRunsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/runs`,
+    );
+    return data.items.map(toAppWorkflowRunRecord);
+  }
+
+  async getWorkflowRun(sessionId: string, runId: string): Promise<AppWorkflowRunRecord | null> {
+    const data = await this.http.get<WireGetWorkflowRunResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/runs/${encodeURIComponent(runId)}`,
+    );
+    return data.run ? toAppWorkflowRunRecord(data.run) : null;
+  }
+
+  async cancelWorkflowRun(sessionId: string, runId: string): Promise<{ cancelled: boolean }> {
+    const data = await this.http.post<WireCancelWorkflowRunResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/runs/${encodeURIComponent(runId)}/cancel`,
+    );
+    return { cancelled: data.cancelled };
+  }
+
+  async saveWorkflow(
+    sessionId: string,
+    input: { script: string; scope: 'project' | 'user'; overwrite?: boolean },
+  ): Promise<{ path: string; name: string }> {
+    const body: WireSaveWorkflowBody = {
+      script: input.script,
+      scope: input.scope,
+      overwrite: input.overwrite,
+    };
+    const data = await this.http.post<WireSaveWorkflowResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/save`,
+      body,
+    );
+    return { path: data.path, name: data.name };
+  }
+
+  async reloadWorkflows(
+    sessionId: string,
+  ): Promise<{ workflows: AppWorkflowSummary[]; skipped: { path: string; reason: string }[] }> {
+    const data = await this.http.post<WireReloadWorkflowsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/workflows/reload`,
+    );
+    return {
+      workflows: data.workflows.map(toAppWorkflowSummary),
+      skipped: data.skipped,
+    };
   }
 
   // -------------------------------------------------------------------------

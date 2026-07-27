@@ -34,6 +34,7 @@ const props = defineProps<{
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
+  workflowMode?: boolean;
   questions?: UIQuestion[];
   /** Question ids with an in-flight respond/dismiss (drives the card loading
    *  state). Keyed by questionId with the action kind. */
@@ -114,6 +115,7 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
+  toggleWorkflow: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   compact: [];
@@ -1379,6 +1381,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :plan-mode="planMode"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
+              :workflow-mode="workflowMode"
               :goal="goal"
               :activation-badges="activationBadges"
               :models="models"
@@ -1397,6 +1400,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @toggle-plan="emit('togglePlan')"
               @toggle-swarm="emit('toggleSwarm')"
               @toggle-goal="emit('toggleGoal')"
+              @toggle-workflow="emit('toggleWorkflow')"
               @open-btw="emit('command', '/btw')"
               @create-goal="emit('createGoal', $event)"
               @control-goal="emit('controlGoal', $event)"
@@ -1455,6 +1459,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :plan-mode="planMode"
         :swarm-mode="swarmMode"
         :goal-mode="goalMode"
+        :workflow-mode="workflowMode"
         :activation-badges="activationBadges"
         :models="models"
         :starred-ids="starredIds"
@@ -1491,6 +1496,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         @toggle-plan="emit('togglePlan')"
         @toggle-swarm="emit('toggleSwarm')"
         @toggle-goal="emit('toggleGoal')"
+        @toggle-workflow="emit('toggleWorkflow')"
           @open-btw="emit('command', '/btw')"
           @create-goal="emit('createGoal', $event)"
           @focus-goal="focusGoal"

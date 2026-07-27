@@ -202,6 +202,7 @@ export interface PersistSessionProfilePatch {
   permissionMode?: string;
   planMode?: boolean;
   swarmMode?: boolean;
+  workflowMode?: boolean;
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
@@ -252,8 +253,9 @@ export interface UseWorkspaceStateDeps {
   savePlanModeToStorage: () => void;
   saveSwarmModeToStorage: () => void;
   saveGoalModeToStorage: () => void;
+  saveWorkflowModeToStorage: () => void;
   /** Staged mode toggles for the not-yet-created draft session. */
-  draftModes: { planMode: boolean; swarmMode: boolean; goalMode: boolean };
+  draftModes: { planMode: boolean; swarmMode: boolean; goalMode: boolean; workflowMode: boolean };
   saveUnread: (changes: Record<string, boolean>) => void;
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
@@ -301,6 +303,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     savePlanModeToStorage,
     saveSwarmModeToStorage,
     saveGoalModeToStorage,
+    saveWorkflowModeToStorage,
     draftModes,
     saveUnread,
     saveActiveWorkspaceToStorage,
@@ -1139,9 +1142,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
       saveGoalModeToStorage();
     }
+    if (draftModes.workflowMode) {
+      rawState.workflowModeBySession = { ...rawState.workflowModeBySession, [sid]: true };
+      saveWorkflowModeToStorage();
+    }
     draftModes.planMode = false;
     draftModes.swarmMode = false;
     draftModes.goalMode = false;
+    draftModes.workflowMode = false;
     return sid;
   }
 
@@ -1207,6 +1215,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      const workflowMode = rawState.workflowModeBySession[sid] ?? false;
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
@@ -1221,6 +1230,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           model,
           planMode,
           swarmMode,
+          workflowMode,
           permissionMode: rawState.permission,
         },
         sid,
@@ -1513,6 +1523,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // that session's settings.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      const workflowMode = rawState.workflowModeBySession[sid] ?? false;
       const goalMode = rawState.goalModeBySession[sid] ?? false;
 
       if (goalMode && text) {
@@ -1541,6 +1552,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
+        workflowMode,
       });
 
       // Goal mode is a one-shot flag: consumed by this send, then cleared.
@@ -1717,6 +1729,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
+        workflowMode: rawState.workflowModeBySession[sid] ?? false,
       });
 
       // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
@@ -2168,6 +2181,27 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const sid = rawState.activeSessionId;
     const current = sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
     setGoalMode(!current);
+  }
+
+  /** Persist and apply workflow mode for the active session (pushed to its profile
+   *  + sent per-prompt). With no active session the toggle is staged on the
+   *  draft and transferred when the first prompt creates the session. */
+  function setWorkflowMode(on: boolean): void {
+    const sid = rawState.activeSessionId;
+    if (sid) {
+      rawState.workflowModeBySession = { ...rawState.workflowModeBySession, [sid]: on };
+      saveWorkflowModeToStorage();
+      void persistSessionProfile({ workflowMode: on });
+    } else {
+      draftModes.workflowMode = on;
+    }
+  }
+
+  /** Flip workflow mode on/off for the active session (or the draft). */
+  function toggleWorkflowMode(): void {
+    const sid = rawState.activeSessionId;
+    const current = sid ? (rawState.workflowModeBySession[sid] ?? false) : draftModes.workflowMode;
+    setWorkflowMode(!current);
   }
 
   /** Create a goal by sending its objective to the session profile, then submit it as a prompt. */
@@ -2803,6 +2837,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     toggleSwarmMode,
     setGoalMode,
     toggleGoalMode,
+    setWorkflowMode,
+    toggleWorkflowMode,
     createGoal,
     controlGoal,
     setPermission,

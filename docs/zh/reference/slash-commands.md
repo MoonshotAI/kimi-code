@@ -96,7 +96,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 ## Dynamic Workflows
 
-`/workflow`（别名 `/workflows`）用于管理 [Dynamic Workflow](../customization/workflows.md) —— 一项实验功能，运行经用户批准、用于编排子 Agent 的 JavaScript 脚本。这些命令仅在 `dynamic-workflows` 实验 flag 启用时可用；每次运行在执行任何内容之前都会要求确认。
+`/workflow`（别名 `/workflows`）用于管理 [Dynamic Workflow](../customization/workflows.md) —— 一项实验功能，运行经用户批准、用于编排子 Agent 的 JavaScript 脚本。在 **CLI** 中这些命令需要启用 `dynamic-workflows` 实验 flag；在 **Web UI** 中则始终可从聊天输入框中使用。每次运行在执行任何内容之前都会要求确认。
 
 | 命令 | 说明 |
 | --- | --- |

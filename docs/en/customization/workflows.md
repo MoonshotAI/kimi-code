@@ -84,6 +84,8 @@ A workflow file with invalid content — for example a missing or malformed `met
 
 ## Running a workflow
 
+### Kimi Code CLI (TUI)
+
 The `/workflow` slash command (alias `/workflows`) manages workflows from the TUI:
 
 | Command | Description |
@@ -104,6 +106,21 @@ You can also just ask Kimi in natural language to create or run a workflow — f
 
 Whether a run comes from `/workflow run` or from the model, execution always starts with a confirmation dialog showing the workflow's name, description, and phases, a warning about token consumption, the configured limits, and an option to inspect the full script. The workflow runs only after you explicitly confirm.
 
+### Kimi Code Web UI
+
+Workflow management is also available in the **Kimi Code Web UI** through a dedicated graphical interface. Open it with the `/workflow` command in the chat composer or by clicking the **Workflow** toggle under the Mode menu in the composer toolbar.
+
+The **Workflow Hub** dialog provides two tabs:
+
+- **Catalog**: Browse all discovered workflows (built-in, project, and user workflows). Each entry shows its name, description, source badge, phase list, and a **Run Now** button. Clicking a workflow expands full details including the script.
+- **Runs**: Monitor active and historical workflow runs. Each run displays its status badge (Running / Completed / Failed / Cancelled), current phase, agent call count, timestamps, and the last log lines. Active runs can be cancelled directly from the dialog.
+
+When a workflow is running, an **active run strip** appears at the bottom of the chat dock showing the workflow name, current phase, and a cancel button. It auto-refreshes every 2 seconds so you can follow progress without opening the hub.
+
+The **Workflow mode** toggle in the composer's mode menu (next to Plan, Swarm, and Goal) instructs the agent to prefer writing workflow scripts for large or multi-step tasks. When enabled, a "Workflow" badge appears in the composer toolbar, and the agent receives the "You are in dynamic workflow mode" system instruction.
+
+All workflow operations in the Web UI use the same backend endpoints as the CLI, so runs started from either interface are visible in both.
+
 ## Monitoring runs
 
 Workflow runs execute in the background and never block your session. `/workflow runs` opens the run browser, which lists every run with its status, the current phase (`N/M`), the number of agent calls made so far, and its log output, plus the final result or error once the run finishes. Keyboard shortcuts in the browser let you cancel a run, save its script, or view the script.
@@ -112,9 +129,9 @@ Workflow start and completion events also appear directly in the conversation, a
 
 ## Dynamic Workflow mode
 
-When enabled via `/workflow on`, **Dynamic Workflow mode** instructs the model to analyse the task first and, for large or multi-phase tasks, propose a dynamic workflow script (via the `Workflow` tool) instead of executing directly. The proposal goes through the same confirmation dialog as any other workflow — nothing runs before you approve.
+When enabled via `/workflow on` or the **Workflow** toggle in the Web UI composer's Mode menu, **Dynamic Workflow mode** instructs the model to analyse the task first and, for large or multi-phase tasks, propose a dynamic workflow script (via the `Workflow` tool) instead of executing directly. The proposal goes through the same confirmation dialog as any other workflow — nothing runs before you approve.
 
-A `Dynamic Workflow` label in the terminal footer shows that the mode is active. Disable it at any time with `/workflow off`.
+A `Dynamic Workflow` label in the terminal footer (CLI) or a `Workflow` badge in the composer toolbar (Web UI) shows that the mode is active. Disable it at any time with `/workflow off` or the mode toggle.
 
 Dynamic Workflow mode composes with all existing modes:
 - **Plan mode**: while planning, the agent reads the codebase and writes a plan; when you exit plan mode, the agent can convert the approved plan into a workflow script.

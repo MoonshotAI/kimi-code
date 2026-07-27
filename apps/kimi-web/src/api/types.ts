@@ -103,6 +103,7 @@ export interface AppSessionRuntimeStatus {
   permission: string;
   planMode: boolean;
   swarmMode: boolean;
+  workflowMode: boolean;
   contextTokens: number;
   maxContextTokens: number;
   contextUsage: number;
@@ -217,6 +218,7 @@ export interface PromptSubmission {
   permissionMode?: 'manual' | 'auto' | 'yolo';
   planMode?: boolean;
   swarmMode?: boolean;
+  workflowMode?: boolean;
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
 }
@@ -426,7 +428,7 @@ export type AppEvent =
       lastTurnReason?: 'completed' | 'cancelled' | 'failed';
     }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
-  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean; thinking?: string }
+  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean; workflowMode?: boolean; thinking?: string }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
   | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }
@@ -688,6 +690,53 @@ export interface AppSkill {
 }
 
 // ---------------------------------------------------------------------------
+// Workflow
+// ---------------------------------------------------------------------------
+
+export interface AppWorkflowPhase {
+  title: string;
+  detail?: string;
+}
+
+export interface AppWorkflowSummary {
+  name: string;
+  description: string;
+  whenToUse?: string;
+  argumentHint?: string;
+  phases: AppWorkflowPhase[];
+  path: string;
+  source: string;
+}
+
+export interface AppWorkflowDetail extends AppWorkflowSummary {
+  script: string;
+}
+
+export type AppWorkflowRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface AppWorkflowRunRecord {
+  runId: string;
+  workflowName: string;
+  description: string;
+  phases: AppWorkflowPhase[];
+  status: AppWorkflowRunStatus;
+  phase?: string;
+  phaseIndex?: number;
+  agentCalls: number;
+  logs: string[];
+  error?: string;
+  resultJson?: string;
+  startedAt: number;
+  endedAt?: number;
+  taskId?: string;
+  scriptPath?: string;
+  source: string;
+  script: string;
+  args: string;
+  callerAgentId: string;
+}
+
+// ---------------------------------------------------------------------------
 // KimiWebApi — the app-facing interface
 // ---------------------------------------------------------------------------
 
@@ -704,7 +753,7 @@ export interface KimiWebApi {
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
-  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel'; thinking?: string }): Promise<AppSession>;
+  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; workflowMode?: boolean; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel'; thinking?: string }): Promise<AppSession>;
   getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   /** Current goal snapshot, or null when the session has no active goal. */
   getSessionGoal(sessionId: string): Promise<AppGoal | null>;
@@ -801,6 +850,16 @@ export interface KimiWebApi {
   } | null>;
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
+
+  // Workflows
+  listWorkflows(sessionId: string): Promise<AppWorkflowSummary[]>;
+  getWorkflow(sessionId: string, name: string): Promise<AppWorkflowDetail | null>;
+  runWorkflow(sessionId: string, input: { name?: string; script?: string; args?: string }): Promise<{ runId: string; taskId: string; workflowName: string }>;
+  listWorkflowRuns(sessionId: string): Promise<AppWorkflowRunRecord[]>;
+  getWorkflowRun(sessionId: string, runId: string): Promise<AppWorkflowRunRecord | null>;
+  cancelWorkflowRun(sessionId: string, runId: string): Promise<{ cancelled: boolean }>;
+  saveWorkflow(sessionId: string, input: { script: string; scope: 'project' | 'user'; overwrite?: boolean }): Promise<{ path: string; name: string }>;
+  reloadWorkflows(sessionId: string): Promise<{ workflows: AppWorkflowSummary[]; skipped: { path: string; reason: string }[] }>;
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */

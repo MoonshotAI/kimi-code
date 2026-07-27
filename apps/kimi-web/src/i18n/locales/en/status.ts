@@ -22,6 +22,8 @@ export default {
   goalDesc: 'Track one objective until it is complete',
   swarmLabel: 'Swarm',
   swarmDesc: 'Run parallel agents for broader exploration',
+  workflowLabel: 'Workflow',
+  workflowDesc: 'Let the agent run multi-step workflow scripts',
   modeOff: 'Off',
   goalPlaceholder: 'What should the agent achieve?',
   goalStart: 'Start',

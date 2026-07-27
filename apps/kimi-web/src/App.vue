@@ -26,6 +26,7 @@ import Onboarding from './components/settings/Onboarding.vue';
 import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
+import { getKimiWebApi } from './api';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useConfirmDialog } from './composables/useConfirmDialog';
 import type { PromptAttachment } from './composables/useKimiWebClient';
@@ -39,8 +40,9 @@ import { useIsMobile } from './composables/useIsMobile';
 import { openDialogCount } from './composables/dialogStack';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
+import WorkflowHubDialog from './components/workflow/WorkflowHubDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
-import type { AppConfig, ThinkingLevel } from './api/types';
+import type { AppConfig, AppWorkflowSummary, AppWorkflowRunRecord, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
@@ -319,6 +321,10 @@ const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
+const showWorkflowHub = ref(false);
+const workflows = ref<AppWorkflowSummary[]>([]);
+const workflowRuns = ref<AppWorkflowRunRecord[]>([]);
+const workflowLoading = ref(false);
 
 type SubmitPayload = {
   text: string;
@@ -343,6 +349,7 @@ const anyOverlayOpen = computed<boolean>(
     showAddWorkspace.value ||
     showStatusPanel.value ||
     showSettings.value ||
+    showWorkflowHub.value ||
     showOnboarding.value ||
     showMobileSwitcher.value ||
     showMobileSettings.value,
@@ -524,6 +531,11 @@ function handleCommand(cmd: string): void {
     else client.toggleGoalMode();
     return;
   }
+  // `/workflow` opens the workflow hub; `/workflow <name>` runs a workflow.
+  if (cmd === '/workflow' || cmd.startsWith('/workflow ')) {
+    handleWorkflowCommand(cmd);
+    return;
+  }
   // `/btw <question>` opens (creating if needed) the side chat and asks it; bare
   // `/btw` toggles the side-chat tab for the active session.
   if (cmd === '/btw' || cmd.startsWith('/btw ')) {
@@ -647,6 +659,38 @@ function handleCloseAddWorkspace(): void {
   pendingWorkspaceSubmit.value = null;
   addWorkspaceError.value = null;
   showAddWorkspace.value = false;
+}
+
+async function loadWorkflows(): Promise<void> {
+  const sid = client.activeSessionId.value;
+  if (!sid) return;
+  workflowLoading.value = true;
+  try {
+    const [wfs, rns] = await Promise.all([
+      getKimiWebApi().listWorkflows(sid),
+      getKimiWebApi().listWorkflowRuns(sid),
+    ]);
+    workflows.value = wfs;
+    workflowRuns.value = rns;
+  } catch {
+    workflows.value = [];
+    workflowRuns.value = [];
+  } finally {
+    workflowLoading.value = false;
+  }
+}
+
+function handleWorkflowCommand(cmd: string): void {
+  const arg = cmd.slice('/workflow'.length).trim();
+  if (arg) {
+    // /workflow <name> — run a workflow right away
+    const sid = client.activeSessionId.value;
+    if (sid) void getKimiWebApi().runWorkflow(sid, { name: arg });
+    return;
+  }
+  // bare /workflow — open the hub
+  showWorkflowHub.value = true;
+  void loadWorkflows();
 }
 
 function focusComposerAfterDraft(): void {
@@ -794,6 +838,7 @@ function openPr(url: string): void {
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :goal-mode="client.goalMode.value"
+      :workflow-mode="client.workflowMode.value"
       :models="client.models.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
@@ -843,6 +888,7 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @toggle-goal="client.toggleGoalMode()"
+      @toggle-workflow="client.toggleWorkflowMode()"
       @create-goal="client.createGoal($event)"
       @control-goal="client.controlGoal($event)"
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
@@ -1041,6 +1087,20 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
       @close="showStatusPanel = false"
+    />
+
+    <!-- Workflow Hub overlay -->
+    <WorkflowHubDialog
+      v-if="showWorkflowHub"
+      :open="showWorkflowHub"
+      :workflows="workflows"
+      :runs="workflowRuns"
+      :loading="workflowLoading"
+      :session-id="client.activeSessionId.value"
+      @run="(name, args) => { showWorkflowHub = false; const sid = client.activeSessionId.value; if (sid) void getKimiWebApi().runWorkflow(sid, { name, args }); }"
+      @cancel-run="(runId) => { const sid = client.activeSessionId.value; if (sid) void getKimiWebApi().cancelWorkflowRun(sid, runId); }"
+      @reload="loadWorkflows"
+      @close="showWorkflowHub = false"
     />
 
     <!-- Add Workspace overlay (daemon folder browser + paste-path fallback) -->

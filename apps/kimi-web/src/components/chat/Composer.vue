@@ -54,6 +54,7 @@ const props = withDefaults(defineProps<{
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
+  workflowMode?: boolean;
   goal?: AppGoal | null;
   activationBadges?: ActivationBadges;
   /** Available models for the quick-switch dropdown. */
@@ -97,6 +98,7 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
+  toggleWorkflow: [];
   openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
@@ -669,6 +671,7 @@ function thinkingSegmentLabel(segment: string): string {
 // Plan toggle
 const planOn = computed(() => props.planMode === true);
 const swarmOn = computed(() => props.swarmMode === true);
+const workflowOn = computed(() => props.workflowMode === true);
 const goalStatus = computed(() => props.goal?.status ?? props.activationBadges?.goal?.status ?? null);
 const goalActive = computed(() => goalStatus.value !== null && goalStatus.value !== 'complete');
 const goalArmed = computed(() => goalActive.value || props.goalMode === true);
@@ -684,7 +687,7 @@ const modesMenuRef = ref<HTMLElement | null>(null);
 // The menu is position:fixed (so no composer stacking context can paint over
 // it); these coords anchor it just above the pill, computed on open.
 const modesMenuStyle = ref<Record<string, string>>({});
-const anyModeActive = computed(() => planOn.value || swarmOn.value || goalArmed.value);
+const anyModeActive = computed(() => planOn.value || swarmOn.value || goalArmed.value || workflowOn.value);
 function closeModes(): void {
   modesOpen.value = false;
   document.removeEventListener('mousedown', onModesDocClick);
@@ -718,7 +721,7 @@ const PERM_MODES: { mode: PermissionMode; color: string; labelKey: string; descK
   { mode: 'yolo', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
   { mode: 'auto', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
 ];
-const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc'] as const;
+const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc', 'status.workflowDesc'] as const;
 
 const menuMeasureRef = ref<HTMLElement | null>(null);
 const permissionDescriptionWidth = ref('');
@@ -1007,6 +1010,7 @@ function selectModel(modelId: string): void {
               <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
               <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
               <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
+              <span v-if="workflowOn" class="mode-tag">{{ t('status.workflowLabel') }}</span>
             </button>
 
             <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuInlineStyle" role="menu">
@@ -1027,6 +1031,15 @@ function selectModel(modelId: string): void {
                   <span class="mode-row-desc">{{ t('status.swarmDesc') }}</span>
                 </span>
                 <span class="mode-switch" :class="{ on: swarmOn }"><span class="mode-knob" /></span>
+              </button>
+              <!-- Workflow — functional client toggle -->
+              <button type="button" class="mode-row" :class="{ on: workflowOn }" role="menuitem" @click="emit('toggleWorkflow')">
+                <span class="mode-row-icon"><Icon name="bolt" size="sm" /></span>
+                <span class="mode-row-info">
+                  <span class="mode-row-name">{{ t('status.workflowLabel') }}</span>
+                  <span class="mode-row-desc">{{ t('status.workflowDesc') }}</span>
+                </span>
+                <span class="mode-switch" :class="{ on: workflowOn }"><span class="mode-knob" /></span>
               </button>
               <!-- Goal — lifecycle controls when active; switch is on when active or armed. -->
               <div class="mode-row mode-row-goal" :class="{ on: goalActive || props.goalMode }">

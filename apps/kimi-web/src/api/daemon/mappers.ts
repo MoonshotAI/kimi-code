@@ -20,6 +20,11 @@ import type {
   AppTaskStatus,
   AppWorkspace,
   ApprovalResponse,
+  AppWorkflowPhase,
+  AppWorkflowSummary,
+  AppWorkflowDetail,
+  AppWorkflowRunRecord,
+  AppWorkflowRunStatus,
   ImageSource,
   PromptSubmission,
   QuestionAnswer,
@@ -49,6 +54,11 @@ import type {
   WireWorkspace,
   WireEvent,
   WireConfig,
+  WireWorkflowPhase,
+  WireWorkflowSummary,
+  WireWorkflowDetail,
+  WireWorkflowRunRecord,
+  WireWorkflowRunStatus,
 } from './wire';
 
 // ---------------------------------------------------------------------------
@@ -259,6 +269,7 @@ export function toWirePromptSubmission(input: PromptSubmission): WirePromptSubmi
     permission_mode: input.permissionMode,
     plan_mode: input.planMode,
     swarm_mode: input.swarmMode,
+    workflow_mode: input.workflowMode,
     goal_objective: input.goalObjective,
     goal_control: input.goalControl,
   };
@@ -790,4 +801,62 @@ export function wireEventSessionId(wire: WireEvent): string {
 
 export function wireEventSeq(wire: WireEvent): number {
   return wire.seq;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow mappers
+// ---------------------------------------------------------------------------
+
+export function toAppWorkflowPhase(wire: WireWorkflowPhase): AppWorkflowPhase {
+  return {
+    title: wire.title,
+    detail: wire.detail,
+  };
+}
+
+export function toAppWorkflowSummary(wire: WireWorkflowSummary): AppWorkflowSummary {
+  return {
+    name: wire.name,
+    description: wire.description,
+    whenToUse: wire.when_to_use,
+    argumentHint: wire.argument_hint,
+    phases: wire.phases.map(toAppWorkflowPhase),
+    path: wire.path,
+    source: wire.source,
+  };
+}
+
+export function toAppWorkflowDetail(wire: WireWorkflowDetail): AppWorkflowDetail {
+  return {
+    ...toAppWorkflowSummary(wire),
+    script: wire.script,
+  };
+}
+
+export function toAppWorkflowRunStatus(wire: WireWorkflowRunStatus): AppWorkflowRunStatus {
+  return wire;
+}
+
+export function toAppWorkflowRunRecord(wire: WireWorkflowRunRecord): AppWorkflowRunRecord {
+  return {
+    runId: wire.run_id,
+    workflowName: wire.workflow_name,
+    description: wire.description,
+    phases: wire.phases.map(toAppWorkflowPhase),
+    status: toAppWorkflowRunStatus(wire.status),
+    phase: wire.phase,
+    phaseIndex: wire.phase_index,
+    agentCalls: wire.agent_calls,
+    logs: wire.logs,
+    error: wire.error,
+    resultJson: wire.result_json,
+    startedAt: wire.started_at,
+    endedAt: wire.ended_at,
+    taskId: wire.task_id,
+    scriptPath: wire.script_path,
+    source: wire.source,
+    script: wire.script,
+    args: wire.args,
+    callerAgentId: wire.caller_agent_id,
+  };
 }
