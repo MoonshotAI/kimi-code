@@ -2,12 +2,15 @@
 <!-- Design-system §03 Sheet / BottomSheet: mobile bottom panel (≤640px dialogs
      anchor here). Top radius xl + drag handle + xl shadow. -->
 <script setup lang="ts">
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 
 defineProps<{ open: boolean; title?: string }>();
 
 const emit = defineEmits<{ 'update:open': [value: boolean]; close: [] }>();
+
+const { t } = useKimiI18n();
 
 function close() {
   emit('update:open', false);
@@ -22,7 +25,7 @@ function close() {
         <div class="ui-sheet__handle" aria-hidden="true" />
         <div v-if="title" class="ui-sheet__head">
           <span class="ui-sheet__title">{{ title }}</span>
-          <IconButton size="sm" label="Close" @click="close">
+          <IconButton size="sm" :label="t('common.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

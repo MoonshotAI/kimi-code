@@ -8,7 +8,7 @@ export default {
   collapseAll: '折叠全部工作区',
   expandAll: '展开全部工作区',
   newSession: '新建会话',
-  newChat: '新建对话',
+  newChat: '新建会话',
   newWorkspace: '新建工作区',
   dropToAddWorkspace: '松开鼠标添加工作区',
   emptyState: '还没有会话 · 点击 新建会话 开始',

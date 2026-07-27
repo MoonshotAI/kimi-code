@@ -11,18 +11,19 @@ type MenuId = 'file' | 'edit' | 'view' | 'help';
 defineProps<{ sidebarCollapsed: boolean }>();
 const emit = defineEmits<{ toggleSidebar: [] }>();
 
-const { locale, t } = useI18n();
+const { t } = useI18n();
 const openMenu = ref<MenuId | null>(null);
 const triggers = ref<Partial<Record<MenuId, HTMLButtonElement>>>({});
 const menus: MenuId[] = ['file', 'edit', 'view', 'help'];
 let popupRequest = 0;
 let menuAccessOrigin: HTMLElement | null = null;
 const standaloneAlt = new StandaloneAltTracker();
-const labels = computed<Record<MenuId, string>>(() =>
-  locale.value.toLowerCase().startsWith('zh')
-    ? { file: '文件', edit: '编辑', view: '视图', help: '帮助' }
-    : { file: 'File', edit: 'Edit', view: 'View', help: 'Help' },
-);
+const labels = computed<Record<MenuId, string>>(() => ({
+  file: t('app.menuFile'),
+  edit: t('app.menuEdit'),
+  view: t('app.menuView'),
+  help: t('app.menuHelp'),
+}));
 
 function bridge(): {
   popupWindowsMenu?: (request: {
@@ -159,7 +160,7 @@ onBeforeUnmount(() => {
       >
         <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
       </IconButton>
-      <nav class="windows-menubar" aria-label="Application menu" @focusout="onMenuFocusout">
+      <nav class="windows-menubar" :aria-label="t('app.applicationMenu')" @focusout="onMenuFocusout">
         <button
           v-for="id in menus"
           :key="id"

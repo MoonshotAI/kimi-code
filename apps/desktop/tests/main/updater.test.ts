@@ -11,7 +11,7 @@ vi.mock('electron', () => ({ app: { isPackaged: false }, net: { fetch: netFetchM
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 
-import { fetchReleaseNotes, startAutoUpdater, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
+import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
 import { log } from '../../src/main/log';
 import { markQuitting } from '../../src/main/window';
 
@@ -306,7 +306,7 @@ describe('manual check (controller.check)', () => {
     const { controller } = setup();
     const promise = controller.check();
     vi.advanceTimersByTime(30_000);
-    await expect(promise).resolves.toEqual({ outcome: 'error', message: 'check timed out' });
+    await expect(promise).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
   });
 });
 

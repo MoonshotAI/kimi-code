@@ -2,6 +2,8 @@ export default {
   dismiss: 'Close',
   errorLabel: 'Error',
   noteLabel: 'Note',
+  agentWarningFallback: 'agent warning',
+  unhandledEvent: 'Unhandled event: {type}',
   agentError: {
     title: 'Model request failed',
     connection: 'Cannot connect to the model service',

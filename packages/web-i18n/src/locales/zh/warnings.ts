@@ -2,6 +2,8 @@ export default {
   dismiss: '关闭',
   errorLabel: '错误',
   noteLabel: '提示',
+  agentWarningFallback: 'agent 警告',
+  unhandledEvent: '未处理的事件:{type}',
   agentError: {
     title: '模型请求失败',
     connection: '无法连接模型服务',

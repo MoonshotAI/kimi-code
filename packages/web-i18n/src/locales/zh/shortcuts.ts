@@ -1,7 +1,7 @@
 export default {
   actions: {
     summonApp: { label: '显示应用窗口', desc: '从任意位置将应用窗口唤起到前台' },
-    newSession: { label: '新聊天', desc: '在当前工作区开始一个新聊天' },
+    newSession: { label: '新建会话', desc: '在当前工作区开始一个新会话' },
     searchSessions: { label: '搜索会话', desc: '打开会话搜索弹窗' },
     archiveSession: { label: '归档任务', desc: '立即归档当前聊天' },
     toggleSideChat: { label: '侧边聊天', desc: '打开或关闭 /btw 侧边聊天' },

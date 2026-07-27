@@ -218,7 +218,7 @@ async function copyPath(): Promise<void> {
         @click="handleOpenTarget(target.id)"
       >
         <span class="om-label">{{ target.label }}</span>
-        <span v-if="target.id === lastTargetId" class="om-last">Last used</span>
+        <span v-if="target.id === lastTargetId" class="om-last">{{ t('header.lastUsed') }}</span>
       </MenuItem>
       <MenuItem separator />
       <MenuItem @click="copyPath">

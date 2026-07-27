@@ -4,7 +4,7 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
 import { getTraceRecorder } from './trace';
-import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
+import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from './updater';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
 import type { WindowsMenuId } from './ipc-channels';
@@ -24,6 +24,7 @@ interface MenuStrings {
   selectAll: string;
   substitutions: string;
   speech: string;
+  view: string;
   newChat: string;
   openFolder: string;
   aboutApp: string;
@@ -38,6 +39,7 @@ interface MenuStrings {
   updateLatest: string;
   updateUnsupported: string;
   updateFailed: string;
+  updateCheckTimedOut: string;
   downloadNow: string;
   restartNow: string;
   later: string;
@@ -60,6 +62,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     selectAll: '全选',
     substitutions: '替换',
     speech: '语音',
+    view: '视图',
     newChat: '新建会话',
     openFolder: '打开文件夹…',
     aboutApp: '关于 Kimi Code',
@@ -74,6 +77,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     updateLatest: '当前已是最新版本。',
     updateUnsupported: '开发版本不支持检查更新。',
     updateFailed: '检查更新失败:{message}',
+    updateCheckTimedOut: '检查更新超时,请检查网络后重试。',
     downloadNow: '立即下载',
     restartNow: '立即重启',
     later: '稍后',
@@ -94,7 +98,8 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     selectAll: 'Select All',
     substitutions: 'Substitutions',
     speech: 'Speech',
-    newChat: 'New chat',
+    view: 'View',
+    newChat: 'New Session',
     openFolder: 'Open Folder…',
     aboutApp: 'About Kimi Code',
     quitApp: 'Quit Kimi Code',
@@ -108,6 +113,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     updateLatest: "You're on the latest version.",
     updateUnsupported: 'Update checks are unavailable in development builds.',
     updateFailed: 'Update check failed: {message}',
+    updateCheckTimedOut: 'The update check timed out. Check your network and try again.',
     downloadNow: 'Download Now',
     restartNow: 'Restart Now',
     later: 'Later',
@@ -307,7 +313,9 @@ async function runMenuUpdateCheck(): Promise<void> {
         ? strings.updateLatest
         : result.outcome === 'unsupported'
           ? strings.updateUnsupported
-          : strings.updateFailed.replace('{message}', result.message),
+          : result.message === UPDATE_CHECK_TIMED_OUT
+            ? strings.updateCheckTimedOut
+            : strings.updateFailed.replace('{message}', result.message),
     buttons: [strings.ok],
   });
 }
@@ -447,7 +455,7 @@ export function menuTemplate(
   };
 
   const viewMenu: MenuItemConstructorOptions = {
-    label: 'View',
+    label: strings.view,
     submenu: [
       { role: 'reload' },
       { role: 'forceReload' },
@@ -620,7 +628,7 @@ export function windowsMenuTemplate(
   const template: MenuItemConstructorOptions[] = [
     { id: 'file-menu', label: strings.file, submenu: fileSubmenu },
     { ...edit, id: 'edit-menu' },
-    { ...view, id: 'view-menu', label: locale === 'zh' ? '视图' : 'View', submenu: viewItems },
+    { ...view, id: 'view-menu', label: strings.view, submenu: viewItems },
     { id: 'help-menu', label: strings.help, submenu: helpSubmenu },
   ];
   if (!suspended) return template;

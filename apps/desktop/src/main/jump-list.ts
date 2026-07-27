@@ -84,7 +84,7 @@ export function parseLaunchArgs(argv: readonly string[]): LaunchAction {
 
 const JUMP_LIST_STRINGS: Record<TrayLocale, { newChat: string; recent: string }> = {
   zh: { newChat: '新建会话', recent: '最近' },
-  en: { newChat: 'New Chat', recent: 'Recent' },
+  en: { newChat: 'New Session', recent: 'Recent' },
 };
 
 export function buildJumpListCategories(

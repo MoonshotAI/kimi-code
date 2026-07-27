@@ -4,6 +4,7 @@
      IconButton pinned to the right. Replaces the per-panel hand-rolled headers
      (.tp-header / .ap-header / .tdp-header / .dv-panel-head / .sc-header …). -->
 <script setup lang="ts">
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 import Tooltip from './Tooltip.vue';
@@ -18,11 +19,12 @@ withDefaults(defineProps<{
   wrap?: boolean;
 }>(), {
   closable: true,
-  closeLabel: 'Close',
   closeIcon: 'close',
 });
 
 defineEmits<{ close: [] }>();
+
+const { t } = useKimiI18n();
 </script>
 
 <template>
@@ -36,7 +38,7 @@ defineEmits<{ close: [] }>();
       v-if="closable"
       class="ui-panel-header__close"
       size="sm"
-      :label="closeLabel"
+      :label="closeLabel ?? t('common.close')"
       @click="$emit('close')"
     >
       <Icon :name="closeIcon" size="sm" />

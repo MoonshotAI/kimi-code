@@ -61,6 +61,10 @@ export type UpdateCheckResult =
   | { outcome: 'unsupported' }
   | { outcome: 'error'; message: string };
 
+/** Sentinel `error.message` for a manual check that hit its timeout; display
+ *  sites map it to a localized string instead of showing it verbatim. */
+export const UPDATE_CHECK_TIMED_OUT = 'update check timed out';
+
 // Structural subset of electron-updater's AppUpdater (an EventEmitter).
 // Declared with method overloads so the real `autoUpdater` stays assignable.
 export interface UpdaterLike {
@@ -248,7 +252,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       const onNotAvailable = (): void => finish({ outcome: 'latest' });
       const onDownloaded = (info: { version: string }): void => finish({ outcome: 'available', version: info.version });
       const onError = (error: Error): void => finish({ outcome: 'error', message: error.message });
-      const timer = setTimeout(() => finish({ outcome: 'error', message: 'check timed out' }), MANUAL_CHECK_TIMEOUT_MS);
+      const timer = setTimeout(() => finish({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT }), MANUAL_CHECK_TIMEOUT_MS);
       timer.unref();
       updater.on('update-available', onAvailable);
       updater.on('update-not-available', onNotAvailable);

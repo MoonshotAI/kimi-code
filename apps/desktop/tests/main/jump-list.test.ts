@@ -99,7 +99,7 @@ describe('buildJumpListCategories', () => {
       {
         type: 'tasks',
         items: [
-          { type: 'task', program: exec, args: '--new-chat', title: 'New Chat', iconPath: exec, iconIndex: 0 },
+          { type: 'task', program: exec, args: '--new-chat', title: 'New Session', iconPath: exec, iconIndex: 0 },
         ],
       },
     ]);

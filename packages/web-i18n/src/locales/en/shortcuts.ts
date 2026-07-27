@@ -1,7 +1,7 @@
 export default {
   actions: {
     summonApp: { label: 'Show App Window', desc: 'Bring the app window to the foreground from anywhere' },
-    newSession: { label: 'New chat', desc: 'Start a new chat in the current workspace' },
+    newSession: { label: 'New Session', desc: 'Start a new session in the current workspace' },
     searchSessions: { label: 'Search Chats', desc: 'Open the session search dialog' },
     archiveSession: { label: 'Archive Chat', desc: 'Archive the current chat right away' },
     toggleSideChat: { label: 'Toggle Side Chat', desc: 'Open or close the /btw side chat' },

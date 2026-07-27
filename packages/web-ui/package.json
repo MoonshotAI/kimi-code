@@ -7,6 +7,9 @@
     ".": "./src/index.ts",
     "./style.css": "./src/style.css"
   },
+  "dependencies": {
+    "@moonshot-ai/web-i18n": "workspace:*"
+  },
   "peerDependencies": {
     "vue": "^3.5.35"
   },
