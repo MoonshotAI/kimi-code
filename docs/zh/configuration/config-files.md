@@ -124,6 +124,7 @@ timeout = 5
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | 供应商类型：`kimi`、`anthropic`、`openai`、`openai_responses`、`google-genai`、`vertexai` |
+| `catalog_provider` | `string` | 否 | 随 CLI 发布的 [models.dev](https://models.dev/) 快照中的精确供应商 ID，用于读取能力元数据，不会改变 `type` 选择的 API 协议。通常由 `/provider` 自动写入；手动配置 DeepSeek 等 OpenAI 兼容供应商时可显式设置，例如 `deepseek` |
 | `api_key` | `string` | 否 | API 密钥，明文写在配置文件里 |
 | `base_url` | `string` | 否 | API 基础 URL |
 | `oauth` | `table` | 否 | OAuth 凭据引用（`storage`、`key` 两个字段），由登录流程自动注入，通常无需手写 |

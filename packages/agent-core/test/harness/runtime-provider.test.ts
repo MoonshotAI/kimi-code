@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Catalog } from '@moonshot-ai/kosong';
 
 import type { KimiConfig, ModelAlias } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
@@ -13,9 +14,11 @@ function resolveRuntimeProvider(input: {
   readonly model?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly promptCacheKey?: string;
+  readonly catalog?: Catalog;
 }): ReturnType<ProviderManager['resolveProviderConfig']> {
   const manager = new ProviderManager({
     config: input.config,
+    catalog: input.catalog,
     kimiRequestHeaders: input.kimiRequestHeaders,
     promptCacheKey: input.promptCacheKey,
   });
@@ -106,6 +109,150 @@ describe('resolveRuntimeProvider model metadata', () => {
       tool_use: true,
       max_context_tokens: 200000,
     });
+  });
+
+  it('uses catalog capabilities before the legacy static table', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          openai: { type: 'openai', apiKey: 'test-key' },
+        },
+        models: {
+          custom: {
+            provider: 'openai',
+            model: 'gpt-4o',
+            maxContextSize: 123_456,
+          },
+        },
+      },
+      model: 'custom',
+      catalog: {
+        openai: {
+          models: {
+            'gpt-4o': {
+              id: 'gpt-4o',
+              limit: { context: 128_000 },
+              tool_call: false,
+              modalities: { input: ['text', 'audio'], output: ['text'] },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolved.modelCapabilities).toMatchObject({
+      image_in: false,
+      audio_in: true,
+      tool_use: false,
+      max_context_tokens: 123_456,
+    });
+  });
+
+  it('uses an explicit catalog provider for an OpenAI-compatible provider', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          deepseek: {
+            type: 'openai',
+            catalogProvider: 'deepseek',
+            apiKey: 'test-key',
+          },
+        },
+        models: {
+          custom: {
+            provider: 'deepseek',
+            model: 'deepseek-reasoner',
+            maxContextSize: 128_000,
+          },
+        },
+      },
+      model: 'custom',
+      catalog: {
+        deepseek: {
+          models: {
+            'deepseek-reasoner': {
+              id: 'deepseek-reasoner',
+              limit: { context: 128_000 },
+              reasoning: true,
+              tool_call: true,
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai',
+      model: 'deepseek-reasoner',
+    });
+    expect(resolved.modelCapabilities).toMatchObject({
+      thinking: true,
+      tool_use: true,
+      max_context_tokens: 128_000,
+    });
+  });
+
+  it('falls back to the legacy static table when the catalog misses', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          openai: { type: 'openai', apiKey: 'test-key' },
+        },
+        models: {
+          custom: {
+            provider: 'openai',
+            model: 'gpt-4o',
+            maxContextSize: 128_000,
+          },
+        },
+      },
+      model: 'custom',
+      catalog: {},
+    });
+
+    expect(resolved.modelCapabilities).toMatchObject({
+      image_in: true,
+      tool_use: true,
+      max_context_tokens: 128_000,
+    });
+  });
+
+  it('keeps user-declared capabilities above the catalog snapshot', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          anthropic: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          custom: {
+            provider: 'anthropic',
+            model: 'claude-example',
+            maxContextSize: 200_000,
+            capabilities: ['tool_use'],
+          },
+        },
+      },
+      model: 'custom',
+      catalog: {
+        anthropic: {
+          models: {
+            'claude-example': {
+              id: 'claude-example',
+              limit: { context: 200_000 },
+              tool_call: false,
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolved.modelCapabilities.tool_use).toBe(true);
   });
 
   it('uses config Kimi capabilities without requiring an api key during OAuth setup', () => {

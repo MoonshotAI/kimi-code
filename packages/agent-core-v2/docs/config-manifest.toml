@@ -276,6 +276,7 @@ merge_all_available_skills = true
   # base_url: string
   # custom_headers: record<string, string>
   # default_model: string
+  # catalog_provider: string
   # type: string
   # api_key: string
   # oauth: object

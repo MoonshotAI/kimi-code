@@ -109,6 +109,7 @@ export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
 import '#/app/kosongConfig/secondaryModelOverlay';
+import '#/app/kosongConfig/modelsDevCapability.contrib';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';

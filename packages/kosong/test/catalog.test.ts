@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   adaptBaseUrlForWire,
   catalogBaseUrl,
+  getCatalogModelCapability,
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
@@ -572,6 +573,97 @@ describe('catalogModelToCapability', () => {
     expect(
       catalogModelToCapability({ id: 'new', status: 'beta', limit: { context: 1000 } })?.id,
     ).toBe('new');
+  });
+});
+
+describe('getCatalogModelCapability', () => {
+  it('prefers an exact model key over normalized platform variants', () => {
+    const capability = getCatalogModelCapability(
+      {
+        anthropic: {
+          models: {
+            'claude-example': {
+              id: 'claude-example',
+              limit: { context: 100_000 },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+            'claude-example-20260724': {
+              id: 'claude-example-20260724',
+              limit: { context: 200_000 },
+              reasoning: true,
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      },
+      'anthropic',
+      'claude-example-20260724',
+    );
+
+    expect(capability).toMatchObject({ thinking: true, max_context_tokens: 200_000 });
+  });
+
+  it('normalizes Bedrock model ids', () => {
+    const catalog = {
+      anthropic: {
+        models: {
+          'claude-example': {
+            id: 'claude-example',
+            limit: { context: 200_000 },
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+    };
+
+    expect(
+      getCatalogModelCapability(
+        catalog,
+        'anthropic',
+        'us.anthropic.claude-example-v1:0',
+      ),
+    ).toMatchObject({ image_in: true, tool_use: true });
+  });
+
+  it('preserves an explicit date while normalizing a Bedrock model id', () => {
+    const capability = getCatalogModelCapability(
+      {
+        anthropic: {
+          models: {
+            'claude-example-20250101': {
+              id: 'claude-example-20250101',
+              limit: { context: 200_000 },
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
+            'claude-example-20250202': {
+              id: 'claude-example-20250202',
+              limit: { context: 200_000 },
+              modalities: { input: ['text', 'audio'], output: ['text'] },
+            },
+          },
+        },
+      },
+      'anthropic',
+      'us.anthropic.claude-example-20250202-v1:0',
+    );
+
+    expect(capability).toMatchObject({ image_in: false, audio_in: true });
+  });
+
+  it('returns undefined for an unknown provider id', () => {
+    const catalog = {
+      anthropic: {
+        models: {
+          'claude-example': {
+            id: 'claude-example',
+            limit: { context: 200_000 },
+          },
+        },
+      },
+    };
+
+    expect(getCatalogModelCapability(catalog, 'missing-provider', 'claude-example')).toBeUndefined();
   });
 });
 

@@ -71,6 +71,7 @@ theme = "dark"
 
 [providers."managed:kimi-code"]
 type = "kimi"
+catalog_provider = "moonshotai"
 base_url = "https://api.kimi.com/coding/v1"
 api_key = "sk-file"
 custom_headers = { "X-Test" = "1" }
@@ -163,6 +164,7 @@ describe('harness config TOML loader', () => {
     expect(config.telemetry).toBe(false);
     expect(config.providers['managed:kimi-code']).toMatchObject({
       type: 'kimi',
+      catalogProvider: 'moonshotai',
       baseUrl: 'https://api.kimi.com/coding/v1',
       apiKey: 'sk-file',
       env: { GOOGLE_CLOUD_PROJECT: 'project-1' },
@@ -370,6 +372,7 @@ removed_flag = true
     const text = await readFile(configPath, 'utf-8');
     expect(text).toContain('default_model = "kimi-code/kimi-for-coding"');
     expect(text).toContain('default_permission_mode = "auto"');
+    expect(text).toContain('catalog_provider = "moonshotai"');
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
     expect(text).toContain('telemetry = false');
     expect(text).not.toContain('default_yolo');

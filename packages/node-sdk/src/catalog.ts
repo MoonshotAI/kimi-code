@@ -133,6 +133,7 @@ export function applyCatalogProvider(
 ): { defaultModel: string } {
   config.providers[options.providerId] = {
     type: options.wire,
+    catalogProvider: options.providerId,
     baseUrl: options.baseUrl,
     apiKey: options.apiKey,
   };

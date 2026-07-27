@@ -1,6 +1,16 @@
 import type { Logger } from '#/logging/types';
-import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
-import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import type {
+  Catalog,
+  ProviderConfig as KosongProviderConfig,
+  ModelCapability,
+  ProviderRequestAuth,
+} from '@moonshot-ai/kosong';
+import {
+  APIStatusError,
+  getCatalogModelCapability,
+  getModelCapability,
+  UNKNOWN_CAPABILITY,
+} from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 import {
   effectiveModelAlias,
@@ -11,6 +21,17 @@ import {
   type ProviderType,
 } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
+
+import { loadBuiltInCatalog } from './built-in-catalog';
+
+const DEFAULT_CATALOG_PROVIDER_BY_TYPE: Readonly<Partial<Record<ProviderType, string>>> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  openai_responses: 'openai',
+  'google-genai': 'google',
+  vertexai: 'google-vertex',
+  kimi: 'moonshotai',
+};
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
@@ -38,6 +59,7 @@ export interface ResolvedRuntimeProvider {
 
 interface ProviderManagerOptions {
   readonly config: KimiConfig | (() => KimiConfig);
+  readonly catalog?: Catalog | (() => Catalog | undefined);
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
@@ -82,6 +104,11 @@ export class SingleModelProvider implements ModelProvider {
 
 export class ProviderManager implements ModelProvider {
   constructor(private readonly options: ProviderManagerOptions) {}
+
+  private get catalog(): Catalog | undefined {
+    const { catalog = loadBuiltInCatalog } = this.options;
+    return typeof catalog === 'function' ? catalog() : catalog;
+  }
 
   private get config(): KimiConfig {
     const { config } = this.options;
@@ -140,7 +167,12 @@ export class ProviderManager implements ModelProvider {
     return {
       providerName,
       provider,
-      modelCapabilities: resolveModelCapabilities(effectiveAlias, provider),
+      modelCapabilities: resolveModelCapabilities(
+        effectiveAlias,
+        provider,
+        this.catalog,
+        providerConfig.catalogProvider ?? DEFAULT_CATALOG_PROVIDER_BY_TYPE[providerConfig.type],
+      ),
       alwaysThinking: (effectiveAlias.capabilities ?? []).some(
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
@@ -230,9 +262,15 @@ export class ProviderManager implements ModelProvider {
 function resolveModelCapabilities(
   alias: ModelAlias,
   provider: KosongProviderConfig,
+  catalog?: Catalog,
+  catalogProvider?: string,
 ): ModelCapability {
   const declared = new Set((alias.capabilities ?? []).map((c) => c.trim().toLowerCase()));
-  const detected = getModelCapability(provider.type, provider.model);
+  const detected =
+    (catalogProvider === undefined
+      ? undefined
+      : getCatalogModelCapability(catalog, catalogProvider, provider.model)) ??
+    getModelCapability(provider.type, provider.model);
 
   return {
     image_in: declared.has('image_in') || detected.image_in,

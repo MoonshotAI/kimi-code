@@ -11,7 +11,8 @@
  * enumerated at the type level. Validation happens at resolve time against
  * the provider-definition registry (`getProviderDefinition`), which is what
  * allows external packages to register new vendors without touching this
- * contract.
+ * contract. `catalogProvider` is a separate, optional models.dev provider id:
+ * it selects metadata only and never changes the wire protocol.
  *
  * Owns the `ProviderConfig` / `OAuthRef` types and the in-memory provider
  * registry contract; App-scoped. Kosong has no persistence — it defines
@@ -46,6 +47,7 @@ export interface ProviderConfig {
   baseUrl?: string;
   customHeaders?: Record<string, string>;
   defaultModel?: string;
+  catalogProvider?: string;
 
   type?: ProviderType;
   apiKey?: string;

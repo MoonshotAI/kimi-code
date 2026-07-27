@@ -6,6 +6,8 @@
  *    `provider.catalog_entry_not_found`;
  *  - a failed upstream fetch with no built-in snapshot throws
  *    `provider.catalog_unavailable`;
+ *  - capability lookup prefers exact keys, normalizes platform model ids,
+ *    and leaves misses to lower fallback sources;
  *  - `importModelsDevProvider` writes the provider + model aliases through
  *    `config.replace` (never the default pointers), keeps the stored api_key
  *    on a re-import without one, and rejects OAuth-managed providers and
@@ -21,6 +23,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
 import { IConfigService } from '#/app/config/config';
+import {
+  getModelsDevModelCapability,
+  resolveModelsDevCapabilityProvider,
+} from '#/app/kosongConfig/modelsDev';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -100,6 +106,136 @@ const REGISTRY_DOC = {
     },
   },
 } as const;
+
+describe('getModelsDevModelCapability', () => {
+  it('prefers an exact model key over normalized variants', () => {
+    const catalog = {
+      anthropic: {
+        models: {
+          'claude-example': {
+            id: 'claude-example',
+            limit: { context: 100_000 },
+            modalities: { input: ['text'], output: ['text'] },
+          },
+          'claude-example-20260724': {
+            id: 'claude-example-20260724',
+            limit: { context: 200_000 },
+            reasoning: true,
+            modalities: { input: ['text'], output: ['text'] },
+          },
+        },
+      },
+    };
+
+    expect(
+      getModelsDevModelCapability(catalog, 'anthropic', 'claude-example-20260724'),
+    ).toMatchObject({
+      providerId: 'anthropic',
+      capability: { thinking: true, max_context_tokens: 200_000 },
+    });
+  });
+
+  it('normalizes platform model ids', () => {
+    const catalog = {
+      anthropic: {
+        models: {
+          'claude-example': {
+            id: 'claude-example',
+            limit: { context: 200_000 },
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+    };
+
+    expect(
+      getModelsDevModelCapability(
+        catalog,
+        'anthropic',
+        'us.anthropic.claude-example-v1:0',
+      ),
+    ).toMatchObject({
+      providerId: 'anthropic',
+      capability: { image_in: true, tool_use: true },
+    });
+  });
+
+  it('preserves an explicit date while normalizing a platform model id', () => {
+    const match = getModelsDevModelCapability(
+      {
+        anthropic: {
+          models: {
+            'claude-example-20250101': {
+              id: 'claude-example-20250101',
+              limit: { context: 200_000 },
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
+            'claude-example-20250202': {
+              id: 'claude-example-20250202',
+              limit: { context: 200_000 },
+              modalities: { input: ['text', 'audio'], output: ['text'] },
+            },
+          },
+        },
+      },
+      'anthropic',
+      'us.anthropic.claude-example-20250202-v1:0',
+    );
+
+    expect(match).toMatchObject({
+      providerId: 'anthropic',
+      capability: { image_in: false, audio_in: true },
+    });
+  });
+
+  it('leaves a miss unresolved', () => {
+    const catalog = {
+      anthropic: {
+        models: {
+          'claude-example': {
+            id: 'claude-example',
+            limit: { context: 200_000 },
+          },
+        },
+      },
+    };
+
+    expect(getModelsDevModelCapability(catalog, 'openai', 'claude-example')).toBeUndefined();
+  });
+});
+
+describe('resolveModelsDevCapabilityProvider', () => {
+  it('uses an explicit catalog provider before protocol defaults', () => {
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'openai',
+        providerType: 'openai',
+        catalogProvider: 'deepseek',
+      }),
+    ).toBe('deepseek');
+  });
+
+  it('maps compatible protocols to their official catalog providers', () => {
+    expect(resolveModelsDevCapabilityProvider({ protocol: 'openai' })).toBe('openai');
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'openai',
+        providerType: 'kimi',
+      }),
+    ).toBe('moonshotai');
+  });
+
+  it('uses the Vertex catalog when the google-genai provider runs in Vertex mode', () => {
+    expect(
+      resolveModelsDevCapabilityProvider({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        vertexai: true,
+      }),
+    ).toBe('google-vertex');
+  });
+});
 
 function fetchJson(doc: unknown): typeof fetch {
   return (async () =>
@@ -219,6 +355,7 @@ describe('IModelsDevImportService', () => {
     const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
     expect(providers['openai']).toMatchObject({
       type: 'openai',
+      catalogProvider: 'openai',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: 'sk-test',
     });

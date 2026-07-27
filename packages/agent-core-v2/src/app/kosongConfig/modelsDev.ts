@@ -1,7 +1,8 @@
 /**
  * `kosongConfig` domain (L3) — the third-party models.dev directory: its
  * api.json schema mirrored as types, plus the normalization that turns a
- * directory entry into an import decision.
+ * directory entry into an import decision or resolves one model's capability
+ * from a bundled snapshot.
  *
  * models.dev is an EXTERNAL schema that evolves on its own, so its mirror
  * lives here in the app layer, NOT in kosong — kosong's type surface stays
@@ -122,6 +123,15 @@ const KNOWN_WIRE_TYPES = [
 
 /** The enumerated subset of {@link ProviderType} the models.dev import knows. */
 type KnownWireType = (typeof KNOWN_WIRE_TYPES)[number];
+
+const DEFAULT_MODELS_DEV_PROVIDER_BY_TYPE: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  openai_responses: 'openai',
+  'google-genai': 'google',
+  vertexai: 'google-vertex',
+  kimi: 'moonshotai',
+};
 
 function isWireType(value: unknown): value is KnownWireType {
   return typeof value === 'string' && (KNOWN_WIRE_TYPES as readonly string[]).includes(value);
@@ -442,6 +452,71 @@ export function modelsDevProviderModels(entry: ModelsDevProviderEntry): ModelsDe
       }
       return model;
     });
+}
+
+function normalizeModelsDevPlatformKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/^(?:us|eu|apac|global)\./, '')
+    .replace(/^(?:anthropic|ai21|amazon|cohere|deepseek|meta|mistral|writer)\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '');
+}
+
+function normalizeModelsDevDeploymentKey(key: string): string {
+  return normalizeModelsDevPlatformKey(key).replace(/@.*$/, '');
+}
+
+function normalizeModelsDevFamilyKey(key: string): string {
+  return normalizeModelsDevDeploymentKey(key)
+    .replace(/-\d{8}$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '');
+}
+
+export interface ModelsDevCapabilityMatch {
+  readonly capability: ModelCapability;
+  readonly providerId: string;
+}
+
+export function resolveModelsDevCapabilityProvider(query: {
+  readonly protocol: ProviderType;
+  readonly providerType?: string;
+  readonly catalogProvider?: string;
+  readonly vertexai?: boolean;
+}): string | undefined {
+  return (
+    query.catalogProvider ??
+    (query.vertexai === true
+      ? 'google-vertex'
+      : DEFAULT_MODELS_DEV_PROVIDER_BY_TYPE[query.providerType ?? query.protocol])
+  );
+}
+
+export function getModelsDevModelCapability(
+  catalog: ModelsDevCatalog | undefined,
+  providerId: string,
+  modelName: string,
+): ModelsDevCapabilityMatch | undefined {
+  if (catalog === undefined) return undefined;
+  const models = catalog[providerId]?.models;
+  if (models === undefined) return undefined;
+  const exact = models[modelName] ?? models[modelName.toLowerCase()];
+  if (exact !== undefined) {
+    const model = modelsDevModelToCapability(exact);
+    if (model !== undefined) return { capability: model.capability, providerId };
+  }
+  for (const normalize of [
+    normalizeModelsDevPlatformKey,
+    normalizeModelsDevDeploymentKey,
+    normalizeModelsDevFamilyKey,
+  ]) {
+    const target = normalize(modelName);
+    for (const [key, entry] of Object.entries(models)) {
+      if (normalize(key) !== target) continue;
+      const model = modelsDevModelToCapability(entry);
+      if (model !== undefined) return { capability: model.capability, providerId };
+    }
+  }
+  return undefined;
 }
 
 /**

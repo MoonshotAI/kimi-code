@@ -47,11 +47,14 @@ import {
 } from '#/agent/loop/configSection';
 import {
   MODELS_SECTION,
+  PROVIDERS_SECTION,
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import type { ModelRecord } from '#/kosong/model/model';
+import type { ProviderConfig } from '#/kosong/provider/provider';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -405,6 +408,43 @@ describe('Agent config', () => {
 });
 
 describe('ConfigService env overlay (live)', () => {
+  it('loads an explicit catalog provider from snake-case TOML', async () => {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode(
+        '[providers.deepseek]\ntype = "openai"\ncatalog_provider = "deepseek"\n' +
+          '[models.production]\nprovider = "deepseek"\nmodel = "deepseek-reasoner"\n',
+      ),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(
+      config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)['deepseek'],
+    ).toMatchObject({
+      type: 'openai',
+      catalogProvider: 'deepseek',
+    });
+    expect(
+      config.get<Record<string, ModelRecord>>(MODELS_SECTION)['production'],
+    ).toMatchObject({
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+    });
+
+    disposables.dispose();
+  });
+
   it('re-applies env bindings on every get()', async () => {
     const env: Record<string, string> = { KIMI_DISABLE_CRON: '0' };
     const disposables = new DisposableStore();

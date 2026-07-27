@@ -72,6 +72,7 @@ export const ProviderConfigSchema = z.object({
   baseUrl: z.string().optional(),
   customHeaders: StringRecordSchema.optional(),
   defaultModel: z.string().optional(),
+  catalogProvider: z.string().min(1).optional(),
 
   type: ProviderTypeSchema.optional(),
   apiKey: z.string().optional(),

@@ -60,6 +60,7 @@ import '#/kosong/provider/bases/openai/index';
 import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai/openai-responses';
 import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai/openai-legacy';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
+import { registerModelCapabilityResolver } from '#/kosong/provider/modelCapabilityResolver';
 import {
   getProviderDefinition,
   getProviderDefinitions,
@@ -304,6 +305,57 @@ describe('resolveCapability', () => {
       true,
     );
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
+  });
+
+  it('uses a registered capability source before the base catalog', () => {
+    const registration = registerModelCapabilityResolver(({ modelName }) =>
+      modelName === 'gpt-4o'
+        ? {
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: true,
+              thinking: false,
+              tool_use: false,
+              max_context_tokens: 128_000,
+            },
+            source: { kind: 'builtin', detail: 'test catalog snapshot' },
+          }
+        : undefined,
+    );
+
+    try {
+      expect(registry.resolveCapability('openai', 'gpt-4o')).toMatchObject({
+        image_in: false,
+        audio_in: true,
+      });
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('forwards explicit catalog identity and provider mode to capability sources', () => {
+    let captured: Parameters<Parameters<typeof registerModelCapabilityResolver>[0]>[0] | undefined;
+    const registration = registerModelCapabilityResolver((query) => {
+      captured = query;
+      return undefined;
+    });
+
+    try {
+      registry.resolveCapability('google-genai', 'deployment-name', 'google-genai', {
+        catalogProvider: 'google-vertex',
+        providerOptions: { vertexai: true, project: 'example-project' },
+      });
+      expect(captured).toMatchObject({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        modelName: 'deployment-name',
+        catalogProvider: 'google-vertex',
+        providerOptions: { vertexai: true, project: 'example-project' },
+      });
+    } finally {
+      registration.dispose();
+    }
   });
 });
 

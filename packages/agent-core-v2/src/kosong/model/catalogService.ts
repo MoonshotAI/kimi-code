@@ -21,8 +21,8 @@
  * referenced provider vendor's declared `baseProtocol`; endpoint and
  * credential env fallbacks resolve through `resolveProviderEndpoint` against
  * the config env bag; host-header forwarding follows the vendor definition's
- * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
- * providerType)`.
+ * `hostHeaders`; capability detection receives the resolved provider mode and
+ * explicit models.dev provider identity separately from wire identity.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
  * model/provider config-change events. Tests that mutate config
@@ -378,10 +378,20 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       );
     }
 
+    const providerOptions = buildProtocolProviderOptions(
+      model,
+      protocol,
+      providerConfig,
+      resolvedBaseUrl,
+    );
     const explainedCapability = this.protocolRegistry.explainCapability(
       protocol,
       wireName,
       providerType,
+      {
+        catalogProvider: providerConfig?.catalogProvider,
+        providerOptions,
+      },
     );
     trace.capture(TRACE.detectedCapability, explainedCapability.capability);
     trace.capture(TRACE.capabilitySource, explainedCapability.source);
@@ -390,12 +400,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       explainedCapability.capability,
       model.maxContextSize,
       model.maxInputSize,
-    );
-    const providerOptions = buildProtocolProviderOptions(
-      model,
-      protocol,
-      providerConfig,
-      resolvedBaseUrl,
     );
     if (providerOptions !== undefined) {
       attributeProviderOptions(trace, providerOptions, providerConfig?.env);

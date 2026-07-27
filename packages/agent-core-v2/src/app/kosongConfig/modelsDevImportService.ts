@@ -193,9 +193,12 @@ export class ModelsDevImportService implements IModelsDevImportService {
     // `undefined` when the wire needs none, so a stale on-disk value is
     // really cleared. The global default pointers are deliberately left
     // alone.
-    const provider: ProviderConfig = { type: resolution.wire };
-    provider.baseUrl = resolution.baseUrl;
-    provider.apiKey = options.apiKey ?? existing?.apiKey;
+    const provider: ProviderConfig = {
+      type: resolution.wire,
+      catalogProvider: catalogId,
+      baseUrl: resolution.baseUrl,
+      apiKey: options.apiKey ?? existing?.apiKey,
+    };
     await config.replace(PROVIDERS_SECTION, { ...providers, [targetId]: provider });
 
     // Two-pass alias swap: pass 1 drops the provider's aliases for real

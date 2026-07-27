@@ -33,6 +33,10 @@ import '#/kosong/provider/bases/anthropic/index';
 import '#/kosong/provider/bases/google-genai/index';
 import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/protocolAdapterRegistry';
+import {
+  type ModelCapabilityQuery,
+  registerModelCapabilityResolver,
+} from '#/kosong/provider/modelCapabilityResolver';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 import {
@@ -315,6 +319,58 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('passes Vertex mode and explicit catalog provider to capability sources', () => {
+    let captured: ModelCapabilityQuery | undefined;
+    const registration = registerModelCapabilityResolver((query) => {
+      captured = query;
+      return {
+        capability: {
+          image_in: true,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000,
+        },
+        source: { kind: 'builtin', detail: 'test catalog source' },
+      };
+    });
+    const { host, catalog } = createHost({
+      providers: {
+        vertex: {
+          type: 'google-genai',
+          catalogProvider: 'google-vertex',
+          env: { GOOGLE_CLOUD_PROJECT: 'my-project', GOOGLE_CLOUD_LOCATION: 'us-central1' },
+        },
+      },
+      models: {
+        v: {
+          provider: 'vertex',
+          model: 'gemini-canonical',
+          maxContextSize: 1_000,
+        },
+      },
+    });
+
+    try {
+      expect(catalog.get('v').capabilities.thinking).toBe(true);
+      expect(captured).toMatchObject({
+        protocol: 'google-genai',
+        providerType: 'google-genai',
+        modelName: 'gemini-canonical',
+        catalogProvider: 'google-vertex',
+        providerOptions: {
+          vertexai: true,
+          project: 'my-project',
+          location: 'us-central1',
+        },
+      });
+    } finally {
+      host.dispose();
+      registration.dispose();
+    }
+  });
+
   it('supports flat models with an inline baseUrl (provider synthesized from the origin)', () => {
     const { host, catalog } = createHost({
       models: {
@@ -513,6 +569,78 @@ describe('headers merge order', () => {
 });
 
 describe('ModelCatalog inspect', () => {
+  it('attributes snapshot false values to the snapshot instead of none', () => {
+    const registration = registerModelCapabilityResolver(({ modelName }) =>
+      modelName === 'gpt-4o'
+        ? {
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: true,
+              thinking: false,
+              tool_use: false,
+              max_context_tokens: 128_000,
+            },
+            source: { kind: 'builtin', detail: 'test models.dev snapshot' },
+          }
+        : undefined,
+    );
+    const { host, catalog } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-test' } },
+      models: {
+        model: { provider: 'openai', model: 'gpt-4o', maxContextSize: 128_000 },
+      },
+    });
+    try {
+      const view = catalog.inspect('model');
+      expect(view.resolved.capabilities.image_in).toBe(false);
+      expect(view.sources['resolved.capabilities.image_in']).toMatchObject({
+        kind: 'builtin',
+        detail: 'test models.dev snapshot',
+      });
+    } finally {
+      host.dispose();
+      registration.dispose();
+    }
+  });
+
+  it('attributes a user capability above a snapshot false value', () => {
+    const registration = registerModelCapabilityResolver(({ modelName }) =>
+      modelName === 'gpt-4o'
+        ? {
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: false,
+              thinking: false,
+              tool_use: false,
+              max_context_tokens: 128_000,
+            },
+            source: { kind: 'builtin', detail: 'test models.dev snapshot' },
+          }
+        : undefined,
+    );
+    const { host, catalog } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-test' } },
+      models: {
+        model: {
+          provider: 'openai',
+          model: 'gpt-4o',
+          maxContextSize: 128_000,
+          capabilities: ['image_in'],
+        },
+      },
+    });
+    try {
+      const view = catalog.inspect('model');
+      expect(view.resolved.capabilities.image_in).toBe(true);
+      expect(view.sources['resolved.capabilities.image_in']).toMatchObject({ kind: 'config' });
+    } finally {
+      host.dispose();
+      registration.dispose();
+    }
+  });
+
   it('builds the god object with per-field provenance (kimi structured model)', () => {
     const { host, catalog } = createHost(kimiSections);
     try {

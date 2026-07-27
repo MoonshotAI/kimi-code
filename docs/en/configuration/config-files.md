@@ -124,6 +124,7 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `google-genai`, `vertexai` |
+| `catalog_provider` | `string` | No | Exact provider id in the bundled [models.dev](https://models.dev/) snapshot used for capability metadata. It does not change the API protocol selected by `type`. Usually written automatically by `/provider`; set it by hand for an OpenAI-compatible third-party provider such as `deepseek` |
 | `api_key` | `string` | No | API key, written in plain text in the config file |
 | `base_url` | `string` | No | API base URL |
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow — normally no need to write this by hand |

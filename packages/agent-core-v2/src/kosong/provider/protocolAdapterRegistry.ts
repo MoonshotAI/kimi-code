@@ -19,7 +19,8 @@
  *    `(protocol, providerType)`; composition needs the real config) and
  *    delegates to the registered base's contrib factory.
  *  - `resolveCapability` — the fixed fallback chain: trait capability hooks
- *    (last declarer wins) → the base's own catalog → `UNKNOWN_CAPABILITY`.
+ *    (last declarer wins) → registered external sources →
+ *    the base's own catalog → `UNKNOWN_CAPABILITY`.
  *
  * Bound at App scope, eager.
  */
@@ -31,6 +32,7 @@ import { ChatProviderError } from '#/kosong/contract/errors';
 import type { ChatProvider } from '#/kosong/contract/provider';
 import {
   IProtocolAdapterRegistry,
+  type CapabilityResolutionContext,
   type ExplainedCapability,
   type Protocol,
   type ProtocolAdapterConfig,
@@ -43,6 +45,7 @@ import {
 } from '#/kosong/protocol/protocolBase';
 import type { ProtocolTrait, ResolvedTrait, TraitContext } from '#/kosong/protocol/protocolTrait';
 
+import { explainRegisteredModelCapability } from './modelCapabilityResolver';
 import { getProviderDefinition } from './providerDefinition';
 
 /**
@@ -95,14 +98,20 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return protocol;
   }
 
-  resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
-    return this.explainCapability(protocol, modelName, providerType).capability;
+  resolveCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+    context?: CapabilityResolutionContext,
+  ): ModelCapability {
+    return this.explainCapability(protocol, modelName, providerType, context).capability;
   }
 
   explainCapability(
     protocol: Protocol,
     modelName: string,
     providerType?: string,
+    context?: CapabilityResolutionContext,
   ): ExplainedCapability {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     let traitCapability: ModelCapability | undefined;
@@ -122,6 +131,15 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
         },
       };
     }
+
+    const registeredCapability = explainRegisteredModelCapability({
+      protocol,
+      providerType,
+      modelName,
+      catalogProvider: context?.catalogProvider,
+      providerOptions: context?.providerOptions,
+    });
+    if (registeredCapability !== undefined) return registeredCapability;
 
     const baseCapability = getProtocolBase(identity.baseId)?.capability?.(modelName);
     if (baseCapability !== undefined) {

@@ -435,6 +435,57 @@ export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel
     });
 }
 
+function normalizeCatalogPlatformKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/^(?:us|eu|apac|global)\./, '')
+    .replace(/^(?:anthropic|ai21|amazon|cohere|deepseek|meta|mistral|writer)\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '');
+}
+
+function normalizeCatalogDeploymentKey(key: string): string {
+  return normalizeCatalogPlatformKey(key).replace(/@.*$/, '');
+}
+
+function normalizeCatalogFamilyKey(key: string): string {
+  return normalizeCatalogDeploymentKey(key)
+    .replace(/-\d{8}$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '');
+}
+
+/**
+ * Looks up a model's capability in a models.dev-style catalog snapshot.
+ * Exact keys win over normalized platform variants. A miss stays undefined
+ * so runtime callers can continue to their built-in table.
+ */
+export function getCatalogModelCapability(
+  catalog: Catalog | undefined,
+  providerId: string,
+  modelName: string,
+): ModelCapability | undefined {
+  if (catalog === undefined) return undefined;
+  const models = catalog[providerId]?.models;
+  if (models === undefined) return undefined;
+  const exact = models[modelName] ?? models[modelName.toLowerCase()];
+  if (exact !== undefined) {
+    const model = catalogModelToCapability(exact);
+    if (model !== undefined) return model.capability;
+  }
+  for (const normalize of [
+    normalizeCatalogPlatformKey,
+    normalizeCatalogDeploymentKey,
+    normalizeCatalogFamilyKey,
+  ]) {
+    const target = normalize(modelName);
+    for (const [key, entry] of Object.entries(models)) {
+      if (normalize(key) !== target) continue;
+      const model = catalogModelToCapability(entry);
+      if (model !== undefined) return model.capability;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Gateway providers (zenmux, opencode, azure, …) may declare a per-model
  * `provider` override when a model is served over a different protocol or

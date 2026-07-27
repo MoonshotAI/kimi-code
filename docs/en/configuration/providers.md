@@ -15,7 +15,7 @@ The `type` field in the `providers` table determines which protocol implementati
 | `google-genai` | Google GenAI | Gemini API |
 | `vertexai` | Google GenAI on Vertex | Google Cloud Vertex AI |
 
-All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix — you typically do not need to declare them manually.
+All providers communicate with models in streaming mode by default. Kimi Code first reads capability metadata from its bundled models.dev snapshot, then falls back to built-in model matchers. For an official endpoint, `type` selects the corresponding catalog provider automatically. For a third-party endpoint that only shares a protocol, set `catalog_provider` explicitly; `type` continues to control the API protocol.
 
 **Credential priority**: `api_key` direct field > `[providers.<name>.env]` sub-table key > if both are absent, startup fails with an error. The CLI does not fall back to shell environment variables for credentials — see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 
@@ -59,7 +59,7 @@ api_key = "sk-xxxxx"
 
 ## `anthropic`
 
-For connecting to the Claude API. Standard Claude models automatically enable vision, tool use, and Thinking (where supported); custom or uncovered models need `capabilities` declared explicitly on `[models.<alias>]`.
+For connecting to the Claude API. The default `anthropic` catalog identity lets Kimi Code auto-detect vision, tool call, and Thinking capabilities from the bundled models.dev snapshot before falling back to its built-in model matchers. Only custom models that neither source covers need `capabilities` declared explicitly on `[models.<alias>]`.
 
 - Default `base_url`: follows Anthropic SDK default
 - Credential key names: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
@@ -92,6 +92,23 @@ type = "openai"
 base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
+
+For an OpenAI-compatible third-party endpoint, keep `type = "openai"` because it controls the wire protocol, and set `catalog_provider` to the exact models.dev provider id used for capability metadata:
+
+```toml
+[providers.deepseek]
+type = "openai"
+catalog_provider = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = "sk-xxxxx"
+
+[models."deepseek/v4-pro"]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+max_context_size = 1000000
+```
+
+Kimi Code looks up the configured `model` within the selected catalog provider. It does not guess a vendor from the local provider name or scan unrelated providers for a matching model id. If a gateway replaces the canonical model id with an arbitrary deployment alias, declare capabilities explicitly instead.
 
 ## `openai_responses`
 
