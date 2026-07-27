@@ -480,6 +480,7 @@ export type ApiErrorKind =
   | 'context_overflow'
   | 'overloaded'
   | 'rate_limit'
+  | 'quota_exhausted'
   | 'auth'
   | '5xx_server'
   | '4xx_client'
@@ -497,6 +498,9 @@ export function classifyApiError(error: unknown): ApiErrorClassification {
   const statusCode = getStatusCode(error);
   if (error instanceof APIContextOverflowError) return { kind: 'context_overflow', statusCode };
   if (error instanceof APIProviderOverloadedError) return { kind: 'overloaded', statusCode };
+  if (error instanceof APIProviderQuotaExhaustedError) {
+    return { kind: 'quota_exhausted', statusCode };
+  }
   if (error instanceof APIStatusError) {
     if (isContextOverflowStatusError(error.statusCode, error.message)) {
       return { kind: 'context_overflow', statusCode };

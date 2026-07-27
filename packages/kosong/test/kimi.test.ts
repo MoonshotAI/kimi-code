@@ -1,3 +1,4 @@
+import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { APIProviderQuotaExhaustedError, isRetryableGenerateError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, ToolCall } from '#/message';
@@ -2217,5 +2218,17 @@ describe('classifyKimiQuotaError', () => {
     ).toBeUndefined();
     expect(classifyKimiQuotaError(new Error(QUOTA_MESSAGE))).toBeUndefined();
     expect(classifyKimiQuotaError(undefined)).toBeUndefined();
+  });
+
+  it('classifies the Anthropic SDK error shape (body nested under .error)', () => {
+    const source = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'exceeded_current_quota_error', message: 'quota gone' } },
+      'Too many requests',
+      new Headers(),
+    );
+    const error = classifyKimiQuotaError(source);
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 });

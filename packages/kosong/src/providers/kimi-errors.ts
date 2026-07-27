@@ -26,6 +26,30 @@ function readStringProp(value: object, key: string): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+function readErrorObjectProp(value: object): object | undefined {
+  const raw = (value as Record<string, unknown>)['error'];
+  return typeof raw === 'object' && raw !== null ? raw : undefined;
+}
+
+// Collect every candidate `code`/`type` string the SDK error may carry. The
+// OpenAI SDK hoists the body's `error.code`/`error.type` to the top level and
+// keeps the inner error object on `.error`; the Anthropic SDK keeps the FULL
+// body on `.error` (`{type: 'error', error: {type, message}}`), so the quota
+// type sits two levels deep. Walking `error` → `.error` → `.error.error`
+// covers both shapes without SDK imports.
+function collectErrorCodes(error: object): string[] {
+  const codes: string[] = [];
+  let current: object | undefined = error;
+  for (let depth = 0; current !== undefined && depth < 3; depth += 1) {
+    const code = readStringProp(current, 'code');
+    if (code !== undefined) codes.push(code);
+    const type = readStringProp(current, 'type');
+    if (type !== undefined) codes.push(type);
+    current = readErrorObjectProp(current);
+  }
+  return codes;
+}
+
 /**
  * Classify a raw provider failure as Moonshot's quota/balance-exhausted 429,
  * or answer `undefined` to keep the base classification. This is the Kimi
@@ -43,12 +67,9 @@ export function classifyKimiQuotaError(
   if (status !== 429) return undefined;
 
   const message = readStringProp(error, 'message') ?? '';
-  const code = readStringProp(error, 'code');
-  const type = readStringProp(error, 'type');
-
-  const structuredHit =
-    (code !== undefined && KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code)) ||
-    (type !== undefined && KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(type));
+  const structuredHit = collectErrorCodes(error).some((code) =>
+    KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
+  );
   const lowerMessage = message.toLowerCase();
   const wordingHit = KIMI_QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) =>
     pattern.test(lowerMessage),

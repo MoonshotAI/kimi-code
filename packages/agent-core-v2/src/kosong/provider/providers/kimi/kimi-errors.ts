@@ -13,8 +13,12 @@
  * transient throttle messages like "token quota per minute" keep classifying
  * as retryable rate limits. The classifier reads the raw SDK error
  * structurally (status / code / type / message), so it works over both the
- * OpenAI and Anthropic transports Kimi registers on; anything it does not
- * positively recognize answers `undefined`, keeping the base classification.
+ * OpenAI and Anthropic transports Kimi registers on: the OpenAI SDK hoists
+ * the body's `error.code`/`error.type` to the top level, while the Anthropic
+ * SDK keeps the full body on `.error` (`{type: 'error', error: {type}}`), so
+ * candidate codes are collected from `error` → `.error` → `.error.error`.
+ * Anything not positively recognized answers `undefined`, keeping the base
+ * classification.
  */
 
 import {
@@ -38,18 +42,33 @@ function readStringProp(value: object, key: string): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+function readErrorObjectProp(value: object): object | undefined {
+  const raw = (value as Record<string, unknown>)['error'];
+  return typeof raw === 'object' && raw !== null ? raw : undefined;
+}
+
+function collectErrorCodes(error: object): string[] {
+  const codes: string[] = [];
+  let current: object | undefined = error;
+  for (let depth = 0; current !== undefined && depth < 3; depth += 1) {
+    const code = readStringProp(current, 'code');
+    if (code !== undefined) codes.push(code);
+    const type = readStringProp(current, 'type');
+    if (type !== undefined) codes.push(type);
+    current = readErrorObjectProp(current);
+  }
+  return codes;
+}
+
 export function classifyKimiQuotaError(error: unknown): APIProviderQuotaExhaustedError | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   const status = (error as Record<string, unknown>)['status'];
   if (status !== 429) return undefined;
 
   const message = readStringProp(error, 'message') ?? '';
-  const code = readStringProp(error, 'code');
-  const type = readStringProp(error, 'type');
-
-  const structuredHit =
-    (code !== undefined && KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code)) ||
-    (type !== undefined && KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(type));
+  const structuredHit = collectErrorCodes(error).some((code) =>
+    KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
+  );
   const lowerMessage = message.toLowerCase();
   const wordingHit = KIMI_QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) =>
     pattern.test(lowerMessage),

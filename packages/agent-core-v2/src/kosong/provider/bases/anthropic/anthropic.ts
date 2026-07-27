@@ -14,10 +14,11 @@
  *
  * `convertAnthropicError`'s FIRST line is the contract's `throwIfAbortError`
  * guard: a user cancellation is THROWN as the standard abort DOMException at
- * the very front of the classification chain. Right after the guard the
- * converter consults the trait-composed `convertError` hook with the raw SDK
- * error, so a vendor riding this transport can classify its own wire
- * failures (e.g. quota 429s) before the base rules run.
+ * the very front of the classification chain. After the guard,
+ * already-converted `ChatProviderError`s pass through untouched; only then is
+ * the trait-composed `convertError` hook consulted, so a vendor riding this
+ * transport classifies each RAW SDK failure exactly once before the base
+ * rules run.
  */
 
 import Anthropic, {
@@ -525,6 +526,9 @@ export function convertAnthropicError(
   // for any abort shape, so a user cancellation is never misclassified as a
   // retryable provider failure.
   throwIfAbortError(error);
+  if (error instanceof ChatProviderError) {
+    return error;
+  }
   const hooked = convertErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;

@@ -125,15 +125,18 @@ export function convertOpenAIError(
   // for any abort shape, so a user cancellation is never misclassified as a
   // retryable provider failure.
   throwIfAbortError(error);
+  // Already-converted errors pass through untouched — they never re-enter
+  // vendor classification, so the hook below sees each raw failure exactly
+  // once even when a stream-minted error crosses an outer catch.
+  if (error instanceof ChatProviderError) {
+    return error;
+  }
   // Vendor classification next: the hook sees the RAW error (the base
   // conversion below drops the SDK-parsed body `error.code`/`error.type`),
   // and `undefined` keeps the base classification.
   const hooked = convertErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
-  }
-  if (error instanceof ChatProviderError) {
-    return error;
   }
   // v6: APIConnectionTimeoutError extends APIConnectionError, check timeout first
   if (error instanceof OpenAITimeoutError) {

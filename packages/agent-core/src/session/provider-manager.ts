@@ -1,6 +1,11 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
-import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import {
+  APIStatusError,
+  classifyKimiQuotaError,
+  getModelCapability,
+  UNKNOWN_CAPABILITY,
+} from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 import {
   effectiveModelAlias,
@@ -284,7 +289,12 @@ function toKosongProviderConfig(
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         supportEfforts,
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
-        ...(provider.type === 'kimi' ? { kimiThinking: true } : {}),
+        // Kimi routed over the Anthropic transport keeps its vendor error
+        // classification: a Moonshot quota-exhausted 429 must fail fast here
+        // exactly as it does on the Kimi OpenAI transport.
+        ...(provider.type === 'kimi'
+          ? { kimiThinking: true, convertError: classifyKimiQuotaError }
+          : {}),
         ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).

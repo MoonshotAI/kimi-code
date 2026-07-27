@@ -6,9 +6,11 @@
  * `prompt_cache_key` field (a cache key is encoded directly — no hook
  * needed). Per-turn intents are encoded inline in the fixed contract order;
  * the base's only hook surface is the trait-composed `convertError` option,
- * consulted (after the abort guard) with the raw failure — the SDK error on
- * HTTP paths, the raw event on in-stream error paths — before the base's own
- * classification. The developer-role model detection lives here.
+ * consulted with each raw failure exactly once — the SDK error on HTTP
+ * paths, the raw event on in-stream error paths — before the base's own
+ * classification (already-converted errors crossing an outer catch pass
+ * through without re-consulting). The developer-role model detection lives
+ * here.
  */
 
 import OpenAI from 'openai';

@@ -9,11 +9,12 @@
  * guard: a user cancellation (SDK `APIUserAbortError`, bare `AbortError`, the
  * standard abort DOMException) is THROWN as the standard abort shape at the
  * very front of the classification chain — it can never be converted into,
- * nor returned as, a retryable provider error. Right after the guard the
- * converter consults an optional trait-composed `convertError` hook with the
- * raw error, so a vendor can classify its own wire failures (e.g. quota 429s)
- * before the base rules run. The base itself classifies only OpenAI's own
- * documented `insufficient_quota` code as a non-retryable quota exhaustion —
+ * nor returned as, a retryable provider error. After the guard,
+ * already-converted `ChatProviderError`s pass through untouched; only then is
+ * the optional trait-composed `convertError` hook consulted, so a vendor
+ * classifies each RAW wire failure (e.g. quota 429s) exactly once before the
+ * base rules run. The base itself classifies only OpenAI's own documented
+ * `insufficient_quota` code as a non-retryable quota exhaustion —
  * vendor-specific quota signals belong on the vendor's trait.
  */
 
@@ -123,12 +124,12 @@ export function convertOpenAIError(
   // for any abort shape, so a user cancellation is never misclassified as a
   // retryable provider failure.
   throwIfAbortError(error);
+  if (error instanceof ChatProviderError) {
+    return error;
+  }
   const hooked = convertErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
-  }
-  if (error instanceof ChatProviderError) {
-    return error;
   }
   if (error instanceof OpenAITimeoutError) {
     return new APITimeoutError(error.message);

@@ -15,6 +15,14 @@
  *    chain in trait order, each receiving the previous stage's output.
  *    `convertMessage` may additionally return `null` to drop the message.
  *  - Single-value hooks are overwritten in trait order: last declarer wins.
+ *  - `convertError` is consulted by the bases with each RAW failure exactly
+ *    once — the SDK error on HTTP paths, the raw event on in-stream paths —
+ *    after the abort guard (a cancellation never reaches it) and after the
+ *    already-converted `ChatProviderError` pass-through. The hook exists
+ *    because base conversion drops vendor-parsed detail such as the body
+ *    `error.type`/`error.code`; it is where a vendor declares what its own
+ *    wire errors mean (e.g. which 429s are a non-retryable quota
+ *    exhaustion rather than a transient rate limit).
  *  - `endpoint` / `defaultHeaders` / `provides` are construction-time
  *    declarations aggregated by the contrib factories, not per-request hooks.
  *
@@ -136,14 +144,8 @@ export interface ProtocolTrait {
 
   /**
    * Single-value: classify one raw failure into a `ChatProviderError` before
-   * the base's own conversion runs. The hook receives the UNCONVERTED object
-   * the base caught at that seam — the SDK error on HTTP paths, the raw error
-   * event on in-stream paths — because base conversion drops vendor-parsed
-   * detail such as the body `error.type`/`error.code`. Returning `undefined`
-   * keeps the base classification; the base runs its abort guard before
-   * consulting the hook, so a user cancellation never reaches it. This is
-   * where a vendor declares what its own wire errors mean (e.g. which 429s
-   * are a non-retryable quota exhaustion rather than a transient rate limit).
+   * the base rules run; `undefined` keeps the base classification. The
+   * consult contract is restated in the header composition rules.
    */
   convertError?(error: unknown, ctx: TraitContext): ChatProviderError | undefined;
 

@@ -19,6 +19,7 @@
  * error-event path.
  */
 
+import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { APIError as OpenAIAPIError } from 'openai';
 import { describe, expect, it } from 'vitest';
 
@@ -156,6 +157,18 @@ describe('classifyKimiQuotaError (Kimi trait classifier)', () => {
     expect(classifyKimiQuotaError(undefined)).toBeUndefined();
   });
 
+  it('classifies the Anthropic SDK error shape (body nested under .error)', () => {
+    const source = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'exceeded_current_quota_error', message: 'quota gone' } },
+      'Too many requests',
+      new Headers(),
+    );
+    const error = classifyKimiQuotaError(source);
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
   it('is declared as the convertError hook on both Kimi traits', () => {
     const context: TraitContext = {
       config: { protocol: 'openai', providerType: 'kimi', modelName: '' } as ProtocolAdapterConfig,
@@ -199,6 +212,17 @@ describe('convertError hook consult at the OpenAI boundary', () => {
     expectStandardAbort(() =>
       convertOpenAIError(createAbortError(), () => new ChatProviderError('never')),
     );
+  });
+
+  it('passes already-converted errors through without re-consulting the hook', () => {
+    const calls: unknown[] = [];
+    const converted = new APIProviderQuotaExhaustedError('already classified');
+    const result = convertOpenAIError(converted, (error) => {
+      calls.push(error);
+      return new ChatProviderError('re-classified');
+    });
+    expect(result).toBe(converted);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -275,6 +299,7 @@ describe('OpenAI Responses quota-exhausted conversion', () => {
     );
     expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
     expect((caught as APIProviderQuotaExhaustedError).message).toBe('vendor quota exhausted');
+    expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ type: 'error', code: 'vendor_quota_gone' });
   });
 });
