@@ -1533,6 +1533,45 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
+    it('preserves the empty reasoning marker on streaming tool-call chunks', async () => {
+      // Reasoning endpoints may require the reasoning field to be replayed on
+      // tool-call continuation; the empty marker must survive so the outbound
+      // message keeps carrying the reasoning field.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'some-reasoning-model',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield {
+          id: 'c1',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '',
+                tool_calls: [
+                  { id: 'call_1', index: 0, function: { name: 'foo', arguments: '{}' } },
+                ],
+              },
+            },
+          ],
+        };
+        yield { id: 'c1', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
+    });
+
     it('treats blank reasoning_key as unset so defaults still apply', async () => {
       // ModelAliasSchema accepts `reasoning_key = ""` (z.string().optional()).
       // A blank value must not route reads/writes through an empty property
@@ -1898,6 +1937,32 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
     );
 
     expect(parts).toEqual([]);
+  });
+
+  it('preserves the empty reasoning marker on a non-stream tool-call response', async () => {
+    // Reasoning endpoints may require the reasoning field to be replayed on
+    // tool-call continuation; the empty marker must survive so the outbound
+    // message keeps carrying the reasoning field.
+    const provider = new OpenAILegacyChatProvider({
+      model: 'deepseek-reasoner',
+      apiKey: 'test-key',
+      stream: false,
+      reasoningKey: 'reasoning_content',
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: null,
+        reasoning_content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'foo', arguments: '{}' } },
+        ],
+      }),
+    );
+
+    expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
   });
 
   it('non-stream response yields ToolCall parts when tool_calls present', async () => {
