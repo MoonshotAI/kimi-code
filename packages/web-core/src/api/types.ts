@@ -385,6 +385,40 @@ export interface AppGoal {
 }
 
 // ---------------------------------------------------------------------------
+// Plan history
+// ---------------------------------------------------------------------------
+
+export type SessionPlanReviewState = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface SessionPlanReview {
+  state: SessionPlanReviewState;
+  selectedOption?: string;
+  feedback?: string;
+}
+
+export interface SessionPlanOption {
+  label: string;
+  description?: string;
+}
+
+/** Persisted ExitPlanMode payload and its eventual review outcome. */
+export interface SessionPlan {
+  agentId: string;
+  toolCallId: string;
+  turnId: string;
+  source: 'interaction' | 'display' | 'output';
+  plan: string;
+  path?: string;
+  options?: SessionPlanOption[];
+  review?: SessionPlanReview;
+}
+
+export interface SessionPlanQuery {
+  agentId: string;
+  toolCallId?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Terminal
 // ---------------------------------------------------------------------------
 
@@ -877,6 +911,8 @@ export interface KimiWebApi {
   getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   /** Current goal snapshot, or null when the session has no active goal. */
   getSessionGoal(sessionId: string): Promise<AppGoal | null>;
+  /** Persisted ExitPlanMode payloads, including final review state. */
+  getSessionPlans(sessionId: string, input: SessionPlanQuery): Promise<SessionPlan[]>;
   getSessionWarnings(sessionId: string): Promise<AppSessionWarning[]>;
   archiveSession(sessionId: string): Promise<{ archived: true }>;
   restoreSession(sessionId: string): Promise<AppSession>;

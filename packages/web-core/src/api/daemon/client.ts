@@ -43,6 +43,8 @@ import type {
   PromptSubmission,
   PromptSubmitResult,
   QuestionResponse,
+  SessionPlan,
+  SessionPlanQuery,
   UpdateProviderInput,
   UpdateProviderResult,
 } from '../types';
@@ -103,6 +105,7 @@ import type {
   WireProviderRefreshResult,
   WireSession,
   WireSessionAbortResult,
+  WireSessionPlansResponse,
   WireSessionWarning,
   WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
@@ -513,6 +516,46 @@ export class DaemonKimiWebApi implements KimiWebApi {
       `/sessions/${encodeURIComponent(sessionId)}/goal`,
     );
     return toAppGoal(data);
+  }
+
+  async getSessionPlans(
+    sessionId: string,
+    input: SessionPlanQuery,
+  ): Promise<SessionPlan[]> {
+    const data = await this.http.get<WireSessionPlansResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/transcript/plan`,
+      {
+        agent_id: input.agentId,
+        tool_call_id: input.toolCallId,
+      },
+    );
+    return data.plans.map((plan) => ({
+      agentId: data.agent_id,
+      toolCallId: plan.tool_call_id,
+      turnId: plan.turn_id,
+      source: plan.source,
+      plan: plan.plan,
+      ...(plan.path !== undefined ? { path: plan.path } : {}),
+      ...(plan.options !== undefined
+        ? {
+            options: plan.options.map((option) => ({
+              label: option.label,
+              ...(option.description !== undefined ? { description: option.description } : {}),
+            })),
+          }
+        : {}),
+      ...(plan.review !== undefined
+        ? {
+            review: {
+              state: plan.review.state,
+              ...(plan.review.selected_option !== undefined
+                ? { selectedOption: plan.review.selected_option }
+                : {}),
+              ...(plan.review.feedback !== undefined ? { feedback: plan.review.feedback } : {}),
+            },
+          }
+        : {}),
+    }));
   }
 
   async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {

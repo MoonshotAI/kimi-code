@@ -24,7 +24,7 @@
 //
 // Pure logic (no Vue) so it can be unit-tested without a reactive runtime.
 
-import type { AppMessage, AppApprovalRequest } from '../../api/types';
+import type { AppMessage, AppApprovalRequest, SessionPlan } from '../../api/types';
 import type { ChatTurn } from '../../types';
 import { messagesToTurns } from '../messagesToTurns';
 
@@ -34,6 +34,7 @@ export interface TurnsProjectInput {
   getFileUrl?: (fileId: string) => string;
   sessionActive?: boolean;
   planReviewByToolCallId?: Record<string, { plan: string; path?: string }>;
+  plansByToolCallId?: Record<string, SessionPlan>;
 }
 
 export interface TurnsProjector {
@@ -50,6 +51,7 @@ export function createTurnsProjector(): TurnsProjector {
   // its entries instead and gate by value — a late-arriving plan path must
   // rebuild the ExitPlanMode turn it belongs to.
   let prevPlanReviewEntries: Record<string, { plan: string; path?: string }> | null = null;
+  let prevPlanEntries: Record<string, SessionPlan> | null = null;
   let prevGetFileUrl: TurnsProjectInput['getFileUrl'];
   let prevSessionActive = true;
   // Sidecar: source message span per emitted turn (the core reports them via
@@ -60,6 +62,7 @@ export function createTurnsProjector(): TurnsProjector {
     const { messages, approvals } = input;
     const sessionActive = input.sessionActive ?? true;
     const planReview = input.planReviewByToolCallId ?? {};
+    const plans = input.plansByToolCallId ?? {};
     const collect = (turn: ChatTurn, src: readonly AppMessage[]) => sources.set(turn, src);
 
     let planReviewUnchanged = prevPlanReviewEntries !== null;
@@ -70,11 +73,20 @@ export function createTurnsProjector(): TurnsProjector {
         nextKeys.length === Object.keys(prev).length &&
         nextKeys.every((k) => planReview[k] === prev[k]);
     }
+    let plansUnchanged = prevPlanEntries !== null;
+    if (plansUnchanged) {
+      const prev = prevPlanEntries!;
+      const nextKeys = Object.keys(plans);
+      plansUnchanged =
+        nextKeys.length === Object.keys(prev).length &&
+        nextKeys.every((k) => plans[k] === prev[k]);
+    }
 
     const canReuse =
       prevTurns.length > 0 &&
       approvals === prevApprovals &&
       planReviewUnchanged &&
+      plansUnchanged &&
       input.getFileUrl === prevGetFileUrl;
 
     let reuseCount = 0;
@@ -117,6 +129,7 @@ export function createTurnsProjector(): TurnsProjector {
       input.getFileUrl,
       sessionActive,
       planReview,
+      plans,
       { startNo, collect },
     );
     const next = reuseCount > 0 ? [...prevTurns.slice(0, reuseCount), ...suffixTurns] : suffixTurns;
@@ -124,6 +137,7 @@ export function createTurnsProjector(): TurnsProjector {
     prevTurns = next;
     prevApprovals = approvals;
     prevPlanReviewEntries = { ...planReview };
+    prevPlanEntries = { ...plans };
     prevGetFileUrl = input.getFileUrl;
     prevSessionActive = sessionActive;
     return next;
@@ -133,6 +147,7 @@ export function createTurnsProjector(): TurnsProjector {
     prevTurns = [];
     prevApprovals = null;
     prevPlanReviewEntries = null;
+    prevPlanEntries = null;
     prevGetFileUrl = undefined;
     prevSessionActive = true;
   };

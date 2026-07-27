@@ -13,6 +13,7 @@ export default {
     task: '任务',
     swarm: 'Swarm',
     ask_user: '提问',
+    plan: '计划',
     goal_create: '启动目标',
     goal_get: '读取目标',
     goal_budget: '设置目标预算',
@@ -44,6 +45,16 @@ export default {
   output: {
     waiting: '等待输出…',
     empty: '（无输出）',
+  },
+  plan: {
+    review: {
+      pending: '待确认',
+      approved: '已通过',
+      rejected: '已拒绝',
+      cancelled: '已取消',
+    },
+    selectedOption: '已选择',
+    feedback: '反馈',
   },
   summary: {
     inScope: '{value} 在 {scope} 中',

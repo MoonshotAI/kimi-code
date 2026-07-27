@@ -14,7 +14,7 @@ import {
   type DropPosition,
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
-import { logError } from '../lib/log';
+import { logError, logWarn } from '../lib/log';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -78,6 +78,7 @@ import type {
   AppQuestionRequest,
   AppSession,
   AppSessionRuntimeStatus,
+  SessionPlan,
   AppSkill,
   AppTask,
   AppWarning,
@@ -463,6 +464,55 @@ const rawState: ExtendedState = reactive({
   sessionsFullyLoaded: false,
 });
 
+const plansBySession = reactive<Record<string, Record<string, SessionPlan>>>({});
+const planRequestSerialByKey = new Map<string, number>();
+const planBulkVersionBySession = new Map<string, number>();
+
+function planRequestKey(sessionId: string, toolCallId?: string): string {
+  return `${sessionId}\0${toolCallId ?? '*'}`;
+}
+
+async function refreshSessionPlans(sessionId: string, toolCallId?: string): Promise<void> {
+  const key = planRequestKey(sessionId, toolCallId);
+  const requestSerial = (planRequestSerialByKey.get(key) ?? 0) + 1;
+  planRequestSerialByKey.set(key, requestSerial);
+  if (toolCallId !== undefined) {
+    planBulkVersionBySession.set(sessionId, (planBulkVersionBySession.get(sessionId) ?? 0) + 1);
+  }
+  const bulkVersion = planBulkVersionBySession.get(sessionId) ?? 0;
+
+  try {
+    const plans = await getKimiWebApi().getSessionPlans(sessionId, {
+      agentId: 'main',
+      toolCallId,
+    });
+    if (
+      planRequestSerialByKey.get(key) !== requestSerial ||
+      (toolCallId === undefined &&
+        (planBulkVersionBySession.get(sessionId) ?? 0) !== bulkVersion) ||
+      !rawState.sessions.some((session) => session.id === sessionId)
+    ) {
+      return;
+    }
+    const fetched = Object.fromEntries(plans.map((plan) => [plan.toolCallId, plan]));
+    plansBySession[sessionId] =
+      toolCallId === undefined
+        ? fetched
+        : { ...plansBySession[sessionId], ...fetched };
+  } catch (error) {
+    logWarn('[refreshSessionPlans] plan history unavailable for', sessionId, error);
+  }
+}
+
+function forgetSessionPlans(sessionId: string): void {
+  const prefix = `${sessionId}\0`;
+  for (const key of planRequestSerialByKey.keys()) {
+    if (key.startsWith(prefix)) planRequestSerialByKey.delete(key);
+  }
+  planBulkVersionBySession.delete(sessionId);
+  delete plansBySession[sessionId];
+}
+
 // ---------------------------------------------------------------------------
 // Draft mode staging (no active session yet).
 // When the user toggles plan/swarm/goal in the empty composer before the first
@@ -629,6 +679,7 @@ function forgetSession(sessionId: string): void {
   enqueueEvent.discard(({ meta }) => meta.sessionId === sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
+  forgetSessionPlans(sessionId);
   delete rawState.approvalsBySession[sessionId];
   delete rawState.questionsBySession[sessionId];
   delete rawState.tasksBySession[sessionId];
@@ -954,6 +1005,21 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 // backlog into one unbounded rAF drain. Lifecycle / control-flow events remain
 // strict ordering barriers and are never dropped or merged.
 
+function latestTurnExitPlanToolCallId(messages: AppMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.role === 'user') return undefined;
+    if (message.role !== 'assistant') continue;
+    for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
+      const content = message.content[contentIndex]!;
+      if (content.type === 'toolUse' && content.toolName === 'ExitPlanMode') {
+        return content.toolCallId;
+      }
+    }
+  }
+  return undefined;
+}
+
 function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // Capture BEFORE applyEvent advances lastSeqBySession: turn-end side
   // effects below only run when this event actually moves the durable cursor
@@ -961,6 +1027,14 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
   const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
+  const settledPlanToolCallId =
+    appEvent.type === 'approvalResolved' || appEvent.type === 'approvalExpired'
+      ? rawState.approvalsBySession[meta.sessionId]?.find(
+          (approval) =>
+            approval.approvalId === appEvent.approvalId &&
+            approval.toolName === 'ExitPlanMode',
+        )?.toolCallId
+      : undefined;
   const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
   if (
     appEvent.type === 'messageCreated' &&
@@ -1040,6 +1114,12 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
       reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
       wasMainTurnActive,
     );
+    const exitPlanToolCallId = latestTurnExitPlanToolCallId(
+      rawState.messagesBySession[appEvent.sessionId] ?? [],
+    );
+    if (exitPlanToolCallId !== undefined) {
+      void refreshSessionPlans(appEvent.sessionId, exitPlanToolCallId);
+    }
   }
 
   if (
@@ -1080,6 +1160,9 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // The agent needs approval for a tool call — surface it so the user comes back.
   if (appEvent.type === 'approvalRequested') {
     onApprovalRequested(appEvent.sessionId, appEvent.approval);
+  }
+  if (settledPlanToolCallId !== undefined) {
+    void refreshSessionPlans(meta.sessionId, settledPlanToolCallId);
   }
 }
 
@@ -2078,6 +2161,7 @@ const turns = computed<ChatTurn[]>(() => {
     getFileUrl: getFileUrlById,
     sessionActive: turnActive.value,
     planReviewByToolCallId: rawState.planReviewByToolCallId,
+    plansByToolCallId: plansBySession[sid],
   });
 });
 
@@ -2821,6 +2905,7 @@ const workspaceState = useWorkspaceState(rawState, {
   hasLoadedMessages,
   refreshSessionStatus,
   refreshSessionGoal,
+  refreshSessionPlans,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,

@@ -244,6 +244,7 @@ export interface UseWorkspaceStateDeps {
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   refreshSessionGoal: (sessionId: string) => Promise<void>;
+  refreshSessionPlans: (sessionId: string, toolCallId?: string) => Promise<void>;
   /** Persist profile fields to the daemon. Resolves false (after surfacing the
    *  failure itself) when the daemon rejected the patch — awaited callers that
    *  order strictly after the profile must NOT proceed on false. */
@@ -306,6 +307,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     hasLoadedMessages,
     refreshSessionStatus,
     refreshSessionGoal,
+    refreshSessionPlans,
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
@@ -413,6 +415,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     void loadGitStatus(sessionId);
     void refreshSessionStatus(sessionId);
     void refreshSessionGoal(sessionId);
+    void refreshSessionPlans(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
       void modelProvider.loadSkillsForSession(sessionId);
     }
@@ -2149,6 +2152,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Guard against a second click while the first respond is in flight.
     if (pendingApprovalActions[approvalId]) return;
     pendingApprovalActions[approvalId] = true;
+    const planToolCallId = rawState.approvalsBySession[sid]?.find(
+      (approval) =>
+        approval.approvalId === approvalId && approval.toolName === 'ExitPlanMode',
+    )?.toolCallId;
     try {
       const api = getKimiWebApi();
       const fullResponse: ApprovalResponse = {
@@ -2160,11 +2167,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await api.respondApproval(sid, approvalId, fullResponse);
       // Remove from local approvals immediately (WS event will confirm)
       removePendingApproval(sid, approvalId);
+      if (planToolCallId !== undefined) {
+        void refreshSessionPlans(sid, planToolCallId);
+      }
     } catch (err) {
       if (isAlreadyResolvedError(err)) {
         // Already resolved (another client or a raced event) — that is the
         // desired end state, so drop it locally without surfacing an error.
         removePendingApproval(sid, approvalId);
+        if (planToolCallId !== undefined) {
+          void refreshSessionPlans(sid, planToolCallId);
+        }
       } else {
         pushOperationFailure('respondApproval', err, { sessionId: sid });
       }

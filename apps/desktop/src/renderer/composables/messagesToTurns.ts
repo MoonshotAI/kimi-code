@@ -9,7 +9,7 @@
 // TOOL-role messages fold their toolResult content into the preceding assistant
 // group rather than becoming separate turns.
 
-import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
+import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata, SessionPlan } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 import { detectShellDanger } from '../lib/shellDanger';
 import { parseTaskNotifications } from '../lib/notificationXml';
@@ -573,6 +573,8 @@ export function messagesToTurns(
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
+  /** Persisted ExitPlanMode records for this session, keyed by toolCallId. */
+  plansByToolCallId: Record<string, SessionPlan> = {},
   options?: {
     /** Gutter numbering starts here instead of 1 (suffix projections continuing
      *  a reused prefix). */
@@ -696,6 +698,8 @@ export function messagesToTurns(
         // the final result when expanded, while a subagent's live progress
         // streams in the right-side detail panel (sourced from the task).
         const pendingApproval = approvalByTool.get(c.toolCallId);
+        const persistedPlan =
+          c.toolName === 'ExitPlanMode' ? plansByToolCallId[c.toolCallId] : undefined;
         const toolCall: ToolCall = {
           id: c.toolCallId,
           name: c.toolName,
@@ -704,7 +708,11 @@ export function messagesToTurns(
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
           output: c.outputLines,
-          planPath: c.toolName === 'ExitPlanMode' ? planReviewByToolCallId[c.toolCallId]?.path : undefined,
+          plan: persistedPlan,
+          planPath:
+            c.toolName === 'ExitPlanMode'
+              ? persistedPlan?.path ?? planReviewByToolCallId[c.toolCallId]?.path
+              : undefined,
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });
