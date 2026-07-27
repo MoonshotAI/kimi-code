@@ -1951,7 +1951,9 @@ function selectModel(modelId: string): void {
   right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
   z-index: var(--z-dropdown);
   min-width: 200px;
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
@@ -2108,7 +2110,9 @@ function selectModel(modelId: string): void {
   min-width: 220px;
   width: max-content;
   max-width: calc(100vw - var(--space-8));
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
@@ -2200,7 +2204,9 @@ function selectModel(modelId: string): void {
   min-width: 220px;
   width: max-content;
   max-width: calc(100vw - var(--space-8));
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);

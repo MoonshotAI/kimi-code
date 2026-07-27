@@ -96,7 +96,9 @@ function fileIcon(item: FileItem): string {
   left: 0;
   right: 0;
   padding: var(--space-1);
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);

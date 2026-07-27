@@ -199,6 +199,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--color-bg</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#121212"></span>#121212</td><td>Page background</td></tr>
                 <tr><td class="tk">--color-surface</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#1f1f1f"></span>#1f1f1f</td><td>Panel / sidebar / card head</td></tr>
                 <tr><td class="tk">--color-surface-raised</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#292929"></span>#292929</td><td>Raised card / dialog / input</td></tr>
+                <tr><td class="tk">--color-menu-bg</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.95)"></span>rgba(255,255,255,.95)</td><td class="val"><span class="swatch" style="background:rgba(41,41,41,.95)"></span>rgba(41,41,41,.95)</td><td>Floating menu panel — frosted glass over <code>--p-menu-backdrop</code> blur</td></tr>
                 <tr><td class="tk">--color-surface-overlay</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:rgba(255,255,255,.1)"></span>rgba(255,255,255,.1)</td><td>Field-control fill on raised cards (selects, steppers) — top rung; light tops out at white (the level is carried by the border), dark steps one rung above raised. Floating layers stay at raised</td></tr>
                 <tr><td class="tk">--color-well</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#1f1f1f"></span>#1f1f1f</td><td>Content well on the page (code blocks, tool-output panels, match/file lists, media thumbnails) — light reuses the sunken recess; dark lifts one rung ABOVE the page, because a true recess (<code>#121212</code>) vanishes into the page there</td></tr>
                 <tr><td class="tk">--color-surface-deep</td><td class="val"><span class="swatch" style="background:#f5f5f5"></span>#f5f5f5</td><td class="val"><span class="swatch" style="background:#0d0d0d"></span>#0d0d0d</td><td>Deep chrome plane one step BELOW the page (panel headers, diff gutters) — dark drops under <code>--color-bg</code> so chrome framing stays darker than the content it frames</td></tr>
@@ -863,7 +864,7 @@ onUnmounted(() => {
             <!-- ===== Menu / Dropdown ===== -->
             <h3 class="sub">Menu / Dropdown</h3>
             <p>Desktop menus use a 3.5px panel inset. Standard items use 5px × 9px padding and a 7px icon gap. Their three-layer neutral shadow stays below 4% opacity.</p>
-            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-menu</code>, a three-layer neutral ramp). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 13px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
+            <p>Dropdown menu panel: frosted glass — the translucent <code>--color-menu-bg</code> fill over a blurred, saturated page backdrop (<code>--p-menu-backdrop</code>) — plus hairline + light shadow (<code>--shadow-menu</code>, a three-layer neutral ramp). This is the one place glassmorphism is the design language rather than an exception (§06); every floating menu surface (Menu.vue, the Select listbox, composer dropdowns, slash/mention popups) uses the token pair, never ad-hoc blur values. Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 13px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
             <p>Row states: hover uses the mode-aware <code>--color-hover</code> wash (it lightens under dark, never darkens); a leading icon sits one rung below the label (<code>--muted</code>), and on hover both label and icon step up to <code>--color-text-strong</code>, the max foreground tier. Selection keeps the accent pair (<code>--color-accent-soft</code> / <code>--color-accent-hover</code>); danger keeps its own colour.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Menu · dropdown menu</span></div>
@@ -1051,7 +1052,7 @@ onUnmounted(() => {
 
             <!-- ===== TopBar ===== -->
             <h3 class="sub">TopBar</h3>
-            <p>The application top bar. Solid by default; the <code>.frost</code> variant is translucent + background blur, used <b>only for sticky navigation bars</b>, and is the sole exception to the <code>no-glassmorphism</code> rule (see §06).</p>
+            <p>The application top bar. Solid by default; the <code>.frost</code> variant is translucent + background blur, used <b>only for sticky navigation bars</b>. Together with the floating menu surfaces (Menu / Dropdown), it is one of the two exceptions to the <code>no-glassmorphism</code> rule (see §06).</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">TopBar · solid / frosted glass</span></div>
               <div class="stage p col" style="gap:14px;background:radial-gradient(circle at 18% 30%,rgba(23,131,255,.16),transparent 42%),radial-gradient(circle at 82% 75%,rgba(20,23,28,.10),transparent 46%),var(--p-surface-sunken)">
@@ -1381,7 +1382,7 @@ onUnmounted(() => {
               <thead><tr><th>Rule ID</th><th>What it detects</th><th>Action</th></tr></thead>
               <tbody>
                 <tr><td class="tk">no-gradient-text</td><td>gradient text / gradient background</td><td><span class="pill red">Forbidden</span></td></tr>
-                <tr><td class="tk">no-glassmorphism</td><td><code>backdrop-filter: blur</code> (<b>TopBar sticky nav bar</b> is the sole exception)</td><td><span class="pill amber">TopBar exempt</span></td></tr>
+                <tr><td class="tk">no-glassmorphism</td><td><code>backdrop-filter: blur</code> (<b>TopBar sticky nav bar</b> and <b>menu surfaces via <code>--p-menu-backdrop</code></b> are the exceptions)</td><td><span class="pill amber">TopBar + menus exempt</span></td></tr>
                 <tr><td class="tk">no-color-glow</td><td>colored / large-radius box-shadow glow</td><td><span class="pill red">Forbidden</span></td></tr>
                 <tr><td class="tk">no-emoji-icon</td><td>using emoji as a functional icon (no exceptions). Emoji inside <b>user content</b> — session titles, messages — is not chrome and is out of scope (see §07 Session row's emoji icon)</td><td><span class="pill red">Forbidden</span></td></tr>
                 <tr><td class="tk">no-hardcoded-hex</td><td>unregistered hex color inside a component <code>&lt;style&gt;</code></td><td><span class="pill amber">Warning</span></td></tr>
@@ -1417,7 +1418,7 @@ onUnmounted(() => {
 
             <h3 class="sub">Glassmorphism exemption</h3>
             <div class="callout good"><span class="ico">✓</span><div>
-              <code>backdrop-filter: blur</code> is banned site-wide, with the <b>sole exception of the <code>.frost</code> variant of <code>TopBar</code></b> — and only in the one place of the "sticky navigation bar", used to stay readable over scrolling content. No other component (card, dialog, Toast, panel) may use glassmorphism; violations are flagged under <code>no-glassmorphism</code>.
+              <code>backdrop-filter: blur</code> is banned site-wide, with <b>two exceptions</b>: the <code>.frost</code> variant of <code>TopBar</code> — only in the one place of the "sticky navigation bar", used to stay readable over scrolling content — and the floating menu surfaces (Menu.vue, the Select listbox, composer dropdowns, slash/mention popups), which go through the <code>--color-menu-bg</code> / <code>--p-menu-backdrop</code> token pair so the recipe stays single-sourced. No other component (card, dialog, Toast, panel) may use glassmorphism; violations are flagged under <code>no-glassmorphism</code>, and menu blur with ad-hoc values (anything but the token) is flagged too. Persistent panels that stay open over scrolling content (the dock work panel) deliberately stay opaque — a live backdrop blur re-samples the scrolling page every frame and janks in Chromium.
             </div></div>
 
             <div class="footer">
@@ -2345,7 +2346,8 @@ onUnmounted(() => {
 
   /* ===== Menu / Dropdown ===== */
   .p-menu {
-    background: var(--p-surface-raised); border: 0.5px solid var(--p-line);
+    background: var(--color-menu-bg); border: 0.5px solid var(--p-line);
+    -webkit-backdrop-filter: var(--p-menu-backdrop); backdrop-filter: var(--p-menu-backdrop);
     border-radius: var(--p-r-lg); box-shadow: var(--p-sh-sm);
     padding: 3.5px; min-width: 180px;
     font-family: var(--p-font-sans); color: var(--p-text);

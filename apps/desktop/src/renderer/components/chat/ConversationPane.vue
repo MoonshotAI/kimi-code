@@ -2427,7 +2427,9 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
   max-width: 100%;
   max-height: calc(var(--space-8) * 10);
   overflow: hidden auto;
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);

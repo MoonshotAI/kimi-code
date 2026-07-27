@@ -309,6 +309,11 @@ html[data-color-scheme="dark"] {
     0 6px 18px lch(0% 0 0 / 0.02),
     0 3px 9px lch(0% 0 0 / 0.04),
     0 1px 1px lch(0% 0 0 / 0.04);
+  /* Floating menu surfaces (Menu.vue, composer dropdowns, dock panel,
+     slash/mention popups): frosted glass — translucent fill over a blurred,
+     saturated backdrop. The hairline + --shadow-menu still carry the edge. */
+  --color-menu-bg: rgba(255, 255, 255, 0.95);
+  --p-menu-backdrop: blur(24px) saturate(1.8);
   /* Chat-input elevation (effect.shadow.inputDefault): kept identical in
      dark — the hairline carries the edge there. */
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
@@ -541,6 +546,8 @@ html[data-color-scheme="dark"] {
     0 6px 18px rgba(0, 0, 0, 0.2),
     0 3px 9px rgba(0, 0, 0, 0.24),
     0 1px 1px rgba(0, 0, 0, 0.24);
+  /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+  --color-menu-bg: rgba(41, 41, 41, 0.95);
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
@@ -608,6 +615,8 @@ html[data-color-scheme="dark"] {
       0 6px 18px rgba(0, 0, 0, 0.2),
       0 3px 9px rgba(0, 0, 0, 0.24),
       0 1px 1px rgba(0, 0, 0, 0.24);
+    /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+    --color-menu-bg: rgba(41, 41, 41, 0.95);
     --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
