@@ -13,7 +13,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness } from '#/index';
+import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness, SDKRpcClientV2 } from '#/index';
+import { foldAgentWireReplay } from '#/v2/resume-replay';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -72,16 +73,101 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
+  it('serves the plugin catalog from the v2 engine on an empty home', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      expect(await rpc.listPlugins()).toEqual([]);
+      expect(await rpc.reloadPlugins()).toEqual({ added: [], removed: [], errors: [] });
+      await expect(rpc.getPluginInfo('missing-plugin')).rejects.toThrow();
+    } finally {
+      await rpc.close();
+    }
+  });
+
   it('fails loudly with not_implemented for methods not yet migrated', async () => {
     const { harness } = await makeHarness();
     try {
-      await expect(harness.listSessions()).rejects.toThrowError(KimiError);
-      await expect(harness.listSessions()).rejects.toMatchObject({
+      // `deleteSession` is the permanent case: the v2 engine has no
+      // session-deletion capability, so it stays not_implemented by design
+      // (tracked in `.tmp/v2-migration-tracker.md`).
+      await expect(harness.deleteSession('session_missing')).rejects.toThrowError(KimiError);
+      await expect(harness.deleteSession('session_missing')).rejects.toMatchObject({
         code: ErrorCodes.NOT_IMPLEMENTED,
       });
     } finally {
       await harness.close();
     }
+  });
+});
+
+describe('foldAgentWireReplay', () => {
+  it('folds a journal into v1 replay records and the tool store', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        time: 1001,
+      },
+      { type: 'permission.set_mode', mode: 'auto', time: 1002 },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'old', status: 'done' }],
+        time: 1003,
+      },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'new', status: 'pending' }],
+        time: 1004,
+      },
+      // A v2-only op the v1 restore switch does not know: ignored.
+      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1005 },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+    const folded = await foldAgentWireReplay(wirePath);
+    expect(folded.replay).toEqual([
+      {
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        time: 1001,
+      },
+      { type: 'permission_updated', mode: 'auto', time: 1002 },
+    ]);
+    // Last write wins per store key.
+    expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+  });
+
+  it('degrades to an empty fold on a missing or corrupt journal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const empty = { replay: [], toolStore: {} };
+    await expect(foldAgentWireReplay(join(dir, 'missing.jsonl'))).resolves.toEqual(empty);
+    const emptyFile = join(dir, 'empty.jsonl');
+    await writeFile(emptyFile, '', 'utf-8');
+    await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual(empty);
+    const corrupt = join(dir, 'corrupt.jsonl');
+    await writeFile(
+      corrupt,
+      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n{not json\n{"type":"permission.set_mode","mode":"auto"}\n',
+      'utf-8',
+    );
+    await expect(foldAgentWireReplay(corrupt)).resolves.toEqual(empty);
+    // A truncated TAIL line is tolerated: everything before it still folds.
+    const truncatedTail = join(dir, 'truncated.jsonl');
+    await writeFile(
+      truncatedTail,
+      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n{"type":"permission.set_mode","mode":"auto","time":2}\n{"type":"context.append_messa',
+      'utf-8',
+    );
+    const folded = await foldAgentWireReplay(truncatedTail);
+    expect(folded.replay).toEqual([{ type: 'permission_updated', mode: 'auto', time: 2 }]);
   });
 });
 
