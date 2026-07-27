@@ -504,4 +504,23 @@ describe('convertAnthropicError: quota-exhausted 429 via the convertError hook',
     expect(result).toBe(converted);
     expect(calls).toHaveLength(0);
   });
+
+  it('the provider threads options.convertError to its generate catch', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'k25',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      convertError: classifyKimiQuotaError,
+    });
+    (provider as any)._client.messages.create = vi.fn().mockRejectedValue(quota429());
+
+    await expect(
+      provider.generate(
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      ),
+    ).rejects.toThrow(APIProviderQuotaExhaustedError);
+  });
 });

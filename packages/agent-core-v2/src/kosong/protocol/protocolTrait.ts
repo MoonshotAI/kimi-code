@@ -142,11 +142,6 @@ export interface ProtocolTrait {
   /** Single-value: tool-call id rewrite policy, replacing the base policy. */
   toolCallIdPolicy?(ctx: TraitContext): ToolCallIdPolicy | undefined;
 
-  /**
-   * Single-value: classify one raw failure into a `ChatProviderError` before
-   * the base rules run; `undefined` keeps the base classification. The
-   * consult contract is restated in the header composition rules.
-   */
   convertError?(error: unknown, ctx: TraitContext): ChatProviderError | undefined;
 
   /**
@@ -256,12 +251,6 @@ export function traitDefaultHeaders(
   return headers;
 }
 
-/**
- * Bind the `convertError` hook of resolved traits with single-value
- * semantics: the last declarer wins, its context bound away. Returns
- * `undefined` when no trait declares the hook, so bases can bypass the
- * consult entirely.
- */
 export function traitConvertError(
   traits: readonly ResolvedTrait[],
 ): ((error: unknown) => ChatProviderError | undefined) | undefined {

@@ -6,11 +6,12 @@
  * headers vs the beta endpoint, and the thinking profile matrix (budget vs
  * adaptive) from `anthropic-profile`.
  *
- * The only hook surface is `withThinking` — a vendor dialect running over
- * this transport re-encodes the thinking intent and nothing else. When the
- * per-turn thinking intent carries `keep`, the BASE overlays the
- * context-management edit uniformly on top of whatever thinking encoding
- * happened (hook or base path), so a trait never handles `keep` itself.
+ * The hook surface is `withThinking` plus `convertError`. `withThinking`
+ * lets a vendor dialect running over this transport re-encode the thinking
+ * intent; when the per-turn thinking intent carries `keep`, the BASE
+ * overlays the context-management edit uniformly on top of whatever
+ * thinking encoding happened (hook or base path), so a trait never handles
+ * `keep` itself.
  *
  * `convertAnthropicError`'s FIRST line is the contract's `throwIfAbortError`
  * guard: a user cancellation is THROWN as the standard abort DOMException at
@@ -124,11 +125,12 @@ interface AnthropicContextManagement {
 }
 
 /**
- * The base-internal hook set: the L1 `withThinking` hook with the context
- * already bound away. It receives a defensive COPY of the seeded kwargs, so a
+ * The base-internal hook set: the L1 hooks with the context already bound
+ * away. `withThinking` receives a defensive COPY of the seeded kwargs, so a
  * hook can never mutate base state — and a construction-headers synthetic
  * trait can never shadow a real dialect hook (the compositor picks the last
- * declarer).
+ * declarer). `convertError` is consulted by `convertAnthropicError` per the
+ * contract in the file header.
  */
 export interface AnthropicHooks {
   withThinking?(
