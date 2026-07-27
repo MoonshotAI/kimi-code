@@ -11,6 +11,7 @@ import {
   type PluginUpdateNotifierSession,
 } from '#/tui/controllers/plugin-update-notifier';
 import type { PluginMarketplace } from '#/utils/plugin-marketplace';
+import { readPluginUpdateNoticeState } from '#/utils/plugin-update-notice-state';
 
 function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummary {
   return {
@@ -222,8 +223,7 @@ describe('PluginUpdateNotifier', () => {
       expect(harness.loadMarketplace).toHaveBeenCalledTimes(1);
     });
     expect(harness.notify).not.toHaveBeenCalled();
-    // Let the rejected check fully settle (in-flight guard released) before
-    // invoking again, otherwise the retry is deduped away.
+    // Let the rejected check fully settle before invoking again.
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
@@ -231,6 +231,78 @@ describe('PluginUpdateNotifier', () => {
     notifier.handlePluginCommandCompleted('kimi-datasource');
     await vi.waitFor(() => {
       expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
+    });
+  });
+
+  it('refreshes the memoized MCP server map when a lookup misses', async () => {
+    const harness = makeHarness({ mcpServers: [] });
+    let servers: readonly string[] = [];
+    harness.session.listMcpServers = vi.fn(async () => servers.map((name) => ({ name })));
+    const notifier = makeNotifier(harness);
+
+    // The plugin's MCP server is not registered yet (the plugin gets
+    // installed later in the same app run, applied on /reload or /new).
+    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    await vi.waitFor(() => {
+      expect(harness.session.listMcpServers).toHaveBeenCalled();
+    });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(harness.notify).not.toHaveBeenCalled();
+
+    // After the reload the new server shows up; the next completion must
+    // refresh the memoized map instead of silently staying unresolved.
+    servers = ['plugin-kimi-datasource:data'];
+    notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
+    await vi.waitFor(() => {
+      expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
+    });
+  });
+
+  it('keeps every notified plugin when a turn uses two outdated plugins', async () => {
+    const harness = makeHarness({
+      marketplace: {
+        source: 'test',
+        plugins: [
+          {
+            id: 'kimi-datasource',
+            displayName: 'Kimi Datasource',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+            tier: 'official',
+            version: '3.4.0',
+          },
+          {
+            id: 'another-plugin',
+            displayName: 'Another Plugin',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/another-plugin.zip',
+            tier: 'official',
+            version: '2.0.0',
+          },
+        ],
+      },
+      installed: [
+        makePluginSummary(),
+        makePluginSummary({
+          id: 'another-plugin',
+          displayName: 'Another Plugin',
+          version: '1.0.0',
+        }),
+      ],
+    });
+    const notifier = makeNotifier(harness);
+
+    notifier.handlePluginCommandCompleted('kimi-datasource');
+    notifier.handlePluginCommandCompleted('another-plugin');
+
+    await vi.waitFor(() => {
+      expect(harness.notify).toHaveBeenCalledTimes(2);
+    });
+    // Both entries must survive in the persisted state — no lost update.
+    const state = await readPluginUpdateNoticeState(stateFile);
+    expect(state.notified).toEqual({
+      'kimi-datasource': '3.4.0',
+      'another-plugin': '2.0.0',
     });
   });
 });

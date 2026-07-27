@@ -72,6 +72,7 @@ export class PluginUpdateNotifier {
   private marketplacePromise: Promise<PluginMarketplace> | undefined;
   private mcpServerPluginIds: Map<string, string> | undefined;
   private readonly inFlight = new Set<string>();
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly deps: PluginUpdateNotifierDeps) {}
 
@@ -80,31 +81,51 @@ export class PluginUpdateNotifier {
     // let alone plugin ones.
     if (!isPluginMcpToolName(toolName)) return;
     void this.resolvePluginId(toolName)
-      .then((pluginId) => (pluginId === undefined ? undefined : this.checkAndNotify(pluginId)))
+      .then((pluginId) => {
+        if (pluginId !== undefined) this.enqueue(pluginId);
+      })
       .catch(() => {});
   }
 
   handlePluginCommandCompleted(pluginId: string): void {
-    void this.checkAndNotify(pluginId).catch(() => {});
+    this.enqueue(pluginId);
+  }
+
+  private enqueue(pluginId: string): void {
+    // Serialize the read-modify-write cycle on the notice state file: two
+    // concurrent checks (e.g. a turn that used two outdated plugins) would
+    // otherwise read the same snapshot and the last write would drop the
+    // other plugin's entry.
+    this.queue = this.queue.then(() => this.checkAndNotify(pluginId)).catch(() => {});
   }
 
   private async resolvePluginId(toolName: string): Promise<string | undefined> {
     const segment = mcpToolServerSegment(toolName);
     if (segment === undefined) return undefined;
-    return (await this.getMcpServerPluginIds()).get(segment);
+    const hit = (await this.getMcpServerPluginIds()).get(segment);
+    if (hit !== undefined) return hit;
+    // The map is memoized, but this notifier is reused across /reload, /new,
+    // and session switches, so plugins installed or enabled later in the same
+    // app run are missing from it. Refresh once on a miss before giving up.
+    return (await this.loadMcpServerPluginIds()).get(segment);
   }
 
   private async getMcpServerPluginIds(): Promise<Map<string, string>> {
     if (this.mcpServerPluginIds !== undefined) return this.mcpServerPluginIds;
+    return this.loadMcpServerPluginIds();
+  }
+
+  private async loadMcpServerPluginIds(): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const session = this.deps.getSession();
-    if (session !== undefined) {
-      const servers = await session.listMcpServers();
-      for (const server of servers) {
-        const match = PLUGIN_MCP_RUNTIME_NAME.exec(server.name);
-        if (match?.[1] !== undefined) {
-          map.set(sanitizeMcpServerName(server.name), match[1]);
-        }
+    // Without a session there is nothing to list; leave the cache unset so
+    // the next lookup retries instead of pinning an empty map.
+    if (session === undefined) return map;
+    const servers = await session.listMcpServers();
+    for (const server of servers) {
+      const match = PLUGIN_MCP_RUNTIME_NAME.exec(server.name);
+      if (match?.[1] !== undefined) {
+        map.set(sanitizeMcpServerName(server.name), match[1]);
       }
     }
     this.mcpServerPluginIds = map;
