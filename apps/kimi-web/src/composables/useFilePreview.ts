@@ -164,8 +164,11 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   // Decoded byte length of a base64 data: URL — media parts arriving as data
   // URLs (user uploads rehydrated from the blob store, ReadMediaFile results)
   // carry no explicit size, but the preview header should still show one.
+  // The mediatype may carry parameters (`data:image/svg+xml;charset=utf-8;
+  // base64,…`) — per RFC 2397 `;base64` is the last token before the comma,
+  // so match the metadata loosely and anchor on that marker.
   function bytesFromDataUrl(url: string): number | undefined {
-    const match = /^data:[^;,]+;base64,(.*)$/is.exec(url);
+    const match = /^data:[^,]*;base64,(.*)$/is.exec(url);
     const b64 = match?.[1];
     if (b64 === undefined) return undefined;
     const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;

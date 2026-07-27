@@ -41,6 +41,15 @@ describe('openMediaPreview size', () => {
     expect(previewFile.value?.mime).toBe('image/png');
   });
 
+  it('handles data: URLs with mediatype parameters (RFC 2397)', () => {
+    const { previewFile, openMediaPreview } = setup();
+    const b64 = Buffer.alloc(1024).toString('base64');
+    const media: ToolMedia = { kind: 'image', url: `data:image/svg+xml;charset=utf-8;base64,${b64}` };
+    openMediaPreview(media);
+    expect(previewFile.value?.size).toBe(1024);
+    expect(previewFile.value?.mime).toBe('image/svg+xml');
+  });
+
   it('prefers explicit media.bytes over the data: URL estimate', () => {
     const { previewFile, openMediaPreview } = setup();
     const media: ToolMedia = { kind: 'image', url: dataUrl(1024), bytes: 42 };
