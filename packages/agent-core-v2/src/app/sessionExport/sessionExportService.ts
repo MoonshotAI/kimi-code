@@ -234,8 +234,8 @@ export async function exportSessionDirectory(input: {
     }
     const manifest = {
       ...baseManifest,
-      ...(globalSource === undefined ? {} : { globalLogPath: GLOBAL_LOG_REL }),
-      ...(desktopSource === undefined ? {} : { desktopLogPath: DESKTOP_LOG_REL }),
+      globalLogPath: globalSource === undefined ? undefined : GLOBAL_LOG_REL,
+      desktopLogPath: desktopSource === undefined ? undefined : DESKTOP_LOG_REL,
     };
 
     const writing = writeExportZip({
