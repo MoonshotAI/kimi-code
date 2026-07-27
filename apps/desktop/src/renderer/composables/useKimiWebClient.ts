@@ -14,6 +14,7 @@ import {
   type DropPosition,
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
+import { logError } from '../lib/log';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -1371,7 +1372,7 @@ function pushOperationFailure(
 ): void {
   // Always-on logging: a surfaced failure must be diagnosable from the console
   // and from the exported web log (session export), not just from the toast.
-  console.error(`[kimi-code] operation failed: ${operation}`, err);
+  logError(`[kimi-code] operation failed: ${operation}`, err);
   const api = isDaemonApiError(err);
   const network = isDaemonNetworkError(err);
   traceKeyEvent('operation:failed', {

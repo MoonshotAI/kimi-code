@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { log } from './log';
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
 import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
@@ -56,6 +57,7 @@ export function main(): void {
   registerIpcHandlers();
 
   app.on('before-quit', () => {
+    log.info('[kimi-desktop] quitting');
     destroyTray();
     unregisterGlobalShortcuts();
     closeServerHandle();
@@ -68,6 +70,9 @@ export function main(): void {
   });
 
   void app.whenReady().then(() => {
+    log.info(
+      `[kimi-desktop] app ready (version=${app.getVersion()} platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged})`,
+    );
     // Dock icon follows the effective appearance (dark/light tile swap);
     // packaged builds additionally keep the static .icns for Finder etc.
     initDockIcon();

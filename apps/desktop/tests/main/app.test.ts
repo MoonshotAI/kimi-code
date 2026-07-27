@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => {
   let resolveReady = (): void => {};
   const app = {
     isPackaged: true,
+    getVersion: vi.fn(() => '0.0.0-test'),
     setAppUserModelId: vi.fn(),
     requestSingleInstanceLock: vi.fn(() => true),
     quit: vi.fn(),

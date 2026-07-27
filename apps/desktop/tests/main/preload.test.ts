@@ -30,6 +30,7 @@ const WHITELIST = [
   'installUpdate',
   'isFullscreen',
   'listOpenInApps',
+  'log',
   'onFullscreenChanged',
   'onLaunchAction',
   'onMenu',
@@ -276,6 +277,19 @@ describe('kimiDesktop preload bridge', () => {
     // A non-boolean set payload is dropped before reaching IPC.
     await exposed.setUpdateAutoDownload('yes' as unknown as boolean);
     expect(invoke).not.toHaveBeenCalledWith('kimi:update-set-auto-download', 'yes');
+
+    // Renderer log forwarding: whitelisted levels + non-empty string messages
+    // send; junk never reaches the main process.
+    exposed.log('warn', 'something', { code: 1 });
+    expect(send).toHaveBeenCalledWith('kimi:renderer-log', {
+      level: 'warn',
+      message: 'something',
+      detail: { code: 1 },
+    });
+    exposed.log('debug' as 'warn', 'x');
+    exposed.log('info', '');
+    exposed.log('info', 42 as unknown as string);
+    expect(send).toHaveBeenCalledTimes(11);
   });
 
   it('coerces the auto-download preference response to a boolean default', async () => {

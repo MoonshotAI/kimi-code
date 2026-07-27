@@ -21,6 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import { logWarn } from '../../lib/log';
 import { formatTokens } from '../../lib/formatTokens';
 import { Button, Input, SegmentedControl } from '@moonshot-ai/web-ui';
 
@@ -182,7 +183,7 @@ async function loadAllArchived(): Promise<void> {
     archivedItems.value = all;
     archivedLoaded.value = true;
   } catch (err) {
-    console.warn('loadAllArchived failed', err);
+    logWarn('loadAllArchived failed', err);
   } finally {
     archivedLoading.value = false;
   }

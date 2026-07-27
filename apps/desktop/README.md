@@ -29,7 +29,11 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 - `src/main/app.ts` — 主进程编排：注册 scheme / IPC、生命周期事件、`whenReady` 后起窗口。
 - `src/main/log.ts` — 主进程文件日志（`~/.kimi-code/logs/kimi-code-desktop.log`，按大小轮转保留
   一个 `.1` 存档）+ `uncaughtException` / `unhandledRejection` 守卫（已知无害的 undici
-  流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。
+  流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。renderer 诊断
+  经 `kimi:renderer-log` 通道由 `renderer-log.ts` 校验/脱敏/限流后写入同一文件（`[renderer]`
+  前缀）；renderer 侧统一入口是 `src/renderer/lib/log.ts`（console 镜像 + 桥转发，web 无桥
+  退化为纯 console），`debug/trace.ts` 的 window error/unhandledrejection 也走它落盘。session
+  导出时 renderer 带 `desktop: true` 标记，server 自行把该日志文件打进 zip（`logs/kimi-desktop.log`）。
 - `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；`rendererDistRoot()`、
   token 读取、server 日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。

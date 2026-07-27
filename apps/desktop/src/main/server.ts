@@ -14,6 +14,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_MSH_PLATFORM } from '../shared/identity';
+import { log } from './log';
 
 export interface DesktopServerHandle {
   readonly origin: string;
@@ -95,6 +96,8 @@ export async function startDesktopServer(
     // `coreProcessOptions`); the upstream model API reads identity from these.
     seeds: hostRequestHeadersSeed(desktopHostHeaders(opts.identity)),
   });
+
+  log.info(`[kimi-desktop] embedded server listening on http://${handle.host}:${handle.port}`);
 
   return {
     origin: `http://${handle.host}:${handle.port}`,

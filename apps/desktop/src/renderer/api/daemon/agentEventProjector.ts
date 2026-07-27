@@ -26,6 +26,7 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
+import { logError } from '../../lib/log';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
 import { toAppMessageContent } from '@moonshot-ai/web-core/api';
 import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/web-core/api';
@@ -562,7 +563,7 @@ export function createAgentProjector(): AgentProjector {
       return _project(rawType, payload, sessionId, meta);
     } catch (error) {
       // Defensive: log but never crash the caller
-      console.error('[agentProjector] Error projecting event:', rawType, error instanceof Error ? error.message : error);
+      logError('[agentProjector] Error projecting event:', rawType, error instanceof Error ? error.message : error);
       return [];
     }
   }

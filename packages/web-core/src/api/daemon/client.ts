@@ -47,7 +47,12 @@ import type {
   UpdateProviderResult,
 } from '../types';
 import { DaemonHttpClient } from './http';
+import { isDaemonApiError } from '../errors';
 import type { AgentProjector } from './projector';
+
+// Envelope code for request-schema validation failures (kap-server
+// error-codes.ts); used to detect servers that predate a request field.
+const VALIDATION_FAILED_CODE = 40001;
 import {
   toAppApprovalRequest,
   toAppCatalogProvider,
@@ -620,14 +625,30 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async exportSession(
     sessionId: string,
     webLog?: string,
+    options?: { desktop?: boolean },
   ): Promise<{ blob: Blob; fileName: string }> {
     const webLogBytes = webLog === undefined ? 0 : new TextEncoder().encode(webLog).byteLength;
     const webLogEntries = webLog === undefined || webLog.length === 0 ? 0 : webLog.split('\n').length;
-    const result = await this.http.postZip(
-      `/sessions/${encodeURIComponent(sessionId)}/export`,
-      { web_log: webLog },
-      { web_log_bytes: webLogBytes, web_log_entries: webLogEntries },
-    );
+    const path = `/sessions/${encodeURIComponent(sessionId)}/export`;
+    const traceBody = { web_log_bytes: webLogBytes, web_log_entries: webLogEntries };
+    const withDesktop = options?.desktop === true;
+    let result: { blob: Blob; contentDisposition?: string };
+    try {
+      result = await this.http.postZip(
+        path,
+        { web_log: webLog, ...(withDesktop ? { desktop: true } : {}) },
+        traceBody,
+      );
+    } catch (error) {
+      // Servers predating the desktop flag validate the body with a strict
+      // schema that rejects the unknown field — retry once without it rather
+      // than failing the whole export.
+      if (withDesktop && isDaemonApiError(error) && error.code === VALIDATION_FAILED_CODE) {
+        result = await this.http.postZip(path, { web_log: webLog }, traceBody);
+      } else {
+        throw error;
+      }
+    }
     const fallback = `${sessionId}.zip`;
     return {
       blob: result.blob,

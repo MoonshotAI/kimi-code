@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 34 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 37 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意三点：
 
@@ -155,6 +155,13 @@
   - **web 无对应物**：浏览器没有窗口材质；`useVibrancy.ts` 不同步 apps/web（同 useFullscreen 先例）；分叉块：`App.vue`（import + binding + `.app.macos-desktop.vibrancy` CSS）、`Sidebar.vue`（import + binding + tint CSS）、`SettingsDialog.vue`（import + 设置行）、`main.ts`（initVibrancy），整目录 re-copy 时需保留。
   - 测试：`tests/main/ui-state.test.ts`（vibrancy 默认 true/畸形 true/往返/保留其它 key）；`tests/main/window.test.ts`（`vibrancyWindowOptions` 三态）；`tests/main/preload.test.ts`（白名单 + 通道/畸形/junk 回默认断言）。
 
+- [x] **renderer 日志落盘主进程**（已完成；链路 desktop 专属，renderer lib 两端一致）
+  - 实现：renderer（沙箱无 fs）诊断经 IPC `kimi:renderer-log`（send）落盘到主进程同一日志文件（`log.ts`，`[renderer]` 前缀，与主进程日志按时间交错成一条时间线）。preload 加 `log(level, message, detail?)` 白名单方法（level 白名单 + 非空 string message 先行校验）；主进程 `renderer-log.ts` 终审不可信输入——level 白名单、message 截断 2000 字符、内联 `token=`/`Bearer` 脱敏、detail 递归脱敏（敏感 key 同 trace.ts 正则、base64 长串折叠、深度/数量/4KB 封顶、恶意输入占位符兜底）、60s 滑窗 120 行限流（超限计数，窗口结束补一条 dropped N 汇总行——防 renderer 死循环写爆 5MB 文件）。
+  - renderer 侧统一入口 `src/renderer/lib/log.ts`（`logInfo/logWarn/logError`）：console 镜像恒在（devtools 可见性不变）+ 运行时探测 `window.kimiDesktop.log` 转发，无桥（web）/老桥缺方法自动退化为纯 console，桥异常静默——日志绝不能影响业务。**两端同文件、零分叉**（运行时桥探测分流），`apps/web/src/lib/log.ts` 是同一份。`debug/trace.ts` 的 window error / unhandledrejection 也经它 always-on 落盘（不受 `?debug=1` 门控）——白屏/未捕获异常在打包版从此有记录。既有 25 处裸 `console.*` 全部收口到该 lib（desktop `[kimi-code]` / web `[kimi-web]` 品牌前缀分叉照旧保留）；`useModelProviderState` 的 desktop 分叉块（直连 console.error 五处 vs web 走 `pushOperationFailure`）同步收口。
+  - 主进程顺带补关键路径日志：app ready（version/platform/arch/packaged）与 quitting、内嵌 server listening 端口、updater 状态迁移（available / download started / downloaded / install / download failed，原裸 `console.warn` 收口为 `log.warn`）、`openExternal` 失败（URL 经 `redactUrlForLog` 脱敏）、`render-process-gone`（渲染进程崩溃/被杀死，此前唯一线索是用户看到白屏）。
+  - 测试：`tests/main/renderer-log.test.ts`（13 用例：payload 校验、脱敏、截断、恶意输入、限流 + 汇总行）；`tests/main/preload.test.ts`（白名单 + 通道 + 畸形不发送）；`tests/renderer/log.test.ts` 与 `apps/web/test/log.test.ts`（各 4 用例：桥转发、多参 detail、无桥/老桥 console-only、桥抛错静默）。
+  - **session 导出带桌面日志**：导出请求新增 `desktop: true` 标记（renderer 按 `isDesktop` 发送，web 恒不发），server 端（kimi-code 仓）读到标记后自行把 `<home>/logs/kimi-code-desktop.log` 打包为 zip 里的 `logs/kimi-desktop.log` 并登记 manifest——日志内容不经过 renderer/HTTP。client（web-core）对不认识该字段的旧版 server（strict schema 40001）自动去掉标记重试一次。kimi-code 侧改动：protocol/kap-server 两份 schema 加 `desktop` 可选字段、kap-server 路由透传 `includeDesktopLog`、agent-core-v2 导出服务照 global log 同款模式打包（缺文件静默跳过）。
+
 
 ## 共享组件 UI 分叉
 
@@ -177,5 +184,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（32 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（35 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

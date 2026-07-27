@@ -287,6 +287,10 @@ export type KimiDesktopApi = {
   /** Current vibrancy preference. Default ON — only an explicit false from
    *  the main process disables. */
   getVibrancy: () => Promise<boolean>;
+  /** Forward a diagnostic line to the main-process log file (fire-and-forget;
+   *  the sandboxed renderer has no fs access). The main process re-validates,
+   *  redacts and rate-limits everything. */
+  log: (level: 'info' | 'warn' | 'error', message: string, detail?: unknown) => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -445,6 +449,11 @@ export const api: KimiDesktopApi = {
     }
   },
   getVibrancy: async () => (await ipcRenderer.invoke('kimi:get-vibrancy')) !== false,
+  log: (level, message, detail) => {
+    if (level !== 'info' && level !== 'warn' && level !== 'error') return;
+    if (typeof message !== 'string' || message === '') return;
+    ipcRenderer.send('kimi:renderer-log', { level, message, detail });
+  },
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);

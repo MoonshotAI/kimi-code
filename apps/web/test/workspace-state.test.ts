@@ -391,7 +391,9 @@ describe('useWorkspaceState — exportSession', () => {
     });
 
     expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
-    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String), {
+      desktop: false,
+    });
   });
 
   it('reclaims the object URL when the browser rejects the download click', async () => {

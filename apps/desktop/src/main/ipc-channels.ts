@@ -35,6 +35,7 @@ export const IPC = {
   vibrancy: 'kimi:vibrancy',
   getVibrancy: 'kimi:get-vibrancy',
   showWindow: 'kimi:show-window',
+  rendererLog: 'kimi:renderer-log',
   jumpList: 'kimi:jump-list',
   launchAction: 'kimi:launch-action',
 } as const;

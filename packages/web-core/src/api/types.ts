@@ -883,8 +883,14 @@ export interface KimiWebApi {
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
   getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
-  /** Export the session archive, optionally including the bounded Web JSONL log. */
-  exportSession(sessionId: string, webLog?: string): Promise<{ blob: Blob; fileName: string }>;
+  /** Export the session archive, optionally including the bounded Web JSONL
+   *  log. `options.desktop` asks the server to bundle the on-disk desktop app
+   *  log (desktop hosts only; older servers are retried without the flag). */
+  exportSession(
+    sessionId: string,
+    webLog?: string,
+    options?: { desktop?: boolean },
+  ): Promise<{ blob: Blob; fileName: string }>;
   submitPrompt(sessionId: string, input: PromptSubmission): Promise<PromptSubmitResult>;
   /** Steer daemon-queued prompts into the active turn (TUI ctrl+s). */
   steerPrompts(sessionId: string, promptIds: string[]): Promise<{ steered: boolean; promptIds: string[] }>;

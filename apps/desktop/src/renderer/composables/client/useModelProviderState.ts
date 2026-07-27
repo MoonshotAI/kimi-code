@@ -9,6 +9,7 @@ import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
 import { DaemonApiError } from '../../api/errors';
 import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '../../api/types';
+import { logError, logWarn } from '../../lib/log';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
   defaultThinkingLevelFor,
@@ -496,7 +497,7 @@ export function useModelProviderState(
       await checkAuth();
       return null;
     } catch (err) {
-      console.error('[kimi-code] operation failed: addProvider', err);
+      logError('[kimi-code] operation failed: addProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -514,7 +515,7 @@ export function useModelProviderState(
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       return null;
     } catch (err) {
-      console.error('[kimi-code] operation failed: updateProvider', err);
+      logError('[kimi-code] operation failed: updateProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -587,7 +588,7 @@ export function useModelProviderState(
       if (err instanceof DaemonApiError && err.code === undefined) {
         return { kind: 'unsupported' };
       }
-      console.error('[kimi-code] operation failed: loadCatalogProviders', err);
+      logError('[kimi-code] operation failed: loadCatalogProviders', err);
       return { kind: 'error' };
     }
   }
@@ -607,7 +608,7 @@ export function useModelProviderState(
       await checkAuth();
       return null;
     } catch (err) {
-      console.error('[kimi-code] operation failed: importCatalogProvider', err);
+      logError('[kimi-code] operation failed: importCatalogProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -628,7 +629,7 @@ export function useModelProviderState(
       await checkAuth();
       return result;
     } catch (err) {
-      console.error('[kimi-code] operation failed: importCustomRegistry', err);
+      logError('[kimi-code] operation failed: importCustomRegistry', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -655,7 +656,7 @@ export function useModelProviderState(
     } catch (err) {
       // The dialog counts consecutive nulls and gives up after a few; keep the
       // cause in the log so a dead daemon is diagnosable.
-      console.warn('[kimi-code] pollOAuthLogin failed', err);
+      logWarn('[kimi-code] pollOAuthLogin failed', err);
       return null;
     }
   }

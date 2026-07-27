@@ -18,11 +18,15 @@ import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
+import { log, redactUrlForLog } from './log';
+import { createRendererLogWriter } from './renderer-log';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
   return value === 'light' || value === 'dark' || value === 'system';
 }
+
+const rendererLogWriter = createRendererLogWriter();
 
 export function registerIpcHandlers(): void {
   ipcMain.on(IPC.theme, (_event, scheme: unknown) => {
@@ -35,7 +39,15 @@ export function registerIpcHandlers(): void {
     if (isDockIconChoice(choice)) setDockIconChoice(choice);
   });
   ipcMain.handle(IPC.osAppearance, () => osAppearance());
-  ipcMain.handle(IPC.openExternal, (_event, url: string) => shell.openExternal(url));
+  ipcMain.handle(IPC.openExternal, (_event, url: string) =>
+    // The rejection still propagates to the renderer's invoke promise; log it
+    // main-side too so packaged builds keep a record (renderer console is
+    // invisible there). The URL is redacted before hitting the log file.
+    shell.openExternal(url).catch((error: unknown) => {
+      log.error(`[kimi-desktop] openExternal failed: ${redactUrlForLog(url)}`, error);
+      throw error;
+    }),
+  );
   // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
   // the main process opens the native dialog and returns the user's selection.
   ipcMain.handle(IPC.dialogOpen, (_event, opts: OpenDialogOptions = {}) => {
@@ -183,4 +195,10 @@ export function registerIpcHandlers(): void {
     applyWindowVibrancy(enabled);
   });
   ipcMain.handle(IPC.getVibrancy, () => isVibrancyEnabled());
+  // Renderer diagnostics → the same log file the main process writes (the
+  // sandboxed renderer has no fs access). Validation, redaction and rate
+  // limiting all live in renderer-log.ts; this handler must never throw.
+  ipcMain.on(IPC.rendererLog, (_event, payload: unknown) => {
+    rendererLogWriter(payload);
+  });
 }

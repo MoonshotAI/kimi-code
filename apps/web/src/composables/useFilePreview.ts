@@ -153,7 +153,7 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       } else {
         // readFileContent swallows daemon failures into null — show the error
         // state instead of a misleading 0-byte "empty file" (the cause is
-        // already console.warn'd in readFileContent).
+        // already logged in readFileContent).
         previewError.value = t('filePreview.errors.loadFailed');
       }
     } catch (err) {

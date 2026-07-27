@@ -442,6 +442,13 @@ export function createWindow(): void {
   win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame) => {
     settleRendererReady(isMainFrame);
   });
+  // A crashed/killed renderer (OOM, GPU fault) shows the user a frozen or
+  // blank page with no other trace — the log file is the only record.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    log.error(
+      `[kimi-desktop] renderer process gone (reason=${details.reason} exitCode=${details.exitCode})`,
+    );
+  });
   win.webContents.on('did-finish-load', () => {
     settleRendererReady(true);
     if (win.isDestroyed()) return;

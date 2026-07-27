@@ -15,6 +15,7 @@ import {
   type DevBackendState,
 } from '../api/devBackend';
 import { copyTextToClipboard } from '../lib/clipboard';
+import { logWarn } from '../lib/log';
 import {
   loadCollapsedWorkspaces,
   saveCollapsedWorkspaces,
@@ -704,7 +705,7 @@ async function chooseBackend(name: BackendName): Promise<void> {
   }
   const next = await switchDevBackend(name);
   if (next === null) {
-    console.warn('[kimi-web] dev backend switch failed:', name);
+    logWarn('[kimi-web] dev backend switch failed:', name);
     closeBackendMenu();
     return;
   }
