@@ -848,6 +848,32 @@ describe('SessionLifecycleService', () => {
     });
   });
 
+  it('keeps telemetry session context isolated when multiple sessions emit interleaved events', async () => {
+    const svc = build();
+    const first = await svc.create({ sessionId: 'first', workDir: '/tmp/proj' });
+    const second = await svc.create({ sessionId: 'second', workDir: '/tmp/proj' });
+    telemetryRecords.length = 0;
+
+    first.accessor.get(ITelemetryService).track('test_event', { marker: 'first-before' });
+    second.accessor.get(ITelemetryService).track('test_event', { marker: 'second' });
+    first.accessor.get(ITelemetryService).track('test_event', { marker: 'first-after' });
+
+    expect(telemetryRecords).toEqual([
+      {
+        event: 'test_event',
+        properties: { sessionId: 'first', marker: 'first-before' },
+      },
+      {
+        event: 'test_event',
+        properties: { sessionId: 'second', marker: 'second' },
+      },
+      {
+        event: 'test_event',
+        properties: { sessionId: 'first', marker: 'first-after' },
+      },
+    ]);
+  });
+
   it('emits session_started with resumed: true and the bound session id on resume', async () => {
     const workDir = '/tmp/proj';
     const svc = build([
