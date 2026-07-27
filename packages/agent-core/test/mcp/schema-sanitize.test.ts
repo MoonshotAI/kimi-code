@@ -216,7 +216,7 @@ describe('sanitizeMcpSchema — nested arrays and items', () => {
     expect((tagsProp['items'] as Schema)['type']).toBe('string');
   });
 
-  it('fills type on array items (array form / tuple)', () => {
+  it('preserves tuple items as prefixItems (positional semantics)', () => {
     const result = sanitizeMcpSchema({
       type: 'object',
       properties: {
@@ -224,9 +224,13 @@ describe('sanitizeMcpSchema — nested arrays and items', () => {
       },
     });
     const pairProp = prop(result, 'pair');
-    const items = (pairProp['items'] as Schema)['anyOf'] as Schema[];
-    expect(items[0]!['type']).toBe('string');
-    expect(items[1]!['type']).toBe('number');
+    expect(pairProp['items']).toBeUndefined();
+    const prefix = pairProp['prefixItems'] as Schema[];
+    expect(prefix).toHaveLength(2);
+    expect(prefix[0]!['type']).toBe('string');
+    expect(prefix[1]!['type']).toBe('number');
+    expect(pairProp['minItems']).toBe(2);
+    expect(pairProp['maxItems']).toBe(2);
   });
 
   it('fills type on additionalProperties (object form)', () => {
@@ -425,5 +429,48 @@ describe('sanitizeMcpSchema — JSON Pointer escaping', () => {
     });
     expect(prop(result, 'slashy')['type']).toBe('integer');
     expect(prop(result, 'tildy')['type']).toBe('boolean');
+  });
+});
+
+describe('sanitizeMcpSchema — JSON Pointer array segments', () => {
+  it('resolves numeric segments into anyOf branches', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        choice: { $ref: '#/$defs/Choice/anyOf/0' },
+      },
+      $defs: {
+        Choice: {
+          anyOf: [{ type: 'integer' }, { type: 'string' }],
+        },
+      },
+    });
+    expect(prop(result, 'choice')['type']).toBe('integer');
+  });
+});
+
+describe('sanitizeMcpSchema — $ref siblings', () => {
+  it('dereferences nested local $refs inside sibling keywords', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        wrapped: {
+          $ref: '#/$defs/Base',
+          properties: {
+            extra: { $ref: '#/$defs/Extra' },
+          },
+        },
+      },
+      $defs: {
+        Base: { type: 'object' },
+        Extra: { type: 'boolean' },
+      },
+    });
+    const wrapped = prop(result, 'wrapped');
+    expect(wrapped['type']).toBe('object');
+    expect('$defs' in result).toBe(false);
+    const extra = prop(wrapped, 'extra');
+    expect(extra['type']).toBe('boolean');
+    expect(extra['$ref']).toBeUndefined();
   });
 });

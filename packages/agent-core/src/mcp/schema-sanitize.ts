@@ -30,7 +30,9 @@
  *    `"object"`, `items` → `"array"`, etc.), or defaulting to `"string"`.
  *    Mixed-type enums become `anyOf` of typed enum branches so no value is
  *    invalidated by a single forced `type`.
- * 3. **Normalizes tuple `items` arrays** into `{ anyOf: items }` objects.
+ * 3. **Preserves tuple `items` arrays** as draft 2020-12 `prefixItems` (plus
+ *    `minItems`/`maxItems`) so positional validation is kept while avoiding
+ *    draft-07 array-form `items`, which Moonshot rejects.
  *
  * Combinator branches (`anyOf`/`oneOf`/`allOf`/`$ref`/`not`/`if`/`then`/
  * `else`) are left alone at their own level because they legitimately
@@ -106,7 +108,19 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
     const parts = pathStr.split('/').map(decodePointerSegment);
     let current: Json = root;
     for (const part of parts) {
-      if (typeof current !== 'object' || current === null || Array.isArray(current)) {
+      if (Array.isArray(current)) {
+        // RFC 6901: array index segments (e.g. #/$defs/X/anyOf/0).
+        if (!/^(0|[1-9][0-9]*)$/.test(part)) {
+          throw new Error(`Unable to resolve reference path: ${pointer}`);
+        }
+        const index = Number(part);
+        if (index < 0 || index >= current.length) {
+          throw new Error(`Unable to resolve reference path: ${pointer}`);
+        }
+        current = current[index] as Json;
+        continue;
+      }
+      if (typeof current !== 'object' || current === null) {
         throw new Error(`Unable to resolve reference path: ${pointer}`);
       }
       if (!(part in (current as JsonRecord))) {
@@ -137,8 +151,14 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
         if (typeof target !== 'object' || target === null || Array.isArray(target)) {
           throw new Error('Local $ref must resolve to a JSON object');
         }
+        // Draft 2020-12 allows sibling keywords alongside $ref — they must be
+        // traversed too so nested local $refs are inlined before $defs drop.
         const { $ref: _, ...rest } = record;
-        return { ...(target as JsonRecord), ...rest };
+        const traversedRest: JsonRecord = {};
+        for (const [key, value] of Object.entries(rest)) {
+          traversedRest[key] = traverse(value, nextActive);
+        }
+        return { ...(target as JsonRecord), ...traversedRest };
       }
       return record;
     }
@@ -167,13 +187,21 @@ function recurseSchema(node: Json): void {
   }
 
   const items = record['items'];
-  if (typeof items === 'object' && items !== null) {
-    if (Array.isArray(items)) {
-      for (const value of items) normalizeProperty(value);
-      record['items'] = { anyOf: items };
-    } else {
-      normalizeProperty(items);
-    }
+  if (Array.isArray(items)) {
+    // Draft-07 tuple form: preserve positional semantics via prefixItems
+    // instead of collapsing to a homogeneous anyOf union.
+    for (const value of items) normalizeProperty(value);
+    record['prefixItems'] = items;
+    record['minItems'] = items.length;
+    record['maxItems'] = items.length;
+    delete record['items'];
+  } else if (typeof items === 'object' && items !== null) {
+    normalizeProperty(items);
+  }
+
+  const prefixItems = record['prefixItems'];
+  if (Array.isArray(prefixItems)) {
+    for (const value of prefixItems) normalizeProperty(value);
   }
 
   const additional = record['additionalProperties'];
