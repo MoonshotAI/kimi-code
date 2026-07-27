@@ -30,6 +30,27 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
+export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git', 'tips'] as const;
+export type StatusLineItem = (typeof STATUS_LINE_ITEMS)[number];
+
+export const StatusLineFileConfigSchema = z.object({
+  items: z.array(z.string()).optional(),
+  command: z.string().optional(),
+});
+
+export const StatusLineConfigSchema = z.object({
+  /** Ordered built-in slots for footer line 1; null means the default layout. */
+  items: z.array(z.enum(STATUS_LINE_ITEMS)).nullable(),
+  /** User command whose first stdout line replaces footer line 1; null disables. */
+  command: z.string().nullable(),
+});
+export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
+
+export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
+  items: null,
+  command: null,
+};
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -49,6 +70,7 @@ export const TuiConfigFileSchema = z.object({
       auto_install: z.boolean().optional(),
     })
     .optional(),
+  status_line: StatusLineFileConfigSchema.optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -57,6 +79,9 @@ export const TuiConfigSchema = z.object({
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  statusLine: StatusLineConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -79,6 +104,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
+  statusLine: DEFAULT_STATUS_LINE_CONFIG,
 });
 
 /**
@@ -133,6 +159,19 @@ export async function saveTuiConfig(
 
 export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
+  const statusLineCommand = config.status_line?.command?.trim();
+  const knownItems = new Set<string>(STATUS_LINE_ITEMS);
+  const statusLineItems =
+    config.status_line?.items
+      ?.filter((item) => {
+        const known = knownItems.has(item);
+        if (!known) {
+          // oxlint-disable-next-line no-console
+          console.warn(`[tui.toml] ignoring unknown status_line item: ${item}`);
+        }
+        return known;
+      })
+      .map((item) => item as StatusLineItem) ?? null;
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
@@ -144,6 +183,13 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
     },
     upgrade: {
       autoInstall: config.upgrade?.auto_install ?? DEFAULT_UPGRADE_PREFERENCES.autoInstall,
+    },
+    statusLine: {
+      items: statusLineItems,
+      command:
+        statusLineCommand === undefined || statusLineCommand.length === 0
+          ? null
+          : statusLineCommand,
     },
   });
 }
@@ -165,6 +211,13 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
+
+# [status_line]
+# Pick and order the built-in footer slots: ${STATUS_LINE_ITEMS.join(', ')}
+# items = ${JSON.stringify([...STATUS_LINE_ITEMS])}
+# Or render your own: a command whose first stdout line replaces footer line 1.
+# It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
+# command = "~/.kimi-code/statusline.sh"
 `;
 }
 

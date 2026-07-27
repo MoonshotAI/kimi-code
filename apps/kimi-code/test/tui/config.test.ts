@@ -63,6 +63,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: { items: null, command: null },
     });
   });
 
@@ -87,6 +88,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: { items: null, command: null },
     });
   });
 
@@ -119,6 +121,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        statusLine: { items: null, command: null },
       },
       filePath,
     );
@@ -129,6 +132,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      statusLine: { items: null, command: null },
     });
   });
 
@@ -141,10 +145,59 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        statusLine: DEFAULT_TUI_CONFIG.statusLine,
       },
       filePath,
     );
 
     expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+  });
+});
+
+describe('TUI config status_line', () => {
+  it('defaults to null when the section is omitted', () => {
+    const config = parseTuiConfig(`theme = "dark"`);
+
+    expect(config.statusLine).toEqual({ items: null, command: null });
+  });
+
+  it('parses items and command', () => {
+    const config = parseTuiConfig(`
+[status_line]
+items = ["model", "git", "cwd"]
+command = "~/.kimi-code/statusline.sh"
+`);
+
+    expect(config.statusLine).toEqual({
+      items: ['model', 'git', 'cwd'],
+      command: '~/.kimi-code/statusline.sh',
+    });
+  });
+
+  it('skips unknown items with a warning instead of failing the whole file', () => {
+    const config = parseTuiConfig(`
+[status_line]
+items = ["model", "wat", "git"]
+`);
+
+    expect(config.statusLine?.items).toEqual(['model', 'git']);
+  });
+
+  it('normalizes an empty command to null', () => {
+    const config = parseTuiConfig(`
+[status_line]
+command = "   "
+`);
+
+    expect(config.statusLine?.command).toBeNull();
+  });
+
+  it('documents status_line in the rendered template', async () => {
+    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('[status_line]');
+    expect(text).toContain('items');
+    expect(text).toContain('command');
   });
 });
