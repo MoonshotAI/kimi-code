@@ -144,18 +144,20 @@ function createService(
     | undefined,
   options: {
     readonly flagEnabled?: boolean;
+    readonly hasProvider?: boolean;
     readonly thinkingLevel?: ThinkingEffort;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
-  const thinkingLevel = options.thinkingLevel ?? 'off';
+  const profileState = { thinkingLevel: options.thinkingLevel ?? 'off' };
   const profile: Partial<IAgentProfileService> = {
+    hasProvider: () => options.hasProvider ?? true,
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
-      thinkingLevel,
+      thinkingLevel: profileState.thinkingLevel,
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
     }),
@@ -165,7 +167,7 @@ function createService(
       cwd: '',
       modelAlias: 'm',
       modelCapabilities: capabilities,
-      thinkingLevel,
+      thinkingLevel: profileState.thinkingLevel,
       systemPrompt: 'system',
     }),
   };
@@ -245,8 +247,38 @@ function createService(
     records,
     events,
     telemetryRecords,
+    profileState,
   };
 }
+
+describe('AgentLLMRequesterService prepareTurnConfig', () => {
+  it('returns undefined when no provider is configured', () => {
+    const requester = createRequester({ value: 0 }, null);
+    const { service } = createService(requester, undefined, { hasProvider: false });
+
+    expect(service.prepareTurnConfig(1)).toBeUndefined();
+  });
+
+  it('returns the configured thinking effort when a provider is available', () => {
+    const requester = createRequester({ value: 0 }, null);
+    const { service } = createService(requester, undefined, { thinkingLevel: 'high' });
+
+    expect(service.prepareTurnConfig(1)).toEqual({ thinkingEffort: 'high' });
+  });
+
+  it('keeps the first effort for a prepared turn while using the updated effort for a new turn', () => {
+    const requester = createRequester({ value: 0 }, null);
+    const { service, profileState } = createService(requester, undefined, {
+      thinkingLevel: 'low',
+    });
+
+    expect(service.prepareTurnConfig(1)).toEqual({ thinkingEffort: 'low' });
+    profileState.thinkingLevel = 'high';
+
+    expect(service.prepareTurnConfig(1)).toEqual({ thinkingEffort: 'low' });
+    expect(service.prepareTurnConfig(2)).toEqual({ thinkingEffort: 'high' });
+  });
+});
 
 describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
   it('warns and sends when the effort is not listed by the model', async () => {
