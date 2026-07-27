@@ -216,7 +216,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // rooted at `homeDir`, so the Store facades above it (append-log, atomic
   // document, blob) — and in turn session metadata, wire records, blobs, and
   // the session index — all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath }, [
+  const { app: core } = bootstrap({ homeDir, configPath, clientVersion: hostVersion }, [
     ...logSeed(logging),
     // Default host identity so outbound requests (model, WebSearch, registry
     // refresh) carry a product User-Agent even when the embedding host did not

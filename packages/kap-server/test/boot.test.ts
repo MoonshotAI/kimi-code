@@ -6,7 +6,12 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { hostRequestHeadersSeed, IHostRequestHeaders, ISkillCatalogRuntimeOptions } from '@moonshot-ai/agent-core-v2';
+import {
+  hostRequestHeadersSeed,
+  IBootstrapService,
+  IHostRequestHeaders,
+  ISkillCatalogRuntimeOptions,
+} from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
@@ -106,6 +111,7 @@ describe('server-v2 boot', () => {
     // ... and it backs the default product User-Agent.
     const defaults = server.core.accessor.get(IHostRequestHeaders);
     expect(defaults.headers['User-Agent']).toBe('kimi-code-cli/9.9.9-host');
+    expect(server.core.accessor.get(IBootstrapService).clientVersion).toBe('9.9.9-host');
   });
 
   it('seeds a default product User-Agent that opts.seeds can override', async () => {
