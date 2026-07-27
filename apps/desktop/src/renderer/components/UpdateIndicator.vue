@@ -134,7 +134,7 @@ function onRestartNow(): void {
       <span class="upd-pill-text">{{ pillText }}</span>
     </button>
 
-    <Dialog :open="open" :title="dialogTitle" size="md" @update:open="open = $event">
+    <Dialog :open="open" :title="dialogTitle" size="lg" @update:open="open = $event">
       <p v-if="(status.state === 'available' || status.state === 'downloaded') && metaText" class="upd-meta">
         {{ metaText }}
       </p>
@@ -256,11 +256,15 @@ function onRestartNow(): void {
   word-break: break-all;
 }
 
-/* Changelog block under the meta line: quiet title + compact rendered list. */
+/* Changelog block under the meta line: quiet title + compact rendered list,
+   height-capped so long notes scroll inside the block instead of stretching
+   the dialog toward full-screen. */
 .upd-notes {
   margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-line);
+  max-height: min(360px, 45vh);
+  overflow-y: auto;
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   color: var(--color-text);
