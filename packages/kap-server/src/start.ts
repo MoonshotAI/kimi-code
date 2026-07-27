@@ -13,6 +13,7 @@ import {
   hostRequestHeadersSeed,
   IConfigService,
   IProviderDiscoveryService,
+  ISessionLifecycleService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -330,10 +331,25 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   }
 
   const close = async (): Promise<void> => {
+    // 1. Stop accepting new HTTP/WS connections and drain in-flight requests.
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    // Telemetry is best-effort and must never prevent core or instance cleanup.
+
+    // 2. Quiesce telemetry producers: drain all active sessions so no events
+    //    are emitted after the telemetry flush boundary. Each session close
+    //    stops its agents, which stops emitting lifecycle events.
+    try {
+      const sessionLifecycle = core.accessor.get(ISessionLifecycleService);
+      for (const handle of sessionLifecycle.list()) {
+        await sessionLifecycle.close(handle.id).catch(() => {});
+      }
+    } catch {
+      // Session lifecycle may not be initialized in partial-boot scenarios.
+    }
+
+    // 3. Flush and shutdown telemetry. Best-effort — telemetry failure must
+    //    never prevent core or instance cleanup.
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -342,6 +358,8 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
         'telemetry shutdown failed; continuing server cleanup',
       );
     }
+
+    // 4. Dispose core scope and release instance registration.
     try {
       core.dispose();
     } finally {
