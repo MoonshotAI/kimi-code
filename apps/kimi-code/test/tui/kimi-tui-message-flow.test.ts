@@ -4268,50 +4268,6 @@ command = "vim"
     });
   });
 
-  it('skips the trust prompt for a loopback mirror of the official CDN path', async () => {
-    const marketplaceDir = await makeTempHome();
-    const marketplacePath = join(marketplaceDir, 'marketplace.json');
-    await writeFile(
-      marketplacePath,
-      JSON.stringify({
-        plugins: [
-          {
-            id: 'kimi-datasource',
-            tier: 'official',
-            displayName: 'Kimi Datasource',
-            // The dev marketplace server serves sources under the official CDN
-            // path shape on loopback.
-            source: 'http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip',
-          },
-        ],
-      }),
-      'utf8',
-    );
-    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = marketplacePath;
-    const session = makeSession();
-    const { driver } = await makeDriver(session);
-
-    driver.handleUserInput('/plugins marketplace');
-
-    await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
-    });
-    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
-    await vi.waitFor(() => {
-      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
-    });
-    // The pinned Kimi WebBridge row leads the Official tab, so move down to
-    // the Kimi Datasource entry before installing.
-    panel.handleInput('\u001B[B');
-    panel.handleInput('\r');
-
-    await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip',
-      );
-    });
-  });
-
   it('prompts for trust before installing a third-party marketplace entry', async () => {
     const marketplaceDir = await makeTempHome();
     const marketplacePath = join(marketplaceDir, 'marketplace.json');

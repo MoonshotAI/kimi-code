@@ -163,21 +163,21 @@ describe('plugins selector dialogs', () => {
       commandCount: 0,
       hasErrors: false,
     };
-    // Zip installs from the official CDN path or its loopback dev mirror.
+    // Zip installs from the official CDN path.
     expect(isOfficialPluginInstall({
       ...base,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     })).toBe(true);
+    // Same manifest id from a local path, GitHub, a loopback URL, or a
+    // third-party URL is not the official build.
+    expect(isOfficialPluginInstall({ ...base, source: 'local-path' })).toBe(false);
+    expect(isOfficialPluginInstall({ ...base, source: 'github' })).toBe(false);
     expect(isOfficialPluginInstall({
       ...base,
       source: 'zip-url',
       originalSource: 'http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip',
-    })).toBe(true);
-    // Same manifest id from a local path, GitHub, or a third-party URL is not
-    // the official build.
-    expect(isOfficialPluginInstall({ ...base, source: 'local-path' })).toBe(false);
-    expect(isOfficialPluginInstall({ ...base, source: 'github' })).toBe(false);
+    })).toBe(false);
     expect(isOfficialPluginInstall({
       ...base,
       source: 'zip-url',
@@ -190,24 +190,15 @@ describe('plugins selector dialogs', () => {
     // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
-    // Non-Kimi hosts, non-https schemes, local paths, and GitHub sources are unofficial.
+    // Non-Kimi hosts (loopback included), non-https schemes, local paths, and
+    // GitHub sources are unofficial.
     expect(isOfficialPluginSource('https://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
     expect(isOfficialPluginSource('http://code.kimi.com/kimi-code/plugins/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://127.0.0.1:58627/kimi-code/plugins/official/x.zip')).toBe(false);
     expect(isOfficialPluginSource('./plugins/kimi-datasource')).toBe(false);
     expect(isOfficialPluginSource('/abs/path/to/plugin')).toBe(false);
     expect(isOfficialPluginSource('github.com/owner/repo')).toBe(false);
     expect(isOfficialPluginSource('not a url')).toBe(false);
-  });
-
-  it('treats loopback mirrors of the official CDN path as trusted install sources', () => {
-    // The dev marketplace server mirrors the official CDN layout on loopback.
-    expect(isOfficialPluginSource('http://127.0.0.1:58627/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
-    expect(isOfficialPluginSource('http://localhost/kimi-code/plugins/official/x.zip')).toBe(true);
-    expect(isOfficialPluginSource('http://[::1]:8080/kimi-code/plugins/official/x.zip')).toBe(true);
-    // The path shape must match exactly, and non-loopback hosts stay unofficial.
-    expect(isOfficialPluginSource('http://127.0.0.1/kimi-code/plugins/curated/x.zip')).toBe(false);
-    expect(isOfficialPluginSource('http://127.0.0.1/official/x.zip')).toBe(false);
-    expect(isOfficialPluginSource('http://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
   });
 
   it('opens on the Installed tab with the four panel tabs', () => {
