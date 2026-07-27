@@ -351,11 +351,8 @@ const activeTurnId = ref<string | null>(null);
 function updateActiveTocQuery(): void {
   const pane = panesRef.value;
   if (!pane) return;
-  const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
-  if (anchors.length === 0) return;
   const items = conversationTocItems.value;
   if (items.length === 0) return;
-  const userIds = new Set(items.map((item) => item.id));
 
   // When pinned to the bottom (auto-follow / short content), the latest query is
   // the active one even if its message sits below the pane's vertical middle —
@@ -365,18 +362,42 @@ function updateActiveTocQuery(): void {
     return;
   }
 
-  const paneRect = pane.getBoundingClientRect();
-  const paneMiddle = paneRect.height / 2;
+  // Anchor positions in pane-content coordinates (viewport top − pane top +
+  // scrollTop): the O(N) getBoundingClientRect pass runs only when geometry
+  // went dirty (content growth, resize, rebind); pure-scroll frames reuse the
+  // cache — a long transcript no longer pays O(N) forced layout per scroll
+  // frame. pane top is re-read on the same dirty pass, so header/pane shifts
+  // stay exact.
+  if (tocAnchorsDirty || tocAnchorsCache === null) {
+    const scrollTop = pane.scrollTop;
+    const paneTop = pane.getBoundingClientRect().top;
+    const measured: { id: string; top: number }[] = [];
+    for (const el of pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]')) {
+      const id = el.dataset.turnId;
+      if (id) measured.push({ id, top: el.getBoundingClientRect().top - paneTop + scrollTop });
+    }
+    tocAnchorsCache = measured;
+    tocAnchorsDirty = false;
+  }
+  const userIds = new Set(items.map((item) => item.id));
+  const paneMiddle = pane.scrollTop + pane.clientHeight / 2;
   // Otherwise the active highlight tracks the query that owns the current
   // viewport: the last user-turn anchor at or above the middle.
   let bestId: string | null = null;
-  anchors.forEach((el) => {
-    const id = el.dataset.turnId;
-    if (!id || !userIds.has(id)) return;
-    const top = el.getBoundingClientRect().top - paneRect.top;
-    if (top <= paneMiddle) bestId = id;
-  });
+  for (const anchor of tocAnchorsCache) {
+    if (!userIds.has(anchor.id)) continue;
+    if (anchor.top <= paneMiddle) bestId = anchor.id;
+  }
   activeTurnId.value = bestId ?? items[0]!.id;
+}
+
+// See updateActiveTocQuery: null = not measured yet, dirty = re-measure on the
+// next query. Marked by content mutation, resize, rebind, and table layout.
+let tocAnchorsCache: { id: string; top: number }[] | null = null;
+let tocAnchorsDirty = true;
+
+function markTocAnchorsDirty(): void {
+  tocAnchorsDirty = true;
 }
 
 let activeTocRaf = 0;
@@ -409,6 +430,11 @@ function scheduleTocTableHitTest(): void {
     tocHitTestRaf = 0;
     updateTocTableOcclusion();
   });
+}
+
+function onTableLayout(): void {
+  scheduleTocTableHitTest();
+  markTocAnchorsDirty();
 }
 
 function updateTocTableOcclusion(): void {
@@ -516,20 +542,42 @@ function toHtmlEl(el: RefArg): HTMLElement | null {
   return null;
 }
 
+let panesGeomRaf = 0;
+
+// Batched behind one rAF and guarded by value: the raw offset* reads force a
+// synchronous layout when they run while the DOM is dirty (every streaming
+// frame via the ResizeObserver), and a same-value ref write still re-renders
+// the style bindings — one of the per-frame RecalcStyle drivers.
 function updatePanesScrollbarWidth(): void {
-  const el = panesRef.value;
-  panesScrollbarWidth.value = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
-  dockHeight.value = dockRef.value?.offsetHeight ?? 0;
+  if (panesGeomRaf) return;
+  panesGeomRaf = raf(() => {
+    panesGeomRaf = 0;
+    const el = panesRef.value;
+    const sbw = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
+    if (sbw !== panesScrollbarWidth.value) panesScrollbarWidth.value = sbw;
+    const dh = dockRef.value?.offsetHeight ?? 0;
+    if (dh !== dockHeight.value) dockHeight.value = dh;
+  });
 }
 
 function bindChatPane(el: RefArg): void {
   const node = toHtmlEl(el);
+  // Vue re-invokes function refs on EVERY patch of the element — during
+  // streaming that is every frame, and rebindScrollObservers' observer
+  // disconnect/observe cycle plus scrollHeight/clientHeight reads force a
+  // full-document layout each time. Rebind only when the node actually
+  // changes (mount / unmount / swap).
+  if (node === panesRef.value) return;
   panesRef.value = node;
   if (node) rebindScrollObservers();
 }
 
 function bindChatDock(el: RefArg): void {
   const node = toHtmlEl(el);
+  // Same every-patch ref re-fire guard as bindChatPane: without it each patch
+  // rebuilds the composer handle (fresh bound closures) and retriggers every
+  // consumer of dockedComposerRef per frame.
+  if (node === dockRef.value) return;
   dockRef.value = node ?? null;
   if (
     el &&
@@ -575,7 +623,11 @@ const USER_ACTION_FOLLOW_LOCK_MS = 1000;
 function distanceFromBottom(): number {
   const el = panesRef.value;
   if (!el) return 0;
-  return el.scrollHeight - el.scrollTop - el.clientHeight;
+  // RO-maintained heights, not live reads: scrollHeight/clientHeight on a dirty
+  // DOM force a synchronous layout, and this runs on every follow-driven scroll
+  // frame. The cache lags ≤1 frame — harmless for the bottom-proximity checks
+  // this feeds (follow / pill / TOC highlight).
+  return lastObservedScrollHeight - el.scrollTop - lastObservedClientHeight;
 }
 
 let lastScrollTop = 0;
@@ -649,7 +701,13 @@ function scrollToBottom(smooth = false): void {
   if (smooth) {
     smoothScrollToBottom();
   } else {
-    el.scrollTop = el.scrollHeight;
+    // Write-only jump: scrollHeight is NOT read here — on a dirty DOM (every
+    // streaming frame) that read forces a synchronous full-document layout.
+    // The ResizeObserver-maintained height lags at most one frame, and the
+    // follow keeps firing while content streams, so the pane converges to the
+    // real bottom without ever forcing layout. Never scroll backwards: a lagging
+    // cache must not yank the pane up.
+    el.scrollTop = Math.max(el.scrollTop, lastObservedScrollHeight);
   }
   lastScrollTop = el.scrollTop;
 }
@@ -963,8 +1021,11 @@ function settleAfterPin(): void {
   }
 }
 
-function scheduleStableFollow(maxFrames = 36): void {
-  if (!following.value && !hasUserActionFollowLock()) return;
+function scheduleStableFollow(maxFrames = 36, onDone?: () => void): void {
+  if (!following.value && !hasUserActionFollowLock()) {
+    onDone?.();
+    return;
+  }
   const token = ++stableFollowToken;
   let lastKey = '';
   let stableFrames = 0;
@@ -977,7 +1038,10 @@ function scheduleStableFollow(maxFrames = 36): void {
   const tick = () => {
     stableFollowRaf = 0;
     if (token !== stableFollowToken) return;
-    if (!following.value && !hasUserActionFollowLock()) return;
+    if (!following.value && !hasUserActionFollowLock()) {
+      onDone?.();
+      return;
+    }
     scrollToBottom(false);
     const key = currentLayoutKey();
     stableFrames = key === lastKey ? stableFrames + 1 : 0;
@@ -985,6 +1049,8 @@ function scheduleStableFollow(maxFrames = 36): void {
     frames++;
     if (stableFrames < 3 && frames < maxFrames) {
       stableFollowRaf = raf(tick);
+    } else {
+      onDone?.();
     }
   };
 
@@ -1036,11 +1102,28 @@ const scrollKey = computed<ScrollKey>(() => {
   };
 });
 
+// Session id as of the last scrollKey fire: the rewind-smooth below (undo /
+// compaction glide) only makes sense WITHIN one session. Across a session
+// switch the turns array goes old → empty → new, and a smooth scroll started
+// on the shrinking transition keeps reading the NEW content's live
+// scrollHeight for 320ms + 420ms of instant-follow guard — the visible
+// "loads at the top, then animates to the bottom" flash. Cross-session
+// transitions are positioned by the fileReloadKey / sessionLoading watchers
+// instead.
+let scrollKeySession: string | number | undefined = props.fileReloadKey;
+
 watch(scrollKey, async (next, prev) => {
+  const sid = props.fileReloadKey;
+  const crossSession = sid !== scrollKeySession;
+  scrollKeySession = sid;
   // Prepending older history changes this key; suppress only that exact case so
   // concurrent bottom appends still raise the new-message pill.
   if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
-    updateActiveTocQuery();
+    scheduleActiveTocUpdate();
+    return;
+  }
+  if (crossSession) {
+    scheduleActiveTocUpdate();
     return;
   }
   await nextTick();
@@ -1050,7 +1133,7 @@ watch(scrollKey, async (next, prev) => {
     // follow keeps up with the tail.
     scrollToBottom(next.length < prev.length);
   } else showPill.value = true;
-  updateActiveTocQuery();
+  scheduleActiveTocUpdate();
 });
 
 watch(dockRef, () => {
@@ -1072,6 +1155,53 @@ watch(
 // restoring a scrolled-up position.
 const scrollStateBySession = new Map<string, { top: number; following: boolean }>();
 
+// Session-switch settle curtain: ChatPane remounts on every switch (keyed by
+// fileReloadKey), so the pane's content first collapses, then the new
+// transcript paints at whatever scrollTop the collapsed pane clamped to —
+// one visible frame of the conversation's HEAD before the follow/restore
+// write lands. Curtain the transcript (spinner stays visible) from the switch
+// until the landing write has painted.
+const sessionSettling = ref(false);
+let settleLiftRaf = 0;
+let settleLiftTimer: ReturnType<typeof setTimeout> | null = null;
+
+function beginSessionSettle(): void {
+  sessionSettling.value = true;
+  if (settleLiftRaf) {
+    cancelRaf(settleLiftRaf);
+    settleLiftRaf = 0;
+  }
+  if (settleLiftTimer) clearTimeout(settleLiftTimer);
+  // Safety net for edge paths where neither watcher reaches the lift (e.g. the
+  // target session errors out of its load): never stay curtained.
+  settleLiftTimer = setTimeout(() => {
+    sessionSettling.value = false;
+    settleLiftTimer = null;
+  }, 1200);
+}
+
+function liftSessionSettle(): void {
+  if (!sessionSettling.value) return;
+  // Two frames after the landing write, so the reveal paints the already
+  // positioned transcript instead of the pre-scroll one.
+  let framesLeft = 2;
+  const step = (): void => {
+    settleLiftRaf = 0;
+    framesLeft--;
+    if (framesLeft > 0) {
+      settleLiftRaf = raf(step);
+      return;
+    }
+    sessionSettling.value = false;
+    if (settleLiftTimer) {
+      clearTimeout(settleLiftTimer);
+      settleLiftTimer = null;
+    }
+  };
+  if (settleLiftRaf) cancelRaf(settleLiftRaf);
+  settleLiftRaf = raf(step);
+}
+
 watch(
   () => props.fileReloadKey,
   async (newKey, oldKey) => {
@@ -1080,6 +1210,7 @@ watch(
       scrollStateBySession.set(String(oldKey), { top: el.scrollTop, following: following.value });
     }
     cancelActiveScrollWrites();
+    beginSessionSettle();
     await nextTick();
     const el2 = panesRef.value;
     const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
@@ -1094,14 +1225,17 @@ watch(
       lastScrollTop = el2.scrollTop;
       showPill.value = !saved.following && distanceFromBottom() > 1;
       if (saved.following) {
-        scheduleStableFollow();
+        scheduleStableFollow(36, liftSessionSettle);
+      } else {
+        liftSessionSettle();
       }
     } else {
       following.value = true;
       lastScrollTop = 0;
       scrollToBottom(false);
-      scheduleStableFollow();
+      scheduleStableFollow(36, liftSessionSettle);
     }
+    markTocAnchorsDirty();
     updateActiveTocQuery();
   },
 );
@@ -1112,8 +1246,8 @@ watch(
     if (loading || !was) return;
     following.value = true;
     await nextTick();
-    scheduleStableFollow();
-    updateActiveTocQuery();
+    scheduleStableFollow(36, liftSessionSettle);
+    scheduleActiveTocUpdate();
   },
 );
 
@@ -1126,7 +1260,7 @@ watch(
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
     scheduleStableFollow(48);
-    updateActiveTocQuery();
+    scheduleActiveTocUpdate();
   },
 );
 
@@ -1360,12 +1494,14 @@ function rebindScrollObservers(): void {
   lastObservedScrollHeight = el?.scrollHeight ?? 0;
   lastObservedClientHeight = el?.clientHeight ?? 0;
   scheduleTocTableHitTest();
+  markTocAnchorsDirty();
 }
 
 function onContentMutated(): void {
   ensureContentObserved();
   scheduleFollow();
   scheduleTocTableHitTest();
+  markTocAnchorsDirty();
 }
 
 function onVisibilityChange(): void {
@@ -1637,6 +1773,7 @@ onMounted(() => {
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => {
         scheduleTocTableHitTest();
+        markTocAnchorsDirty();
         updatePanesScrollbarWidth();
         const el = panesRef.value;
         if (!el) return;
@@ -1658,8 +1795,9 @@ onMounted(() => {
     updateActiveTocQuery();
     // Table widen/restore toggles change table geometry without a scroll —
     // re-run the TOC occlusion hit test when they fire (event bubbles up from
-    // the table wrapper; see web-markdown's tableWide.ts).
-    panesRef.value?.addEventListener('kimi-table-layout', scheduleTocTableHitTest);
+    // the table wrapper; see web-markdown's tableWide.ts). Anchor geometry
+    // shifts the same way, so the TOC cache goes dirty too.
+    panesRef.value?.addEventListener('kimi-table-layout', onTableLayout);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
@@ -1673,7 +1811,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  panesRef.value?.removeEventListener('kimi-table-layout', scheduleTocTableHitTest);
+  panesRef.value?.removeEventListener('kimi-table-layout', onTableLayout);
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
   if (scrollRaf) cancelRaf(scrollRaf);
@@ -1802,6 +1940,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
           'history-prepending': historyLoadInProgress,
           'is-pinned': pinActive,
           scrolling: panesScrolling,
+          'session-settling': sessionSettling,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -2111,7 +2250,16 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
   background: color-mix(in srgb, var(--color-text) 25%, transparent);
 }
 
+/* Session-switch settle curtain (see beginSessionSettle): hide the freshly
+   remounted transcript until the initial scroll position has painted. The
+   loading spinner stays visible; visibility (not display) keeps the geometry
+   measurable for the follow/restore math. */
+.panes.session-settling .chat > *:not(.chat-loading) {
+  visibility: hidden;
+}
+
 .panes.is-following,
+
 .panes.history-prepending,
 /* While a row pin owns scrollTop, native anchoring must not join in (the
    follow — and its is-following class — is off for the pin's duration). */

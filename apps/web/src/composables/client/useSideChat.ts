@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useSideChat.ts
+// apps/web/src/composables/client/useSideChat.ts
 // Side chat ("BTW") — a TUI-style forked agent rendered as a session tab.
 // It is not a child session and never appears in the sidebar. Each session can
 // have its own side chat; state is keyed by session id, while messages are
@@ -9,8 +9,8 @@
 
 import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
-import { messagesToTurns } from '../messagesToTurns';
+import type { AppApprovalRequest, AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
+import { createTurnsProjector } from './turnsProjector';
 import type { ChatTurn } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
 
@@ -69,23 +69,27 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     );
   });
 
+  // Same incremental projection as the main transcript (see turnsProjector.ts):
+  // a streaming side chat rebuilds only its live tail. The projector is
+  // stateful, so a plain computed keeps the old synchronous pull semantics.
+  // The approvals list and getFileUrl are hoisted to stable refs so the
+  // projector's reuse gate holds.
+  const getSideChatFileUrl = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
+  const SIDE_CHAT_NO_APPROVALS: AppApprovalRequest[] = [];
+  const sideChatTurnsProjector = createTurnsProjector();
   const sideChatTurns = computed<ChatTurn[]>(() => {
     const target = activeSideChatTarget.value;
     if (!target) return [];
-    const messages = rawState.sideChatMessagesByAgent[target.agentId] ?? [];
-    return messagesToTurns(
-      messages,
-      [],
-      (fileId) => getKimiWebApi().getFileUrl(fileId),
-      sideChatRunning.value,
-    );
+    return sideChatTurnsProjector({
+      messages: rawState.sideChatMessagesByAgent[target.agentId] ?? [],
+      approvals: SIDE_CHAT_NO_APPROVALS,
+      getFileUrl: getSideChatFileUrl,
+      sessionActive: sideChatRunning.value,
+    });
   });
 
   function updateSideChatMessages(agentId: string, update: (messages: AppMessage[]) => AppMessage[]): void {
-    rawState.sideChatMessagesByAgent = {
-      ...rawState.sideChatMessagesByAgent,
-      [agentId]: update(rawState.sideChatMessagesByAgent[agentId] ?? []),
-    };
+    rawState.sideChatMessagesByAgent[agentId] = update(rawState.sideChatMessagesByAgent[agentId] ?? []);
   }
 
   function appendSideChatMessage(agentId: string, message: AppMessage): void {

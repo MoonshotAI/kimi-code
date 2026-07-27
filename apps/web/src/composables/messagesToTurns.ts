@@ -419,6 +419,13 @@ interface Group {
    * tool cards twice. Dedupe by exact content so a turn shows each reply once.
    */
   seenSigs: Set<string>;
+  /**
+   * Source messages absorbed into this group, in order (openers, tool-role
+   * results, continuation assistants, and the notification/goal-seed user
+   * messages that seeded the group). Reported via `collect` so the turns
+   * projector can reuse this turn while every source reference is unchanged.
+   */
+  sources: AppMessage[];
 }
 
 // ---------------------------------------------------------------------------
@@ -566,9 +573,17 @@ export function messagesToTurns(
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
+  options?: {
+    /** Gutter numbering starts here instead of 1 (suffix projections continuing
+     *  a reused prefix). */
+    startNo?: number;
+    /** Fired for every emitted turn with the source messages that produced it. */
+    collect?: (turn: ChatTurn, sources: readonly AppMessage[]) => void;
+  },
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
-  let no = 1;
+  let no = options?.startNo ?? 1;
+  const collect = options?.collect;
 
   // Build approval lookup by toolCallId
   const approvalByTool = new Map<string, AppApprovalRequest>();
@@ -611,7 +626,7 @@ export function messagesToTurns(
         if (blk && blk.kind === 'tool') blk.tool = updated;
       }
     }
-    turns.push({
+    const turn: ChatTurn = {
       id: g.id,
       role: 'assistant',
       no: no++,
@@ -625,7 +640,9 @@ export function messagesToTurns(
       createdAt: g.createdAt,
       endedAt: g.endedAt,
       goalContinuation: g.goalContinuation,
-    });
+    };
+    turns.push(turn);
+    collect?.(turn, g.sources);
   }
 
   function absorbContent(g: Group, content: AppMessage['content']): void {
@@ -748,7 +765,7 @@ export function messagesToTurns(
       const marker = msg.metadata?.[COMPACTION_MARKER_METADATA_KEY] as
         | CompactionMarkerMetadata
         | undefined;
-      turns.push({
+      const compactionTurn: ChatTurn = {
         id: msg.id,
         role: 'compaction',
         no, // not displayed — dividers have no gutter number
@@ -761,7 +778,9 @@ export function messagesToTurns(
           tokensBefore: marker?.tokensBefore,
           tokensAfter: marker?.tokensAfter,
         },
-      });
+      };
+      turns.push(compactionTurn);
+      collect?.(compactionTurn, [msg]);
       continue;
     }
 
@@ -811,6 +830,7 @@ export function messagesToTurns(
             approval: undefined,
             approvalId: undefined,
             seenSigs: new Set<string>(),
+            sources: [msg],
             createdAt: msg.createdAt,
           };
           for (const notification of notifications) {
@@ -828,7 +848,9 @@ export function messagesToTurns(
       // its result in practice.
       flushGroup();
       if (cronKind !== undefined) {
-        turns.push(buildCronTurn(msg, no++, cronKind));
+        const cronTurn = buildCronTurn(msg, no++, cronKind);
+        turns.push(cronTurn);
+        collect?.(cronTurn, [msg]);
         continue;
       }
       // A goal continuation opens the next assistant turn: the (long,
@@ -851,6 +873,7 @@ export function messagesToTurns(
           approval: undefined,
           approvalId: undefined,
           seenSigs: new Set<string>(),
+          sources: [msg],
           createdAt: msg.createdAt,
           goalContinuation: true,
         };
@@ -948,7 +971,7 @@ export function messagesToTurns(
           });
         }
       }
-      turns.push({
+      const userTurn: ChatTurn = {
         id: msg.id,
         role: 'user',
         no: no++,
@@ -961,13 +984,16 @@ export function messagesToTurns(
           ? { pluginId: origin.pluginId!, commandName: origin.commandName!, args: origin.commandArgs }
           : undefined,
         createdAt: msg.createdAt,
-      });
+      };
+      turns.push(userTurn);
+      collect?.(userTurn, [msg]);
       continue;
     }
 
     // Tool-role messages (toolResult) fold into the pending group's tool list
     if (msg.role === 'tool') {
       if (pendingGroup) {
+        pendingGroup.sources.push(msg);
         absorbContent(pendingGroup, msg.content);
         pendingGroup.endedAt = msg.createdAt;
       }
@@ -997,6 +1023,7 @@ export function messagesToTurns(
         approval: undefined,
         approvalId: undefined,
         seenSigs: new Set<string>(),
+        sources: [],
         durationMs: msg.durationMs,
         createdAt: msg.createdAt,
       };
@@ -1013,6 +1040,7 @@ export function messagesToTurns(
     const sig = JSON.stringify(msg.content);
     if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
     group.seenSigs.add(sig);
+    group.sources.push(msg);
 
     // Assistant absorb site also tracks the daemon's own turn measurement:
     // the reducer stamps durationMs on the turn's LAST assistant message at

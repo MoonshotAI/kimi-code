@@ -50,6 +50,7 @@ import {
   splitOversizedAppRenderEvent,
   type PendingAppEvent,
 } from './client/eventBatcher';
+import { applyRecordDiff } from './client/applyRecordDiff';
 import { useAppearance } from '@moonshot-ai/web-core';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
@@ -91,12 +92,11 @@ import {
   toAppEvent,
   isPlaceholderSessionUsage,
   shallowEqualArray,
-  shallowEqualRecord,
   type CompactionStatus,
   type KimiClientState,
 } from '@moonshot-ai/web-core/api';
 
-import { messagesToTurns } from './messagesToTurns';
+import { createTurnsProjector } from './client/turnsProjector';
 import { latestTodos } from './latestTodos';
 import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
 import type { SwarmGroup, SwarmMember } from './swarmGroups';
@@ -519,7 +519,7 @@ function clearActiveUnread(): void {
     typeof document !== 'undefined' &&
     document.visibilityState === 'visible'
   ) {
-    rawState.unreadBySession = { ...rawState.unreadBySession, [active]: false };
+    rawState.unreadBySession[active] = false;
     saveUnread({ [active]: false });
   }
 }
@@ -583,30 +583,31 @@ function setActiveSessionId(id: string | undefined): void {
 
 // ---------------------------------------------------------------------------
 // rawState.messagesBySession — single mutation funnel.
+//
+// All writers assign PER KEY, never replace the record itself: a wholesale
+// `{...map}` replacement dirties every computed that reads the record —
+// including other sessions' turns projector, which re-ran on every background
+// session's streaming delta (cross-session invalidation). Per-key writes only
+// trigger the deps of the key written (and iteration deps on add/delete).
 // ---------------------------------------------------------------------------
-/** Replace the whole messages map (e.g. from the reducer snapshot). */
+/** Apply the reducer's next messages map key-by-key (e.g. from a snapshot). */
 function setMessagesBySession(next: Record<string, AppMessage[]>): void {
-  rawState.messagesBySession = next;
+  applyRecordDiff(rawState.messagesBySession, next);
 }
 /** Set one session's message list. */
 function setSessionMessages(sessionId: string, messages: AppMessage[]): void {
-  rawState.messagesBySession = { ...rawState.messagesBySession, [sessionId]: messages };
+  rawState.messagesBySession[sessionId] = messages;
 }
 /** Update one session's message list via a function of the current list. */
 function updateSessionMessages(
   sessionId: string,
   update: (messages: AppMessage[]) => AppMessage[],
 ): void {
-  rawState.messagesBySession = {
-    ...rawState.messagesBySession,
-    [sessionId]: update(rawState.messagesBySession[sessionId] ?? []),
-  };
+  rawState.messagesBySession[sessionId] = update(rawState.messagesBySession[sessionId] ?? []);
 }
 /** Remove one session's message list. */
 function removeSessionMessages(sessionId: string): void {
-  const { [sessionId]: _removed, ...rest } = rawState.messagesBySession;
-  void _removed;
-  rawState.messagesBySession = rest;
+  delete rawState.messagesBySession[sessionId];
 }
 
 // ---------------------------------------------------------------------------
@@ -713,15 +714,12 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
       contextLimit: st.maxContextTokens,
     },
   }));
-  rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
-  rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
+  rawState.swarmModeBySession[sessionId] = st.swarmMode;
+  rawState.planModeBySession[sessionId] = st.planMode;
   // Fold the session's own thinking level too — per-session state wins over the
   // per-model storage pick (see thinkingBySession on ExtendedState).
   if (st.thinkingEffort.length > 0) {
-    rawState.thinkingBySession = {
-      ...rawState.thinkingBySession,
-      [sessionId]: st.thinkingEffort as ThinkingLevel,
-    };
+    rawState.thinkingBySession[sessionId] = st.thinkingEffort as ThinkingLevel;
   }
 }
 
@@ -751,10 +749,8 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
   }
   // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
   // the card, anything else replaces it.
-  const nextGoals = { ...rawState.goalBySession };
-  if (goal === null || goal.status === 'complete') delete nextGoals[sessionId];
-  else nextGoals[sessionId] = goal;
-  rawState.goalBySession = nextGoals;
+  if (goal === null || goal.status === 'complete') delete rawState.goalBySession[sessionId];
+  else rawState.goalBySession[sessionId] = goal;
 }
 
 /** Persist runtime controls to a session via POST /profile, then re-read
@@ -884,43 +880,27 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // several-hundred-ms recompute storm. The reducer never mutates slice entries
   // in place (entries are always replaced or deleted), so a shallow reference
   // comparison is sufficient to tell "changed" from "merely cloned".
+  //
+  // Record slices go one step further: applyRecordDiff writes changed KEYS only
+  // and keeps the record's own identity. A wholesale `{...map}` replacement —
+  // even when guarded — re-triggers computeds that read a DIFFERENT session's
+  // key (cross-session invalidation: the foreground turns projector re-ran on
+  // every background session's streaming delta).
   if (next.sessions !== snapshot.sessions) setSessions(next.sessions);
   if (next.activeSessionId !== snapshot.activeSessionId) {
     setActiveSessionId(next.activeSessionId);
   }
-  if (!shallowEqualRecord(next.messagesBySession, snapshot.messagesBySession)) {
-    setMessagesBySession(next.messagesBySession);
-  }
-  if (!shallowEqualRecord(next.approvalsBySession, snapshot.approvalsBySession)) {
-    rawState.approvalsBySession = next.approvalsBySession;
-  }
-  if (!shallowEqualRecord(next.planReviewByToolCallId, snapshot.planReviewByToolCallId)) {
-    rawState.planReviewByToolCallId = next.planReviewByToolCallId;
-  }
-  if (!shallowEqualRecord(next.questionsBySession, snapshot.questionsBySession)) {
-    rawState.questionsBySession = next.questionsBySession;
-  }
-  if (!shallowEqualRecord(next.tasksBySession, snapshot.tasksBySession)) {
-    rawState.tasksBySession = next.tasksBySession;
-  }
-  if (!shallowEqualRecord(next.goalBySession, snapshot.goalBySession)) {
-    rawState.goalBySession = next.goalBySession;
-  }
-  if (!shallowEqualRecord(next.goalVersionBySession, snapshot.goalVersionBySession)) {
-    rawState.goalVersionBySession = next.goalVersionBySession;
-  }
-  if (!shallowEqualRecord(next.lastSeqBySession, snapshot.lastSeqBySession)) {
-    rawState.lastSeqBySession = next.lastSeqBySession;
-  }
-  if (!shallowEqualRecord(next.turnActiveBySession, snapshot.turnActiveBySession)) {
-    rawState.turnActiveBySession = next.turnActiveBySession;
-  }
-  if (!shallowEqualRecord(next.turnEndedPromptIdBySession, snapshot.turnEndedPromptIdBySession)) {
-    rawState.turnEndedPromptIdBySession = next.turnEndedPromptIdBySession;
-  }
-  if (!shallowEqualRecord(next.compactionBySession, snapshot.compactionBySession)) {
-    rawState.compactionBySession = next.compactionBySession;
-  }
+  setMessagesBySession(next.messagesBySession);
+  applyRecordDiff(rawState.approvalsBySession, next.approvalsBySession);
+  applyRecordDiff(rawState.planReviewByToolCallId, next.planReviewByToolCallId);
+  applyRecordDiff(rawState.questionsBySession, next.questionsBySession);
+  applyRecordDiff(rawState.tasksBySession, next.tasksBySession);
+  applyRecordDiff(rawState.goalBySession, next.goalBySession);
+  applyRecordDiff(rawState.goalVersionBySession, next.goalVersionBySession);
+  applyRecordDiff(rawState.lastSeqBySession, next.lastSeqBySession);
+  applyRecordDiff(rawState.turnActiveBySession, next.turnActiveBySession);
+  applyRecordDiff(rawState.turnEndedPromptIdBySession, next.turnEndedPromptIdBySession);
+  applyRecordDiff(rawState.compactionBySession, next.compactionBySession);
   if (next.config !== snapshot.config) rawState.config = next.config ?? null;
   if (!shallowEqualArray(next.warnings, snapshot.warnings)) {
     rawState.warnings = next.warnings;
@@ -940,16 +920,13 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // session — so a background session keeps its own independent toggle state.
   if (event.type === 'sessionUsageUpdated') {
     if (event.swarmMode !== undefined) {
-      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [event.sessionId]: event.swarmMode };
+      rawState.swarmModeBySession[event.sessionId] = event.swarmMode;
     }
     if (event.planMode !== undefined) {
-      rawState.planModeBySession = { ...rawState.planModeBySession, [event.sessionId]: event.planMode };
+      rawState.planModeBySession[event.sessionId] = event.planMode;
     }
     if (event.thinking !== undefined) {
-      rawState.thinkingBySession = {
-        ...rawState.thinkingBySession,
-        [event.sessionId]: event.thinking as ThinkingLevel,
-      };
+      rawState.thinkingBySession[event.sessionId] = event.thinking as ThinkingLevel;
     }
   }
 
@@ -1033,10 +1010,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   ) {
     const sid = appEvent.message.sessionId;
     if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
-      rawState.promptIdBySession = {
-        ...rawState.promptIdBySession,
-        [sid]: appEvent.message.promptId,
-      };
+      rawState.promptIdBySession[sid] = appEvent.message.promptId;
     }
   }
 
@@ -1538,43 +1512,25 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // (their member rows otherwise only exist from non-replayed WS events).
     // loadTasksForSession's keepLiveSubagents preserves these across REST
     // reloads; the roster stays authoritative until then.
-    rawState.tasksBySession = {
-      ...rawState.tasksBySession,
-      [sessionId]: mergeSnapshotSubagents(
-        snap.subagents,
-        rawState.tasksBySession[sessionId] ?? [],
-      ),
-    };
-    rawState.messagesHasMoreBySession = {
-      ...rawState.messagesHasMoreBySession,
-      [sessionId]: snap.hasMoreMessages,
-    };
-    rawState.approvalsBySession = {
-      ...rawState.approvalsBySession,
-      [sessionId]: snap.pendingApprovals,
-    };
+    rawState.tasksBySession[sessionId] = mergeSnapshotSubagents(
+      snap.subagents,
+      rawState.tasksBySession[sessionId] ?? [],
+    );
+    rawState.messagesHasMoreBySession[sessionId] = snap.hasMoreMessages;
+    rawState.approvalsBySession[sessionId] = snap.pendingApprovals;
     // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
     // card can link to the plan file even after a reload.
     for (const a of snap.pendingApprovals) {
       const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
       if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
-        rawState.planReviewByToolCallId = {
-          ...rawState.planReviewByToolCallId,
-          [a.toolCallId]: {
-            plan: display.plan,
-            path: typeof display.path === 'string' ? display.path : undefined,
-          },
+        rawState.planReviewByToolCallId[a.toolCallId] = {
+          plan: display.plan,
+          path: typeof display.path === 'string' ? display.path : undefined,
         };
       }
     }
-    rawState.questionsBySession = {
-      ...rawState.questionsBySession,
-      [sessionId]: snap.pendingQuestions,
-    };
-    rawState.lastSeqBySession = {
-      ...rawState.lastSeqBySession,
-      [sessionId]: snap.asOfSeq,
-    };
+    rawState.questionsBySession[sessionId] = snap.pendingQuestions;
+    rawState.lastSeqBySession[sessionId] = snap.asOfSeq;
     epochBySession[sessionId] = snap.epoch;
     sessionsRequiringSnapshot.delete(sessionId);
     sessionsRetryingStaleSnapshot.delete(sessionId);
@@ -1593,12 +1549,10 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // whose turn.ended was lost (abrupt agent disposal) — the server-side
     // busy read is the reconciler, so a dead turn never relights the moon.
     {
-      const next = { ...rawState.turnActiveBySession };
       const mainTurnActive =
         snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
-      if (mainTurnActive) next[sessionId] = true;
-      else delete next[sessionId];
-      rawState.turnActiveBySession = next;
+      if (mainTurnActive) rawState.turnActiveBySession[sessionId] = true;
+      else delete rawState.turnActiveBySession[sessionId];
     }
 
     connectEventsIfNeeded();
@@ -2090,21 +2044,6 @@ const activeAppTasks = computed<AppTask[]>(() => {
 
 const taskPoller = useTaskPoller(rawState, activeAppTasks);
 
-const turns = computed<ChatTurn[]>(() => {
-  const sid = rawState.activeSessionId;
-  if (!sid) return [];
-  const hiddenIds = new Set(rawState.sideChatUserMessageIdsBySession[sid] ?? []);
-  const messages = (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id));
-  const approvals = rawState.approvalsBySession[sid] ?? [];
-  return messagesToTurns(
-    messages,
-    approvals,
-    (fileId) => getKimiWebApi().getFileUrl(fileId),
-    turnActive.value,
-    rawState.planReviewByToolCallId,
-  );
-});
-
 /** The MAIN agent of the active session has a turn in flight — the working
  *  moon's authoritative half (the optimistic `inFlight` window covers the gap
  *  before the turn.started round-trips). Background agents and BTW side chats
@@ -2116,6 +2055,29 @@ const turnActive = computed<boolean>(() => {
     (rawState.turnActiveBySession[sid] ?? false) ||
     (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false)
   );
+});
+
+// Turns run through an incremental projector: unchanged turns keep their object
+// identity across streaming frames (see turnsProjector.ts), so the keyed v-for
+// downstream only patches the live tail. The projector is stateful (it caches
+// its own previous output), so a plain computed preserves the old synchronous
+// pull semantics while reuse happens inside each re-evaluation.
+const getFileUrlById = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
+// Hoisted empty fallback: a fresh `[]` literal per projection would break the
+// projector's approvals-identity reuse gate (see turnsProjector.ts).
+const NO_PENDING_APPROVALS: AppApprovalRequest[] = [];
+const turnsProjector = createTurnsProjector();
+const turns = computed<ChatTurn[]>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return [];
+  const hiddenIds = new Set(rawState.sideChatUserMessageIdsBySession[sid] ?? []);
+  return turnsProjector({
+    messages: (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id)),
+    approvals: rawState.approvalsBySession[sid] ?? NO_PENDING_APPROVALS,
+    getFileUrl: getFileUrlById,
+    sessionActive: turnActive.value,
+    planReviewByToolCallId: rawState.planReviewByToolCallId,
+  });
 });
 
 /** The working moon: the main conversation has an unfinished prompt — either
@@ -2911,12 +2873,10 @@ function isUserWatching(sid: string): boolean {
  */
 function clearWorkingFlags(sid: string): void {
   if (rawState.turnActiveBySession[sid]) {
-    const next = { ...rawState.turnActiveBySession };
-    delete next[sid];
-    rawState.turnActiveBySession = next;
+    delete rawState.turnActiveBySession[sid];
   }
   if (rawState.inFlightBySession[sid]) {
-    rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+    rawState.inFlightBySession[sid] = false;
   }
 }
 
@@ -2940,7 +2900,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
     // unread dot until they open it. Aborted (cancelled/failed) turns are
     // excluded on purpose: there is no fresh result to read, and counting them
     // is what made the sidebar fill with stale unreads after a refresh.
-    rawState.unreadBySession = { ...rawState.unreadBySession, [sid]: true };
+    rawState.unreadBySession[sid] = true;
     saveUnread({ [sid]: true });
   }
 
