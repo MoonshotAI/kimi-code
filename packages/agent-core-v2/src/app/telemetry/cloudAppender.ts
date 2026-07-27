@@ -3,9 +3,20 @@
  * batches events, drops non-primitive properties, redacts PII from string
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientVersion`, env,
- * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
- * one from a `ServicesAccessor` so hosts only supply identity facts.
+ * through the `storage` byte layer (`IFileSystemStorageService`). Reads host
+ * facts (`clientVersion`, env, platform/arch) from `IBootstrapService`;
+ * `createCloudAppender` assembles one from a `ServicesAccessor` so hosts only
+ * supply identity facts.
+ *
+ * Shutdown lifecycle:
+ * - `flush()` is guarded by a serial lock so concurrent periodic / threshold /
+ *   manual triggers cannot race and lose ownership of a batch.
+ * - `shutdown(deadlineMs?)` provides a deadline-bounded, idempotent close:
+ *   cancels in-flight sends, hands unsent buffer to durable storage, replays
+ *   recoverable v2 spool data before completing.
+ * - Delivery is at-least-once across ambiguous cancellation boundaries; stable
+ *   event IDs preserve the server's deduplication key.
+ *
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
  */
 
@@ -74,6 +85,7 @@ export function createCloudAppender(
 
 const DEFAULT_FLUSH_THRESHOLD = 50;
 const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 export class CloudAppender implements ITelemetryAppender {
   private readonly transport: CloudTransport;
@@ -84,6 +96,13 @@ export class CloudAppender implements ITelemetryAppender {
   private sessionId: string | null;
   private buffer: EnrichedCloudEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Serial flush lock: prevents concurrent flush from racing on the buffer. */
+  private flushInFlight: Promise<void> | null = null;
+  /** Shutdown abort controller: cancels in-flight sends at the deadline. */
+  private shutdownController: AbortController | null = null;
+  /** Whether shutdown has completed (idempotent guard). */
+  private shutDown = false;
 
   constructor(options: CloudAppenderOptions) {
     this.deviceId = options.deviceId;
@@ -105,6 +124,7 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
+    if (this.shutDown) return;
     const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
@@ -136,16 +156,99 @@ export class CloudAppender implements ITelemetryAppender {
     }
   }
 
+  /**
+   * Flush the current buffer to the cloud endpoint.
+   *
+   * Serialized through a single in-flight promise so concurrent callers
+   * (periodic timer, threshold trigger, manual flush, shutdown) never race on
+   * the buffer. If a flush is already running, the caller waits for it to
+   * finish and then starts a new one for any events accumulated in the
+   * meantime.
+   */
   async flush(): Promise<void> {
-    if (this.buffer.length === 0) return;
-    const events = this.buffer;
-    this.buffer = [];
-    await this.transport.send(events);
+    // Wait for any existing in-flight flush to complete before starting a new
+    // one. This serializes access to `this.buffer` and prevents two callers
+    // from both swapping the buffer and then one's send overwriting the other.
+    if (this.flushInFlight !== null) {
+      await this.flushInFlight.catch(() => {});
+    }
+    const flushPromise = this.doFlush();
+    this.flushInFlight = flushPromise;
+    try {
+      await flushPromise;
+    } finally {
+      if (this.flushInFlight === flushPromise) {
+        this.flushInFlight = null;
+      }
+    }
   }
 
-  async shutdown(): Promise<void> {
+  private async doFlush(): Promise<void> {
+    if (this.buffer.length === 0) return;
+    // Atomically swap the buffer so new track() calls go into a fresh array
+    // while we send the captured batch.
+    const events = this.buffer;
+    this.buffer = [];
+    const signal = this.shutdownController?.signal;
+    await this.transport.send(events, signal);
+  }
+
+  /**
+   * Durable, deadline-bounded, idempotent shutdown.
+   *
+   * 1. Stops the periodic flush timer.
+   * 2. Sets an AbortController deadline; in-flight sends observe it.
+   * 3. Flushes the remaining buffer (respects the deadline).
+   * 4. Hands unsent buffered events to durable storage.
+   * 5. Replays recoverable v2 spool data before completing.
+   * 6. Marks the appender as shut down (idempotent).
+   *
+   * Hosts may retain an outer hard cap around non-cancellable local storage
+   * I/O if desired.
+   */
+  async shutdown(deadlineMs?: number): Promise<void> {
+    if (this.shutDown) return;
+    this.shutDown = true;
+
+    // 1. Stop periodic flush — no new automatic triggers.
     this.stopPeriodicFlush();
-    await this.flush();
+
+    // 2. Create an abort controller with the deadline.
+    const deadline = deadlineMs ?? Date.now() + DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.shutdownController = new AbortController();
+    const remainingMs = Math.max(0, deadline - Date.now());
+
+    // Schedule deadline abort for in-flight remote work.
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    if (remainingMs > 0) {
+      deadlineTimer = setTimeout(() => {
+        this.shutdownController?.abort(new Error('shutdown deadline expired'));
+      }, remainingMs);
+      deadlineTimer.unref?.();
+    } else {
+      this.shutdownController.abort(new Error('shutdown deadline already expired'));
+    }
+
+    try {
+      // 3. Flush remaining buffer (respects deadline via the abort signal).
+      await this.flush().catch(() => {});
+
+      // 4. If buffer still has items (e.g. send failed at deadline), hand to
+      //    durable storage so they survive a restart.
+      if (this.buffer.length > 0) {
+        await this.transport.saveToDisk(this.buffer).catch(() => {});
+        this.buffer = [];
+      }
+
+      // 5. Replay recoverable v2 spool data. Legacy spool files (owned by the
+      //    legacy telemetry pipeline) are left untouched — retryDiskEvents
+      //    only touches the v2 `failed_*.jsonl` namespace.
+      await this.transport.retryDiskEvents().catch(() => {});
+    } finally {
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
+    }
   }
 
   startPeriodicFlush(): void {

@@ -293,3 +293,126 @@ describe('CloudAppender', () => {
     }
   });
 });
+
+  describe('shutdown durability', () => {
+    it('serializes concurrent flush calls without losing events', async () => {
+      const requests: CapturedRequest[] = [];
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch((req) => {
+            requests.push(req);
+            return okResponse();
+          }),
+        }),
+      );
+
+      // Track multiple events
+      appender.track('e1');
+      appender.track('e2');
+      appender.track('e3');
+
+      // Fire multiple concurrent flushes — they must serialize, not race
+      await Promise.all([appender.flush(), appender.flush(), appender.flush()]);
+
+      // All events must have been sent (possibly in multiple batches, but
+      // the total event count must be 3)
+      const totalEvents = requests.reduce(
+        (sum, req) => sum + req.body.events.length,
+        0,
+      );
+      expect(totalEvents).toBe(3);
+    });
+
+    it('shutdown is idempotent — calling it twice only flushes once', async () => {
+      let sends = 0;
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch(() => {
+            sends += 1;
+            return okResponse();
+          }),
+        }),
+      );
+
+      appender.track('e1');
+      await appender.shutdown();
+      await appender.shutdown(); // Second call should be a no-op
+      expect(sends).toBe(1);
+    });
+
+    it('shutdown respects the deadline and hands unsent events to disk', async () => {
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          // Fetch that never resolves within the deadline
+          fetchImpl: makeFetch(
+            () => new Promise((resolve) => setTimeout(() => resolve(okResponse()), 10_000)),
+          ),
+        }),
+      );
+
+      appender.track('e1');
+      appender.track('e2');
+
+      // Shutdown with a very short deadline (already expired)
+      await appender.shutdown(Date.now());
+
+      // Events should have been saved to disk
+      const files = readdirSync(join(homeDir, 'telemetry')).filter((f) =>
+        f.startsWith('failed_'),
+      );
+      expect(files.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('shutdown replays spool data from disk', async () => {
+      let sends = 0;
+      let shouldFail = true;
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch(() => {
+            if (shouldFail) return statusResponse(500);
+            sends += 1;
+            return okResponse();
+          }),
+        }),
+      );
+
+      // First flush fails → events go to disk
+      appender.track('disk_event');
+      await appender.flush();
+      expect(
+        readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
+      ).toHaveLength(1);
+
+      // Now make fetch succeed and call shutdown — it should replay disk events
+      shouldFail = false;
+      await appender.shutdown();
+
+      // Disk file should be cleaned up after successful replay
+      expect(
+        readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
+      ).toHaveLength(0);
+      expect(sends).toBe(1); // The replayed event was sent
+    });
+
+    it('track() after shutdown is silently ignored', async () => {
+      let sends = 0;
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch(() => {
+            sends += 1;
+            return okResponse();
+          }),
+        }),
+      );
+
+      appender.track('before_shutdown');
+      await appender.shutdown();
+      appender.track('after_shutdown'); // Should be ignored
+      expect(sends).toBe(1);
+    });
+  });
