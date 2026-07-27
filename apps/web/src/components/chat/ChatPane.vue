@@ -1218,9 +1218,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .u-text-wrap.is-clamped {
   min-width: 120px;
 }
-.u-text-wrap.is-clamped .u-text,
-.u-text-wrap.is-clamped .skill-act-args,
-.u-text-wrap.is-clamped .q-body {
+.u-text-wrap.is-clamped > .u-text,
+.u-text-wrap.is-clamped > .skill-act-args,
+.u-text-wrap.is-clamped > .q-body {
   max-height: calc(10 * 1lh);
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
