@@ -52,9 +52,9 @@ describe('formatTokens', () => {
 });
 
 describe('formatDuration', () => {
-  it('floors to whole seconds and drops trailing zero units', () => {
-    expect(formatDuration(0)).toBe('<1s');
-    expect(formatDuration(999)).toBe('<1s');
+  it('floors to whole seconds, hides sub-second spans, and drops trailing zero units', () => {
+    expect(formatDuration(0)).toBe('');
+    expect(formatDuration(999)).toBe('');
     expect(formatDuration(1000)).toBe('1s');
     expect(formatDuration(14_000)).toBe('14s');
     expect(formatDuration(59_999)).toBe('59s');

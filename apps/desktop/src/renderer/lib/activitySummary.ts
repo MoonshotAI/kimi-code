@@ -127,7 +127,8 @@ export function summarizeActivity(
     clauses.push({ fragments });
   }
   if (opts.durationMs !== undefined) {
-    clauses.push({ fragments: [{ text: formatDuration(opts.durationMs), tone: 'faint' }] });
+    const span = formatDuration(opts.durationMs);
+    if (span) clauses.push({ fragments: [{ text: span, tone: 'faint' }] });
   }
   return { clauses, plain: plainText(clauses), hasError };
 }

@@ -343,6 +343,12 @@ function compactionDividerLabel(turn: ChatTurn): string {
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
+/** The assistant footer's duration label; '' (no stamp or a sub-second span)
+    hides both the label and an otherwise-empty footer. */
+function turnDurationLabel(turn: ChatTurn): string {
+  return turn.durationMs === undefined ? '' : formatDuration(turn.durationMs);
+}
+
 // Undo in-flight guard (keyed by turn id) — set while the server rewinds the
 // turn so a second undo can't fire until the first one settles.
 const undoingTurnId = ref<string | null>(null);
@@ -935,8 +941,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
-          <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
+        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnDurationLabel(turn))" class="a-msg-ft">
+          <span v-if="turnDurationLabel(turn)" class="a-duration">{{ turnDurationLabel(turn) }}</span>
           <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
             class="a-cpbtn"
