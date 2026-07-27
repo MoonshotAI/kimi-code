@@ -294,6 +294,13 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             unregister: () => {},
           } as never;
         }
+        if (serviceId === IEventBus) {
+          return {
+            _serviceBrand: undefined,
+            publish: () => {},
+            subscribe: () => noopDisposable(),
+          } as never;
+        }
         if (serviceId === IWireService) {
           return {
             _serviceBrand: undefined,

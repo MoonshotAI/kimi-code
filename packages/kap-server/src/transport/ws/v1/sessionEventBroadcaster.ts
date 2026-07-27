@@ -122,9 +122,12 @@ export interface SessionSnapshotState {
   subagents: SnapshotSubagent[];
 }
 
+/** Internal transport lane: only subscription traffic enters the timed buffer. */
+export type BroadcastDelivery = 'subscription' | 'immediate';
+
 /** A connection (or test double) that receives sequenced envelopes. */
 export interface BroadcastTarget {
-  send(envelope: EventEnvelope): void;
+  send(envelope: EventEnvelope, delivery?: BroadcastDelivery): void;
 }
 
 /**
@@ -1208,7 +1211,7 @@ export class SessionEventBroadcaster {
       for (const target of this.allTargets()) recipients.add(target);
       for (const target of recipients) {
         try {
-          target.send(envelope);
+          target.send(envelope, 'immediate');
         } catch {
           // best-effort fan-out; a broken target is dropped, not fatal
         }

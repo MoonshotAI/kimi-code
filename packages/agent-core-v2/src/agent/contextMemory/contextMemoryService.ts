@@ -1,24 +1,12 @@
 /**
  * `contextMemory` domain (L4) — `IAgentContextMemoryService` implementation.
  *
- * Owns the per-agent conversation history in the wire `ContextModel`
- * (`ContextMessage[]`): reads through `wire.getModel`, writes through the
- * v1 wire Ops (`append` / `appendLoopEvent` / `clear` / `undo` /
- * `applyCompaction`).
- * As the sole live mutation gateway for the history, it also cascades a
- * (non-persisted) `context_size.measured` Op alongside every mutation that
- * changes the measured prefix — `clear` resets it, `applyCompaction` adopts
- * `tokensAfter`, and `undo` rebases it (to an estimate when the measured
- * aggregate is truncated); `append` leaves the measured prefix untouched since
- * new messages are the unmeasured tail (see `contextSizeService`).
- * Splice-shaped mutations publish `context.spliced` from the live path only
- * (replay rebuilds the Model silently and never invokes these methods), so
- * existing subscribers observe the same change regardless of which Op was
- * persisted. Messages
- * are persisted without local ids — the on-disk record matches v1's field set
- * and public message ids are derived from the transcript index. Blob
- * dehydrate/rehydrate is declared on `ContextModel.blobs`. Bound at
- * Agent scope.
+ * Owns per-agent conversation history through `wire`, maintains measurements
+ * with `contextSize`, and broadcasts live mutations through `event`. Every
+ * splice-shaped mutation (`clear` / `applyCompaction` / `undo`) publishes
+ * `context.spliced` from the live path only — replay rebuilds silently — and
+ * `undo` additionally rebases the measured token prefix to an estimate when
+ * the cut truncates it. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

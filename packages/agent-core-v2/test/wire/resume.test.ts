@@ -5,6 +5,10 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
+import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
   type WireRecord,
@@ -168,6 +172,43 @@ describe('Agent resume', () => {
       turnId: 3,
       reason: 'completed',
     });
+  });
+
+  it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Historical prompt' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'historical-step', turnId: '0' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'historical-step', turnId: '0' },
+      },
+      { type: 'turn.cancel', turnId: 1, target: 'queued' },
+    ] as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
   });
 
   it('projects restored pending tool results before later user messages', async () => {
@@ -771,6 +812,47 @@ describe('Agent resume', () => {
     expect(ctx.context.get()).toHaveLength(2);
     expect(ctx.context.get()[0]?.role).toBe('user');
     expect(ctx.context.get()[1]?.role).toBe('assistant');
+  });
+
+  it('skips a fractional undo record on resume without corrupting checkpointed state', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.4',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep me' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      { type: 'context.undo', count: 0.5 },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.context.get()).toHaveLength(1);
+      await expect(ctx.get(IAgentPlanService).status()).resolves.toBeNull();
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.unknown_record',
+        details: { type: 'context.undo', index: 1 },
+      });
+    } finally {
+      try {
+        await ctx.dispose();
+      } finally {
+        resetUnexpectedErrorHandler();
+      }
+    }
   });
 });
 

@@ -636,25 +636,40 @@ describe('WsConnectionV1 outbound buffer', () => {
     vi.useRealTimers();
   });
 
-  it('buffers server_hello and flushes it after the interval', async () => {
+  it('sends server_hello immediately', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    expect(socket.sent).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(16);
-    expect(socket.frames().map((f) => (f as { type: string }).type)).toContain('server_hello');
+    expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual(['server_hello']);
     conn.close();
   });
 
-  it('coalesces adjacent deltas into one socket.send', async () => {
+  it('buffers subscribe_v2 transcript frames without merging them', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
+    socket.sent = [];
+
+    conn.send(durable('transcript.reset', 's1', 7));
+    conn.send(durable('transcript.ops', 's1', 8));
+    expect(socket.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(15);
+    expect(socket.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const frames = socket.frames() as Array<{ type: string; seq: number }>;
+    expect(frames.map((frame) => frame.type)).toEqual(['transcript.reset', 'transcript.ops']);
+    expect(frames.map((frame) => frame.seq)).toEqual([7, 8]);
+    conn.close();
+  });
+
+  it('coalesces adjacent subscribed deltas into one socket.send', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16 });
     socket.sent = [];
 
     conn.send(delta('s1', 'main', 1, 'Hello', 0));
     conn.send(delta('s1', 'main', 1, ' ', 5));
     conn.send(delta('s1', 'main', 1, 'world', 6));
-    expect(socket.sent).toHaveLength(0); // still buffered
+    expect(socket.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(16);
 
     const frames = socket.frames();
@@ -666,15 +681,36 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
-  it('flushes immediately once the batch reaches maxBatchSize', async () => {
+  it('sends public events immediately and preserves FIFO with subscribed events', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16 });
+    socket.sent = [];
+
+    conn.send(delta('s1', 'main', 1, 'before', 0));
+    expect(socket.sent).toHaveLength(0);
+    conn.send(durable('event.session.work_changed', 's1', 2), 'immediate');
+
+    expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual([
+      'assistant.delta',
+      'event.session.work_changed',
+    ]);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(socket.sent).toHaveLength(2);
+    conn.close();
+  });
+
+  it('flushes immediately once the subscribed batch reaches maxBatchSize', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000, maxBatchSize: 3 });
-    // constructor already queued server_hello (1); two deltas bring it to 3.
+    socket.sent = [];
+
     conn.send(delta('s1', 'main', 1, 'a', 0));
     conn.send(delta('s1', 'main', 1, 'b', 1));
-    // No timer advanced — flush must have happened synchronously.
-    const types = socket.frames().map((f) => (f as { type: string }).type);
-    expect(types).toEqual(['server_hello', 'assistant.delta']);
+    conn.send(delta('s1', 'main', 1, 'c', 2));
+
+    const frames = socket.frames();
+    expect(frames).toHaveLength(1);
+    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('abc');
     conn.close();
   });
 
@@ -684,53 +720,45 @@ describe('WsConnectionV1 outbound buffer', () => {
       flushIntervalMs: 16,
       highWaterMarkBytes: 100,
     });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
     socket.sent = [];
 
-    socket.bufferedAmount = 200; // above the watermark
+    socket.bufferedAmount = 200;
     conn.send(delta('s1', 'main', 1, 'Hello', 0));
-    await vi.advanceTimersByTimeAsync(16); // flush attempted → deferred
+    await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
 
-    // More deltas arrive while deferred — they merge into the queued frame.
     conn.send(delta('s1', 'main', 1, ' world', 5));
-    await vi.advanceTimersByTimeAsync(5); // backpressure retry, still high
+    await vi.advanceTimersByTimeAsync(5);
     expect(socket.sent).toHaveLength(0);
 
-    socket.bufferedAmount = 0; // peer drained
-    await vi.advanceTimersByTimeAsync(5); // retry succeeds
+    socket.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(5);
     const frames = socket.frames();
     expect(frames).toHaveLength(1);
     expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('Hello world');
     conn.close();
   });
 
-  it('force-flushes buffered frames on close', async () => {
+  it('force-flushes buffered subscription frames on close', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000 });
-    // server_hello is still buffered (interval not elapsed).
+    socket.sent = [];
+
     conn.send(delta('s1', 'main', 1, 'tail', 0));
     expect(socket.sent).toHaveLength(0);
 
     conn.close();
-    const types = socket.frames().map((f) => (f as { type: string }).type);
-    expect(types).toContain('server_hello');
-    expect(types).toContain('assistant.delta');
-    const tail = socket
-      .frames()
-      .find((f) => (f as { type: string }).type === 'assistant.delta') as {
-      payload: { delta: string };
-    };
-    expect(tail.payload.delta).toBe('tail');
+    const frames = socket.frames();
+    expect(frames).toHaveLength(1);
+    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('tail');
   });
 
   it('drops buffered frames when the socket is already closed at flush time', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    await vi.advanceTimersByTimeAsync(16); // flush server_hello
     socket.sent = [];
 
-    socket.readyState = socket.CLOSED; // peer went away
+    socket.readyState = socket.CLOSED;
     conn.send(delta('s1', 'main', 1, 'lost', 0));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);

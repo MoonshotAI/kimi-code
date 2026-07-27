@@ -657,6 +657,7 @@ export interface SessionStateSnapshot {
     } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'injection';
       readonly variant: string;
+      readonly ownerPromptId?: string;
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -732,6 +733,7 @@ export interface AgentStateSnapshot {
       } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'injection';
         readonly variant: string;
+        readonly ownerPromptId?: string;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -855,6 +857,7 @@ export interface AgentStateSnapshot {
     } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'injection';
       readonly variant: string;
+      readonly ownerPromptId?: string;
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -910,6 +913,7 @@ export interface AgentStateSnapshot {
       } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'injection';
         readonly variant: string;
+        readonly ownerPromptId?: string;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -1006,7 +1010,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2665": undefined;
+    readonly "__@mediaStripSnapshotBrand@2667": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {

@@ -529,6 +529,65 @@ describe('Agent loop', () => {
     expect(ctx.llmCalls).toHaveLength(3);
   });
 
+  it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
+    let started!: () => void;
+    const activeStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('test-quiescence', async (_hookCtx, next) => {
+      started();
+      await canFinish;
+      await next();
+    });
+
+    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    await activeStarted;
+
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    expect(active.signal.aborted).toBe(false);
+
+    hook.dispose();
+    ctx.mockNextResponse({ type: 'text', text: 'completed normally' });
+    release();
+    await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+  });
+
+  it('holds new admissions until an idle quiescence lease is released', async () => {
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    const held = loop.enqueue(nextTurnMessage('held'));
+    let assigned = false;
+    void held.assigned.then(() => {
+      assigned = true;
+    });
+
+    await Promise.resolve();
+    expect(assigned).toBe(false);
+    expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: true });
+
+    ctx.mockNextResponse({ type: 'text', text: 'after undo' });
+    lease?.dispose();
+    const resumed = (await held.assigned).turn;
+    await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
+  });
+
+  it('can abort an admission while quiescence holds it', async () => {
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    const held = loop.enqueue(nextTurnMessage('held'));
+
+    expect(held.abort()).toBe(true);
+    await expect(held.assigned).rejects.toBeDefined();
+    expect(loop.hasPendingRequests()).toBe(false);
+
+    lease?.dispose();
+    expect(loop.status().state).toBe('idle');
+  });
+
   it('cancels a running step without cancelling its turn and continues the next step', async () => {
     let releaseRunning!: () => void;
     const running = new Promise<void>((resolve) => {
