@@ -9,8 +9,7 @@
  * and inherits its `tier` for rate limiting. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 
@@ -52,4 +51,4 @@ function nonEmptyString(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-registerScopedService(LifecycleScope.App, IRerankService, RerankService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IRerankService, RerankService, ScopeActivation.OnScopeCreated, 'auth');
