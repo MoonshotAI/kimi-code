@@ -1304,7 +1304,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentRPCService).cancelCompaction({});
+    await agent.accessor.get(IAgentRPCService).cancelCompaction({});
   }
 
   /**
@@ -1317,7 +1317,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentRPCService).undoHistory({ count: input.count });
+    await agent.accessor.get(IAgentRPCService).undoHistory({ count: input.count });
   }
 
   /**
