@@ -9,6 +9,8 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
+import { supportsOsc8Hyperlinks } from '#/utils/terminal-hyperlink';
+
 const BRANCH_TTL_MS = 5_000;
 const STATUS_TTL_MS = 15_000;
 const PULL_REQUEST_TTL_MS = 60_000;
@@ -331,7 +333,12 @@ export function formatPullRequestBadge(
   options: FormatGitBadgeOptions = {},
 ): string {
   const prText = `[PR#${String(pullRequest.number)}]`;
-  return options.linkPullRequest ? toTerminalHyperlink(prText, pullRequest.url) : prText;
+  if (!options.linkPullRequest) return prText;
+  // Terminals without OSC 8 support (e.g. Warp) render hyperlinks as inert
+  // text, so print the URL in markdown-link style instead — Warp's own URL
+  // detection makes a visible URL clickable.
+  if (!supportsOsc8Hyperlinks()) return `[PR#${String(pullRequest.number)}](${pullRequest.url})`;
+  return toTerminalHyperlink(prText, pullRequest.url);
 }
 
 export function formatGitBadge(status: GitStatus, options: FormatGitBadgeOptions = {}): string {

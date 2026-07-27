@@ -11,10 +11,11 @@ vi.mock('node:child_process', () => ({
   spawnSync: mocks.spawnSync,
 }));
 
-import { createGitStatusCache, formatGitBadge } from '#/utils/git/git-status';
+import { createGitStatusCache, formatGitBadge, formatPullRequestBadge } from '#/utils/git/git-status';
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 
@@ -228,6 +229,8 @@ describe('git status cache', () => {
   });
 
   it('formats pull request badges as terminal hyperlinks when requested', () => {
+    vi.stubEnv('TERM_PROGRAM', 'iTerm.app');
+
     const linked = formatGitBadge(
       {
         branch: 'feature/footer',
@@ -247,5 +250,16 @@ describe('git status cache', () => {
     expect(linked).toContain('[PR#12]');
     expect(linked).toContain('\u001B]8;;https://github.com/acme/repo/pull/12\u0007');
     expect(linked).toContain('\u001B]8;;\u0007');
+  });
+
+  it('prints the pull request URL instead of a hyperlink on terminals without OSC 8 support', () => {
+    vi.stubEnv('TERM_PROGRAM', 'WarpTerminal');
+
+    const badge = formatPullRequestBadge(
+      { number: 12, url: 'https://github.com/acme/repo/pull/12' },
+      { linkPullRequest: true },
+    );
+
+    expect(badge).toBe('[PR#12](https://github.com/acme/repo/pull/12)');
   });
 });
