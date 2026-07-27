@@ -8,7 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { isAbortError } from '#/_base/utils/abort';
+import { abortable, isAbortError } from '#/_base/utils/abort';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 export type CloudPrimitive = boolean | number | string | undefined | null;
@@ -86,15 +86,9 @@ export class CloudTransport {
 
   async send(events: readonly EnrichedCloudEvent[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
-    let savedToDisk = false;
-    const saveEventsToDisk = async (): Promise<void> => {
-      if (savedToDisk) return;
-      await this.saveToDisk(events);
-      savedToDisk = true;
-    };
     if (signal?.aborted === true) {
-      await saveEventsToDisk();
-      throw abortError();
+      await this.saveToDisk(events);
+      return;
     }
 
     let payload: CloudPayload;
@@ -104,32 +98,34 @@ export class CloudTransport {
       return;
     }
 
-    try {
-      for (let attempt = 0; attempt <= this.retryBackoffsMs.length; attempt++) {
-        try {
-          await this.sendHttp(payload, signal);
+    for (let attempt = 0; attempt <= this.retryBackoffsMs.length; attempt++) {
+      try {
+        const request = this.sendHttp(payload, signal);
+        await (signal === undefined ? request : abortable(request, signal));
+        return;
+      } catch (error) {
+        if (isSignalAborted(signal) || isAbortError(error)) {
+          await this.saveToDisk(events);
           return;
-        } catch (error) {
-          if (isSignalAborted(signal) || isAbortError(error)) {
-            await saveEventsToDisk();
-            throw error;
-          }
-          if (!(error instanceof TransientCloudError)) {
-            break;
-          }
-          const backoff = this.retryBackoffsMs[attempt];
-          if (backoff === undefined) break;
-          await this.sleepImpl(backoff, signal);
         }
-      }
-    } catch (error) {
-      if (isSignalAborted(signal) || isAbortError(error)) {
-        await saveEventsToDisk();
-        throw error;
+        if (!(error instanceof TransientCloudError)) {
+          break;
+        }
+        const backoff = this.retryBackoffsMs[attempt];
+        if (backoff === undefined) break;
+        try {
+          await this.sleepImpl(backoff, signal);
+        } catch (sleepError) {
+          if (isSignalAborted(signal) || isAbortError(sleepError)) {
+            await this.saveToDisk(events);
+            return;
+          }
+          break;
+        }
       }
     }
 
-    await saveEventsToDisk();
+    await this.saveToDisk(events);
   }
 
   async saveToDisk(events: readonly EnrichedCloudEvent[]): Promise<void> {
@@ -139,10 +135,11 @@ export class CloudTransport {
     await this.storage.write(TELEMETRY_SCOPE, key, textEncoder.encode(text));
   }
 
-  async retryDiskEvents(): Promise<void> {
+  async retryDiskEvents(signal?: AbortSignal): Promise<void> {
     const keys = await this.storage.list(TELEMETRY_SCOPE, FAILED_PREFIX);
     const now = this.now();
     for (const key of keys) {
+      if (signal?.aborted === true) throw abortError();
       if (!key.startsWith(FAILED_PREFIX) || !key.endsWith(JSONL_SUFFIX)) continue;
       const createdAt = parseFailedTimestamp(key);
       if (createdAt === undefined || now - createdAt > DISK_EVENT_MAX_AGE_MS) {
@@ -163,9 +160,11 @@ export class CloudTransport {
       }
 
       try {
-        await this.sendHttp(payload);
+        const request = this.sendHttp(payload, signal);
+        await (signal === undefined ? request : abortable(request, signal));
         await this.storage.delete(TELEMETRY_SCOPE, key);
       } catch (error) {
+        if (isSignalAborted(signal) || isAbortError(error)) throw error;
         if (error instanceof TransientCloudError) continue;
       }
     }

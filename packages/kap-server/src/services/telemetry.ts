@@ -13,6 +13,7 @@ import {
   createCloudAppender,
   IBootstrapService,
   IConfigService,
+  type IDisposable,
   IOAuthToolkit,
   ITelemetryService,
   type Scope,
@@ -34,9 +35,9 @@ const TELEMETRY_DISABLE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
 
 export interface ServerTelemetry {
-  readonly service: ITelemetryService;
   /** Present only when telemetry is enabled by both config and environment. */
   readonly appender?: CloudAppender;
+  readonly registration?: IDisposable;
 }
 
 function isTelemetryDisabledByEnv(core: Scope): boolean {
@@ -57,7 +58,7 @@ export async function initializeServerTelemetry(
   } catch {
     enabled = true;
   }
-  if (!enabled || isTelemetryDisabledByEnv(core)) return { service };
+  if (!enabled || isTelemetryDisabledByEnv(core)) return {};
 
   const auth = core.accessor.get(IOAuthToolkit);
   const appender = createCloudAppender(core.accessor, {
@@ -67,26 +68,20 @@ export async function initializeServerTelemetry(
     model: config.get<string>('defaultModel') ?? undefined,
     getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
   });
-  service.setAppender(appender);
-  // The server is long-lived: flush on a timer, not only at the threshold.
-  appender.startPeriodicFlush();
-  return { service, appender };
+  const registration = service.addAppender(appender);
+  try {
+    appender.start();
+  } catch (error) {
+    registration.dispose();
+    throw error;
+  }
+  return { appender, registration };
 }
 
 export async function shutdownServerTelemetry(
   telemetry: ServerTelemetry,
   deadlineMs = Date.now() + TELEMETRY_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      telemetry.service.shutdown(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  telemetry.registration?.dispose();
+  await telemetry.appender?.shutdown({ deadlineMs });
 }

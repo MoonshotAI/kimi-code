@@ -24,12 +24,17 @@ export type TelemetryProperties = Readonly<Record<string, TelemetryPrimitive>>;
 
 export type TelemetryContextPatch = TelemetryProperties;
 
+export interface TelemetryShutdownOptions {
+  readonly signal?: AbortSignal;
+  readonly deadlineMs?: number;
+}
+
 export interface ITelemetryAppender {
   track(event: string, properties?: TelemetryProperties): void;
   withContext?(patch: TelemetryContextPatch): ITelemetryAppender;
   setContext?(patch: TelemetryContextPatch): void;
   flush?(): Promise<void> | void;
-  shutdown?(): Promise<void> | void;
+  shutdown?(options?: TelemetryShutdownOptions): Promise<void> | void;
 }
 
 export interface TelemetryServiceOptions {
@@ -56,7 +61,7 @@ export interface ITelemetryService {
   setAppender(appender: ITelemetryAppender): void;
   setEnabled(enabled: boolean): void;
   flush(): Promise<void>;
-  shutdown(): Promise<void>;
+  shutdown(options?: TelemetryShutdownOptions): Promise<void>;
 }
 
 export const nullTelemetryAppender: ITelemetryAppender = {

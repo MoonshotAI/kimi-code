@@ -1,16 +1,24 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+/**
+ * Kap server boot tests — exercise the public server lifecycle, App-scope
+ * seeds, instance registration, loopback routes, and owned resource cleanup
+ * with real local storage and loopback sockets.
+ */
+
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   hostRequestHeadersSeed,
   IBootstrapService,
   IHostRequestHeaders,
   ISkillCatalogRuntimeOptions,
+  ITelemetryService,
+  noopTelemetryService,
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
@@ -163,6 +171,25 @@ describe('server-v2 boot', () => {
       logLevel: 'silent',
     });
     expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
+  });
+
+  it('does not shut down a host-injected telemetry service when server telemetry is disabled', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-host-telemetry-'));
+    await writeFile(join(home, 'config.toml'), 'telemetry = false\n', 'utf8');
+    const shutdown = vi.fn(async () => {});
+
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[ITelemetryService, { ...noopTelemetryService, shutdown }]],
+    });
+
+    await server.close();
+    server = undefined;
+
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });
 

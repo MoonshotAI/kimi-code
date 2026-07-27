@@ -12,7 +12,6 @@ import {
   hostRequestHeadersSeed,
   IConfigService,
   IProviderDiscoveryService,
-  ITelemetryService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -237,7 +236,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // an appender wired later would drop them to the null appender. Opt-in via
   // `opts.telemetry` (off by default so tests never post to the real endpoint);
   // best-effort — telemetry must never block server boot.
-  let telemetry: ServerTelemetry = { service: core.accessor.get(ITelemetryService) };
+  let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
     try {
       telemetry = await initializeServerTelemetry(core, homeDir);

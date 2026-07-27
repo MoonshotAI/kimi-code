@@ -22,6 +22,7 @@ import {
   nullTelemetryAppender,
   type TelemetryContextPatch,
   type TelemetryProperties,
+  type TelemetryShutdownOptions,
 } from './telemetry';
 
 export class TelemetryService implements ITelemetryService {
@@ -88,10 +89,10 @@ export class TelemetryService implements ITelemetryService {
     );
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(options?: TelemetryShutdownOptions): Promise<void> {
     await Promise.all(
       this.appenders.map((appender) =>
-        Promise.resolve(appender.shutdown?.()).catch(onUnexpectedError),
+        Promise.resolve(appender.shutdown?.(options)).catch(onUnexpectedError),
       ),
     );
   }
@@ -147,8 +148,8 @@ class TelemetryContextView implements ITelemetryService {
     return this.root.flush();
   }
 
-  shutdown(): Promise<void> {
-    return this.root.shutdown();
+  shutdown(options?: TelemetryShutdownOptions): Promise<void> {
+    return this.root.shutdown(options);
   }
 }
 
