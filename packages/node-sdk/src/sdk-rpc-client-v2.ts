@@ -182,6 +182,7 @@ import {
   ISessionWorkspaceCommandService,
   ISessionWorkspaceContext,
   ISkillDiscovery,
+  ITelemetryService,
   IWorkspaceAliases,
   logSeed,
   MAIN_AGENT_ID,
@@ -400,6 +401,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     this.klient = createKlient({ scope: app });
     this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
     this.configReady = app.accessor.get(IConfigService).ready;
+    this.installEngineTelemetry(options.telemetry);
     this.modelReady = Promise.all([
       this.configReady,
       app.accessor.get(IModelService).ready,
@@ -437,6 +439,25 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     await this.klient.close();
     this.app.dispose();
+  }
+
+  /**
+   * Forward engine telemetry to the host-supplied client. Without this the
+   * client only served `KimiHarness`-level events and every engine-side event
+   * (`track2` facts from agent/session scopes) was dropped on the v2 route.
+   * The `ITelemetryAppender` shape is a structural superset of the v1
+   * `TelemetryClient`, so the client installs directly. The `telemetry`
+   * config section gates engine events the same way the v2 print runner
+   * gates them; the host keeps owning the client's lifecycle (flush /
+   * shutdown stay with the host, matching the v1 core's arrangement).
+   */
+  private installEngineTelemetry(client: TelemetryClient | undefined): void {
+    if (client === undefined) return;
+    const telemetry = this.app.accessor.get(ITelemetryService);
+    telemetry.setAppender(client);
+    void this.configReady.then(() => {
+      telemetry.setEnabled(this.engineAccessor.get(IConfigService).get('telemetry') !== false);
+    });
   }
 
   /**
