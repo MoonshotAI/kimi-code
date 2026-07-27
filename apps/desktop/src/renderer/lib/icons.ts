@@ -10,7 +10,7 @@
 //     exists for the intent. A few glyphs are filed under their intent rather
 //     than the upstream asset name (terminal.svg is the upstream "Code" glyph,
 //     mail.svg its "Message" envelope, clock.svg "History", comment.svg backs
-//     message, pin-to-top/unpin-from-top back pin/unpin, task.svg backs sparkles).
+//     message, task.svg backs sparkles).
 //     dark-mode.svg, add-conversation.svg, left-panel.svg and
 //     left-panel-expand.svg are newer designer exports that intentionally
 //     diverge from the set's originals — do not overwrite them on the next
@@ -44,7 +44,6 @@ import KimiCheck from '~icons/kimi/check';
 import KimiChevronDown from '~icons/kimi/chevron-down';
 import KimiChevronRight from '~icons/kimi/chevron-right';
 import KimiChevronUp from '~icons/kimi/chevron-up';
-import KimiClip from '~icons/kimi/clip';
 import KimiClock from '~icons/kimi/clock';
 import KimiClose from '~icons/kimi/close';
 import KimiCollapse from '~icons/kimi/collapse';
@@ -78,7 +77,6 @@ import KimiMicroscope from '~icons/kimi/microscope';
 import KimiMore from '~icons/kimi/more';
 import KimiPause from '~icons/kimi/pause';
 import KimiPencil from '~icons/kimi/pencil';
-import KimiPinToTop from '~icons/kimi/pin-to-top';
 import KimiPlay from '~icons/kimi/play';
 import KimiQuestion from '~icons/kimi/question';
 import KimiRobot from '~icons/kimi/robot';
@@ -96,12 +94,12 @@ import KimiThinking from '~icons/kimi/thinking';
 import KimiTodo from '~icons/kimi/todo';
 import KimiTrash from '~icons/kimi/trash';
 import KimiUndo from '~icons/kimi/undo';
-import KimiUnpinFromTop from '~icons/kimi/unpin-from-top';
 import KimiUser from '~icons/kimi/user';
 import KimiWarning from '~icons/kimi/warning';
 
 // Components (Tabler) ---------------------------------------------------------
 import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
+import TablerPaperclip from '~icons/tabler/paperclip';
 
 // Components (Remix) ---------------------------------------------------------
 import RiBracesLine from '~icons/ri/braces-line';
@@ -119,10 +117,12 @@ import RiFolderFill from '~icons/ri/folder-fill';
 import RiGitForkLine from '~icons/ri/git-fork-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
 import RiNodeTree from '~icons/ri/node-tree';
+import RiPushpinLine from '~icons/ri/pushpin-line';
 import RiSortDesc from '~icons/ri/sort-desc';
 import RiStarFill from '~icons/ri/star-fill';
 import RiStarLine from '~icons/ri/star-line';
 import RiToolsLine from '~icons/ri/tools-line';
+import RiUnpinLine from '~icons/ri/unpin-line';
 
 // Raw SVG strings (Kimi collection) -----------------------------------------
 import RawKimiAdd from '~icons/kimi/add?raw';
@@ -136,7 +136,6 @@ import RawKimiCheck from '~icons/kimi/check?raw';
 import RawKimiChevronDown from '~icons/kimi/chevron-down?raw';
 import RawKimiChevronRight from '~icons/kimi/chevron-right?raw';
 import RawKimiChevronUp from '~icons/kimi/chevron-up?raw';
-import RawKimiClip from '~icons/kimi/clip?raw';
 import RawKimiClock from '~icons/kimi/clock?raw';
 import RawKimiClose from '~icons/kimi/close?raw';
 import RawKimiCollapse from '~icons/kimi/collapse?raw';
@@ -170,7 +169,6 @@ import RawKimiMicroscope from '~icons/kimi/microscope?raw';
 import RawKimiMore from '~icons/kimi/more?raw';
 import RawKimiPause from '~icons/kimi/pause?raw';
 import RawKimiPencil from '~icons/kimi/pencil?raw';
-import RawKimiPinToTop from '~icons/kimi/pin-to-top?raw';
 import RawKimiPlay from '~icons/kimi/play?raw';
 import RawKimiQuestion from '~icons/kimi/question?raw';
 import RawKimiRobot from '~icons/kimi/robot?raw';
@@ -188,12 +186,12 @@ import RawKimiThinking from '~icons/kimi/thinking?raw';
 import RawKimiTodo from '~icons/kimi/todo?raw';
 import RawKimiTrash from '~icons/kimi/trash?raw';
 import RawKimiUndo from '~icons/kimi/undo?raw';
-import RawKimiUnpinFromTop from '~icons/kimi/unpin-from-top?raw';
 import RawKimiUser from '~icons/kimi/user?raw';
 import RawKimiWarning from '~icons/kimi/warning?raw';
 
 // Raw SVG strings (Tabler) ----------------------------------------------------
 import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
+import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
 
 // Raw SVG strings (Remix) ----------------------------------------------------
 import RawBracesLine from '~icons/ri/braces-line?raw';
@@ -211,10 +209,12 @@ import RawFolderFill from '~icons/ri/folder-fill?raw';
 import RawGitForkLine from '~icons/ri/git-fork-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
 import RawNodeTree from '~icons/ri/node-tree?raw';
+import RawPushpinLine from '~icons/ri/pushpin-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
 import RawStarFill from '~icons/ri/star-fill?raw';
 import RawStarLine from '~icons/ri/star-line?raw';
 import RawToolsLine from '~icons/ri/tools-line?raw';
+import RawUnpinLine from '~icons/ri/unpin-line?raw';
 
 // Public types -------------------------------------------------------------
 export type IconName =
@@ -373,7 +373,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'file-edit': entry(KimiEdit, RawKimiEdit),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(KimiFile, RawKimiFile),
-  attachment: entry(KimiClip, RawKimiClip),
+  attachment: entry(TablerPaperclip, RawTablerPaperclip),
   'image-off': entry(KimiImageFailed, RawKimiImageFailed),
   eye: entry(RiEyeLine, RawEyeLine),
   'eye-off': entry(RiEyeOffLine, RawEyeOffLine),
@@ -402,11 +402,11 @@ export const ICONS: Record<IconName, IconEntry> = {
   target: entry(KimiTarget, RawKimiTarget),
   pause: entry(KimiPause, RawKimiPause),
   play: entry(KimiPlay, RawKimiPlay),
-  pin: entry(KimiPinToTop, RawKimiPinToTop),
+  pin: entry(RiPushpinLine, RawPushpinLine),
   stop: entry(KimiStop, RawKimiStop),
   star: entry(RiStarFill, RawStarFill),
   'star-outline': entry(RiStarLine, RawStarLine),
-  unpin: entry(KimiUnpinFromTop, RawKimiUnpinFromTop),
+  unpin: entry(RiUnpinLine, RawUnpinLine),
   'dots-horizontal': entry(KimiMore, RawKimiMore),
   thinking: entry(KimiThinking, RawKimiThinking),
 };
