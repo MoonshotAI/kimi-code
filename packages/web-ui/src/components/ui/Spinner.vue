@@ -3,14 +3,16 @@
      except the chat working state, which uses WorkingIndicator. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 
 withDefaults(defineProps<{
   size?: 'sm' | 'md' | 'lg';
   label?: string;
 }>(), {
   size: 'md',
-  label: 'Loading',
 });
+
+const { t } = useKimiI18n();
 
 // Phase-lock every Spinner to the document timeline: each instance's animation
 // is anchored to the same absolute start time (the timeline's zero), so
@@ -67,7 +69,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span ref="boxRef" class="ui-spinner" :class="`ui-spinner--${size}`" role="status" :aria-label="label">
+  <span ref="boxRef" class="ui-spinner" :class="`ui-spinner--${size}`" role="status" :aria-label="label ?? t('common.loading')">
     <svg class="ui-spinner__svg" viewBox="0 0 24 24" aria-hidden="true">
       <circle class="ui-spinner__track" cx="12" cy="12" r="9" />
       <circle class="ui-spinner__arc" cx="12" cy="12" r="9" />

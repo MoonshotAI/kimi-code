@@ -8,12 +8,13 @@ import type { ChatTurn, TaskNotification, TurnBlock } from '../types';
 // existing ChatPane import keeps working.
 export { formatTokens } from '../lib/formatTokens';
 
-/** Whole-second duration, `<1s` / `37s` / `1m37s` / `6m` / `1h4m` — the only
+/** Whole-second duration, `37s` / `1m37s` / `6m` / `1h4m` — the only
     user-visible duration vocabulary: floored to whole seconds (never a
-    decimal fraction), trailing zero units dropped (`6m`, not `6m0s`). */
+    decimal fraction), trailing zero units dropped (`6m`, not `6m0s`).
+    Sub-second spans return '' — callers hide them ("0s" reads like clutter). */
 export function formatDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return s === 0 ? '<1s' : `${s}s`;
+  if (s < 60) return s === 0 ? '' : `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) {
     const rest = s % 60;

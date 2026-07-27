@@ -829,6 +829,10 @@ importers:
         version: 3.2.9(typescript@6.0.2)
 
   packages/web-ui:
+    dependencies:
+      '@moonshot-ai/web-i18n':
+        specifier: workspace:*
+        version: link:../web-i18n
     devDependencies:
       typescript:
         specifier: 6.0.2

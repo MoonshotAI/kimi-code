@@ -16,7 +16,7 @@
 //   apps/desktop/build/icon.icns  10-entry iconset via iconutil (macOS only)
 //   apps/desktop/build/tray.png, tray@2x.png         Linux tray (white silhouette)
 //   apps/desktop/build/trayTemplate.png, trayTemplate@2x.png  macOS menu-bar template
-//   apps/desktop/build/tray.ico   4 frames (16–48), Windows tray (colored mark)
+//   apps/desktop/build/tray.ico   4 frames (16–48), Windows tray (white tile)
 //   apps/web/public/favicon.ico   5 frames (16–64)
 //   Inline brand marks between `brand-mark:start/end` comments in:
 //     apps/desktop/src/renderer/components/onboarding/BrandLogo.vue (+ apps/web copy)
@@ -24,9 +24,12 @@
 //
 // Geometry decisions (do not change casually — they keep the icon consistent
 // with macOS conventions and the pre-refresh assets):
-//   - App icon: the tile occupies 414/512 of the canvas (49px margin per side
-//     at 512, i.e. Apple's 824/1024 icon grid) so the Dock icon reads
-//     normal-sized next to other apps.
+//   - macOS/Linux app icon: the tile occupies 414/512 of the canvas (49px
+//     margin per side at 512, i.e. Apple's 824/1024 icon grid) so the Dock icon
+//     reads normal-sized next to other apps.
+//   - Windows app icon is full-bleed. Explorer already allocates the icon
+//     canvas; reusing the Apple inset there makes the shortcut visibly smaller
+//     than neighboring Windows apps.
 //   - Tile corners are a baked macOS squircle (superellipse n=4.5, ~1.5px AA),
 //     so pre-Tahoe macOS (no system masking) still shows a rounded icon; Tahoe
 //     re-clips the already-transparent corners to the same shape.
@@ -144,7 +147,7 @@ async function fitOnCanvas(img, w, h, canvas, box) {
 }
 
 // ---------------------------------------------------------------------------
-// App icons: icon.png / icon.ico / icon.icns (inset squircle) + favicon (full-bleed)
+// App icons: icon.png / icon.icns (inset squircle) + icon.ico / favicon (full-bleed)
 // ---------------------------------------------------------------------------
 
 /** Rasterize a kit tile SVG onto a `bgColor` field at `size`². The vector is
@@ -198,7 +201,9 @@ async function buildAppIcons() {
   );
 
   const icoSizes = [16, 24, 32, 48, 64, 128, 256];
-  save(path.join(BUILD, 'icon.ico'), icoBuffer(await Promise.all(icoSizes.map(resize)), icoSizes));
+  const full = await applyMask(await rasterizeTile(src, '#ffffff', 2712), 2712);
+  const resizeFull = (s) => sharp(full).resize(s, s, { kernel: 'lanczos3' }).png().toBuffer();
+  save(path.join(BUILD, 'icon.ico'), icoBuffer(await Promise.all(icoSizes.map(resizeFull)), icoSizes));
 
   // iconset -> iconutil -> icns (the up-front guard above ensures darwin)
   const iconset = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-icon-')) + '/icon.iconset';
@@ -213,12 +218,8 @@ async function buildAppIcons() {
   written.push(path.relative(ROOT, icnsOut));
 
   // favicon: full-bleed squircle (no margin — tab icons are tiny).
-  const FAVICON_SIZE = 2712;
-  const full = await applyMask(await rasterizeTile(src, '#ffffff', FAVICON_SIZE), FAVICON_SIZE);
   const favSizes = [16, 24, 32, 48, 64];
-  const favFrames = await Promise.all(
-    favSizes.map((s) => sharp(full).resize(s, s, { kernel: 'lanczos3' }).png().toBuffer()),
-  );
+  const favFrames = await Promise.all(favSizes.map(resizeFull));
   save(path.join(ROOT, 'apps', 'web', 'public', 'favicon.ico'), icoBuffer(favFrames, favSizes));
 }
 
@@ -237,11 +238,15 @@ async function buildTrayIcons() {
     save(path.join(BUILD, `tray${suffix}.png`), png);
   }
 
-  // Windows tray: colored mark, contain-fit per frame.
-  const ol = await sharp(path.join(KIT, 'Original Logo.png')).png().toBuffer();
-  const { width: olW, height: olH } = await sharp(ol).metadata();
+  // Windows tray: full-bleed white tile.
   const sizes = [16, 24, 32, 48];
-  const frames = await Promise.all(sizes.map((s) => fitOnCanvas(ol, olW, olH, s, s)));
+  const full = await applyMask(
+    await rasterizeTile(path.join(KIT, 'White Background.svg'), '#ffffff', 512),
+    512,
+  );
+  const frames = await Promise.all(
+    sizes.map((s) => sharp(full).resize(s, s, { kernel: 'lanczos3' }).png().toBuffer()),
+  );
   save(path.join(BUILD, 'tray.ico'), icoBuffer(frames, sizes));
 }
 

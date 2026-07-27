@@ -30,7 +30,8 @@ const liveText = computed(() => (props.member.text ?? '').trimEnd());
 
 interface ProgressGroup {
   key: string;
-  /** The "Calling …" tool-call line, or '' for output with no preceding call. */
+  /** Tool-call label (the "Calling …" line minus its stable prefix), or '' for
+   *  output with no preceding call. */
   call: string;
   output: string[];
 }
@@ -43,7 +44,9 @@ function groupProgress(lines: string[]): ProgressGroup[] {
   let idx = 0;
   for (const line of lines) {
     if (line.startsWith('Calling ')) {
-      current = { key: `g${idx++}`, call: line, output: [] };
+      // The projector emits a stable English "Calling " marker; the localized
+      // verb is applied at render time via tasks.calling.
+      current = { key: `g${idx++}`, call: line.slice('Calling '.length), output: [] };
       groups.push(current);
     } else if (current) {
       current.output.push(line);
@@ -119,20 +122,20 @@ watch(
       <div v-if="member.subagentType" class="ap-type">{{ member.subagentType }}</div>
       <div v-if="member.suspendedReason" class="ap-reason">{{ member.suspendedReason }}</div>
       <div v-if="member.prompt" class="ap-field">
-        <span class="ap-field-label">Task</span>
+        <span class="ap-field-label">{{ t('tasks.fieldTask') }}</span>
         <div class="ap-field-body">{{ member.prompt }}</div>
       </div>
       <div v-if="liveText" class="ap-field">
-        <span class="ap-field-label">Output</span>
+        <span class="ap-field-label">{{ t('tasks.fieldOutput') }}</span>
         <div class="ap-field-body ap-live">{{ liveText }}</div>
       </div>
       <div v-if="progressGroups.length > 0" class="ap-field">
-        <span class="ap-field-label">Progress</span>
+        <span class="ap-field-label">{{ t('tasks.fieldProgress') }}</span>
         <div class="ap-field-body ap-progress">
           <div v-for="group in progressGroups" :key="group.key" class="ap-group">
             <div v-if="group.call" class="ap-call">
               <span class="ap-glyph" aria-hidden="true">▶</span>
-              {{ group.call }}
+              {{ t('tasks.calling', { label: group.call }) }}
             </div>
             <div v-if="group.output.length > 0" class="ap-output">
               <template v-if="group.output.length <= OUTPUT_FOLD_THRESHOLD || isExpanded(group.key)">
@@ -141,7 +144,7 @@ watch(
               <template v-else>
                 <div v-for="(line, li) in group.output.slice(0, OUTPUT_HEAD)" :key="li" class="ap-out-line">{{ line }}</div>
                 <button type="button" class="ap-fold" @click="toggleGroup(group.key)">
-                  … ({{ foldCount(group) }} more)
+                  {{ t('tasks.moreLines', { count: foldCount(group) }) }}
                 </button>
                 <div v-for="(line, li) in group.output.slice(-OUTPUT_TAIL)" :key="'t' + li" class="ap-out-line">{{ line }}</div>
               </template>
@@ -150,7 +153,7 @@ watch(
         </div>
       </div>
       <div v-if="member.summary" class="ap-field">
-        <span class="ap-field-label">Result</span>
+        <span class="ap-field-label">{{ t('tasks.fieldResult') }}</span>
         <div class="ap-field-body">{{ member.summary }}</div>
       </div>
     </div>

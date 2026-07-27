@@ -1,6 +1,6 @@
 {
   "name": "kimi-code-app",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "private": true,
   "description": "Kimi Code desktop client — an Electron shell around the Kimi Code web UI.",
   "author": "Moonshot AI",
@@ -9,17 +9,17 @@
   "main": "out/main.cjs",
   "scripts": {
     "prepare:fonts": "node ../../scripts/prepare-fonts.mjs",
+    "predev": "npm run prepare:fonts",
     "prebuild:renderer": "npm run prepare:fonts",
     "build": "tsdown",
     "build:renderer": "vite build --config vite.renderer.config.ts",
     "prebuild": "npm run build:renderer",
     "start": "electron .",
-    "predev": "npm run prepare:fonts",
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit && npm run typecheck:renderer",
     "typecheck:renderer": "vue-tsc --noEmit -p tsconfig.renderer.json",
     "test": "vitest run",
-    "postinstall": "electron-rebuild",
+    "postinstall": "node scripts/rebuild-native.mjs",
     "dist": "npm run build:renderer && tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "dependencies": {

@@ -11,7 +11,7 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { dialog } from 'electron';
+import { app, dialog } from 'electron';
 
 // track.ts is type-only at import time (its agent-core-v2 imports are
 // `import type`, erased at build), so pulling it in here adds no runtime
@@ -143,8 +143,12 @@ export function isUndiciStreamCloseRace(error: unknown): boolean {
 
 function surfaceUncaught(error: unknown): void {
   // Preserve Electron's default visibility for genuinely unexpected errors.
+  // The crash guard can fire before the renderer pushed its locale, so the
+  // title follows the OS language.
   try {
-    dialog.showErrorBox('A JavaScript error occurred in the main process', formatError(error));
+    const zh = app.getLocale().toLowerCase().startsWith('zh');
+    const title = zh ? '主进程发生 JavaScript 错误' : 'A JavaScript error occurred in the main process';
+    dialog.showErrorBox(title, formatError(error));
   } catch {
     // App not ready / shutting down — the file log already has it.
   }

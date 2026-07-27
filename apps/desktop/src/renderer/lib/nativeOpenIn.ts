@@ -10,9 +10,10 @@ import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from './storag
 import { track } from './track';
 import { ref, type Ref } from 'vue';
 
-// Colored app icons, extracted from the apps' own .icns bundles (the
-// "open in <app>" menu is nominative use of the trademarks). PNG URLs are
-// bundled by Vite; keyed by the main-process app id (src/main/open-in.ts).
+// Colored app icons, extracted from the apps' own bundles (macOS .icns /
+// Windows exe resources; the "open in <app>" menu is nominative use of the
+// trademarks). PNG URLs are bundled by Vite; keyed by the main-process app id
+// (src/main/open-in.ts).
 import iconVscode from '../assets/app-icons/vscode.png';
 import iconVscodeInsiders from '../assets/app-icons/vscode-insiders.png';
 import iconCursor from '../assets/app-icons/cursor.png';
@@ -24,6 +25,9 @@ import iconGhostty from '../assets/app-icons/ghostty.png';
 import iconWarp from '../assets/app-icons/warp.png';
 import iconKitty from '../assets/app-icons/kitty.png';
 import iconXcode from '../assets/app-icons/xcode.png';
+import iconExplorer from '../assets/app-icons/explorer.png';
+import iconWindowsTerminal from '../assets/app-icons/windows-terminal.png';
+import iconGitBash from '../assets/app-icons/git-bash.png';
 
 const APP_ICONS: Record<string, string> = {
   vscode: iconVscode,
@@ -37,6 +41,9 @@ const APP_ICONS: Record<string, string> = {
   warp: iconWarp,
   kitty: iconKitty,
   xcode: iconXcode,
+  explorer: iconExplorer,
+  'windows-terminal': iconWindowsTerminal,
+  'git-bash': iconGitBash,
 };
 
 /** Bundled PNG URL for an app id; '' for unknown ids (caller renders no img). */

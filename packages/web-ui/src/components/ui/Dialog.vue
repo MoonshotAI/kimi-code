@@ -4,6 +4,7 @@
      Includes focus trap, Esc-to-close, and optional overlay-click-to-close. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import { openDialogCount } from '../../composables/dialogStack';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
@@ -52,6 +53,8 @@ const emit = defineEmits<{
   'update:open': [value: boolean];
   close: [];
 }>();
+
+const { t } = useKimiI18n();
 
 const panel = ref<HTMLElement | null>(null);
 let previouslyFocused: Element | null = null;
@@ -165,7 +168,7 @@ onBeforeUnmount(() => {
               <div v-if="description" class="ui-dialog__desc">{{ description }}</div>
             </div>
           </slot>
-          <IconButton v-if="!hideClose" class="ui-dialog__close" size="sm" label="Close" @click="close">
+          <IconButton v-if="!hideClose" class="ui-dialog__close" size="sm" :label="t('common.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

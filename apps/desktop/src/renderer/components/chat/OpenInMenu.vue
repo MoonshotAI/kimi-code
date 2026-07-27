@@ -16,28 +16,15 @@ const { t } = useI18n();
 const props = defineProps<{
   /** Absolute path of the workspace to open; the control is disabled without it. */
   workDir?: string;
-  /** Installed app IDs from the main process; unset/empty shows the full catalog. */
-  availableApps?: string[];
+  /** Installed app catalog from the main process; unset/empty shows the fallback catalog. */
+  availableApps?: Array<{ id: string; label: string }>;
 }>();
 
 const emit = defineEmits<{
   openInApp: [appId: string];
 }>();
 
-type TargetId =
-  | 'vscode'
-  | 'vscode-insiders'
-  | 'cursor'
-  | 'zed'
-  | 'finder'
-  | 'terminal'
-  | 'iterm'
-  | 'ghostty'
-  | 'warp'
-  | 'kitty'
-  | 'xcode';
-
-const TARGETS: Array<{ id: TargetId; label: string }> = [
+const TARGETS: Array<{ id: string; label: string }> = [
   { id: 'vscode', label: 'VS Code' },
   { id: 'vscode-insiders', label: 'VS Code Insiders' },
   { id: 'cursor', label: 'Cursor' },
@@ -55,8 +42,7 @@ const hasWorkDir = computed(() => Boolean(props.workDir && props.workDir.trim().
 
 const visibleTargets = computed(() => {
   if (!props.availableApps || props.availableApps.length === 0) return TARGETS;
-  const available = new Set(props.availableApps);
-  return TARGETS.filter((target) => available.has(target.id));
+  return props.availableApps;
 });
 
 // ---------------------------------------------------------------------------
@@ -84,7 +70,7 @@ const quickTooltipText = computed(() =>
     : t('header.openInApp', { app: quickTargetLabel.value }),
 );
 
-function handleOpenTarget(id: TargetId): void {
+function handleOpenTarget(id: string): void {
   // Picking an item both opens with it and selects it — the same key the
   // settings dropdown writes, so the pill and settings stay in sync.
   saveDefaultOpenInTarget(id);

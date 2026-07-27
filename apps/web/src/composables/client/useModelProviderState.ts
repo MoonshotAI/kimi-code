@@ -8,6 +8,7 @@
 import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel } from '../../api/types';
+import { logWarn } from '../../lib/log';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
   defaultThinkingLevelFor,
@@ -541,7 +542,7 @@ export function useModelProviderState(
     } catch (err) {
       // The dialog counts consecutive nulls and gives up after a few; keep the
       // cause in the log so a dead daemon is diagnosable.
-      console.warn('[kimi-web] pollOAuthLogin failed', err);
+      logWarn('[kimi-web] pollOAuthLogin failed', err);
       return null;
     }
   }

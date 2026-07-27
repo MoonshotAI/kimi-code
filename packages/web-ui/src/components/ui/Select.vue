@@ -261,7 +261,9 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   padding: var(--space-1);
   border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-md);
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   box-shadow: var(--shadow-lg);
 }
 .ui-select__group {

@@ -26,6 +26,7 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
+import { logError } from '../../lib/log';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
 import { toAppMessageContent } from '@moonshot-ai/web-core/api';
 import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/web-core/api';
@@ -211,7 +212,7 @@ function patchSubagent(
     id: subagentId,
     sessionId,
     kind: 'subagent',
-    description: 'Sub Agent',
+    description: i18n.global.t('tasks.dockSubagent'),
     status: 'running',
     createdAt: new Date().toISOString(),
     subagentPhase: 'queued',
@@ -562,7 +563,7 @@ export function createAgentProjector(): AgentProjector {
       return _project(rawType, payload, sessionId, meta);
     } catch (error) {
       // Defensive: log but never crash the caller
-      console.error('[agentProjector] Error projecting event:', rawType, error instanceof Error ? error.message : error);
+      logError('[agentProjector] Error projecting event:', rawType, error instanceof Error ? error.message : error);
       return [];
     }
   }
@@ -1119,7 +1120,7 @@ export function createAgentProjector(): AgentProjector {
           id: taskId,
           sessionId,
           kind: 'subagent',
-          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? 'Sub Agent',
+          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? i18n.global.t('tasks.dockSubagent'),
           status: 'running',
           createdAt: new Date().toISOString(),
           subagentPhase: 'queued',

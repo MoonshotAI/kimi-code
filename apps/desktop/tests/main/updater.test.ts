@@ -15,7 +15,8 @@ vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock }));
 
-import { fetchReleaseNotes, startAutoUpdater, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
+import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
+import { log } from '../../src/main/log';
 import { markQuitting } from '../../src/main/window';
 
 const markQuittingMock = vi.mocked(markQuitting);
@@ -207,7 +208,7 @@ describe('startAutoUpdater', () => {
 
   it('swallows background check failures without disturbing the idle state', () => {
     const { updater, sent, controller } = setup();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
 
     updater.emit('error', new Error('feed unreachable'));
     expect(controller.getStatus()).toEqual({ state: 'idle' });
@@ -307,7 +308,7 @@ describe('manual check (controller.check)', () => {
 
   it('resolves error on an error event and on a rejected checkForUpdates', async () => {
     const { updater, controller } = setup();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
 
     const promise = controller.check();
     updater.emit('error', new Error('feed unreachable'));
@@ -324,7 +325,7 @@ describe('manual check (controller.check)', () => {
     const { controller } = setup();
     const promise = controller.check();
     vi.advanceTimersByTime(30_000);
-    await expect(promise).resolves.toEqual({ outcome: 'error', message: 'check timed out' });
+    await expect(promise).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
   });
 });
 

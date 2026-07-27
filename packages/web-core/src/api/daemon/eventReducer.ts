@@ -911,12 +911,12 @@ export function reduceAppEvent(
         // diagnostics (code / HTTP status / request id) for troubleshooting.
         next.warnings = [...next.warnings, buildAgentErrorNotice(raw, ctx.t)];
       } else if (raw && raw._agentWarning) {
-        const msg = raw.message ?? raw.code ?? 'agent warning';
+        const msg = raw.message ?? raw.code ?? ctx.t('warnings.agentWarningFallback');
         next.warnings = [...next.warnings, `${ctx.t('warnings.noteLabel')}: ${msg}`];
       } else {
         // Truly unknown — push a warning
         const wireType = raw?.type ?? '(unknown)';
-        next.warnings = [...next.warnings, `Unhandled event: ${wireType}`];
+        next.warnings = [...next.warnings, ctx.t('warnings.unhandledEvent', { type: wireType })];
       }
       break;
     }

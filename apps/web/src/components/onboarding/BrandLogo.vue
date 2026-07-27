@@ -12,7 +12,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, useId } from 'vue';
 
-withDefaults(defineProps<{ size?: number; variant?: 'system' | 'light' | 'dark' }>(), {
+withDefaults(defineProps<{ size?: number; variant?: 'system' | 'light' | 'dark' | 'theme' }>(), {
   size: 64,
   variant: 'system',
 });
@@ -102,4 +102,13 @@ html[data-color-scheme="dark"] .bl-tile-dark { display: block; }
 .brand-logo.bl-variant-light .bl-tile-dark { display: block; }
 .brand-logo.bl-variant-dark .bl-tile-light { display: block; }
 .brand-logo.bl-variant-dark .bl-tile-dark { display: none; }
+/* Same-direction appearance for chrome: white tile in light, black in dark. */
+.brand-logo.bl-variant-theme .bl-tile-light { display: none; }
+.brand-logo.bl-variant-theme .bl-tile-dark { display: block; }
+html[data-color-scheme="dark"] .brand-logo.bl-variant-theme .bl-tile-light { display: block; }
+html[data-color-scheme="dark"] .brand-logo.bl-variant-theme .bl-tile-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] .brand-logo.bl-variant-theme .bl-tile-light { display: block; }
+  html[data-color-scheme="system"] .brand-logo.bl-variant-theme .bl-tile-dark { display: none; }
+}
 </style>

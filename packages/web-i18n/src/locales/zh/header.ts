@@ -6,6 +6,7 @@ export default {
   copyAll: '复制全部对话为 Markdown',
   copyFinalSummary: '仅复制最终总结',
   copied: '已复制',
+  lastUsed: '上次使用',
   copyPath: '复制路径',
   changed: '{n} 处改动',
   gitTooltip: '打开「文件 > 改动」',

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { join } from 'node:path';
 
 import { installDownloadHandler } from '../../src/main/downloads';
 
@@ -46,7 +47,7 @@ describe('installDownloadHandler', () => {
     installDownloadHandler(session as any, deps);
     fireDownload(fakeItem('kimi-session.zip'));
     expect(deps.showSaveDialog).toHaveBeenCalledWith({
-      defaultPath: '/Users/x/Downloads/kimi-session.zip',
+      defaultPath: join('/Users/x/Downloads', 'kimi-session.zip'),
     });
   });
 
@@ -80,7 +81,7 @@ describe('installDownloadHandler', () => {
     fireDownload(fakeItem('a.zip'));
     fireDownload(fakeItem('trace.jsonl'));
     expect(deps.showSaveDialog).toHaveBeenLastCalledWith({
-      defaultPath: '/Users/x/Desktop/trace.jsonl',
+      defaultPath: join('/Users/x/Desktop', 'trace.jsonl'),
     });
   });
 
@@ -98,7 +99,7 @@ describe('installDownloadHandler', () => {
     fireDownload(fakeItem('c.zip'));
     // A cancelled dialog must not clobber the remembered directory.
     expect(deps.showSaveDialog).toHaveBeenLastCalledWith({
-      defaultPath: '/Users/x/Desktop/c.zip',
+      defaultPath: join('/Users/x/Desktop', 'c.zip'),
     });
   });
 

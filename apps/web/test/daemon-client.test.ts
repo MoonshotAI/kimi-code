@@ -121,6 +121,56 @@ describe('DaemonKimiWebApi.exportSession', () => {
     expect(result.blob.size).toBe(4);
   });
 
+  it('sends the desktop flag only when requested', async () => {
+    const zipResponse = () =>
+      new Response(new Uint8Array([80, 75]), {
+        status: 200,
+        headers: { 'content-type': 'application/zip' },
+      });
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(zipResponse()));
+
+    await createApi().exportSession('sess_1', 'log', { desktop: true });
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ web_log: 'log', desktop: true }),
+    });
+
+    vi.mocked(fetch).mockClear();
+    await createApi().exportSession('sess_1', 'log');
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ web_log: 'log' }),
+    });
+  });
+
+  it('retries without the desktop flag when the server predates it', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ code: 40001, msg: 'unrecognized key: desktop', request_id: 'req_old' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([80, 75, 3, 4]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/zip',
+            'content-disposition': 'attachment; filename="session-export.zip"',
+          },
+        }),
+      );
+
+    const result = await createApi().exportSession('sess_1', 'log', { desktop: true });
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ web_log: 'log', desktop: true }),
+    });
+    expect(vi.mocked(fetch).mock.calls[1]?.[1]).toMatchObject({
+      body: JSON.stringify({ web_log: 'log' }),
+    });
+    expect(result.fileName).toBe('session-export.zip');
+  });
+
   it('falls back to a session-id ZIP name for an unsafe response filename', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(new Uint8Array([80, 75]), {

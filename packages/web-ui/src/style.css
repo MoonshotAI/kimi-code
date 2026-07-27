@@ -309,6 +309,11 @@ html[data-color-scheme="dark"] {
     0 6px 18px lch(0% 0 0 / 0.02),
     0 3px 9px lch(0% 0 0 / 0.04),
     0 1px 1px lch(0% 0 0 / 0.04);
+  /* Floating menu surfaces (Menu.vue, composer dropdowns, dock panel,
+     slash/mention popups): frosted glass — translucent fill over a blurred,
+     saturated backdrop. The hairline + --shadow-menu still carry the edge. */
+  --color-menu-bg: rgba(255, 255, 255, 0.95);
+  --p-menu-backdrop: blur(24px) saturate(1.8);
   /* Chat-input elevation (effect.shadow.inputDefault): kept identical in
      dark — the hairline carries the edge there. */
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
@@ -430,6 +435,11 @@ html[data-color-scheme="dark"] {
   --p-ic-md: 16px;
   --p-ic-lg: 20px;
 
+  /* -- the single hairline width (design-system §02 borders) ----------------- */
+  --p-hairline: 0.5px;
+  /* -- current-match outline ring width (design-system §03 find bar) --------- */
+  --p-findring-w: 2px;
+
   /* -- IconButton box sizes (design-system §03) ----------------------------- */
   --icon-button-sm: 26px;
 
@@ -442,6 +452,7 @@ html[data-color-scheme="dark"] {
   --p-content-wide: 920px;
   --p-table-max: 1040px;
   --p-table-cell-max: 700px;
+  --p-findbar-w: 340px;
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }
@@ -541,6 +552,8 @@ html[data-color-scheme="dark"] {
     0 6px 18px rgba(0, 0, 0, 0.2),
     0 3px 9px rgba(0, 0, 0, 0.24),
     0 1px 1px rgba(0, 0, 0, 0.24);
+  /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+  --color-menu-bg: rgba(41, 41, 41, 0.95);
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
@@ -608,6 +621,8 @@ html[data-color-scheme="dark"] {
       0 6px 18px rgba(0, 0, 0, 0.2),
       0 3px 9px rgba(0, 0, 0, 0.24),
       0 1px 1px rgba(0, 0, 0, 0.24);
+    /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+    --color-menu-bg: rgba(41, 41, 41, 0.95);
     --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
@@ -627,4 +642,33 @@ html[data-color-scheme="dark"] {
 html[data-color-scheme="dark"] { --color-sidebar-tint: rgba(0, 0, 0, 0.25); }
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] { --color-sidebar-tint: rgba(0, 0, 0, 0.25); }
+}
+
+/* Transcript find bar (Cmd/Ctrl+F, the apps' components/chat/TranscriptSearch.vue):
+   match ink. The find bar mutates no DOM — it registers one Range per
+   occurrence with the CSS Custom Highlight API under the two registry names
+   below (::highlight pseudos are document-global, so these rules can't be
+   component-scoped). All matches get a vivid yellow wash, the current match a
+   deeper one. The current match additionally carries a 2px outline ring —
+   box properties don't exist on highlight pseudos, so the component overlays
+   the ring as a positioned element colored by --color-warning. */
+:root {
+  --color-search-match: #ffe066;
+  --color-search-match-current: #ffc531;
+}
+html[data-color-scheme="dark"] {
+  --color-search-match: rgba(255, 197, 49, 0.3);
+  --color-search-match-current: rgba(255, 197, 49, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --color-search-match: rgba(255, 197, 49, 0.3);
+    --color-search-match-current: rgba(255, 197, 49, 0.55);
+  }
+}
+::highlight(kimi-transcript-search) {
+  background-color: var(--color-search-match);
+}
+::highlight(kimi-transcript-search-current) {
+  background-color: var(--color-search-match-current);
 }

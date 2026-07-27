@@ -58,6 +58,11 @@ describe('summarizeActivity', () => {
     expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26s', tone: 'faint' }]);
   });
 
+  it('omits a sub-second duration', () => {
+    const s = summarizeActivity([tool('read')], { durationMs: 400 });
+    expect(render(s.clauses)).toBe('读取了 1 个文件');
+  });
+
   it('falls back to the generic counter for unknown kinds', () => {
     const s = summarizeActivity([tool('frobnicate'), tool('frobnicate')]);
     expect(render(s.clauses)).toBe('两个工具调用');

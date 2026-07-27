@@ -15,6 +15,7 @@ import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUp
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
+import { logWarn } from '../../lib/log';
 import type { IconName } from '../../lib/icons';
 import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
@@ -342,7 +343,7 @@ async function loadAllArchived(): Promise<void> {
     archivedItems.value = all;
     archivedLoaded.value = true;
   } catch (err) {
-    console.warn('loadAllArchived failed', err);
+    logWarn('loadAllArchived failed', err);
   } finally {
     archivedLoading.value = false;
   }

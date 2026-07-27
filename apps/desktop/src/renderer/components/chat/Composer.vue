@@ -7,6 +7,7 @@ import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
 import { formatTokens } from '../../lib/formatTokens';
+import type { IconName } from '../../lib/icons';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
@@ -804,10 +805,10 @@ function toggleModes(): void {
   setTimeout(() => document.addEventListener('mousedown', onModesDocClick), 0);
 }
 // Permission modes
-const PERM_MODES: { mode: PermissionMode; color: string; labelKey: string; descKey: string }[] = [
-  { mode: 'manual', color: 'var(--dim)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
-  { mode: 'yolo', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
-  { mode: 'auto', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
+const PERM_MODES: { mode: PermissionMode; icon: IconName; color: string; labelKey: string; descKey: string }[] = [
+  { mode: 'manual', icon: 'hand', color: 'var(--color-text)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
+  { mode: 'yolo', icon: 'shield-question', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
+  { mode: 'auto', icon: 'full-access', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
 ];
 const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc'] as const;
 
@@ -922,11 +923,7 @@ function choosePermission(mode: PermissionMode): void {
 
 const permInfo = computed(() => PERM_MODES.find((p) => p.mode === props.status?.permission));
 const permLabel = computed(() => (permInfo.value ? t(permInfo.value.labelKey) : ''));
-const permIcon = computed(() => {
-  if (props.status?.permission === 'yolo') return 'alert-triangle';
-  if (props.status?.permission === 'auto') return 'robot';
-  return 'hand';
-});
+const permIcon = computed<IconName>(() => permInfo.value?.icon ?? 'hand');
 
 // ---------------------------------------------------------------------------
 // Model dropdown — current provider models + thinking + more
@@ -1149,11 +1146,12 @@ function selectModel(modelId: string): void {
                 role="menuitem"
                 @click="choosePermission(opt.mode)"
               >
-                <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
+                <span class="pd-icon" :style="{ color: opt.color }"><Icon :name="opt.icon" size="sm" /></span>
                 <span class="pd-info">
                   <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
                   <span class="pd-desc">{{ t(opt.descKey) }}</span>
                 </span>
+                <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
               </button>
             </div>
           </Transition>
@@ -1814,6 +1812,10 @@ function selectModel(modelId: string): void {
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
+.perm-pill,
+.mode-pill {
+  font-size: var(--ui-font-size-sm);
+}
 /* The hover wash floats over the fill as its own layer so it can fade in and
    out (the dock work pills' recipe — background gradients can't transition). */
 .perm-pill::after,
@@ -1851,13 +1853,10 @@ function selectModel(modelId: string): void {
   color: var(--color-danger);
 }
 .perm-pill-icon {
-  display: none;
   flex: none;
 }
 
 @container (max-width: 620px) {
-  .perm-pill-icon { display: block; }
-
   .perm-pill {
     width: var(--composer-control-size);
     height: var(--composer-control-size);
@@ -1951,7 +1950,9 @@ function selectModel(modelId: string): void {
   right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
   z-index: var(--z-dropdown);
   min-width: 200px;
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
@@ -2108,7 +2109,9 @@ function selectModel(modelId: string): void {
   min-width: 220px;
   width: max-content;
   max-width: calc(100vw - var(--space-8));
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
@@ -2121,7 +2124,7 @@ function selectModel(modelId: string): void {
 
 .pd-row {
   display: grid;
-  grid-template-columns: 14px var(--composer-menu-desc-width, max-content);
+  grid-template-columns: var(--p-ic-sm) var(--composer-menu-desc-width, max-content) var(--p-ic-sm);
   column-gap: 7px;
   row-gap: 2px;
   align-items: start;
@@ -2136,10 +2139,21 @@ function selectModel(modelId: string): void {
 .pd-row:hover { background: var(--color-hover); }
 .pd-row.is-current { background: var(--color-hover); }
 
-.pd-check {
+.pd-icon {
   grid-column: 1;
   grid-row: 1;
-  width: 14px;
+  width: var(--p-ic-sm);
+  min-height: 1lh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: var(--leading-tight);
+}
+
+.pd-check {
+  grid-column: 3;
+  grid-row: 1;
+  width: var(--p-ic-sm);
   min-height: 1lh;
   color: var(--color-accent);
   font-size: var(--ui-font-size);
@@ -2147,7 +2161,7 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 
 .pd-info {
@@ -2158,9 +2172,9 @@ function selectModel(modelId: string): void {
   grid-column: 2;
   grid-row: 1;
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--ui-font-size-sm);
   font-weight: var(--weight-medium);
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 
 .pd-desc {
@@ -2169,9 +2183,9 @@ function selectModel(modelId: string): void {
   width: var(--composer-menu-desc-width, auto);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-caption);
   color: var(--muted);
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 
 /* Modes selector (plan / goal / swarm) — replaces the old plan pill + badges.
@@ -2200,7 +2214,9 @@ function selectModel(modelId: string): void {
   min-width: 220px;
   width: max-content;
   max-width: calc(100vw - var(--space-8));
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
@@ -2243,25 +2259,25 @@ function selectModel(modelId: string): void {
   color: var(--muted);
   transition: color var(--duration-base) var(--ease-out);
   font-size: var(--ui-font-size);
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 .mode-row-name {
   grid-column: 2;
   grid-row: 1;
   transition: color var(--duration-base) var(--ease-out);
-  font-size: var(--ui-font-size);
+  font-size: var(--ui-font-size-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text);
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 .mode-row-desc {
   grid-column: 2;
   grid-row: 2;
   width: var(--composer-menu-desc-width, auto);
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-caption);
   color: var(--muted);
-  line-height: var(--leading-normal);
+  line-height: var(--leading-tight);
 }
 .mode-row-not-supported {
   margin-left: auto;

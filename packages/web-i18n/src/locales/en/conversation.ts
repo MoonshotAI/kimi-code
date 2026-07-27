@@ -81,4 +81,14 @@ export default {
     expand: 'Show more',
     collapse: 'Show less',
   },
+  search: {
+    placeholder: 'Search chat…',
+    searching: 'Searching…',
+    results: '{current}/{total} results',
+    resultsCapped: '{current}/{total}+ results',
+    noResults: 'No results',
+    previous: 'Previous match',
+    next: 'Next match',
+    close: 'Close search',
+  },
 } as const;

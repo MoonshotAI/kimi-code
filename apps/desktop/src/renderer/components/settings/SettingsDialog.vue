@@ -13,6 +13,7 @@ import ShortcutsPanel from './ShortcutsPanel.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
+import { logWarn } from '../../lib/log';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import { isMacosDesktop } from '../../lib/desktopFlag';
@@ -433,7 +434,7 @@ async function loadAllArchived(): Promise<void> {
     archivedItems.value = all;
     archivedLoaded.value = true;
   } catch (err) {
-    console.warn('loadAllArchived failed', err);
+    logWarn('loadAllArchived failed', err);
   } finally {
     archivedLoading.value = false;
   }

@@ -13,16 +13,26 @@ import {
   setUpdateAutoDownload,
 } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
-import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
+import { setContextMenuLocale } from './context-menu';
+import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
+import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
+import { log, redactUrlForLog } from './log';
+import { createRendererLogWriter } from './renderer-log';
 import { asRendererTrackEvent, trackDesktopEvent } from './track';
-import { IPC, type ColorScheme } from './ipc-channels';
+import { IPC, type ColorScheme, type WindowsMenuId } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
   return value === 'light' || value === 'dark' || value === 'system';
 }
+
+function isWindowsMenuId(value: unknown): value is WindowsMenuId {
+  return value === 'file' || value === 'edit' || value === 'view' || value === 'help';
+}
+
+const rendererLogWriter = createRendererLogWriter();
 
 export function registerIpcHandlers(): void {
   // native_ipc_used fires only for the curated user-initiated channels below
@@ -40,7 +50,15 @@ export function registerIpcHandlers(): void {
     if (isDockIconChoice(choice)) setDockIconChoice(choice);
   });
   ipcMain.handle(IPC.osAppearance, () => osAppearance());
-  ipcMain.handle(IPC.openExternal, (_event, url: string) => shell.openExternal(url));
+  ipcMain.handle(IPC.openExternal, (_event, url: string) =>
+    // The rejection still propagates to the renderer's invoke promise; log it
+    // main-side too so packaged builds keep a record (renderer console is
+    // invisible there). The URL is redacted before hitting the log file.
+    shell.openExternal(url).catch((error: unknown) => {
+      log.error(`[kimi-desktop] openExternal failed: ${redactUrlForLog(url)}`, error);
+      throw error;
+    }),
+  );
   // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
   // the main process opens the native dialog and returns the user's selection.
   ipcMain.handle(IPC.dialogOpen, (_event, opts: OpenDialogOptions = {}) => {
@@ -79,6 +97,23 @@ export function registerIpcHandlers(): void {
     const win = getMainWindow();
     return win !== null && !win.isDestroyed() && win.isFullScreen();
   });
+  ipcMain.handle(IPC.menuPopup, (event, request: unknown) => {
+    const win = getMainWindow();
+    if (
+      win === null ||
+      win.isDestroyed() ||
+      event.sender !== win.webContents ||
+      request === null ||
+      typeof request !== 'object'
+    ) {
+      return { opened: false };
+    }
+    const { id, x, y } = request as Record<string, unknown>;
+    if (!isWindowsMenuId(id) || typeof x !== 'number' || typeof y !== 'number') {
+      return { opened: false };
+    }
+    return popupWindowsMenu(id, x, y);
+  });
   // Auto-update: the sidebar banner reads the current status once (reload
   // recovery — transitions stream over IPC.updateStatus) and fires the two
   // user actions. No-ops in dev (see updater.ts).
@@ -112,6 +147,16 @@ export function registerIpcHandlers(): void {
     if (locale === 'en' || locale === 'zh') {
       setTrayLocale(locale);
       setMenuLocale(locale);
+      setContextMenuLocale(locale);
+      setJumpListLocale(locale);
+    }
+  });
+  // Windows Jump List: the renderer pushes its recent workspaces (name +
+  // root) whenever they change (useJumpList.ts); malformed payloads drop.
+  ipcMain.on(IPC.jumpList, (_event, payload: unknown) => {
+    const workspaces = asJumpListWorkspaces(payload);
+    if (workspaces !== null) {
+      updateJumpList(workspaces);
     }
   });
   // The renderer's customizable shortcut bindings (canonical keymap format,
@@ -165,7 +210,7 @@ export function registerIpcHandlers(): void {
     return setGlobalShortcutSuspended(suspended);
   });
   // Renderer-initiated "bring the window back" (notification clicks): with
-  // macOS hide-on-close the window may be alive but hidden, and the web
+  // hide-on-close the window may be alive but hidden, and the web
   // window.focus() can't un-hide it — only the main process can.
   ipcMain.on(IPC.showWindow, () => {
     trackDesktopEvent('native_ipc_used', { channel: 'show-window' });
@@ -188,6 +233,12 @@ export function registerIpcHandlers(): void {
     applyWindowVibrancy(enabled);
   });
   ipcMain.handle(IPC.getVibrancy, () => isVibrancyEnabled());
+  // Renderer diagnostics → the same log file the main process writes (the
+  // sandboxed renderer has no fs access). Validation, redaction and rate
+  // limiting all live in renderer-log.ts; this handler must never throw.
+  ipcMain.on(IPC.rendererLog, (_event, payload: unknown) => {
+    rendererLogWriter(payload);
+  });
   // Renderer telemetry: events are whitelisted and re-validated at this trust
   // boundary (track.ts), then flow through the same CloudAppender pipeline as
   // main-process events. No-op until telemetry is wired (telemetry.ts).

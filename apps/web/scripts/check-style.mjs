@@ -2,7 +2,8 @@
 // check-style.mjs — design-system §06 anti-pattern guard for apps/kimi-web.
 //
 // Scans src/** for the rules in the design system (§06 of the DesignSystemView spec):
-//   no-gradient-text, no-glassmorphism (.frost exempt), no-color-glow,
+//   no-gradient-text, no-glassmorphism (.frost + whitelisted menu files using
+//   exactly var(--p-menu-backdrop) exempt), no-color-glow,
 //   icon-from-registry (hand-written <svg>; Icon/Spinner + the
 //   32x22 / 32x28.x / 120x120 brand marks exempt), no-emoji-icon,
 //   no-hardcoded-hex (DiffView/Terminal domain colors + var()
@@ -52,6 +53,20 @@ const ICON_EXEMPT = new Set([
 // illustrative mockups) rather than product UI, so the anti-pattern rules do not
 // apply to it.
 const FILE_EXEMPT = new Set(['views/DesignSystemView.vue']);
+
+// The §03 floating menu surfaces allowed to use the frosted-glass token pair
+// (--color-menu-bg + --p-menu-backdrop). Any other file using backdrop-filter
+// (and any ad-hoc blur value, even in these files) is flagged. ChatDock is
+// deliberately absent: its work panel stays open over the scrolling
+// transcript, where a live backdrop blur re-samples every frame and janks.
+const GLASS_MENU_EXEMPT = new Set([
+  'web-ui/components/ui/Menu.vue',
+  'web-ui/components/ui/Select.vue',
+  'components/chat/Composer.vue',
+  'components/chat/SlashMenu.vue',
+  'components/chat/MentionMenu.vue',
+  'components/chat/ConversationPane.vue',
+]);
 
 // Files exempt from no-gradient-text. The rule targets gradient TEXT, but the
 // line regex matches any gradient — these use background opacity ramps as
@@ -142,9 +157,19 @@ function checkFile(abs) {
         add('no-gradient-text', file, line, trimmed.slice(0, 80));
       }
 
-      // no-glassmorphism (TopBar frost variant exempt)
-      if (/backdrop-filter\s*:/i.test(raw) && !/\bfrost\b/.test(text)) {
-        add('no-glassmorphism', file, line, trimmed.slice(0, 80));
+      // no-glassmorphism (TopBar frost variant exempt; whitelisted menu
+      // surfaces may use exactly var(--p-menu-backdrop) — any other file or any
+      // ad-hoc value, including a token-name mention in a comment, is flagged.
+      // Every declaration on the line must pass: a whitelisted first match must
+      // not smuggle an ad-hoc second one through.)
+      const backdropDecls = [...raw.matchAll(/\bbackdrop-filter\s*:\s*([^;]+)/gi)];
+      if (backdropDecls.length > 0) {
+        const menuGlass =
+          GLASS_MENU_EXEMPT.has(file) &&
+          backdropDecls.every((m) => m[1].trim() === 'var(--p-menu-backdrop)');
+        if (!menuGlass && !/\bfrost\b/.test(text)) {
+          add('no-glassmorphism', file, line, trimmed.slice(0, 80));
+        }
       }
 
       // no-hardcoded-font (skip token definitions and the family declaration

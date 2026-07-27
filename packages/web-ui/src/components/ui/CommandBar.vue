@@ -1,10 +1,13 @@
 <!-- apps/kimi-web/src/components/ui/CommandBar.vue -->
 <!-- Design-system §03 Command Bar: primary action + mono command + copy. -->
 <script setup lang="ts">
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 
 const props = defineProps<{ command: string }>();
+
+const { t } = useKimiI18n();
 
 async function copy() {
   try {
@@ -20,7 +23,7 @@ async function copy() {
     <span class="ui-cmdbar__action"><slot /></span>
     <span class="ui-cmdbar__cmd">
       <code class="ui-cmdbar__text">{{ command }}</code>
-      <IconButton size="sm" label="Copy" @click="copy">
+      <IconButton size="sm" :label="t('common.copy')" @click="copy">
         <Icon name="copy" size="md" />
       </IconButton>
     </span>

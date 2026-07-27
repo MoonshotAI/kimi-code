@@ -11,12 +11,14 @@ import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
+import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
 import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
+import { isFindKeyEvent } from '../../lib/transcriptSearch';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
 
@@ -513,6 +515,46 @@ const panesRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
 const panesScrollbarWidth = ref(0);
 const dockHeight = ref(0);
+
+// Transcript find bar (Cmd/Ctrl+F) — floats over the transcript's top-right,
+// scopes its search to the rendered .chat inside .panes and scrolls matches
+// into view via revealTranscriptElement.
+const transcriptSearchOpen = ref(false);
+const transcriptSearchRef = ref<InstanceType<typeof TranscriptSearch> | null>(null);
+// Element focused before the find bar opened — focus returns to it on close,
+// or typing continues into the void (browser drops focus to <body>).
+let searchPreFocus: Element | null = null;
+
+function openTranscriptSearch(): void {
+  // An empty session has nothing to search (and no .chat to scope to).
+  if (props.turns.length === 0) return;
+  if (transcriptSearchOpen.value) {
+    transcriptSearchRef.value?.focusInput();
+    return;
+  }
+  searchPreFocus = document.activeElement;
+  transcriptSearchOpen.value = true;
+}
+
+function closeTranscriptSearch(): void {
+  transcriptSearchOpen.value = false;
+  void nextTick(() => {
+    if (searchPreFocus instanceof HTMLElement && searchPreFocus.isConnected) {
+      searchPreFocus.focus();
+    }
+    searchPreFocus = null;
+  });
+}
+
+// The empty-session layout (centred composer) has no transcript — the find
+// bar must not float over it. Route through the unified close path so the
+// pre-open focus is restored (an unmounted input would drop it to <body>).
+watch(
+  () => props.turns.length === 0 && !props.sessionLoading,
+  (empty) => {
+    if (empty && transcriptSearchOpen.value) closeTranscriptSearch();
+  },
+);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
@@ -633,6 +675,13 @@ function distanceFromBottom(): number {
 let lastScrollTop = 0;
 let userActionFollowUntil = 0;
 let lastSmoothScroll = 0;
+// While a find-bar reveal scroll is in flight (the smooth animation plus the
+// 480ms settle correction), the scroll-DOWN-into-the-zone branch in
+// onPanesScroll must NOT re-arm the bottom follow: the reveal deliberately
+// broke it (following=false), and a match inside the bottom threshold would
+// otherwise re-enable it mid-animation, letting the next stream growth yank
+// the viewport back to the tail and lose the match.
+let searchScrollFollowSuppressUntil = 0;
 // While a smooth scroll is in flight, instant `scrollToBottom(false)` calls
 // (e.g. from the streaming follow) are skipped so they don't cancel the
 // animation — see scrollToBottom().
@@ -679,7 +728,11 @@ function onPanesScroll(): void {
   if (top < lastScrollTop - 1 && dist > 1) {
     following.value = false;
     showPill.value = true;
-  } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
+  } else if (
+    dist <= BOTTOM_THRESHOLD &&
+    top > lastScrollTop + 1 &&
+    Date.now() >= searchScrollFollowSuppressUntil
+  ) {
     following.value = true;
     showPill.value = false;
   }
@@ -893,11 +946,11 @@ function cancelTocSettleCorrection(): void {
   }
 }
 
-function scrollToTurn(turnId: string): void {
-  const el = panesRef.value;
-  if (!el) return;
-  const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
-  if (!target) return;
+// Shared "scroll a transcript element into view" dance: breaks the bottom
+// follow, shows the new-messages pill when far from the tail, smooth-scrolls,
+// then re-centers once content-visibility's estimated boxes have settled.
+// Used by the TOC (turn anchors) and the find bar (match elements).
+function revealTranscriptElement(target: HTMLElement): void {
   cancelActiveScrollWrites();
   following.value = false;
   showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
@@ -906,10 +959,103 @@ function scrollToTurn(turnId: string): void {
   tocSettleTimer = setTimeout(() => {
     tocSettleTimer = null;
     const el2 = panesRef.value;
-    const t2 = el2?.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
-    if (!el2 || !t2) return;
-    const delta = (t2.getBoundingClientRect().top + t2.offsetHeight / 2)
+    if (!el2 || !target.isConnected) return;
+    const delta = (target.getBoundingClientRect().top + target.offsetHeight / 2)
       - (el2.getBoundingClientRect().top + el2.clientHeight / 2);
+    if (Math.abs(delta) > 48) el2.scrollTop += delta;
+  }, 480);
+}
+
+function scrollToTurn(turnId: string): void {
+  const el = panesRef.value;
+  if (!el) return;
+  const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
+  if (!target) return;
+  revealTranscriptElement(target);
+}
+
+// Center the match inside every scrollable ancestor between it and the pane
+// (tool-output cards, grep results…), on BOTH axes — long code lines hide in
+// overflow-x containers too. scrollIntoView on the parent can't do this: a
+// parent taller than the inner viewport only aligns its own edge. The rect
+// is re-read per level — every scroll moves it.
+function scrollNestedContainersToRange(range: Range, pane: HTMLElement): void {
+  const parent = range.startContainer.parentElement;
+  if (parent === null) return;
+  for (let node: Element | null = parent; node !== null && node !== pane; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    const canScrollY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+    const canScrollX = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+    if (!canScrollY && !canScrollX) continue;
+    const rect = range.getClientRects()[0];
+    if (!rect) return;
+    const nodeRect = node.getBoundingClientRect();
+    if (canScrollY) {
+      node.scrollTop += (rect.top + rect.height / 2) - (nodeRect.top + node.clientHeight / 2);
+    }
+    if (canScrollX) {
+      node.scrollLeft += (rect.left + rect.width / 2) - (nodeRect.left + node.clientWidth / 2);
+    }
+  }
+}
+
+// Range-based variant for the find bar: centers the MATCH ITSELF, not the
+// (possibly viewport-tall) element wrapping it — a long paragraph or code
+// block with several matches would otherwise re-center the same parent on
+// every navigation step. Falls back to the parent element when the range has
+// no layout box (hidden content is filtered out of results, but be safe).
+function revealTranscriptRange(range: Range): void {
+  const el = panesRef.value;
+  if (!el) return;
+  const parent = range.startContainer.parentElement;
+  cancelActiveScrollWrites();
+  following.value = false;
+  showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
+  // Keep the follow OFF for the whole reveal (smooth animation + settle
+  // correction) — the scroll-down branch in onPanesScroll would otherwise
+  // re-arm it for matches inside the bottom threshold.
+  searchScrollFollowSuppressUntil = Date.now() + 700;
+  // A match inside a clamped long user message is clipped by overflow:hidden
+  // — no scroll can reveal it. Expand the clamp first (the toggle lives in
+  // ChatPane's markup), then measure after Vue re-renders.
+  const clampWrap = parent?.closest('.u-text-wrap.is-clamped');
+  if (clampWrap) {
+    clampWrap.querySelector<HTMLElement>('.u-text-toggle')?.click();
+    void nextTick(() => revealTranscriptRangeAfterExpand(range, el));
+    return;
+  }
+  revealTranscriptRangeAfterExpand(range, el);
+}
+
+function revealTranscriptRangeAfterExpand(range: Range, el: HTMLElement): void {
+  const parent = range.startContainer.parentElement;
+  // Phase 1: nested scroll containers (outer pane can't move them).
+  scrollNestedContainersToRange(range, el);
+  // Phase 2: center the match's own rect in the outer pane (re-read after
+  // the nested scroll).
+  const rect = range.getClientRects()[0];
+  if (!rect) {
+    if (parent instanceof HTMLElement) revealTranscriptElement(parent);
+    return;
+  }
+  const paneRect = el.getBoundingClientRect();
+  const centerDelta = (rect.top + rect.height / 2) - (paneRect.top + el.clientHeight / 2);
+  // The CSS reduced-motion rules can't reach a JS-driven scroll — honor the
+  // preference with an instant landing (same guard as scrollToBottom).
+  const smooth =
+    typeof window === 'undefined' ||
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollTo({ top: el.scrollTop + centerDelta, behavior: smooth ? 'smooth' : 'auto' });
+  // Same content-visibility drift as revealTranscriptElement: re-measure once
+  // the smooth scroll has settled and correct to the real position.
+  cancelTocSettleCorrection();
+  tocSettleTimer = setTimeout(() => {
+    tocSettleTimer = null;
+    const el2 = panesRef.value;
+    const rect2 = range.getClientRects()[0];
+    if (!el2 || !rect2) return;
+    const paneRect2 = el2.getBoundingClientRect();
+    const delta = (rect2.top + rect2.height / 2) - (paneRect2.top + el2.clientHeight / 2);
     if (Math.abs(delta) > 48) el2.scrollTop += delta;
   }, 480);
 }
@@ -1369,6 +1515,11 @@ function cancelActiveScrollWrites(): void {
   const el = panesRef.value;
 
   userActionFollowUntil = 0;
+  // A user takeover (wheel/touch/scrollbar) also ends the find-bar reveal's
+  // follow suppression, so a deliberate scroll back to the bottom re-arms
+  // following right away. (Reveal paths call this BEFORE setting their own
+  // timestamp, so the order stays safe.)
+  searchScrollFollowSuppressUntil = 0;
   cancelScheduledFollow();
   pinUntil = 0;
   pinEl = null;
@@ -1745,6 +1896,16 @@ function onKeyDown(event: KeyboardEvent): void {
       armEscUndo();
       handleInterrupt();
     }
+    return;
+  }
+  // Cmd/Ctrl+F opens the transcript find bar (browser find-in-page idiom).
+  // Deliberately NOT gated on editable targets — find works from the composer
+  // too — but overlays own their own keyboard. Only consumed when there is a
+  // transcript to search; on an empty session the keypress falls through to
+  // the browser's native find.
+  if (isFindKeyEvent(event) && !props.overlayOpen && props.turns.length > 0) {
+    event.preventDefault();
+    openTranscriptSearch();
     return;
   }
   // Cmd/Ctrl+A outside a text field selects the region the user is attending
@@ -2167,6 +2328,17 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
       />
     </div>
 
+    <!-- Transcript find bar (Cmd/Ctrl+F) — floats over the transcript's
+         top-right corner. -->
+    <TranscriptSearch
+      v-if="transcriptSearchOpen"
+      ref="transcriptSearchRef"
+      :pane="panesRef"
+      :mobile="mobile"
+      :reveal="revealTranscriptRange"
+      @close="closeTranscriptSearch"
+    />
+
     <!-- "New messages" pill — only visible when scrolled up and new content arrives. -->
     <Transition name="pill">
       <button
@@ -2427,7 +2599,9 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
   max-width: 100%;
   max-height: calc(var(--space-8) * 10);
   overflow: hidden auto;
-  background: var(--color-surface-raised);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);

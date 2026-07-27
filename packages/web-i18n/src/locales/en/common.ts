@@ -4,6 +4,11 @@ export default {
   /** Generic confirm / cancel button labels (used by ConfirmDialog). */
   confirm: 'Confirm',
   cancel: 'Cancel',
+  /** Accessible labels for web-ui chrome (close buttons, spinner…). */
+  close: 'Close',
+  dismiss: 'Dismiss',
+  loading: 'Loading',
+  copy: 'Copy',
   countWords: {
     one: 'One',
     two: 'Two',

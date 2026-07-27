@@ -1,7 +1,7 @@
 <!-- apps/desktop/src/renderer/components/UpdateIndicator.vue -->
-<!-- Auto-update entry: a yellow pill in the sidebar header (on macOS desktop
-     that header IS the traffic-light drag strip, so the wrapper opts out of
-     app-region drag). Clicking opens the canonical §03 Dialog (Anatomy A,
+<!-- Auto-update entry: a yellow pill in the Windows titlebar or the sidebar
+     header on other desktop surfaces. Both may be window-drag strips, so the
+     wrapper opts out of app-region drag. Clicking opens the canonical §03 Dialog (Anatomy A,
      padded · lg · auto — see §09 in DesignSystemView.vue) with the version,
      release date, the state-dependent actions (download / background /
      restart / retry) and an auto-download checkbox pinned to the foot's left,
@@ -152,7 +152,7 @@ function onRestartNow(): void {
       <span class="upd-pill-text">{{ pillText }}</span>
     </button>
 
-    <Dialog :open="open" :title="dialogTitle" size="md" @update:open="open = $event">
+    <Dialog :open="open" :title="dialogTitle" size="lg" @update:open="open = $event">
       <p v-if="(status.state === 'available' || status.state === 'downloaded') && metaText" class="upd-meta">
         {{ metaText }}
       </p>
@@ -199,8 +199,7 @@ function onRestartNow(): void {
 .upd {
   display: inline-flex;
   flex: none;
-  /* The macOS-desktop sidebar header is a window-drag strip — the pill must
-     stay clickable. */
+  /* The parent chrome may be a window-drag strip — the pill must stay clickable. */
   -webkit-app-region: no-drag;
   animation: upd-in var(--duration-base) var(--ease-out);
 }
@@ -275,11 +274,15 @@ function onRestartNow(): void {
   word-break: break-all;
 }
 
-/* Changelog block under the meta line: quiet title + compact rendered list. */
+/* Changelog block under the meta line: quiet title + compact rendered list,
+   height-capped so long notes scroll inside the block instead of stretching
+   the dialog toward full-screen. */
 .upd-notes {
   margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-line);
+  max-height: min(360px, 45vh);
+  overflow-y: auto;
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   color: var(--color-text);

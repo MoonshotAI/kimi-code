@@ -33,6 +33,8 @@ import {
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
 } from '../../lib/storage';
+import { isDesktop } from '../../lib/desktopFlag';
+import { logWarn } from '../../lib/log';
 import { parseDiff } from '../../lib/parseDiff';
 import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
@@ -463,7 +465,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // empty. Surfacing it as a global "kimi server api" error toast on a routine
       // file click is disproportionate, so log it for the trace export instead.
       if (selectedDiffPath.value === path) fileDiffLines.value = [];
-      console.warn('[loadFileDiff] diff unavailable for', path, err);
+      logWarn('[loadFileDiff] diff unavailable for', path, err);
     } finally {
       if (selectedDiffPath.value === path) fileDiffLoading.value = false;
     }
@@ -882,7 +884,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function loadAllSessions(): Promise<void> {
     if (rawState.sessionsFullyLoaded) return;
     const result = await listAllSessionsGlobal().catch((err) => {
-      console.warn('[kimi-web] loadAllSessions failed; search covers only loaded sessions', err);
+      logWarn('[kimi-web] loadAllSessions failed; search covers only loaded sessions', err);
       return null;
     });
     if (result === null) return;
@@ -1375,7 +1377,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       return true;
     } catch (err) {
       // The caller shows an inline error in the picker; keep the cause in the log.
-      console.warn('[kimi-web] addWorkspaceByPath failed for', trimmed, err);
+      logWarn('[kimi-web] addWorkspaceByPath failed for', trimmed, err);
       return false;
     }
   }
@@ -2501,7 +2503,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await getKimiWebApi().deleteWorkspace(id);
     } catch (err) {
       // registry delete is optional — the sidebar hide is what the user sees.
-      console.warn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
+      logWarn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     // Drop the local add-time entry with the workspace; re-adding re-stamps it.
@@ -2570,7 +2572,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     traceKeyEvent('export:start', { sessionId });
     try {
       const webLog = sessionExportTraceToJsonl();
-      const { blob, fileName } = await getKimiWebApi().exportSession(sessionId, webLog);
+      const { blob, fileName } = await getKimiWebApi().exportSession(sessionId, webLog, {
+        desktop: isDesktop,
+      });
       if (typeof document === 'undefined') throw new Error('Document is unavailable');
       const url = URL.createObjectURL(blob);
       let anchor: HTMLAnchorElement | undefined;
@@ -2835,7 +2839,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         lineCount: result.lineCount,
       };
     } catch (err) {
-      console.warn('[kimi-web] readFileContent failed for', path, err);
+      logWarn('[kimi-web] readFileContent failed for', path, err);
       return null;
     }
   }

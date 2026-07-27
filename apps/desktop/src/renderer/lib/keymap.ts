@@ -434,17 +434,32 @@ const RESERVED_COMMON: readonly string[] = [
   'shift+mod+=',
   'mod+plus',
   'shift+mod+plus',
-  // Minimize is CommandOrControl+M on EVERY platform (Electron role table).
-  'mod+m',
   // Close window (File menu role, CmdOrCtrl+W)
   'mod+w',
 ];
 
-export const RESERVED_NATIVE_BINDINGS: { readonly apple: readonly string[]; readonly other: readonly string[] } = {
+const RESERVED_NON_APPLE: readonly string[] = [
+  ...RESERVED_COMMON,
+  // Non-mac: devtools (Ctrl+Shift+I), fullscreen (F11), OS-level close
+  // window (Alt+F4), paste-and-match-style (⇧⌃V), and redo (Ctrl+Y).
+  'shift+ctrl+i',
+  'f11',
+  'alt+f4',
+  'shift+mod+v',
+  'mod+y',
+];
+
+export const RESERVED_NATIVE_BINDINGS: {
+  readonly apple: readonly string[];
+  readonly other: readonly string[];
+  readonly windows: readonly string[];
+} = {
   apple: [
     ...RESERVED_COMMON,
-    // macOS-only: devtools, fullscreen, quit, hide, paste-and-match-style
+    // macOS-only: minimize, devtools, fullscreen, quit, hide,
+    // paste-and-match-style
     // (⌘⌥⇧V on mac per the Electron role table)
+    'mod+m',
     'alt+mod+i',
     'ctrl+mod+f',
     'mod+q',
@@ -452,24 +467,36 @@ export const RESERVED_NATIVE_BINDINGS: { readonly apple: readonly string[]; read
     'alt+shift+mod+v',
   ],
   other: [
-    ...RESERVED_COMMON,
-    // Non-mac: devtools (Ctrl+Shift+I), fullscreen (F11), OS-level close
-    // window (Alt+F4 — the renderer never sees it), paste-and-match-style
-    // (⇧⌃V), and Windows-only redo (Ctrl+Y — Linux uses ⇧⌃Z, already in
-    // common; over-reserving Ctrl+Y there is the accepted tradeoff).
-    'shift+ctrl+i',
-    'f11',
-    'alt+f4',
-    'shift+mod+v',
-    'mod+y',
+    ...RESERVED_NON_APPLE,
+    // Linux keeps Electron's Window menu and its minimize role.
+    'mod+m',
+  ],
+  windows: [
+    ...RESERVED_NON_APPLE,
+    // The custom Windows menu omits Window/minimize, leaving Ctrl+M free.
+    'alt+f',
+    'alt+e',
+    'alt+v',
+    'alt+h',
   ],
 };
 
 /** True when the binding collides with a native menu/OS accelerator on the
  *  current platform (platform-aware comparison). */
 export function isReservedBinding(binding: string): boolean {
-  const list = isAppleShortcutPlatform() ? RESERVED_NATIVE_BINDINGS.apple : RESERVED_NATIVE_BINDINGS.other;
-  return list.some((reserved) => bindingsEquivalent(reserved, binding));
+  const windows =
+    typeof navigator !== 'undefined' &&
+    (navigator.platform.startsWith('Win') ||
+      (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ===
+        'Windows');
+  const list = isAppleShortcutPlatform()
+    ? RESERVED_NATIVE_BINDINGS.apple
+    : windows
+      ? RESERVED_NATIVE_BINDINGS.windows
+      : RESERVED_NATIVE_BINDINGS.other;
+  return list.some((reserved) =>
+    bindingsEquivalent(reserved, binding),
+  );
 }
 
 /** Combos owned by hardcoded app behavior (NOT in the registry, so conflict
@@ -482,6 +509,18 @@ export const HARDCODED_BINDINGS: readonly string[] = ['ctrl+s', 'mod+s'];
  *  (platform-aware comparison). */
 export function isHardcodedBinding(binding: string): boolean {
   return HARDCODED_BINDINGS.some((hardcoded) => bindingsEquivalent(hardcoded, binding));
+}
+
+/** Same dead-binding problem as steer: ConversationPane's document-level
+ *  handler consumes Cmd/Ctrl+F (transcript find bar) before App.vue's
+ *  dispatcher — preventDefault'd there, the dispatcher returns early, so a
+ *  custom binding on the chord would record fine and never fire. */
+export const HARDCODED_FIND_BINDINGS: readonly string[] = ['mod+f'];
+
+/** True when the binding collides with the hardcoded transcript-find chord
+ *  (platform-aware comparison). */
+export function isHardcodedFindBinding(binding: string): boolean {
+  return HARDCODED_FIND_BINDINGS.some((hardcoded) => bindingsEquivalent(hardcoded, binding));
 }
 
 /** Platform-aware binding equivalence. On non-Apple platforms `mod` and

@@ -139,6 +139,13 @@ function onRenameEnter(e: KeyboardEvent): void {
   emit('confirmRename');
 }
 
+// Right-click over the open rename input belongs to the native text-editing
+// menu (same exception as SessionRow): don't open the workspace menu there.
+function onHeaderContextMenu(e: MouseEvent): void {
+  if (props.renamingId === props.group.workspace.id) return;
+  emit('groupContextmenu', props.group.workspace, e);
+}
+
 // Drag-to-reorder: the group header is the drag handle. We stash the workspace
 // id on the dataTransfer (so drop targets elsewhere could read it) and tell the
 // sidebar which group is being dragged so it can compute the new order on drop.
@@ -179,7 +186,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
       :class="{ on: group.workspace.id === activeWorkspaceId && activeId === '', collapsed: isCollapsed(group.workspace.id) }"
       draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
-      @contextmenu="emit('groupContextmenu', group.workspace, $event)"
+      @contextmenu="onHeaderContextMenu"
       @dragstart="onHeaderDragStart"
       @dragend="emit('wsDragend')"
     >

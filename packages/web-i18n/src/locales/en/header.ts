@@ -6,6 +6,7 @@ export default {
   copyAll: 'Copy all as Markdown',
   copyFinalSummary: 'Copy final summary',
   copied: 'Copied',
+  lastUsed: 'Last used',
   copyPath: 'Copy path',
   changed: '{n} changed',
   gitTooltip: 'Open Files > Changed',

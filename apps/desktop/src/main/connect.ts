@@ -7,6 +7,7 @@ import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
+import { startShellEnvProbe } from './shell-env';
 import { rendererUrl, rendererDevBase } from './protocol';
 import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
@@ -86,6 +87,9 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       // window (re)creation. A failed start leaves the handle null, so a
       // later retry comes back through here and starts fresh.
       if (serverHandle === null) {
+        // The embedded server and every tool it spawns share this process's
+        // env; wait for the probe (warmed up in index.ts) to fill it first.
+        await startShellEnvProbe();
         serverHandle = await startDesktopServer({
           // No static fallback in HMR dev: the renderer comes from the Vite dev
           // server, and desktop-dist may not exist (kap-server would refuse to

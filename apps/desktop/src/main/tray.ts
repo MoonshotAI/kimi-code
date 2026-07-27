@@ -4,24 +4,28 @@ import { app, Menu, nativeImage, Tray } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
 import { trackDesktopEvent } from './track';
+import { setTaskbarAttention } from './taskbar';
 
 // System tray (macOS menu-bar / Windows notification area). Desktop-only — the
-// web client has no equivalent surface. A single context menu covers both
-// interactions: on macOS a plain click on a status item with a context menu
-// opens the menu; on Windows left-click is wired to the same menu below.
+// web client has no equivalent surface. Click behaviour: on macOS a plain
+// click on a status item with a context menu opens the menu; on Windows the
+// menu opens on right-click by default once set, so left-click (and
+// double-click) is wired to surface the main window below.
 //
 // The tray also renders the pending-attention badge: the renderer pushes
 // {unread, approvals, questions, items} over `IPC.trayAttention` whenever they
 // change (see renderer composables/useTrayAttention.ts), and `setTrayAttention`
 // shows the bare total next to the macOS menu-bar icon (Tray.setTitle is
-// macOS-only), the per-kind breakdown in the tooltip, and the attention
+// macOS-only — the Windows counterpart is the taskbar overlay + flash in
+// taskbar.ts), the per-kind breakdown in the tooltip, and the attention
 // sessions as clickable entries at the top of the dropdown menu (click → show
-// the window and jump to that session). On macOS the window hides instead of
-// closing (window.ts shouldHideOnClose), so the renderer keeps reporting while
-// hidden and the badge stays live; the last-known state only has to survive
-// real quits/reloads — unread flags persist in localStorage and pending items
-// live server-side, so entries stay meaningful (and clickable, via the
-// window.ts queue while booting/reloading) until the next push.
+// the window and jump to that session). On macOS and Windows the window hides
+// instead of closing (window.ts shouldHideOnClose), so the renderer keeps
+// reporting while hidden and the badge stays live; the last-known state only
+// has to survive real quits/reloads — unread flags persist in localStorage
+// and pending items live server-side, so entries stay meaningful (and
+// clickable, via the window.ts queue while booting/reloading) until the next
+// push.
 
 export interface TrayIconEnv {
   platform: NodeJS.Platform;
@@ -363,7 +367,10 @@ export function createTray(actions: TrayActions): Tray | null {
   lastAttention = ZERO_ATTENTION;
   renderTray();
   if (process.platform === 'win32') {
-    tray.on('click', () => tray?.popUpContextMenu());
+    // Windows convention: left-click / double-click surfaces the window; the
+    // context menu opens on right-click without any handler.
+    tray.on('click', () => actions.showMainWindow());
+    tray.on('double-click', () => actions.showMainWindow());
   }
   return tray;
 }
@@ -393,6 +400,7 @@ function renderTray(): void {
 export function setTrayAttention(attention: TrayAttention): void {
   lastAttention = attention;
   renderTray();
+  syncTaskbarAttention();
 }
 
 /** Follow the renderer's in-app language (IPC.locale): re-render the tooltip
@@ -403,6 +411,12 @@ export function setTrayLocale(locale: TrayLocale): void {
   }
   trayLocale = locale;
   renderTray();
+  syncTaskbarAttention();
+}
+
+function syncTaskbarAttention(): void {
+  const total = lastAttention.unread + lastAttention.approvals + lastAttention.questions;
+  setTaskbarAttention(total, trayAttentionSummary(lastAttention, effectiveTrayLocale()));
 }
 
 /** Tear the tray down on quit and drop the module references. */

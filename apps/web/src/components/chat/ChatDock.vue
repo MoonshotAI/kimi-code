@@ -118,6 +118,9 @@ const goalTokenPct = computed(() => {
   return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
 });
 
+/** Wall-clock stat in the goal footer ('' hides a sub-second span). */
+const goalWallClockLabel = computed(() => (props.goal ? formatDuration(props.goal.wallClockMs) : ''));
+
 async function onGoalCancel(): Promise<void> {
   const confirmed = await confirm({
     title: t('status.goalCancel'),
@@ -351,7 +354,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
         <div v-if="dockPanel === 'goal' && goal" class="dock-work-foot">
           <span>{{ goal.turnsUsed }} turns</span>
           <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
-          <span>{{ formatDuration(goal.wallClockMs) }}</span>
+          <span v-if="goalWallClockLabel">{{ goalWallClockLabel }}</span>
           <span v-if="goal.budget.tokenBudget !== null">{{ goalTokenPct }}% token budget</span>
         </div>
       </div>

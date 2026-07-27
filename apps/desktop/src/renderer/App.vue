@@ -47,11 +47,13 @@ import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import { Icon, IconButton } from '@moonshot-ai/web-ui';
-import { isMacosDesktop } from './lib/desktopFlag';
+import { isMacosDesktop, isWindowsDesktop } from './lib/desktopFlag';
+import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
 import { selectContentsOf } from './lib/transcriptSelectAll';
 import { useFullscreen } from './composables/useFullscreen';
+import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
+import { useJumpList } from './composables/useJumpList';
 import { useVibrancy } from './composables/useVibrancy';
-import { useTrayAttention } from './composables/useTrayAttention';
 import { matchShortcutAction } from './composables/useShortcuts';
 import { shortcutActionById } from './lib/keymap';
 import {
@@ -111,6 +113,19 @@ const { vibrancy } = useVibrancy();
 // approvals + awaiting questions) to the native tray: macOS menu-bar count +
 // tray tooltip/menu breakdown. No-op without the desktop bridge (web).
 useTrayAttention(client);
+
+// Push the recent workspaces to the Windows Jump List (taskbar right-click),
+// and route launch actions (Jump List clicks, second-instance argv) back
+// into the app. No-op without the desktop bridge (web).
+useJumpList(client, (payload) => {
+  runWhenInitialized(client.initialized, () => {
+    if (payload.action === 'new-chat') {
+      handleCreateSession();
+    } else {
+      void openWorkspaceByRoot(payload.root);
+    }
+  });
+});
 
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);
@@ -993,6 +1008,23 @@ async function handleDropWorkspacePaths(paths: string[]): Promise<void> {
   }
 }
 
+// Launch-action "open this workspace" (Jump List item / second-instance
+// argv): select it when already registered, otherwise add it through the
+// standard flow (which also selects it). Part of the desktop-only
+// add-workspace block — keep on web→desktop re-copies (docs/native-todos.md).
+async function openWorkspaceByRoot(root: string): Promise<void> {
+  const existing = client.workspacesView.value.find((workspace) => workspace.root === root);
+  if (existing) {
+    client.openWorkspace(existing.id);
+    return;
+  }
+  const added = await addWorkspace(root);
+  if (!added) {
+    addWorkspaceError.value = t('workspace.addFailed');
+    showAddWorkspace.value = true;
+  }
+}
+
 function focusComposerAfterDraft(): void {
   void nextTick(() => {
     conversationPaneRef.value?.focusComposer();
@@ -1044,11 +1076,17 @@ function openPr(url: string): void {
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
         'macos-desktop': isMacosDesktop,
+        'windows-desktop': isWindowsDesktop,
         vibrancy: isMacosDesktop && vibrancy,
         fullscreen: isFullscreen,
       }"
       :inert="showOnboarding"
     >
+    <WindowsTitleBar
+      v-if="isWindowsDesktop && !isFullscreen"
+      :sidebar-collapsed="sidebarCollapsed"
+      @toggle-sidebar="toggleSidebarCollapse"
+    />
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
@@ -1199,18 +1237,18 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
-    <!-- Sidebar toggle — floating only when the in-header control can't serve:
+    <!-- Sidebar toggle — floating only when the platform control can't serve:
          on macOS desktop it's RESIDENT (always rendered beside the traffic
          lights, the sidebar slides underneath and only the glyph swaps, so it
-         never moves or flashes); on Windows/web the collapse button lives
-         inside the sidebar header, so this floating button only appears while
+         never moves or flashes); Windows owns a resident toggle in its global
+         titlebar and never renders this control; web renders it only while
          COLLAPSED (to re-expand the sidebar). It must come AFTER
          ConversationPane in the DOM: Electron computes the window-drag region
          in tree order (drag rects union, no-drag rects subtract), so a no-drag
          element placed before the ChatHeader drag region would have its hole
          painted back over — making the button an inert drag area. -->
     <IconButton
-      v-if="!isMobile && (isMacosDesktop || sidebarCollapsed)"
+      v-if="!isMobile && (isMacosDesktop || (sidebarCollapsed && !isWindowsDesktop))"
       class="sidebar-toggle-btn"
       size="sm"
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
@@ -1219,11 +1257,11 @@ function openPr(url: string): void {
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
 
-    <!-- New-chat shortcut — only while the sidebar is COLLAPSED (the expanded
-         sidebar already owns the primary "New chat" button). Sits immediately
-         right of the toggle and reuses its chat-new icon. -->
+    <!-- New-chat shortcut — web-only while the sidebar is COLLAPSED (the
+         expanded sidebar already owns the primary "New chat" button).
+         Windows deliberately keeps this action out of the global titlebar. -->
     <IconButton
-      v-if="!isMobile && sidebarCollapsed"
+      v-if="!isMobile && sidebarCollapsed && !isWindowsDesktop"
       class="new-chat-btn"
       size="sm"
       :label="t('sidebar.newChat')"
@@ -1483,6 +1521,7 @@ function openPr(url: string): void {
   box-sizing: border-box;
 }
 .app {
+  --windows-titlebar-height: env(titlebar-area-height, 40px);
   flex: 1;
   min-height: 0;
   position: relative;
@@ -1500,6 +1539,9 @@ function openPr(url: string): void {
   color: var(--color-text);
   overflow: hidden;
   box-sizing: border-box;
+}
+.app.windows-desktop:not(.fullscreen) {
+  padding-top: var(--windows-titlebar-height);
 }
 /* macOS desktop with the frosted material on: unpainted — the window's
    native vibrancy material reads through the sidebar column (see style.css
@@ -1652,6 +1694,9 @@ function openPr(url: string): void {
 }
 .app.sidebar-collapsed .chat-header {
   padding-left: 78px;
+}
+.app.sidebar-collapsed.windows-desktop .chat-header {
+  padding-left: var(--space-4);
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
   padding-left: 146px;

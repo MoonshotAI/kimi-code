@@ -3,6 +3,7 @@
      + close. Variants color the icon (info / success / warning / danger). The
      default slot carries extra body content (action links, detail panels…). -->
 <script setup lang="ts">
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 
@@ -13,10 +14,11 @@ withDefaults(defineProps<{
   dismissLabel?: string;
 }>(), {
   variant: 'info',
-  dismissLabel: 'Dismiss',
 });
 
 defineEmits<{ dismiss: [] }>();
+
+const { t } = useKimiI18n();
 </script>
 
 <template>
@@ -34,7 +36,7 @@ defineEmits<{ dismiss: [] }>();
       <div v-if="message" class="ui-toast__msg">{{ message }}</div>
       <slot />
     </div>
-    <IconButton class="ui-toast__close" size="sm" :label="dismissLabel" @click="$emit('dismiss')">
+    <IconButton class="ui-toast__close" size="sm" :label="dismissLabel ?? t('common.dismiss')" @click="$emit('dismiss')">
       <Icon name="close" size="sm" />
     </IconButton>
   </div>

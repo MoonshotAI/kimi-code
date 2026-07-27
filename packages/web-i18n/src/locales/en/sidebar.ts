@@ -8,7 +8,7 @@ export default {
   collapseAll: 'Collapse all workspaces',
   expandAll: 'Expand all workspaces',
   newSession: 'New Session',
-  newChat: 'New chat',
+  newChat: 'New Session',
   newWorkspace: 'New Workspace',
   dropToAddWorkspace: 'Drop to add workspace',
   emptyState: 'No sessions yet · click New Session to start',

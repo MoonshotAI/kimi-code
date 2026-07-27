@@ -8,6 +8,7 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 - **本仓库是 Web UI 和桌面端源码的主仓库**。这两个应用此前住在 kimi-code 仓库（`apps/kimi-web` / `apps/kimi-desktop`），今后 web/desktop 的开发都在本仓库进行。
 - **kimi-code 是 CLI / server / agent 的主仓库**，以 submodule 钉在本仓库根目录，其 `packages/*` 通过 pnpm workspace 直接以源码链接进来——desktop 的 Electron 主进程会把其中的 server（`kap-server`、`agent-core-v2` 等）打包为内嵌 server。
 - **web 产物分发**：`pnpm sync:web`（`scripts/sync-web-to-kimi-code.mjs`）把 `apps/web/dist` 拷贝到一个 kimi-code checkout 的 `apps/kimi-code/dist-web`，用 `KIMI_CODE_REPO` 指定目标 checkout（必传）。
+- **Windows 窗口 chrome**：desktop 用 Window Controls Overlay 保留原生窗口按钮，并由 renderer 绘制品牌与文件/编辑/视图/帮助菜单入口。
 
 ## 下载
 
@@ -93,6 +94,8 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token（动效除 `--duration-*` / `--ease-*` 外，含设计师导出图标动画的 `--anim-*` 例外，见 §02 Motion），并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **主进程原生界面文案**：新增用户可见字符串（托盘、通知、对话框等）要 en/zh 双语——主进程无 i18n runtime，用 `apps/desktop/src/main/tray.ts` 同款字符串表，应用语言经 `kimi:locale` 通道同步（OS 语言兜底）。细则见 `AGENTS.md` 的"硬约束"。
 - **应用菜单（menu.ts）**：编辑菜单不用 `editMenu` 角色而是手工拼装——原生菜单加速键会先于 renderer 截获按键；「全选」保留 CmdOrCtrl+A 加速键但经 `kimi:menu-action` 转发 renderer 的作用域全选（只选中中间 transcript 或注意力所在面板）。改动菜单时保持该契约，其余编辑项镜像 Electron editMenu 展开（`tests/main/menu.test.ts` 钉住）。
+- **文本框原生右键菜单（context-menu.ts）**：Electron 无默认编辑菜单，`context-menu.ts` 在 `webContents` 的 `context-menu` 事件里对可编辑字段（transcript 搜索框、composer、内联重命名等）弹原生菜单——macOS 带 Look Up（走 `showDefinitionForSelection`），其余编辑动词走 role + `editFlags` 门控；全部条目显式双语 label（role 默认 label 只随 OS locale），菜单每次右键重建，切语言即时生效。安装点：`window.ts` 的 `createWindow`（`installExternalLinkGuard` 同款）；明细见 `apps/desktop/docs/native-todos.md`。
+- **Windows 标题栏**：使用 Window Controls Overlay 保留原生窗口按钮，左侧依次为图标随主题同向切换（浅色白底、深色深底）的完整品牌、常驻侧栏切换、文件/编辑/视图/帮助菜单及按状态出现的更新入口；Windows 托盘固定使用带白色背景的完整品牌图标，Sidebar 不渲染品牌 Header，也不重复这些 chrome 控件。
 - **注释克制**：密度对齐所在文件，不写复述代码的注释；设计决策与 bug 根因进 spec / commit message，不进代码。细则见 `AGENTS.md` 的"硬约束"。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
 

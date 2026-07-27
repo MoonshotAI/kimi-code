@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 35 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 39 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意三点：
 
@@ -38,7 +38,7 @@
   - 测试：`tests/main/open-in.test.ts`（13 用例：平台门控、检测、argv 构造、失败回传）；`tests/main/preload.test.ts` 白名单；`src/renderer/lib/nativeOpenIn.test.ts`（16 用例：桥探测、列表过滤、打开回传、默认目标持久化、快捷解析优先级）。
   - 遗留：打开失败暂无 UI 反馈（静默）；「打开文件 / 在 Finder 显示」（FilePreview 的 `openWorkspaceFile`/`revealWorkspaceFile`）仍走 daemon REST，未原生化。
   - 图标：彩色官方图标从本机 app bundle 的 `.icns` 提取为 128px PNG（`src/renderer/assets/app-icons/`，11 个），经 `lib/nativeOpenIn.ts` 的 `openInAppIcon(id)` 映射；菜单项与快捷按钮用 `<img>` 渲染（nominative use），设置页 Select 靠 web-ui `Select` 新增的 `option.icon` 字段（可选、向后兼容，web 同步受益）。
-  - 已知限制：第一版仅 macOS；Windows/Linux 返回空目录并隐藏入口。
+  - 已知限制：仅 macOS / Windows（2026-07 已补 Windows 侧：VS Code / VS Code Insiders / Cursor / Zed 走 LOCALAPPDATA/ProgramFiles 固定路径探测；File Explorer 恒有；Terminal 优先 `wt.exe`、不可用时回退 Windows PowerShell；Git Bash 走 Git for Windows 的 LOCALAPPDATA/ProgramFiles 路径探测；启动全部 detached spawn——explorer.exe 成功也常返回非零退出码，不看 exit code；图标为从 exe / 安装包资源提取的官方图标）；Linux 返回空目录并隐藏入口。
 
 - [x] **文件导出走保存对话框**（已完成，desktop 专属）
   - 实现：新增 `src/main/downloads.ts`——主进程 `will-download` 统一接管所有下载（会话导出 zip、trace 日志、未来任何下载），`dialog.showSaveDialogSync` 弹系统保存框（预选"上次目录 + 建议文件名"，首次 `~/Downloads`），确认才 `setSavePath` 落盘、取消 `item.cancel()` 不落盘；`WeakSet` 防窗口重建重复注册（renderer 零改动、零 web 分叉，未走 `kimi:dialog-save` IPC）。
@@ -67,9 +67,11 @@
   - **web 刻意不改**：浏览器无 globalShortcut；`summonApp` 在 `SHORTCUT_ACTIONS` 中 scope 为 global 但不进 `App.vue` 的 renderer dispatcher（主进程直接处理，renderer 无需消费）。
   - 测试：`tests/main/shortcuts.test.ts`（14 用例：推送前不注册/推送注册/回调 showMainWindow/重绑/清空/注册失败/重绑失败保旧值（含返回值断言）/重绑失败后挂起循环恢复 committed/deferred 失败回落 committed 并返回 false/恢复回执 true+false/挂起中取消分配/挂起-恢复/相同绑定 no-op/卸载全清）；`tests/main/preload.test.ts` 白名单 + 两全局快捷键通道 invoke 回执校验；`tests/renderer/keymap.test.ts` 补 OS-global 跨 scope 双向查重、`isAcceleratorExpressible`（单引号拒绝）、`isAltGrShapedBinding`（平台分流）、OS-global 默认值可转换+带修饰键 sanity；`tests/renderer/useShortcuts.test.ts`（3 用例：拒绝置位/成功清除/重绑推送/无桥静默）。
 
-- [ ] **最近工作区接入 OS**
-  - 现状：全靠 localStorage + server `recentRoots`。
-  - 做法：`app.addRecentDocument`（macOS dock 最近文档）/ Windows Jump List。
+- [x] **最近工作区接入 OS**（Windows 侧已完成，desktop 专属；macOS `app.addRecentDocument` 仍待做）
+  - 实现（Windows Jump List，2026-07）：主进程 `src/main/jump-list.ts`——renderer 经新 IPC `kimi:jump-list` 推送最近工作区（name + root，上限 9 条，`asJumpListWorkspaces` 结构校验），主进程 `app.setJumpList` 建 custom「最近/Recent」+ tasks「新建会话/New Chat」两段（双语，跟随 `kimi:locale` 推送，OS 语言兜底）；条目为 `type: 'task'` + `program: process.execPath` + `args: --workspace="<root>"` / `--new-chat`（**不用 `type: 'file'`**——目录没有文件关联，点击行为不可靠；root 带空格必须引号包裹）。argv 解析 `parseLaunchArgs`（兼容引号/非引号、剥空值），两个入口：首实例 `process.argv` 与 `second-instance` 的 argv（配合单实例锁），统一 `forwardLaunchArgs` → `window.ts` `sendLaunchAction`——与托盘会话跳转共用同一个 renderer 就绪队列（`did-finish-load` 落定冲刷），新 renderer event channel `kimi:launch-action`。renderer 侧 `composables/useJumpList.ts`（desktop-only，无桥 no-op）：照 useTrayAttention 模式，`initialized` 门控首推（不抹掉加载窗口的旧菜单）、结构去重防重复推；`App.vue` 订阅 launch action（desktop 分叉块）：new-chat → `handleCreateSession()`，open-workspace → `openWorkspaceByRoot`（已注册则选中，未注册走 `addWorkspace` 标准流程并选中）。`second-instance` 回调在 app.ts（单实例锁的配套）。
+  - **web 无对应物**：浏览器没有 Jump List；`useJumpList.ts` 不同步 apps/web（同 useTrayAttention 先例）；`App.vue` 分叉块（import + useJumpList 调用 + openWorkspaceByRoot），整目录 re-copy 时需保留。
+  - 测试：`tests/main/jump-list.test.ts`（parseLaunchArgs 各形态/引号/空值、payload 校验与截断、分类模板双语）；`tests/renderer/useJumpList.test.ts`（去重、门控、截断、路由、无桥）；`tests/main/preload.test.ts` 白名单 + 两通道校验。
+  - 验证注意：Jump List 只对打包版的 exe 路径生效（dev 下 `process.execPath` 是 electron 二进制），dev 可用命令行 `--workspace=...` 验证 argv 路由。
 
 - [ ] **server token 改走 IPC**
   - 现状：`renderer/lib/serverAuth.ts` 从 URL `#token=` hash 读 token 再镜像 localStorage（7 天 TTL）。
@@ -81,7 +83,7 @@
   - 测试：`tests/main/ui-state.test.ts`（缺失/损坏文件、往返、保留其它 key、目录创建、幂等）；`tests/main/preload.test.ts` 白名单 + 通道断言。
 
 - [x] **系统托盘常驻图标**（已完成，desktop 专属）
-  - 实现：新增 `src/main/tray.ts`——`Tray` + 单一右键/左击菜单（`显示主窗口` / `退出`）；macOS 下 status item 设了 context menu 后单击即弹菜单，Windows 左键额外接 `click → popUpContextMenu` 对齐行为。托盘图标按平台分资产（`trayIconPath` 纯函数）：macOS 用 `trayTemplate.png`/`@2x`（机器人单色剪影、眼睛镂空，`Template` 文件名让 nativeImage 自动标记为 template image，OS 按深浅色菜单栏自动反色）；Windows 用 `tray.ico`，Linux 用 `tray.png`/`tray@2x.png`（满铺白底圆角方块 + 机器人的彩色构图）；经 `electron-builder.config.cjs` `extraResources` 的 `build/` + `filter: ['tray*']` 进 resources（注意 extraResources 的 `from` **不吃 glob**，写成 `build/tray*` 会被当字面路径静默跳过——v0.0.2 就踩了这个、包里没有托盘，见 config 注释）。`index.ts` 模块级持有 `Tray` 引用（无引用会被 GC、图标消失），`before-quit` 里 `tray.destroy()`；`quit` 走 `app.quit()`，server 清理照常执行。
+  - 实现：新增 `src/main/tray.ts`——`Tray` + 单一右键/左击菜单（`显示主窗口` / `退出`）；macOS 下 status item 设了 context menu 后单击即弹菜单，Windows 左键额外接 `click → popUpContextMenu` 对齐行为。托盘图标按平台分资产（`trayIconPath` 纯函数）：macOS 用 `trayTemplate.png`/`@2x`（机器人单色剪影、眼睛镂空，`Template` 文件名让 nativeImage 自动标记为 template image，OS 按深浅色菜单栏自动反色）；Windows 用带白色背景的完整品牌构图 `tray.ico`；Linux 用 `tray.png`/`tray@2x.png`。资源经 `electron-builder.config.cjs` `extraResources` 的 `build/` + `filter: ['tray*']` 进 resources（注意 extraResources 的 `from` **不吃 glob**，写成 `build/tray*` 会被当字面路径静默跳过——v0.0.2 就踩了这个、包里没有托盘，见 config 注释）。`index.ts` 模块级持有 `Tray` 引用（无引用会被 GC、图标消失），`before-quit` 里 `tray.destroy()`；`quit` 走 `app.quit()`，server 清理照常执行。
   - **web 无对应物**：浏览器没有托盘面，`apps/web` 不涉及（非共享文件分叉）。
   - 测试：`tests/main/tray.test.ts`（`trayIconPath` 纯函数 3 用例：win32 取 .ico、mac/linux 取 png、packaged 走 resourcesPath）。
 
@@ -135,10 +137,22 @@
   - 待接线：打开文件夹 → `createAddWorkspaceEntry` 全链路（desktop 原生目录选择器，web 回退对话框）。
   - 测试：`tests/main/menu.test.ts` 改写 +4 用例（Close 在 File 不在 Window、File 菜单双语 label + accelerator、New Chat 已接线 / New Window 与 Open Folder 展示态无 handler）。
 
-- [x] **Help 菜单（文档 / 控制台）**（已完成，desktop 专属）
+- [x] **Help 菜单（文档 / 控制台 / 性能录制）**（已完成，desktop 专属）
   - 实现：`menu.ts` 新增 Help 菜单（`帮助`/`Help`，位于 Window 之后，菜单序列 App / File / Edit / View / Window / Help）：「文档」`https://www.kimi.com/code/docs/`、「控制台」`https://www.kimi.com/code/console?from=kimi_code_desktop`（带 desktop 归因参数），`shell.openExternal` 走系统浏览器（链接由用户提供，未核验跳转）。macOS 会给 Help 菜单自动加系统搜索框，非我们控制。
-  - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback、Start Performance Trace（性能录制）三项后续再加。
-  - 测试：`tests/main/menu.test.ts` +1 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项）。
+  - 性能录制（2026-07 补）：新增 `src/main/trace.ts`——`contentTracing` 录制 Chromium trace（browser/renderer/GPU 全进程），category 集面向卡顿诊断（`blink,v8,toplevel,ipc,loading,navigation,renderer_host,disabled-by-default-v8.cpu_profiler,disabled-by-default-blink.main_frame`），`record-continuously` 环形缓冲（淘汰早期事件保留最近事件；长录制丢数据按产品决策静默不提示）。菜单项文案随状态切换（录制中显示「停止性能录制」，经 `menuTemplate` 第 5 参传入，`buildMenu` 读 `getTraceRecorder().isRecording()`；不用 checkbox 勾选样式，用户明确决定）：点击开始，再点停止——先 `stopRecording()` 落临时文件，再弹 `dialog.showSaveDialog`（预选 `~/Downloads/kimi-code-trace-<时间戳>.json`，同 runMenuUpdateCheck 的 showMainWindow 父窗模式），确认则 copy+rm 移到目标（跨卷 EXDEV 故不用 rename），取消删临时文件，**保存失败保留临时文件且错误信息带其路径**（唯一副本不主动销毁，用户可手动取走，2026-07 codex review）；产物拖入 ui.perfetto.dev / chrome://tracing 分析。状态机防重入（busy 覆盖 start 与 stop/save 全阶段，双击/快速连点返回 busy）；开始/停止/保存失败弹原生错误框（菜单点击是显式用户意图，同菜单检查更新策略）。`createTraceRecorder(deps)` 依赖注入可测，模块级单例 lazy 接真实 Electron API（contentTracing 需 app-ready）。录制中退出 app 无需清理（数据在内存缓冲，进程结束即消失）。renderer 零改动、无桥接、web 不涉及。
+  - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback 两项后续再加。
+  - 测试：`tests/main/menu.test.ts` +2 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项；性能录制项双语 + checkbox 状态跟随参数）；`tests/main/trace.test.ts`（8 用例：文件名格式、开始带 category、停止保存移动、取消删临时文件、开始/停止/保存失败、重入 busy）。
+
+- [x] **Windows 关窗驻留托盘 + 单实例锁**（已完成，desktop 专属）
+  - 实现（2026-07）：`window.ts` `shouldHideOnClose` 平台门控从仅 darwin 扩到 darwin/win32——Windows 点 X 也改为隐藏窗口（内嵌 server / WS / 托盘全保活），真退出走托盘「退出」/ 更新器安装（`before-quit` / `markQuitting` 既有闭环不变）；macOS 的全屏先退再藏分支 Windows 同样适用。`app.ts` 加 `app.requestSingleInstanceLock()`（拿不到锁直接 quit，不起 server 不建窗；dev 与打包版 userData 目录不同、锁互不影响，同机调试能力保留）+ `second-instance` → `showMainWindow()`（并路由 argv，见 Jump List 条目）。窗口位置恢复新增 `clampBoundsToWorkArea`：存档 bounds 不在当前任何显示器 workArea 内时 clamp 回边缘（至少 100px 可见、标题栏不出顶边），修拔外接屏后窗口恢复到屏幕外的问题。`window-all-closed` 非 darwin `app.quit()` 保留为真销毁兜底。
+  - **web 无对应物**；`shouldHideOnClose` / `clampBoundsToWorkArea` 为纯函数。
+  - 测试：`tests/main/window.test.ts`（win32 hide-on-close 两态、linux 仍销毁；clamp 各方向/副屏 origin/无坐标）。
+  - 验证注意：Windows 用户旧习惯「点 X = 退出」改变，托盘菜单「退出」是唯一显式退出入口（更新器安装不受影响）。
+
+- [x] **Windows 托盘交互 + 任务栏待办角标/闪动**（已完成，desktop 专属）
+  - 实现（2026-07）：`tray.ts` win32 左键/双击改为 `showMainWindow()`（右键菜单是 `setContextMenu` 后的系统默认行为，旧行为是左键弹菜单，反 Windows 惯例）。待处理提醒新增 Windows 落点 `src/main/taskbar.ts`：`tray.ts setTrayAttention` 同步调 `setTaskbarAttention(total, summary)`——`win.setOverlayIcon` 数字角标（运行时 `nativeImage.createFromBitmap` 生成紧凑红色圆/胶囊 + 3×5 白色点阵数字，1–99 显示数字、超过 99 显示 `99+`，带 1x/2x representation，无资产文件、不动 extraResources；生成失败降级为只闪动）+ total **增大**且窗口未聚焦时 `flashFrame(true)`（0→N 的启动恢复不闪——窗口聚焦；未变/变小不闪），focus / 归零停闪。控制器按窗口实例缓存、角标按显示文本缓存，窗口重建后重挂。macOS 仍走菜单栏计数 + Dock badge，`setTaskbarAttention` 非 win32 恒 no-op。
+  - **web 无对应物**（主进程-only 改动，renderer 零改动）。
+  - 测试：`tests/main/taskbar.test.ts`（badgePixels 像素格式、overlay 设置/清除、闪动触发条件全集、缺资产降级、窗口销毁 no-op）。
 
 - [x] **拖文件夹到侧边栏创建工作区**（已完成，desktop 专属）
   - 实现：preload 新增 `getPathForFile(file)`（`webUtils.getPathForFile`——sandboxed renderer 拿拖放文件绝对路径的唯一官方姿势，`File.path` 早已移除；空串/异常归 `null`，零新 IPC channel，webUtils 就在 preload 进程内）。renderer 新增 `src/renderer/lib/nativeWorkspaceDrop.ts`：`canDropWorkspaceFolders()` 桥探测（桥缺 `getPathForFile` 方法即 false，旧桥自动降级）；`looksLikeFolderDrag()` dragover 启发式（拖拽处于 protected mode，只有 `kind`/`type` 可读，文件夹 = `kind:'file'` + 空 MIME，误报无害——drop 会权威复核）；`extractDroppedFolderPaths()` drop 权威提取（`webkitGetAsEntry().isDirectory` 过滤、桥解析路径、去重，解析失败跳过）。`Sidebar.vue` 在 `.col` 上挂 dragenter/dragover/dragleave/drop：启发式命中才 `preventDefault + stopPropagation`（后者压住 `useAttachmentUpload` document 级处理，composer 的全窗口附件 overlay 不为文件夹拖亮起；高亮用计数器跟踪嵌套 enter/leave，照抄同款模式），dragleave 刻意不 stopPropagation（document 计数 floor 0 兜底）；drop 提取到 ≥1 个路径才拦截并 `emit('addWorkspacePaths', paths)`，否则原样冒泡回落附件流程——普通文件拖放行为两端零变化；内部工作区排序拖是 `text/plain` payload，天然不命中启发式。高亮 UI 为 `.col` 内绝对定位 overlay（pointer-events:none、纯 CSS show/hide 不用 Transition，虚线 accent 卡片复用 composer drop-overlay 视觉语言）。`App.vue`（desktop 分叉块，同 requestAddWorkspace 区块）`@add-workspace-paths` 顺序循环复用 `addWorkspace()`（自动选中最后一个、接上 pending 首条消息），daemon 拒绝走 `addWorkspaceError` + 回退 dialog（同选择器失败的报错面）。多文件夹一次拖入 = 顺序逐个创建。
@@ -151,6 +165,13 @@
   - renderer：`composables/useVibrancy.ts` 单例（照 useFullscreen 模式，无桥恒 true 零影响）。**关键 class 拆分**：`macos-desktop` 只管红绿灯避让/拖拽区等 macOS 布局，`vibrancy`（`<html>`、`App.vue` 根、`.side` 三处绑定同一 ref）只管"让材质透出"的上色规则——`style.css` 根链透明、`App.vue` `.app` 背景透明、`Sidebar.vue` 侧栏 tint + 子面透明；关闭 vibrancy 时布局（红绿灯）必须原样保留，所以两套 class 绝不能合并。`main.ts` 启动同步加 `macos-desktop` + `initVibrancy()`。**关闭态启动防闪烁**：偏好经 `rendererUrl` 的 `kimi_vibrancy=0|1` 查询参数**每次启动都注入**（protocol.ts，照 `kimi_onboarded` 先例——ui-state 主进程持有，URL 注入不依赖 origin localStorage；恒注入是为了让 SPA 内部 pushState 丢 query 后的 reload 能区分"开启"与"参数丢失"），`initVibrancy` 同步读参并镜像进 sessionStorage（desktopFlag 模式）决定首帧 class——**sessionStorage 优先于 URL pin**（设置切换写 sessionStorage，而地址栏里的 boot query 可能是旧值，SPA 或整页 reload 时不能让旧 query 盖过当次选择），异步桥读仅作确认；否则关闭过的用户启动会先闪一帧 tint 再跳回。设置行在 `SettingsDialog.vue` 通用页 Appearance（`v-if="isMacosDesktop"`，web 恒不渲染；i18n `settings.vibrancy[Hint]` 在共享包，web 不使用）。
   - **web 无对应物**：浏览器没有窗口材质；`useVibrancy.ts` 不同步 apps/web（同 useFullscreen 先例）；分叉块：`App.vue`（import + binding + `.app.macos-desktop.vibrancy` CSS）、`Sidebar.vue`（import + binding + tint CSS）、`SettingsDialog.vue`（import + 设置行）、`main.ts`（initVibrancy），整目录 re-copy 时需保留。
   - 测试：`tests/main/ui-state.test.ts`（vibrancy 默认 true/畸形 true/往返/保留其它 key）；`tests/main/window.test.ts`（`vibrancyWindowOptions` 三态）；`tests/main/preload.test.ts`（白名单 + 通道/畸形/junk 回默认断言）。
+
+- [x] **renderer 日志落盘主进程**（已完成；链路 desktop 专属，renderer lib 两端一致）
+  - 实现：renderer（沙箱无 fs）诊断经 IPC `kimi:renderer-log`（send）落盘到主进程同一日志文件（`log.ts`，`[renderer]` 前缀，与主进程日志按时间交错成一条时间线）。preload 加 `log(level, message, detail?)` 白名单方法（level 白名单 + 非空 string message 先行校验）；主进程 `renderer-log.ts` 终审不可信输入——level 白名单、message 截断 2000 字符、内联 `token=`/`Bearer` 脱敏、detail 递归脱敏（敏感 key 同 trace.ts 正则、base64 长串折叠、深度/数量/4KB 封顶、恶意输入占位符兜底）、60s 滑窗 120 行限流（超限计数，窗口结束补一条 dropped N 汇总行——防 renderer 死循环写爆 5MB 文件）。
+  - renderer 侧统一入口 `src/renderer/lib/log.ts`（`logInfo/logWarn/logError`）：console 镜像恒在（devtools 可见性不变）+ 运行时探测 `window.kimiDesktop.log` 转发，无桥（web）/老桥缺方法自动退化为纯 console，桥异常静默——日志绝不能影响业务。**两端同文件、零分叉**（运行时桥探测分流），`apps/web/src/lib/log.ts` 是同一份。`debug/trace.ts` 的 window error / unhandledrejection 也经它 always-on 落盘（不受 `?debug=1` 门控）——白屏/未捕获异常在打包版从此有记录。既有 25 处裸 `console.*` 全部收口到该 lib（desktop `[kimi-code]` / web `[kimi-web]` 品牌前缀分叉照旧保留）；`useModelProviderState` 的 desktop 分叉块（直连 console.error 五处 vs web 走 `pushOperationFailure`）同步收口。
+  - 主进程顺带补关键路径日志：app ready（version/platform/arch/packaged）与 quitting、内嵌 server listening 端口、updater 状态迁移（available / download started / downloaded / install / download failed，原裸 `console.warn` 收口为 `log.warn`）、`openExternal` 失败（URL 经 `redactUrlForLog` 脱敏）、`render-process-gone`（渲染进程崩溃/被杀死，此前唯一线索是用户看到白屏）。
+  - 测试：`tests/main/renderer-log.test.ts`（13 用例：payload 校验、脱敏、截断、恶意输入、限流 + 汇总行）；`tests/main/preload.test.ts`（白名单 + 通道 + 畸形不发送）；`tests/renderer/log.test.ts` 与 `apps/web/test/log.test.ts`（各 4 用例：桥转发、多参 detail、无桥/老桥 console-only、桥抛错静默）。
+  - **session 导出带桌面日志**：导出请求新增 `desktop: true` 标记（renderer 按 `isDesktop` 发送，web 恒不发），server 端（kimi-code 仓）读到标记后自行把 `<home>/logs/kimi-code-desktop.log` 打包为 zip 里的 `logs/kimi-desktop.log` 并登记 manifest——日志内容不经过 renderer/HTTP。client（web-core）对不认识该字段的旧版 server（strict schema 40001）自动去掉标记重试一次。kimi-code 侧改动：protocol/kap-server 两份 schema 加 `desktop` 可选字段、kap-server 路由透传 `includeDesktopLog`、agent-core-v2 导出服务照 global log 同款模式打包（缺文件静默跳过）。
 
 
 ## 共享组件 UI 分叉
@@ -167,12 +188,16 @@
 
 ## 已原生化的（不用动）
 
+- Windows 自定义标题栏：`titleBarStyle: hidden` + Window Controls Overlay 保留原生三键/Snap Layout；renderer 的 `WindowsTitleBar.vue` 显示完整品牌、紧随其后的常驻侧栏切换按钮、文件/编辑/视图/帮助四个入口及帮助右侧按状态出现的更新 pill，通过受控 `kimi:menu-popup` 桥弹主进程同一份原生 submenu。Sidebar 在 Windows 不再渲染品牌 Header，也不承载品牌、切换或更新入口，折叠态不渲染会话 Header 的浮动展开/新建会话按钮；web/macOS 不跟随。
 - 深色模式同步：renderer → `kimi:theme` → `nativeTheme.themeSource`
 - macOS 隐藏标题栏 + 红绿灯位置、CSS `-webkit-app-region: drag` 拖拽区
 - 原生菜单（App/Edit/View/Window）、`Cmd+Alt+K` 全局快捷键
 - 窗口尺寸/位置持久化、`app://renderer` 自定义协议、内嵌 server
+- **文本框原生右键菜单**（2026-07）：`src/main/context-menu.ts`——`webContents` 的 `context-menu` 事件里对 `params.isEditable` 弹原生编辑菜单（macOS 带 Look Up「查找」，走 `showDefinitionForSelection`，Electron 无 lookUp role；undo/redo/cut/copy/paste/selectAll 走 role，按 `editFlags` 门控），一次接入覆盖全部文本框（transcript 搜索框、composer、内联重命名）。双语：全部条目显式 label（字符串表模式，**role 默认 label 只随 OS locale，不随应用内语言**），经 `IPC.locale` 推送（`setContextMenuLocale`），OS 语言兜底；菜单每次右键重建，切语言即时生效。`window.ts` 的 `createWindow` 里 `installEditableContextMenu(win.webContents)` 安装（`installExternalLinkGuard` 同款）。只处理 isEditable；只读文本无菜单（维持现状）。
+- **web 无对应物**：浏览器对 `<input>` 自带原生菜单，`apps/web` 不涉及；主进程文件不参与两端同步。选区预览按 `Intl.Segmenter` 字素簇截断（48 上限），避免切出半个代理对。
+- 测试：`tests/main/context-menu.test.ts`（菜单结构/editFlags 门控/mac-only 项/Look Up 触发与双语 label/选区预览字素簇截断/非编辑目标不弹/locale 推送）。
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（33 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（37 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

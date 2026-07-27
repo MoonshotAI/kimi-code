@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
+import { join } from 'node:path';
 
 import type { DesktopServerHandle } from '../../src/main/server';
 
 const mocks = vi.hoisted(() => ({
   startDesktopServer: vi.fn(),
+  startShellEnvProbe: vi.fn((): Promise<void> => Promise.resolve()),
   rendererUrl: vi.fn(() => 'renderer-url'),
   rendererDevBase: vi.fn((): string | undefined => undefined),
   dataUrl: vi.fn(() => 'error-url'),
@@ -32,6 +34,9 @@ vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
 }));
 vi.mock('../../src/main/server', () => ({
   startDesktopServer: mocks.startDesktopServer,
+}));
+vi.mock('../../src/main/shell-env', () => ({
+  startShellEnvProbe: mocks.startShellEnvProbe,
 }));
 vi.mock('../../src/main/protocol', () => ({
   rendererUrl: mocks.rendererUrl,
@@ -90,13 +95,25 @@ describe('connect', () => {
 
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(mocks.startDesktopServer).toHaveBeenCalledWith({
-      webAssetsDir: '/resources/desktop-dist',
+      webAssetsDir: join('/resources', 'desktop-dist'),
       identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
     });
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', 'tok', undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
+  });
+
+  it('awaits the shell env probe before starting the embedded server', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+
+    expect(mocks.startShellEnvProbe).toHaveBeenCalledTimes(1);
+    expect(mocks.startShellEnvProbe.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.startDesktopServer.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('reuses the live embedded server on reconnect — never closes it', async () => {
@@ -162,7 +179,7 @@ describe('connect', () => {
     await connect(win1 as unknown as BrowserWindow);
     expect(mocks.errorHtml).toHaveBeenCalledWith(
       'server already running (pid=1, port=2, started=x)',
-      '/tmp/kimi-test/server/server.log',
+      join('/tmp/kimi-test', 'server', 'server.log'),
     );
     expect(mocks.dataUrl).toHaveBeenCalledWith('<error>');
     expect(win1.loadURL).toHaveBeenCalledWith('error-url');

@@ -5,6 +5,8 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 `app://renderer` 提供给窗口。它不再 spawn 独立 server 可执行文件（SEA），也不再套壳远
 程/共享 daemon 的网页。
 
+Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls Overlay：完整品牌与四个原生菜单入口在左，系统窗口按钮在右；实现集中在 `src/renderer/components/window/WindowsTitleBar.vue`、`src/main/window.ts` 与 `src/main/menu.ts`。
+
 ## 当前架构
 
 启动时主进程：
@@ -24,19 +26,31 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 
 关键文件：
 
-- `src/main/index.ts` — 主进程入口，只做引导：先装 `log.ts` 的日志与崩溃守卫，再动态
+- `src/main/index.ts` — 主进程入口，只做引导：先装 `log.ts` 的日志与崩溃守卫，注册
+  `app://` 特权 scheme（必须在 `app` ready 前，不能等异步步骤），fire-and-forget 启动
+  `shell-env.ts` 的 shell env 探测（GUI 启动只有 launchd 最小 env），最后动态
   `import('./app')`（静态 import 会让整个依赖树先于守卫加载，加载期崩溃无日志）。
-- `src/main/app.ts` — 主进程编排：注册 scheme / IPC、生命周期事件、`whenReady` 后起窗口。
+- `src/main/app.ts` — 主进程编排：注册 IPC、生命周期事件、`whenReady` 后起窗口。
 - `src/main/log.ts` — 主进程文件日志（`~/.kimi-code/logs/kimi-code-desktop.log`，按大小轮转保留
   一个 `.1` 存档）+ `uncaughtException` / `unhandledRejection` 守卫（已知无害的 undici
-  流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。
-- `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；`rendererDistRoot()`、
-  token 读取、server 日志路径也在这里。
+  流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。renderer 诊断
+  经 `kimi:renderer-log` 通道由 `renderer-log.ts` 校验/脱敏/限流后写入同一文件（`[renderer]`
+  前缀）；renderer 侧统一入口是 `src/renderer/lib/log.ts`（console 镜像 + 桥转发，web 无桥
+  退化为纯 console），`debug/trace.ts` 的 window error/unhandledrejection 也走它落盘。session
+  导出时 renderer 带 `desktop: true` 标记，server 自行把该日志文件打进 zip（`logs/kimi-desktop.log`）。
+- `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；内嵌 server 启动前
+  await shell env 探测结果补全 `process.env`；`rendererDistRoot()`、token 读取、server
+  日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
 - `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。
 - `src/main/tray.ts` — 系统托盘（macOS 菜单栏 / Windows 通知区）：图标、上下文菜单、待处理
-  badge（菜单栏计数 + 托盘菜单按会话跳转）；主进程原生界面文案的 en/zh 字符串表与
-  `kimi:locale` 语言同步也在这里。
+  badge（macOS 菜单栏计数 + 托盘菜单按会话跳转；Windows 的任务栏角标/闪动在 `taskbar.ts`，
+  Windows 左键 = 显示主窗口）；主进程原生界面文案的 en/zh 字符串表与 `kimi:locale` 语言
+  同步也在这里。macOS 与 Windows 均为关窗 = 隐藏驻留（`window.ts` `shouldHideOnClose`），
+  托盘「退出」为显式退出入口；打包版启动有单实例锁，二次启动聚焦已有窗口并路由其 argv。
+- `src/main/jump-list.ts` — Windows Jump List（任务栏右键）：「新建会话」task + renderer
+  推送的最近工作区（`kimi:jump-list`），条目共用 `--new-chat` / `--workspace="<root>"`
+  argv（`parseLaunchArgs`），经 `window.ts` 的 renderer 就绪队列下发 `kimi:launch-action`。
 - `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist；`server_version`
   经 tsdown 注入的 `__KIMI_CORE_VERSION__`（`scripts/kimi-core-version.mjs` 读 submodule 的 CLI 版本）
@@ -124,6 +138,11 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter kimi-code-app run dist
 只会把 `dependencies` 闭包拷进 app。
 
 注意：不要重命名构建出的 `.app`，重命名会使签名失效，macOS 会提示「已损坏」。
+
+Windows 使用自定义 40px 全局标题栏和原生 Window Controls Overlay。左侧依次为图标随
+主题同向切换（浅色白底、深色深底）的完整品牌、常驻侧栏切换、文件/编辑/视图/帮助菜单及
+帮助右侧按状态出现的更新入口；Windows 托盘固定使用带白色背景的完整品牌图标。Sidebar 不重复
+品牌、切换或更新控件，并省略原品牌 Header，收起后也不显示浮动展开或新建会话按钮。
 
 ### CI 打包（GitHub Actions）
 

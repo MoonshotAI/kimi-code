@@ -30,6 +30,7 @@ import { app, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
 import { IPC } from './ipc-channels';
+import { log } from './log';
 import { isUpdateAutoDownloadEnabled, setUpdateAutoDownloadEnabled } from './ui-state';
 import { markQuitting, sendToRenderer } from './window';
 import { trackDesktopEvent } from './track';
@@ -60,6 +61,10 @@ export type UpdateCheckResult =
   /** Dev / unpackaged runs have no updater at all (controller is null). */
   | { outcome: 'unsupported' }
   | { outcome: 'error'; message: string };
+
+/** Sentinel `error.message` for a manual check that hit its timeout; display
+ *  sites map it to a localized string instead of showing it verbatim. */
+export const UPDATE_CHECK_TIMED_OUT = 'update check timed out';
 
 // Structural subset of electron-updater's AppUpdater (an EventEmitter).
 // Declared with method overloads so the real `autoUpdater` stays assignable.
@@ -182,6 +187,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       return;
     }
     setStatus({ state: 'available', version: info.version, releaseDate: info.releaseDate });
+    log.info(`[kimi-desktop] update available: ${info.version}`);
     requestNotes(info.version);
   });
   updater.on('update-not-available', () => {
@@ -203,6 +209,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   });
   updater.on('update-downloaded', (info) => {
     setStatus({ state: 'downloaded', version: info.version, releaseDate: info.releaseDate });
+    log.info(`[kimi-desktop] update downloaded: ${info.version}`);
     // An update downloaded in a previous run surfaces here without a prior
     // 'update-available' — this may be the first time the version is known.
     requestNotes(info.version);
@@ -210,8 +217,9 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   updater.on('error', (error) => {
     if (current.state === 'downloading') {
       setStatus({ state: 'error', version: current.version, releaseDate: current.releaseDate, message: error.message });
+      log.error('[kimi-desktop] update download failed', error);
     } else {
-      console.warn('[updater] background check failed:', error.message);
+      log.warn(`[kimi-desktop] background update check failed: ${error.message}`);
     }
   });
 
@@ -251,7 +259,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       const onNotAvailable = (): void => finish({ outcome: 'latest' });
       const onDownloaded = (info: { version: string }): void => finish({ outcome: 'available', version: info.version });
       const onError = (error: Error): void => finish({ outcome: 'error', message: error.message });
-      const timer = setTimeout(() => finish({ outcome: 'error', message: 'check timed out' }), MANUAL_CHECK_TIMEOUT_MS);
+      const timer = setTimeout(() => finish({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT }), MANUAL_CHECK_TIMEOUT_MS);
       timer.unref();
       updater.on('update-available', onAvailable);
       updater.on('update-not-available', onNotAvailable);
@@ -267,6 +275,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       return;
     }
     setStatus({ state: 'downloading', version: current.version, releaseDate: current.releaseDate, percent: 0 });
+    log.info(`[kimi-desktop] update download started: ${current.version ?? 'unknown'}`);
     void updater.downloadUpdate().catch(() => {});
   };
 
@@ -278,6 +287,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       if (current.state !== 'downloaded') {
         return;
       }
+      log.info(`[kimi-desktop] installing update ${current.version ?? 'unknown'} (quitAndInstall)`);
       // quitAndInstall emits before-quit only AFTER the window close events,
       // so hide-on-close would intercept those closes and hang the install —
       // mark quitting explicitly first (window.ts).

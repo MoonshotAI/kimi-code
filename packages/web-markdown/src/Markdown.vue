@@ -700,6 +700,13 @@ function copyDiff(code: string, idx: number) {
   border-radius: 50%;
   background: color-mix(in srgb, var(--color-text) 90%, transparent);
 }
+/* GFM task-list items carry their own checkbox as the marker — no dot. Loose
+   lists wrap the inline content in <p>, so match the paragraph-wrapped
+   checkbox too. */
+.md :deep(ul > li:has(> input[type='checkbox']))::before,
+.md :deep(ul > li:has(> p > input[type='checkbox']))::before {
+  content: none;
+}
 .md :deep(ul ul > li)::before {
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--color-text) 90%, transparent);

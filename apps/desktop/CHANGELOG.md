@@ -1,5 +1,79 @@
 # kimi-code-app
 
+## 0.0.11
+
+### Patch Changes
+
+- [#112](https://github.com/MoonshotAI/kimi-code-app/pull/112) [`9abb793`](https://github.com/MoonshotAI/kimi-code-app/commit/9abb79383e310d9feb153f378c77a3a30e6f244f) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复其他会话在后台运行任务时，当前会话也跟着变卡的问题。
+
+- [#123](https://github.com/MoonshotAI/kimi-code-app/pull/123) [`8140820`](https://github.com/MoonshotAI/kimi-code-app/commit/8140820d5958044b2b80233da45d948db6814a84) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复 Windows 桌面快捷方式图标显示偏小的问题。
+
+- [#123](https://github.com/MoonshotAI/kimi-code-app/pull/123) [`8140820`](https://github.com/MoonshotAI/kimi-code-app/commit/8140820d5958044b2b80233da45d948db6814a84) Thanks [@liruifengv](https://github.com/liruifengv)! - Windows 桌面端采用与应用界面一致的自定义标题栏和菜单栏。
+
+- [#120](https://github.com/MoonshotAI/kimi-code-app/pull/120) [`15d9f7e`](https://github.com/MoonshotAI/kimi-code-app/commit/15d9f7ef526d7062434eac15390fc01930cccb7e) Thanks [@chengluyu](https://github.com/chengluyu)! - 收紧输入框「权限」与「模式」按钮及下拉菜单的文字排版：按钮与选项名称字号调小，菜单描述字重减轻、行高收紧。
+
+- [#125](https://github.com/MoonshotAI/kimi-code-app/pull/125) [`e64c302`](https://github.com/MoonshotAI/kimi-code-app/commit/e64c3027328bf62f25d79caff5c9620847b6bfb8) Thanks [@liruifengv](https://github.com/liruifengv)! - 助手自我介绍改为 Kimi Code 桌面端身份，回复排版指引适配桌面聊天界面。
+
+- [#118](https://github.com/MoonshotAI/kimi-code-app/pull/118) [`fab5444`](https://github.com/MoonshotAI/kimi-code-app/commit/fab54442863fe3de96875ebe730a2fe2b0d02481) Thanks [@liruifengv](https://github.com/liruifengv)! - 「帮助」菜单新增「性能录制」。
+
+- [#111](https://github.com/MoonshotAI/kimi-code-app/pull/111) [`934f3c8`](https://github.com/MoonshotAI/kimi-code-app/commit/934f3c8a6fc5241b1175dc669f1b014754696b4e) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复新建的空文件在改动面板中被误报为“没有行级改动”的问题。
+
+- [#111](https://github.com/MoonshotAI/kimi-code-app/pull/111) [`934f3c8`](https://github.com/MoonshotAI/kimi-code-app/commit/934f3c8a6fc5241b1175dc669f1b014754696b4e) Thanks [@chengluyu](https://github.com/chengluyu)! - 改动面板的代码差异视图支持语法高亮，代码字号调整为比正文小一号。
+
+- [#111](https://github.com/MoonshotAI/kimi-code-app/pull/111) [`934f3c8`](https://github.com/MoonshotAI/kimi-code-app/commit/934f3c8a6fc5241b1175dc669f1b014754696b4e) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复文件预览的代码字号与改动视图不一致的问题。
+
+- [#111](https://github.com/MoonshotAI/kimi-code-app/pull/111) [`934f3c8`](https://github.com/MoonshotAI/kimi-code-app/commit/934f3c8a6fc5241b1175dc669f1b014754696b4e) Thanks [@chengluyu](https://github.com/chengluyu)! - 文件预览的代码内容支持完整语法高亮，与改动视图一致。
+
+- [#102](https://github.com/MoonshotAI/kimi-code-app/pull/102) [`66a6db6`](https://github.com/MoonshotAI/kimi-code-app/commit/66a6db69bdd205fd0af2d7c1422a027b7276c2ad) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复消息中的待办列表（`- [ ]`）同时显示圆点和复选框的问题。
+
+- [#102](https://github.com/MoonshotAI/kimi-code-app/pull/102) [`66a6db6`](https://github.com/MoonshotAI/kimi-code-app/commit/66a6db69bdd205fd0af2d7c1422a027b7276c2ad) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复关闭毛玻璃侧栏后启动时仍会闪一下毛玻璃的问题。
+
+- [#121](https://github.com/MoonshotAI/kimi-code-app/pull/121) [`51017fe`](https://github.com/MoonshotAI/kimi-code-app/commit/51017fec5f0c6fbf3465dc9c75fc3793923a4c18) Thanks [@chengluyu](https://github.com/chengluyu)! - 所有弹出菜单改为毛玻璃质感。
+
+- [#107](https://github.com/MoonshotAI/kimi-code-app/pull/107) [`7b361d4`](https://github.com/MoonshotAI/kimi-code-app/commit/7b361d427a07fc411cfbe994c7e9968a1b5f0334) Thanks [@liruifengv](https://github.com/liruifengv)! - 输入框内容较多时不再显示右侧滚动条。
+
+- [#122](https://github.com/MoonshotAI/kimi-code-app/pull/122) [`44e36e1`](https://github.com/MoonshotAI/kimi-code-app/commit/44e36e11b0b3b351b1c6a9fce9268e3ff068bfd1) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 不足 1 秒的耗时不再显示 <1s 字样。
+
+- [#129](https://github.com/MoonshotAI/kimi-code-app/pull/129) [`d6b75e6`](https://github.com/MoonshotAI/kimi-code-app/commit/d6b75e6ce63152b290701c6db8424a414428f2be) Thanks [@liruifengv](https://github.com/liruifengv)! - 补充本地化文案。
+
+- [#116](https://github.com/MoonshotAI/kimi-code-app/pull/116) [`41970aa`](https://github.com/MoonshotAI/kimi-code-app/commit/41970aa2276c25f82b1056d40214ed8ee9637ecd) Thanks [@liruifengv](https://github.com/liruifengv)! - 消息发送后的加载动画从月亮换成小蓝，并随阶段显示「请求中…」「工作中…」文案。
+
+- [#114](https://github.com/MoonshotAI/kimi-code-app/pull/114) [`ac59b69`](https://github.com/MoonshotAI/kimi-code-app/commit/ac59b699a0c680682a684142bc149c49c1f9e9c8) Thanks [@chengluyu](https://github.com/chengluyu)! - 文本输入框（搜索框、输入区、重命名等）支持系统原生右键菜单：macOS 上有查找（Look Up）、撤销、重做、剪切、拷贝、粘贴、全选。
+
+- [#129](https://github.com/MoonshotAI/kimi-code-app/pull/129) [`d6b75e6`](https://github.com/MoonshotAI/kimi-code-app/commit/d6b75e6ce63152b290701c6db8424a414428f2be) Thanks [@liruifengv](https://github.com/liruifengv)! - 「新建对话」统一更名为「新建会话」（英文界面为 New Session）。
+
+- [#120](https://github.com/MoonshotAI/kimi-code-app/pull/120) [`15d9f7e`](https://github.com/MoonshotAI/kimi-code-app/commit/15d9f7ef526d7062434eac15390fc01930cccb7e) Thanks [@chengluyu](https://github.com/chengluyu)! - 修正「逐条确认」权限在下拉菜单中颜色偏淡的问题，与其他菜单项颜色一致。
+
+- [#120](https://github.com/MoonshotAI/kimi-code-app/pull/120) [`15d9f7e`](https://github.com/MoonshotAI/kimi-code-app/commit/15d9f7ef526d7062434eac15390fc01930cccb7e) Thanks [@chengluyu](https://github.com/chengluyu)! - 权限模式增加专属图标，逐条确认、自动通过、完全自主在输入框工具栏和下拉菜单中都有对应图标。
+
+- [#115](https://github.com/MoonshotAI/kimi-code-app/pull/115) [`f1179ac`](https://github.com/MoonshotAI/kimi-code-app/commit/f1179acec210d38c1e9d243c98d1ebcba29dc3e5) Thanks [@liruifengv](https://github.com/liruifengv)! - 移除桌面宠物「小蓝」（View 菜单里的 Kimi Pet 开关与桌面浮窗）。
+
+- [#124](https://github.com/MoonshotAI/kimi-code-app/pull/124) [`6e6b539`](https://github.com/MoonshotAI/kimi-code-app/commit/6e6b5391ffb4c6d3016eb861a99171c5d8ab8908) Thanks [@chengluyu](https://github.com/chengluyu)! - 添加附件、置顶和取消置顶按钮恢复旧版图标样式。
+
+- [#104](https://github.com/MoonshotAI/kimi-code-app/pull/104) [`41cc40a`](https://github.com/MoonshotAI/kimi-code-app/commit/41cc40a3b068e4d77e3b114a249f619c0ab81094) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复使用全选快捷键时会同时选中两侧边栏内容的问题。
+
+- [#112](https://github.com/MoonshotAI/kimi-code-app/pull/112) [`9abb793`](https://github.com/MoonshotAI/kimi-code-app/commit/9abb79383e310d9feb153f378c77a3a30e6f244f) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复切换会话时对话界面先闪现顶部消息再滚动到底部的问题。
+
+- [#117](https://github.com/MoonshotAI/kimi-code-app/pull/117) [`d4e51b2`](https://github.com/MoonshotAI/kimi-code-app/commit/d4e51b29319f084205b840f8904e6d6914cb19f3) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复从访达/Dock 启动时读取不到本机终端环境（如 gh、rclone 等命令行工具）的问题。
+
+- [#110](https://github.com/MoonshotAI/kimi-code-app/pull/110) [`c13cef5`](https://github.com/MoonshotAI/kimi-code-app/commit/c13cef5811c368f2b8018484cd38ba2cdb58065a) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复 Windows 重复启动应用时打开多个实例的问题。
+
+- [#112](https://github.com/MoonshotAI/kimi-code-app/pull/112) [`9abb793`](https://github.com/MoonshotAI/kimi-code-app/commit/9abb79383e310d9feb153f378c77a3a30e6f244f) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复长时间运行的会话输出越多越卡的问题。
+
+- [#107](https://github.com/MoonshotAI/kimi-code-app/pull/107) [`7b361d4`](https://github.com/MoonshotAI/kimi-code-app/commit/7b361d427a07fc411cfbe994c7e9968a1b5f0334) Thanks [@liruifengv](https://github.com/liruifengv)! - 开始新会话前的输入框加高到三行。
+
+- [#114](https://github.com/MoonshotAI/kimi-code-app/pull/114) [`ac59b69`](https://github.com/MoonshotAI/kimi-code-app/commit/ac59b699a0c680682a684142bc149c49c1f9e9c8) Thanks [@chengluyu](https://github.com/chengluyu)! - 新增对话内容搜索：按 Cmd+F（macOS）或 Ctrl+F 在对话右上角调出搜索框，显示匹配数量并支持上/下一条跳转定位。
+
+- [#123](https://github.com/MoonshotAI/kimi-code-app/pull/123) [`8140820`](https://github.com/MoonshotAI/kimi-code-app/commit/8140820d5958044b2b80233da45d948db6814a84) Thanks [@liruifengv](https://github.com/liruifengv)! - Windows 标题栏图标随主题切换，并为托盘使用白底品牌图标。
+
+- [#110](https://github.com/MoonshotAI/kimi-code-app/pull/110) [`c13cef5`](https://github.com/MoonshotAI/kimi-code-app/commit/c13cef5811c368f2b8018484cd38ba2cdb58065a) Thanks [@liruifengv](https://github.com/liruifengv)! - Windows 任务栏右键菜单支持新建会话和打开最近工作区。
+
+- [#110](https://github.com/MoonshotAI/kimi-code-app/pull/110) [`c13cef5`](https://github.com/MoonshotAI/kimi-code-app/commit/c13cef5811c368f2b8018484cd38ba2cdb58065a) Thanks [@liruifengv](https://github.com/liruifengv)! - 「用其他应用打开」支持 Windows。
+
+- [#110](https://github.com/MoonshotAI/kimi-code-app/pull/110) [`c13cef5`](https://github.com/MoonshotAI/kimi-code-app/commit/c13cef5811c368f2b8018484cd38ba2cdb58065a) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复 Windows 下的通知功能。
+
+- [#110](https://github.com/MoonshotAI/kimi-code-app/pull/110) [`c13cef5`](https://github.com/MoonshotAI/kimi-code-app/commit/c13cef5811c368f2b8018484cd38ba2cdb58065a) Thanks [@liruifengv](https://github.com/liruifengv)! - 优化 Windows 托盘功能。
+
 ## 0.0.10
 
 ### Patch Changes

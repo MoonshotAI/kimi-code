@@ -9,6 +9,7 @@
 // full REST/WS/console diagnostics never enter the archive.
 
 import { ref, shallowRef } from 'vue';
+import { logError } from '../lib/log';
 import { safeGetString, STORAGE_KEYS } from '../lib/storage';
 
 export type TraceSource = 'rest' | 'ws' | 'client';
@@ -537,6 +538,13 @@ export function installClientErrorCapture(): () => void {
           line: e.lineno,
           col: e.colno,
         });
+        // Always-on, not debug-gated: an uncaught renderer failure is
+        // otherwise invisible in packaged builds. Forwarded to the
+        // main-process log file via the desktop bridge (no-op on web).
+        logError(
+          `[kimi-code] window error: ${e.message}`,
+          e.error instanceof Error ? e.error.stack : undefined,
+        );
       };
       const onUnhandledRejection = (e: PromiseRejectionEvent): void => {
         const reason = e.reason;
@@ -544,6 +552,10 @@ export function installClientErrorCapture(): () => void {
           status: 'failed',
           errorName: reason instanceof Error ? reason.name : typeof reason,
         });
+        logError(
+          `[kimi-code] unhandled rejection: ${rejectionText(reason)}`,
+          reason instanceof Error ? reason.stack : undefined,
+        );
       };
       window.addEventListener('error', onError);
       window.addEventListener('unhandledrejection', onUnhandledRejection);
@@ -598,6 +610,17 @@ function stringifyArg(a: unknown): string {
     return JSON.stringify(a);
   } catch {
     return String(a);
+  }
+}
+
+/** String() throws on exotic rejection reasons (null-prototype objects); the
+    error handler itself must never throw. */
+export function rejectionText(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  try {
+    return String(reason);
+  } catch {
+    return '[unstringifiable reason]';
   }
 }
 

@@ -76,6 +76,13 @@ describe('startDesktopServer', () => {
     expect(typeof args.version).toBe('string');
     expect(args.version.length).toBeGreaterThan(0);
 
+    // System-prompt identity overrides the CLI defaults (product name +
+    // terminal-oriented reply style guide) for the desktop chat UI.
+    expect(args.hostIdentity).toEqual({
+      productName: 'Kimi Code',
+      replyStyleGuide: expect.stringContaining('desktop app'),
+    });
+
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); no serviceOverrides / process.exit hack remains.
     expect(createKimiDefaultHeadersMock).toHaveBeenCalledWith({

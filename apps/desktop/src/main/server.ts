@@ -13,7 +13,12 @@ import {
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { DESKTOP_MSH_PLATFORM } from '../shared/identity';
+import {
+  DESKTOP_DISPLAY_NAME,
+  DESKTOP_MSH_PLATFORM,
+  DESKTOP_REPLY_STYLE_GUIDE,
+} from '../shared/identity';
+import { log } from './log';
 import { wireDesktopTelemetry } from './telemetry';
 
 export interface DesktopServerHandle {
@@ -88,6 +93,12 @@ export async function startDesktopServer(
     // in this bundled main process resolves to the desktop app's package.json —
     // pass it explicitly (injected by tsdown, see tsdown.config.ts).
     version: __KIMI_CORE_VERSION__,
+    // System-prompt identity: fills the base template's ${product_name} /
+    // ${reply_style_guide} slots — the CLI defaults describe a terminal.
+    hostIdentity: {
+      productName: DESKTOP_DISPLAY_NAME,
+      replyStyleGuide: DESKTOP_REPLY_STYLE_GUIDE,
+    },
     // Allow the local `app://renderer` origin so the renderer (served from
     // app://renderer) can call the loopback HTTP API. The v2 server takes the
     // origin allowlist directly (no KIMI_CODE_CORS_ORIGINS env needed).
@@ -101,6 +112,7 @@ export async function startDesktopServer(
   // the null appender); wire the cloud appender here, before the renderer can
   // create a session, and flush it before the server goes down.
   const telemetry = await wireDesktopTelemetry(handle.core);
+  log.info(`[kimi-desktop] embedded server listening on http://${handle.host}:${handle.port}`);
 
   return {
     origin: `http://${handle.host}:${handle.port}`,

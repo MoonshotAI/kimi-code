@@ -268,7 +268,6 @@ onMounted(async () => {
 });
 
 const showOpenIn = computed(() => openInApps.value.length > 0 && Boolean(props.workspaceRoot));
-const openInAppIds = computed(() => openInApps.value.map((app) => app.id));
 
 async function onOpenInApp(appId: string): Promise<void> {
   if (!props.workspaceRoot) return;
@@ -364,7 +363,7 @@ async function onOpenInApp(appId: string): Promise<void> {
     <OpenInMenu
       v-if="showOpenIn"
       :work-dir="workspaceRoot"
-      :available-apps="openInAppIds"
+      :available-apps="openInApps"
       @open-in-app="onOpenInApp"
     />
 

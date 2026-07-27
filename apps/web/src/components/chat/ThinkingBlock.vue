@@ -62,7 +62,8 @@ const elapsedLabel = computed(() => {
     return Number.isFinite(startMs) ? formatDuration(nowMs.value - startMs) : '';
   }
   if (props.durationMs !== undefined) {
-    return `· ${formatDuration(props.durationMs)}`;
+    const span = formatDuration(props.durationMs);
+    return span ? `· ${span}` : '';
   }
   return '';
 });

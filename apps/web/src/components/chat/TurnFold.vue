@@ -168,11 +168,10 @@ function toggle(): void {
   });
 }
 
-const label = computed(() =>
-  spanMs.value !== undefined
-    ? t('conversation.fold.worked', { duration: formatDuration(spanMs.value) })
-    : t('conversation.fold.workedUnknown'),
-);
+const label = computed(() => {
+  const duration = spanMs.value === undefined ? '' : formatDuration(spanMs.value);
+  return duration ? t('conversation.fold.worked', { duration }) : t('conversation.fold.workedUnknown');
+});
 
 /** A block streams while it sits on the turn's live tail. A settled thinking
     block is done even while still the tail — the turn is parked on an

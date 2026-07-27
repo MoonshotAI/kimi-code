@@ -12,6 +12,7 @@ export const IPC = {
   getServerToken: 'kimi:get-server-token',
   isFullscreen: 'kimi:is-fullscreen',
   menuAction: 'kimi:menu-action',
+  menuPopup: 'kimi:menu-popup',
   shortcut: 'kimi:shortcut',
   fullscreenChanged: 'kimi:fullscreen-changed',
   updateStatus: 'kimi:update-status',
@@ -35,10 +36,25 @@ export const IPC = {
   vibrancy: 'kimi:vibrancy',
   getVibrancy: 'kimi:get-vibrancy',
   showWindow: 'kimi:show-window',
+  rendererLog: 'kimi:renderer-log',
+  jumpList: 'kimi:jump-list',
+  launchAction: 'kimi:launch-action',
   track: 'kimi:track',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
+
+export type WindowsMenuId = 'file' | 'edit' | 'view' | 'help';
+
+export interface WindowsMenuPopupRequest {
+  id: WindowsMenuId;
+  x: number;
+  y: number;
+}
+
+/** Launch intent parsed from argv (--new-chat / --workspace=<root>) or a
+    Jump List item click, forwarded to the renderer once it is ready. */
+export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string };
 
 // Channels that carry main → renderer events (see window.ts sendToRenderer).
 export type RendererEventChannel =
@@ -47,4 +63,5 @@ export type RendererEventChannel =
   | typeof IPC.fullscreenChanged
   | typeof IPC.updateStatus
   | typeof IPC.traySelectSession
+  | typeof IPC.launchAction
   | typeof IPC.osAppearanceChanged;

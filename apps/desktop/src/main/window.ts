@@ -1,12 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, dialog, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
+import type { BrowserWindowConstructorOptions } from 'electron';
 
 import { connect } from './connect';
+import { installEditableContextMenu } from './context-menu';
 import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
-import { IPC, type RendererEventChannel } from './ipc-channels';
+import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
 import { log, redactUrlForLog } from './log';
 import { trackDesktopEvent } from './track';
 import { isVibrancyEnabled } from './ui-state';
@@ -38,11 +40,11 @@ export function showMainWindow(): void {
 
 // --- window lifecycle ---------------------------------------------------------
 
-// macOS hide-on-close (the tray-resident model, like Slack/Discord): closing
-// the window only hides it — the renderer, its session state, WS, and the
-// tray-select subscription all stay alive, so re-showing (Dock click, tray)
-// is instant and tray jumps deliver immediately without the boot/reload
-// queue. Real quits (Cmd+Q, tray 退出, updater install) go through
+// macOS/Windows hide-on-close (the tray-resident model, like Slack/Discord):
+// closing the window only hides it — the renderer, its session state, WS, and
+// the tray-select subscription all stay alive, so re-showing (Dock click,
+// tray, taskbar) is instant and tray jumps deliver immediately without the
+// boot/reload queue. Real quits (Cmd+Q, tray 退出, updater install) go through
 // before-quit, which fires before any window close event and flips this
 // flag, letting the close proceed to destruction. The listener installs
 // lazily from createWindow: module scope must stay Electron-free for tests.
@@ -72,9 +74,25 @@ export function markQuitting(): void {
 // cancels the stale close intent.
 let pendingFullscreenHide = false;
 
-/** Close-button policy: hide instead of destroy on macOS, unless quitting. */
+/** Close-button policy: hide instead of destroy on macOS/Windows, unless quitting. */
 export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
-  return platform === 'darwin' && !quitting;
+  return (platform === 'darwin' || platform === 'win32') && !quitting;
+}
+
+interface SessionEndWindowLike {
+  on(event: 'session-end', listener: () => void): unknown;
+}
+
+/** Windows does not emit app.before-quit for shutdown, restart, or logoff.
+    session-end is final (unlike query-session-end, which can be cancelled),
+    so it is safe to let the following close destroy the window. */
+export function installWindowsSessionEndWatch(
+  platform: NodeJS.Platform,
+  win: SessionEndWindowLike,
+  markEnding: () => void,
+): void {
+  if (platform !== 'win32') return;
+  win.on('session-end', markEnding);
 }
 
 // --- tray "jump to session" routing -------------------------------------------
@@ -85,7 +103,7 @@ export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean):
 // `onTraySelectSession` subscription is in place (module scripts run before
 // the load event) — so clicks before that queue up and flush when the load
 // settles (did-finish-load, or did-fail-load: a failed/aborted load leaves
-// the old, still-subscribed page displayed). With macOS hide-on-close
+// the old, still-subscribed page displayed). With hide-on-close
 // (shouldHideOnClose) the renderer otherwise stays alive for the app's
 // lifetime, so clicks deliver immediately and the queue only covers boot and
 // reload.
@@ -107,6 +125,23 @@ export function selectSessionInRenderer(sessionId: string): void {
     sendToRenderer(IPC.traySelectSession, sessionId);
   } else {
     pendingTraySessionSelect = sessionId;
+  }
+}
+
+let pendingLaunchActions: LaunchActionPayload[] = [];
+
+export function drainLaunchActions(actions: LaunchActionPayload[]): LaunchActionPayload[] {
+  return actions.splice(0);
+}
+
+/** Forward a launch action (Jump List item, second-instance argv) to a live,
+    loaded renderer; queue behind the same readiness gate as tray clicks and
+    flush together with them when the load settles. */
+export function sendLaunchAction(action: LaunchActionPayload): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed() && rendererReady) {
+    sendToRenderer(IPC.launchAction, action);
+  } else {
+    pendingLaunchActions.push(action);
   }
 }
 
@@ -144,6 +179,29 @@ export function looksMaximizedBounds(
   return bounds.width >= workArea.width * 0.95 && bounds.height >= workArea.height * 0.95;
 }
 
+/** Clamp saved bounds into the matched display's work area. Display layouts
+    change between runs (laptop undocked, monitor re-arranged), and an
+    unreachable window — title bar off every screen — is unrecoverable without
+    editing the state file. At least MIN_VISIBLE px stay on screen; the top
+    edge never goes above the work area (that's where the drag handle is). */
+const MIN_VISIBLE_PX = 100;
+
+export function clampBoundsToWorkArea(
+  bounds: WindowBounds,
+  workArea: { x: number; y: number; width: number; height: number },
+): WindowBounds {
+  if (bounds.x === undefined || bounds.y === undefined) return bounds;
+  const x = Math.min(
+    Math.max(bounds.x, workArea.x - bounds.width + MIN_VISIBLE_PX),
+    workArea.x + workArea.width - MIN_VISIBLE_PX,
+  );
+  const y = Math.min(
+    Math.max(bounds.y, workArea.y),
+    workArea.y + workArea.height - MIN_VISIBLE_PX,
+  );
+  return x === bounds.x && y === bounds.y ? bounds : { ...bounds, x, y };
+}
+
 function stateFile(): string {
   return join(app.getPath('userData'), 'window-state.json');
 }
@@ -168,7 +226,7 @@ function loadBounds(): WindowBounds {
               height: bounds.height,
             })
       ).workArea;
-      if (!looksMaximizedBounds(bounds, workArea)) return bounds;
+      if (!looksMaximizedBounds(bounds, workArea)) return clampBoundsToWorkArea(bounds, workArea);
     }
   } catch {
     // No saved state yet, or it is unreadable — fall back to defaults.
@@ -209,6 +267,38 @@ function saveBounds(win: BrowserWindow): void {
 // the midline of the web UI's 48px header row, same line as the
 // sidebar-toggle button and header icons.
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
+const WINDOWS_TITLEBAR_HEIGHT = 40;
+
+export function titleBarWindowOptions(
+  platform: NodeJS.Platform,
+  dark = false,
+): Partial<
+  Pick<BrowserWindowConstructorOptions, 'titleBarStyle' | 'titleBarOverlay' | 'trafficLightPosition'>
+> {
+  if (platform === 'darwin') {
+    return { titleBarStyle: 'hidden', trafficLightPosition: TRAFFIC_LIGHT_POSITION };
+  }
+  if (platform === 'win32') {
+    return {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        color: '#00000000',
+        symbolColor: dark ? '#f2f2f2' : '#202020',
+        height: WINDOWS_TITLEBAR_HEIGHT,
+      },
+    };
+  }
+  return { titleBarStyle: 'default' };
+}
+
+export function applyWindowsTitleBarOverlay(win: BrowserWindow): void {
+  if (process.platform !== 'win32' || win.isDestroyed()) return;
+  win.setTitleBarOverlay({
+    color: '#00000000',
+    symbolColor: nativeTheme.shouldUseDarkColors ? '#f2f2f2' : '#202020',
+    height: WINDOWS_TITLEBAR_HEIGHT,
+  });
+}
 
 /** macOS frosted chrome: the window carries a native NSVisualEffectView
     ('menu') behind the renderer's unpainted sidebar column, so backgroundColor
@@ -251,8 +341,7 @@ export function createWindow(): void {
     // 'hidden' (not 'hiddenInset') so trafficLightPosition can pin the lights
     // (see TRAFFIC_LIGHT_POSITION). 'default' on other platforms (they keep
     // their native title bar).
-    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
-    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+    ...titleBarWindowOptions(process.platform, nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -261,6 +350,12 @@ export function createWindow(): void {
     },
   });
   mainWindow = win;
+  if (process.platform === 'win32') {
+    win.setMenuBarVisibility(false);
+    const syncTitleBar = (): void => applyWindowsTitleBarOverlay(win);
+    nativeTheme.on('updated', syncTitleBar);
+    win.once('closed', () => nativeTheme.removeListener('updated', syncTitleBar));
+  }
   // Opted-out launch: the window is still created WITH the material (so the
   // 'inactive' pin is stored for any later re-enable) and it is removed
   // immediately — before the first paint, so there is no frosted flash.
@@ -272,6 +367,9 @@ export function createWindow(): void {
   // system browser, not in frameless Electron windows; cross-origin
   // navigation of the main window is intercepted the same way.
   installExternalLinkGuard(win.webContents, (url) => shell.openExternal(url));
+  // Right-click in any text field (find bar, composer, rename inputs) shows
+  // the native editing menu — Electron has no default one.
+  installEditableContextMenu(win.webContents);
   // Exports (session zip, trace logs) always prompt a native save dialog and
   // remember the last used directory. The handler outlives this window (one
   // install per session), so the dialog parent is resolved at call time.
@@ -322,6 +420,7 @@ export function createWindow(): void {
   };
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
+  installWindowsSessionEndWatch(process.platform, win, markQuitting);
   win.on('close', (event) => {
     saveBounds(win);
     if (shouldHideOnClose(process.platform, isQuitting)) {
@@ -381,12 +480,22 @@ export function createWindow(): void {
       sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
       pendingTraySessionSelect = null;
     }
+    for (const action of drainLaunchActions(pendingLaunchActions)) {
+      sendToRenderer(IPC.launchAction, action);
+    }
   };
   win.webContents.on('did-fail-load', (_event, _code, _desc, _url, isMainFrame) => {
     settleRendererReady(isMainFrame);
   });
   win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame) => {
     settleRendererReady(isMainFrame);
+  });
+  // A crashed/killed renderer (OOM, GPU fault) shows the user a frozen or
+  // blank page with no other trace — the log file is the only record.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    log.error(
+      `[kimi-desktop] renderer process gone (reason=${details.reason} exitCode=${details.exitCode})`,
+    );
   });
   win.webContents.on('did-finish-load', () => {
     settleRendererReady(true);
