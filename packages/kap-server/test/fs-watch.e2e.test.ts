@@ -4,11 +4,16 @@
  * Mirrors `packages/server/test/fs-watch.e2e.test.ts` (v1) so the wire contract
  * stays byte-compatible:
  *   1. subscribe `src` → create file → receive `event.fs.changed`
- *   2. burst > 500 changes / 200ms → `truncated` event
- *   3. two clients, disjoint paths → no cross-delivery
+ *   2. burst > 500 changes / 200ms → `truncated` event reaches every
+ *      connection with its own next seq; the client then rebuilds its
+ *      baseline via REST `fs:list`
+ *   3. two clients, disjoint paths → no cross-delivery; each connection
+ *      numbers only the frames it actually receives (per-connection seq)
  *   4. > 100 paths per connection → `42902 fs.watch_limit_exceeded`
  *   5. idempotent add of the same path
  *   6. `watch_fs_remove` updates `watched_paths`; `..` → `41304`
+ *   7. two clients on the same path see the same event with the same
+ *      per-connection seq, numbered from 1 without gaps
  *
  * Boots `startServer` in-process (loopback, auth disabled) against a tmp
  * workspace, drives `/api/v1/ws` clients with the raw `ws` library, and mutates
@@ -81,6 +86,18 @@ async function createSession(r: RunningServer): Promise<string> {
     throw new Error(`create session failed: ${JSON.stringify(env)}`);
   }
   return env.data.id;
+}
+
+async function runSessionAction(
+  r: RunningServer,
+  sessionId: string,
+  action: 'archive' | 'restore',
+): Promise<void> {
+  const res = await fetch(`${addressOf(r)}/api/v1/sessions/${sessionId}:${action}`, {
+    method: 'POST',
+  });
+  const env = (await res.json()) as { code: number };
+  if (env.code !== 0) throw new Error(`${action} session failed: ${JSON.stringify(env)}`);
 }
 
 interface WsFrame {
@@ -224,6 +241,8 @@ describe('WS fs watch (kap-server)', () => {
       const sid = await createSession(r);
       const conn = await openConn(wsUrl(r));
       await helloAndSubscribe(conn, 'A', sid);
+      const bystander = await openConn(wsUrl(r));
+      await helloAndSubscribe(bystander, 'B', sid);
 
       conn.ws.send(
         JSON.stringify({
@@ -233,31 +252,66 @@ describe('WS fs watch (kap-server)', () => {
         }),
       );
       await receiveType(conn, 'ack', 1000);
+      bystander.ws.send(
+        JSON.stringify({
+          type: 'watch_fs_add',
+          id: 'wB',
+          payload: { session_id: sid, paths: ['docs'] },
+        }),
+      );
+      await receiveType(bystander, 'ack', 1000);
       await sleep(WATCH_SETTLE_MS);
 
       const burstDir = join(workspace, 'burst');
       mkdirSync(burstDir, { recursive: true });
       for (let i = 0; i < 600; i++) writeFileSync(join(burstDir, `f${i}.txt`), `x${i}`);
 
-      const deadline = Date.now() + 12000;
-      let sawTruncated = false;
-      while (Date.now() < deadline) {
-        let frame: WsFrame;
-        try {
-          frame = await receive(conn, deadline - Date.now());
-        } catch {
-          break;
+      const waitForTruncated = async (c: Conn): Promise<WsFrame> => {
+        const deadline = Date.now() + 12000;
+        while (Date.now() < deadline) {
+          let frame: WsFrame;
+          try {
+            frame = await receive(c, deadline - Date.now());
+          } catch {
+            break;
+          }
+          if (frame.type !== 'event.fs.changed') continue;
+          const payload = frame.payload as { truncated?: boolean; count?: number };
+          if (payload.truncated === true) {
+            expect(payload.count).toBeGreaterThan(100);
+            return frame;
+          }
         }
-        if (frame.type !== 'event.fs.changed') continue;
-        const payload = frame.payload as { truncated?: boolean; count?: number };
-        if (payload.truncated === true) {
-          expect(payload.count).toBeGreaterThan(100);
-          sawTruncated = true;
-          break;
-        }
-      }
-      expect(sawTruncated).toBe(true);
+        throw new Error('no truncated frame received');
+      };
+
+      const [truncatedA, truncatedB] = await Promise.all([
+        waitForTruncated(conn),
+        waitForTruncated(bystander),
+      ]);
+      // A truncated window is broadcast to every connection of the session
+      // watch — even one whose paths match nothing — and each frame carries
+      // that connection's own next seq. The bystander received no matched
+      // frame before, so its truncated frame is its first (seq 1).
+      expect(typeof truncatedA.seq).toBe('number');
+      expect(truncatedB.seq).toBe(1);
+
+      // Client-side recovery path after `truncated`: rebuild the baseline
+      // with a full REST listing (snapshot + incremental + resync).
+      const listRes = await fetch(`${addressOf(r)}/api/v1/sessions/${sid}/fs:list`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '.', depth: 1, limit: 100 }),
+      });
+      const listEnv = (await listRes.json()) as {
+        code: number;
+        data: { items: Array<{ path: string }> } | null;
+      };
+      expect(listEnv.code).toBe(0);
+      expect(listEnv.data?.items.map((i) => i.path)).toContain('burst');
+
       conn.ws.close();
+      bystander.ws.close();
     },
   );
 
@@ -291,6 +345,21 @@ describe('WS fs watch (kap-server)', () => {
     const pathsB = (evB.payload as { changes: Array<{ path: string }> }).changes.map((c) => c.path);
     expect(pathsB.some((p) => p.startsWith('docs/'))).toBe(true);
     expect(pathsB.some((p) => p.startsWith('src/'))).toBe(false);
+
+    // Per-connection monotonic seq: each connection numbers only the frames
+    // actually delivered to it, so the same logical window arrives as each
+    // connection's own seq 1 — not a shared per-session counter.
+    expect(evA.seq).toBe(1);
+    expect(evB.seq).toBe(1);
+
+    writeFileSync(join(workspace, 'src', 'a2.ts'), 'a2');
+    const evA2 = await receiveType(a, 'event.fs.changed', 2000);
+    expect(evA2.seq).toBe(2);
+
+    writeFileSync(join(workspace, 'docs', 'b2.md'), 'b2');
+    const evB2 = await receiveType(b, 'event.fs.changed', 2000);
+    // The src-only window never reached B, so it consumed none of B's seq.
+    expect(evB2.seq).toBe(2);
 
     a.ws.close();
     b.ws.close();
@@ -378,6 +447,38 @@ describe('WS fs watch (kap-server)', () => {
     const payload = ack.payload as { watched_paths: string[]; current_count: number };
     expect(payload.watched_paths).toEqual(['docs']);
     expect(payload.current_count).toBe(1);
+
+    conn.ws.close();
+  });
+
+  it('rebinds file watches after an archived session is restored on the same connection', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+    const conn = await openConn(wsUrl(r));
+    await helloAndSubscribe(conn, 'A', sid);
+
+    conn.ws.send(
+      JSON.stringify({ type: 'watch_fs_add', id: 'before', payload: { session_id: sid, paths: ['src'] } }),
+    );
+    await receiveType(conn, 'ack', 1000);
+    await runSessionAction(r, sid, 'archive');
+    await runSessionAction(r, sid, 'restore');
+
+    conn.ws.send(
+      JSON.stringify({ type: 'watch_fs_add', id: 'after', payload: { session_id: sid, paths: ['src'] } }),
+    );
+    const ack = await receiveType(conn, 'ack', 1000);
+    expect(ack.code).toBe(0);
+    expect(ack.payload).toMatchObject({ watched_paths: ['src'], current_count: 1 });
+
+    await sleep(WATCH_SETTLE_MS);
+    writeFileSync(join(workspace, 'src', 'restored.ts'), 'export const restored = true;\n');
+
+    const ev = await receiveType(conn, 'event.fs.changed', 2000);
+    expect(ev.session_id).toBe(sid);
+    expect((ev.payload as { changes: Array<{ path: string }> }).changes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: 'src/restored.ts' })]),
+    );
 
     conn.ws.close();
   });

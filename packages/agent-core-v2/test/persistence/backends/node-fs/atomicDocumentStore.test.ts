@@ -45,6 +45,32 @@ describe('JsonAtomicDocumentStore', () => {
     expect(await config.get<State>('session', 'state.json')).toEqual({ title: 'new', count: 2 });
   });
 
+  it('serializes concurrent read-modify-write updates for one key', async () => {
+    await config.set<State>('session', 'state.json', { count: 0 });
+    let releaseFirst!: () => void;
+    const firstMayFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const firstDidEnter = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+
+    const first = config.update<State>('session', 'state.json', async (current) => {
+      firstEntered();
+      await firstMayFinish;
+      return { count: (current?.count ?? 0) + 1 };
+    });
+    await firstDidEnter;
+    const second = config.update<State>('session', 'state.json', (current) => ({
+      count: (current?.count ?? 0) + 1,
+    }));
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([{ count: 1 }, { count: 2 }]);
+    expect(await config.get<State>('session', 'state.json')).toEqual({ count: 2 });
+  });
+
   it('keys are independent', async () => {
     await config.set<State>('session', 'a.json', { title: 'A' });
     await config.set<State>('session', 'b.json', { title: 'B' });

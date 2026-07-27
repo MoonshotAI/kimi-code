@@ -13,7 +13,10 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -23,6 +26,7 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
+import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -32,7 +36,7 @@ interface SessionIndexLine {
 
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
-  let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
+  const hosts: ReturnType<typeof createScopedTestHost>[] = [];
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -54,25 +58,26 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   afterEach(async () => {
-    currentHost?.dispose();
-    currentHost = undefined;
+    for (const host of hosts.splice(0)) host.dispose();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
   function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceService {
-    const fileStorage = new FileStorageService(homeDir);
+    const locks = new CrossProcessLockService();
+    const fileStorage = new FileStorageService(homeDir, undefined, undefined, locks);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ICrossProcessLockService, locks),
     ]);
-    currentHost = host;
+    hosts.push(host);
     return host.app.accessor.get(IWorkspaceService);
   }
 
   function restart(): IWorkspaceService {
-    currentHost?.dispose();
-    currentHost = undefined;
+    hosts.pop()?.dispose();
     return build();
   }
 
@@ -564,6 +569,59 @@ describe('WorkspaceService (file-backed)', () => {
     const afterMerge = await readWorkspacesJson();
     expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
   });
+
+  it('two registries interleave createOrTouch without losing entries', async () => {
+    const a = build();
+    const b = build();
+    const dirsA: string[] = [];
+    const dirsB: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const da = join(homeDir, `side-a-${i}`);
+      const db = join(homeDir, `side-b-${i}`);
+      await fsp.mkdir(da);
+      await fsp.mkdir(db);
+      dirsA.push(da);
+      dirsB.push(db);
+    }
+    for (let i = 0; i < 4; i++) {
+      await Promise.all([a.createOrTouch(dirsA[i]!), b.createOrTouch(dirsB[i]!)]);
+    }
+
+    const onDisk = await readWorkspacesJson();
+    const expectedIds = [...dirsA, ...dirsB].map((dir) => encodeWorkDirKey(dir)).toSorted();
+    expect(Object.keys(onDisk.workspaces).toSorted()).toEqual(expectedIds);
+    expect(onDisk.deleted_workspace_ids).toEqual([]);
+    for (const entry of Object.values(onDisk.workspaces)) {
+      expect(Object.keys(entry).toSorted()).toEqual([
+        'created_at',
+        'last_opened_at',
+        'name',
+        'root',
+      ]);
+    }
+  });
+
+  it('interleaved delete and createOrTouch keep both the new entry and the tombstone', async () => {
+    const dirKeep = join(homeDir, 'keep');
+    const dirDrop = join(homeDir, 'drop');
+    const dirNew = join(homeDir, 'new');
+    await fsp.mkdir(dirKeep);
+    await fsp.mkdir(dirDrop);
+    await fsp.mkdir(dirNew);
+    const a = build();
+    await a.createOrTouch(dirKeep);
+    const drop = await a.createOrTouch(dirDrop);
+    const b = build();
+
+    await Promise.all([a.delete(drop.id), b.createOrTouch(dirNew)]);
+
+    const onDisk = await readWorkspacesJson();
+    expect(Object.keys(onDisk.workspaces).toSorted()).toEqual(
+      [encodeWorkDirKey(dirKeep), encodeWorkDirKey(dirNew)].toSorted(),
+    );
+    expect(onDisk.deleted_workspace_ids).toEqual([drop.id]);
+  });
+
 });
 
 describe('workspaceRootKey', () => {

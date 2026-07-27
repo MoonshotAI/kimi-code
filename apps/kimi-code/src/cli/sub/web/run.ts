@@ -41,6 +41,7 @@ import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
+  serverOrigin,
   tryResolveServerToken,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
@@ -288,7 +289,7 @@ async function runServerInProcess(
   });
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
-    address: `http://${v2.host}:${v2.port}`,
+    address: serverOrigin(v2.host, v2.port),
     logger,
     close: () => v2.close(),
   };

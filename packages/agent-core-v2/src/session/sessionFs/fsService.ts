@@ -103,6 +103,15 @@ const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
 const HIDDEN_NAME_RE = /^\./;
 const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
 
+interface GitignoreCacheEntry {
+  readonly ig: Ignore;
+  /**
+   * Fingerprint of the workspace `.gitignore` the matcher was built from:
+   * its `mtimeMs`, or `undefined` when the file was absent at load time.
+   */
+  readonly mtimeMs: number | undefined;
+}
+
 export const sessionFsRgResolutionKey = defineState<RgResolution | null | undefined>(
   'sessionFs.rgResolution',
   () => undefined,
@@ -114,7 +123,7 @@ export const sessionFsRealRootsCacheKey = defineState<
 export class SessionFsService implements ISessionFsService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly gitignoreCache = new Map<string, Ignore>();
+  private readonly gitignoreCache = new Map<string, GitignoreCacheEntry>();
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -689,16 +698,25 @@ export class SessionFsService implements ISessionFsService {
 
   private async matcher(): Promise<Ignore | undefined> {
     const cwd = this.workspace.workDir;
+    const ignorePath = join(cwd, '.gitignore');
+    // One stat per lookup keeps the cache honest: a changed or removed
+    // `.gitignore` (mtime mismatch / stat failure) rebuilds the entry.
+    // (The rg grep path never consults this cache — rg applies ignore rules
+    // itself.)
+    const st = await this.hostFs.stat(ignorePath).catch(() => undefined);
+    const mtimeMs = st === undefined ? undefined : (st.mtimeMs ?? -1);
     const cached = this.gitignoreCache.get(cwd);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.ig;
     const ig = ignore();
     ig.add('.git/');
-    try {
-      const contents = await this.hostFs.readText(join(this.workspace.workDir, '.gitignore'));
-      ig.add(contents);
-    } catch {
+    if (st !== undefined) {
+      try {
+        ig.add(await this.hostFs.readText(ignorePath));
+      } catch {
+        // The file raced away between stat and read — keep the base rules.
+      }
     }
-    this.gitignoreCache.set(cwd, ig);
+    this.gitignoreCache.set(cwd, { ig, mtimeMs });
     return ig;
   }
 

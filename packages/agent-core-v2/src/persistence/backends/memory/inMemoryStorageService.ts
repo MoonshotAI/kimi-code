@@ -20,6 +20,7 @@ import {
   type IDisposable,
 } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
+import { enqueueKeyedOperation } from '#/_base/utils/promise';
 
 import {
   IFileSystemStorageService,
@@ -38,6 +39,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
 
   private readonly scopes = new Map<string, Map<string, Uint8Array>>();
   private readonly watchers = new Map<string, WatchEntry>();
+  private readonly operationQueues = new Map<string, Promise<void>>();
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.scopes.get(scope)?.get(key);
@@ -129,6 +131,14 @@ export class InMemoryStorageService implements IFileSystemStorageService {
       }
       return combined;
     };
+  }
+
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    return enqueueKeyedOperation(this.operationQueues, this.watchKey(scope, key), mutation);
   }
 
   private notifyWatchers(scope: string, key: string): void {

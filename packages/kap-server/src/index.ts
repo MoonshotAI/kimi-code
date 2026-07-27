@@ -5,6 +5,7 @@
 
 export { startServer } from './start';
 export type { ServerStartOptions, RunningServer } from './start';
+export { formatServerOrigin } from './serverOrigin';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
 export { classify } from './security/bindClassify';

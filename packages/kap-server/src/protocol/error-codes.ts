@@ -116,6 +116,8 @@ export const ErrorCode = {
   GOAL_UNSUPPORTED_AGENT: 40920,
   /** 创建时 provider_id 已存在 */
   PROVIDER_ALREADY_EXISTS: 40921,
+  /** session 的 lease 被其他实例持有；`details` 为 SessionOwnershipDetails */
+  SESSION_HELD_BY_PEER: 40922,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,

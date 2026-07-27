@@ -7,9 +7,9 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
  * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Fans session-level
+ * envelope while non-empty unversioned logs are rejected. Removal coordinates
+ * task, turn, and full-compaction teardown before disposing the child scope.
+ * Fans session-level
  * permission-mode switches out to every live agent. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
@@ -281,7 +281,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
-    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
+    const tasks = handle.accessor.get(IAgentTaskService);
+    tasks.beginClose();
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
@@ -294,6 +295,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled]);
+    await tasks.stopAllOnExit('Session closed');
+    await tasks.flushPersistence();
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

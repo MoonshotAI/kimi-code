@@ -47,6 +47,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
     "@types/ws": "^8.18.0",
     "ulid": "^3.0.1",

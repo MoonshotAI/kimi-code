@@ -73,7 +73,7 @@ export class AgentTaskPersistence {
     private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
-    private readonly fallbackRoot?: AgentTaskPersistenceRoot,
+    private readonly fallbackRoot: AgentTaskPersistenceRoot | undefined,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
@@ -122,6 +122,7 @@ export class AgentTaskPersistence {
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
+    validateTaskId(taskId);
     await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
   }
 

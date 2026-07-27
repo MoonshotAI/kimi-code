@@ -76,6 +76,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventService,
+  IHostFileSystem,
   IPluginService,
   ISessionIndex,
   ISessionLifecycleService,
@@ -338,6 +339,7 @@ async function listWorkspaceSkillsForRoot(
 ): Promise<readonly SkillDefinition[]> {
   const discovery = core.accessor.get(ISkillDiscovery);
   const bootstrap = core.accessor.get(IBootstrapService);
+  const hostFs = core.accessor.get(IHostFileSystem);
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
@@ -350,12 +352,12 @@ async function listWorkspaceSkillsForRoot(
   const rootOptions = { mergeAllAvailableSkills };
 
   const [userRootList, projectRootList, explicitRootList, extraRootList, pluginRootList] = await Promise.all([
-    useExplicitDirs ? Promise.resolve([]) : userRoots(bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
-    useExplicitDirs ? Promise.resolve([]) : projectRoots(workDir, rootOptions),
+    useExplicitDirs ? Promise.resolve([]) : userRoots(hostFs, bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
+    useExplicitDirs ? Promise.resolve([]) : projectRoots(hostFs, workDir, rootOptions),
     useExplicitDirs
-      ? configuredRoots(explicitDirs, workDir, bootstrap.osHomeDir, 'user')
+      ? configuredRoots(hostFs, explicitDirs, workDir, bootstrap.osHomeDir, 'user')
       : Promise.resolve([]),
-    configuredRoots(extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
+    configuredRoots(hostFs, extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
   const [user, project, explicit, extra, plugin] = await Promise.all([

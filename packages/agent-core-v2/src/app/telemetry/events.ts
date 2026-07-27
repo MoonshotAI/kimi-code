@@ -435,6 +435,20 @@ export interface SessionLoadFailedEvent {
   reason: string;
 }
 
+export interface SessionLeaseAcquiredEvent {
+  session_id: string;
+}
+
+export interface SessionHeldByPeerReturnedEvent {
+  session_id: string;
+  phase: 'creating' | 'routable' | 'held-by-local-instance';
+}
+
+export interface SessionDirtyAbortEvent {
+  session_id: string;
+  reason: 'flush-failed';
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -923,6 +937,27 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
+  }),
+  session_lease_acquired: defineTelemetryEvent<SessionLeaseAcquiredEvent>({
+    owner: 'kimi-code',
+    comment: "This instance takes a session's write lease.",
+    properties: { session_id: 'Session the lease covers' },
+  }),
+  session_held_by_peer_returned: defineTelemetryEvent<SessionHeldByPeerReturnedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session materialization is refused because a peer instance holds the lease.',
+    properties: {
+      session_id: 'Session that was refused',
+      phase: 'Ownership phase reported to the client (routable, creating, …)',
+    },
+  }),
+  session_dirty_abort: defineTelemetryEvent<SessionDirtyAbortEvent>({
+    owner: 'kimi-code',
+    comment: 'A session is force-aborted after its final durability barrier became ambiguous.',
+    properties: {
+      session_id: 'Session whose lease is being released after an ambiguous flush failure',
+      reason: 'Why the dirty abort was required',
+    },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

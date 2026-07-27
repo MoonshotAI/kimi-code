@@ -28,6 +28,7 @@ export interface HostFsWatchOptions {
 }
 
 export interface IHostFsWatchHandle extends IDisposable {
+  readonly ready: Promise<void>;
   readonly onDidChange: Event<HostFsChange>;
 }
 

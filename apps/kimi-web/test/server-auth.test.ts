@@ -282,6 +282,22 @@ describe('fragment token intake', () => {
     expect(replaceState).toHaveBeenCalledWith(null, '', '/some/path?x=1');
   });
 
+  it('builds a credential redirect fragment and restores the original hash after intake', async () => {
+    const auth = await loadAuth();
+    const target = auth.withServerCredentialFragment(
+      'http://127.0.0.1:58628/sessions/sess_1?debug=1#top',
+      'tok+/=',
+    );
+    const { replaceState } = installWindow(new URL(target).hash);
+
+    expect(target).toBe(
+      'http://127.0.0.1:58628/sessions/sess_1?debug=1#token=tok%2B%2F%3D&redirect_hash=top',
+    );
+    expect(auth.initServerAuth()).toBe(true);
+    expect(auth.getCredential()).toBe('tok+/=');
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/some/path?x=1#top');
+  });
+
   it('ignores an empty fragment and falls back to storage', async () => {
     writeStoredCredential('stored-tok');
     installWindow('');

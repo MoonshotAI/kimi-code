@@ -4,7 +4,7 @@
  * cursor-based replay.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -192,7 +192,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1, origin: { kind: 'user' } } as unknown as DomainEvent);
 
     const ev = await c.next((f) => f.type === 'turn.started');
     expect(ev.seq).toBeGreaterThanOrEqual(1);
@@ -212,7 +212,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c1.next((f) => f.type === 'server_hello');
     c1.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c1.next((f) => f.type === 'ack' && f.id === 'h1');
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1, origin: { kind: 'user' } } as unknown as DomainEvent);
     emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
     await c1.next((f) => f.type === 'turn.ended');
     c1.ws.close();
@@ -253,6 +253,58 @@ describe('server-v2 /api/v1/ws resync', () => {
 
     c.ws.close();
     await c.closed;
+  });
+
+  it('sends resync_required when the journal cannot serve replay (storage failure)', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const journalPath = join(home as string, 'server', 'events', `${sid}.jsonl`);
+
+    // Subscribe (activates the journal) and land one durable event on disk.
+    const c1 = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c1.next((f) => f.type === 'server_hello');
+    c1.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
+    await c1.next((f) => f.type === 'ack' && f.id === 'h1');
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1, origin: { kind: 'user' } } as unknown as DomainEvent);
+    await c1.next((f) => f.type === 'turn.started');
+
+    // Sabotage the journal: replace the file with a same-named directory so
+    // every subsequent open('a') fails. The next durable event's flush round
+    // drives the journal into its failure state.
+    await rm(journalPath, { force: true });
+    await mkdir(journalPath);
+    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Replaying from a stale cursor: the journal cannot serve the gap, and a
+    // "not served" must surface as resync_required — never as an empty page
+    // (or as the not-yet-persisted memory tail). The failure flush rounds
+    // settle asynchronously, so retry the subscribe a few times; each attempt
+    // retries the journal flush and converges to the sticky state.
+    const c2 = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c2.next((f) => f.type === 'server_hello');
+    let resync: Frame | undefined;
+    for (let attempt = 0; attempt < 5 && resync === undefined; attempt++) {
+      c2.send({
+        type: 'subscribe',
+        id: `s${attempt}`,
+        payload: withToken({ session_ids: [sid], cursors: { [sid]: { seq: 0 } } }),
+      });
+      resync = await c2
+        .next(
+          (f) =>
+            f.type === 'resync_required' &&
+            (f.payload as { session_id?: string } | undefined)?.session_id === sid,
+          400,
+        )
+        .catch(() => undefined);
+    }
+    expect(resync).toBeDefined();
+
+    c1.ws.close();
+    c2.ws.close();
+    await c1.closed;
+    await c2.closed;
   });
 
   it('delivers only the allowlisted agent events via agent_filter', async () => {

@@ -26,8 +26,10 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
+  attachToolFileRevision,
   ToolAccesses,
   type ExecutableToolResult,
+  makeToolFileRevision,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
@@ -40,6 +42,7 @@ import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, type LineEndingStyle } from '#/_base/text/line-endings';
+import { fileStatTuplesEqual } from '#/_base/utils/fs';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   IReadTool,
@@ -275,22 +278,43 @@ export class ReadTool implements IReadTool {
       const lineOffset = args.line_offset ?? 1;
       const requestedLines = args.n_lines ?? MAX_LINES;
       const effectiveLimit = Math.min(requestedLines, MAX_LINES);
+      let observedStat: Awaited<ReturnType<IHostFileSystem['stat']>> | undefined;
+      const onFileStat = (value: Awaited<ReturnType<IHostFileSystem['stat']>>): void => {
+        observedStat = value;
+      };
 
-      if (lineOffset < 0) {
-        return await this.readTail(
-          safePath,
-          args.path,
-          lineOffset,
-          effectiveLimit,
-          requestedLines,
-        );
+      const result =
+        lineOffset < 0
+          ? await this.readTail(
+              safePath,
+              args.path,
+              lineOffset,
+              effectiveLimit,
+              requestedLines,
+              onFileStat,
+            )
+          : await this.readForward(
+              safePath,
+              args.path,
+              lineOffset,
+              effectiveLimit,
+              requestedLines,
+              onFileStat,
+            );
+      if (result.isError === true) return result;
+      observedStat ??= await this.fs.stat(safePath);
+      if (!fileStatTuplesEqual(stat, observedStat)) {
+        return {
+          isError: true,
+          output: `"${args.path}" changed while it was being read. Retry the read.`,
+        };
       }
-      return await this.readForward(
-        safePath,
-        args.path,
-        lineOffset,
-        effectiveLimit,
-        requestedLines,
+      if (args.line_offset !== undefined || args.n_lines !== undefined) {
+        return result;
+      }
+      return attachToolFileRevision(
+        result,
+        makeToolFileRevision(safePath, observedStat),
       );
     } catch (error) {
       if (isTextDecodeError(error)) {
@@ -309,6 +333,7 @@ export class ReadTool implements IReadTool {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    onFileStat: (stat: Awaited<ReturnType<IHostFileSystem['stat']>>) => void,
   ): Promise<ExecutableToolResult> {
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
@@ -316,7 +341,7 @@ export class ReadTool implements IReadTool {
     let maxLinesReached = false;
     let collectionClosed = false;
 
-    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict' })) {
+    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict', onFileStat })) {
       if (containsNulByte(rawLine)) {
         return { isError: true, output: notReadableFileOutput(displayPath) };
       }
@@ -366,13 +391,14 @@ export class ReadTool implements IReadTool {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    onFileStat: (stat: Awaited<ReturnType<IHostFileSystem['stat']>>) => void,
   ): Promise<ExecutableToolResult> {
     const tailCount = Math.abs(lineOffset);
     const entries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let currentLineNo = 0;
 
-    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict' })) {
+    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict', onFileStat })) {
       if (containsNulByte(rawLine)) {
         return { isError: true, output: notReadableFileOutput(displayPath) };
       }

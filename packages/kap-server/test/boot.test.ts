@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,9 +6,18 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { hostRequestHeadersSeed, IHostRequestHeaders, ISkillCatalogRuntimeOptions } from '@moonshot-ai/agent-core-v2';
+import {
+  type DomainEvent,
+  hostRequestHeadersSeed,
+  IAgentLifecycleService,
+  IEventBus,
+  IHostRequestHeaders,
+  ISessionLifecycleService,
+  ISkillCatalogRuntimeOptions,
+} from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
+import { formatServerOrigin } from '../src/serverOrigin';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
 import { getServerVersion } from '../src/version';
 import { authedFetch } from './helpers/auth';
@@ -157,6 +166,104 @@ describe('server-v2 boot', () => {
       logLevel: 'silent',
     });
     expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
+  });
+
+  it('close() is idempotent under concurrent triggers and safe to re-invoke', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-close-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+
+    // The remote /api/v1/shutdown path and the CLI signal handler converge on
+    // this same close(): double triggers must share ONE in-flight close
+    // rather than racing fastify.close / core.dispose re-entrantly.
+    const first = server.close();
+    const second = server.close();
+    expect(second).toBe(first);
+    await expect(first).resolves.toBeUndefined();
+
+    // A late third invocation resolves replays the completed close instead of
+    // re-running it (fastify would reject a second app.close()).
+    await expect(server.close()).resolves.toBeUndefined();
+    server = undefined;
+  });
+
+  it('does not dispose the server when lifecycle closeAll fails', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-close-failure-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const lifecycle = server.core.accessor.get(ISessionLifecycleService);
+    const originalCloseAll = lifecycle.closeAll.bind(lifecycle);
+    const failure = new Error('session shutdown failed');
+    lifecycle.closeAll = async () => {
+      throw failure;
+    };
+
+    await expect(server.close()).rejects.toBe(failure);
+
+    lifecycle.closeAll = originalCloseAll;
+    await server.close();
+    server = undefined;
+  });
+
+  it('flushes the dispatch tail into the session journal before close() resolves', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-close-tail-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    // Create a session and arm its journal (the snapshot route activates the
+    // broadcaster state for the session without a WS connection).
+    const created = await authedFetch(server, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    });
+    const createdBody = (await created.json()) as { code: number; data: { id: string } };
+    expect(createdBody.code).toBe(0);
+    const sid = createdBody.data.id;
+
+    const session = server.core.accessor.get(ISessionLifecycleService).get(sid);
+    expect(session).toBeDefined();
+    const agents = session!.accessor.get(IAgentLifecycleService);
+    if (agents.get('main') === undefined) {
+      await agents.create({ agentId: 'main' });
+    }
+    const snapshot = await authedFetch(server, base, `/api/v1/sessions/${sid}/snapshot`);
+    expect(snapshot.status).toBe(200);
+
+    // Emit a durable event and shut down IMMEDIATELY — the dispatch is still
+    // sitting in the broadcaster queue when close() starts. It must be
+    // journaled (with fsync) before close() resolves: sessions close first,
+    // the journal flush comes last.
+    agents
+      .get('main')!
+      .accessor.get(IEventBus)
+      .publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    await server.close();
+    server = undefined;
+
+    const journal = await readFile(join(home, 'server', 'events', `${sid}.jsonl`), 'utf8');
+    expect(journal).toContain('journal_header');
+    expect(journal).toContain('turn.started');
+  });
+});
+
+describe('server origin formatting', () => {
+  it('bracket-wraps IPv6 hosts and keeps IPv4 hosts unchanged', () => {
+    expect(formatServerOrigin('::1', 58627)).toBe('http://[::1]:58627');
+    expect(formatServerOrigin('127.0.0.1', 58627)).toBe('http://127.0.0.1:58627');
   });
 });
 

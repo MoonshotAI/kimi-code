@@ -42,6 +42,7 @@ describe('resolveTargetDeps', () => {
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
     expect(names).toContain('@moonshot-ai/pi-tui');
+    expect(names).toContain('fs-native-extensions');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -75,6 +76,15 @@ describe('resolveTargetDeps', () => {
     ]);
   });
 
+  it('encodes fs-native-extensions prebuild path per target', () => {
+    const fsNative = resolveTargetDeps('linux-x64').find(
+      (d) => d.resolvedName === 'fs-native-extensions',
+    );
+    expect(fsNative?.nativeFileRelatives).toEqual([
+      'prebuilds/linux-x64/fs-native-extensions.node',
+    ]);
+  });
+
   it('throws on unsupported target', () => {
     expect(() => resolveTargetDeps('linux-x64-musl')).toThrow(/unsupported/i);
   });
@@ -96,5 +106,11 @@ describe('nativeDeps registry shape', () => {
     const piTui = nativeDeps.find((d) => d.id === 'pi-tui');
     expect(piTui?.collect).toBe('native-file-only');
     expect(piTui?.parent).toBe(null);
+  });
+
+  it('has fs-native-extensions (collect=native-file-only, no parent)', () => {
+    const fsNative = nativeDeps.find((d) => d.id === 'fs-native-extensions');
+    expect(fsNative?.collect).toBe('native-file-only');
+    expect(fsNative?.parent).toBe(null);
   });
 });

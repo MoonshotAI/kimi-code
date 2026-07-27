@@ -84,6 +84,23 @@ test('expired keys are removed from secondary indexes', async () => {
   }
 });
 
+test('editing the sentinel payload cannot create a successor generation', async () => {
+  const dir = await tmpDir();
+  try {
+    const oldWriter = await MiniDb.open({ dir, valueCodec: 'string', autoCompact: false });
+    await oldWriter.set('generation', 'old');
+
+    await fs.writeFile(path.join(dir, 'db.lock'), 'successor-generation');
+    await assert.rejects(() => MiniDb.open({ dir, valueCodec: 'string', autoCompact: false }), /locked/);
+    await oldWriter.set('generation', 'old-again');
+    assert.equal(oldWriter.get('generation'), 'old-again');
+
+    await oldWriter.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('expired keys are removed from the full-text index', async () => {
   const dir = await tmpDir();
   try {

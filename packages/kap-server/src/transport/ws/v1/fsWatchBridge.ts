@@ -14,9 +14,10 @@
  * {@link SessionEventBroadcaster}); it is **not** DI-registered and carries no
  * `_serviceBrand`. It owns the per-`(connection, session)` subscription sets,
  * fans the core feed out to each connection filtered by that connection's
- * paths, and assigns a per-session monotonic `seq`. Frames are sent straight
- * to the socket — they never enter the broadcaster / journal (fs changes are
- * volatile: on overflow the client sees `truncated` and re-syncs).
+ * paths, and numbers the delivered frames per connection. Frames are sent
+ * straight to the socket — they never enter the broadcaster / journal. The
+ * `seq` / `truncated` / rebuild contract is pinned on `fsChangeEventSchema` in
+ * `@moonshot-ai/protocol` (`packages/protocol/src/fs.ts`) — see there.
  *
  * The core `ISessionFsWatchService` keeps a single subscription set per
  * session; the bridge drives it with the **union** of every connection's
@@ -36,6 +37,7 @@ import {
 import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/agent-core-v2/session/sessionFs/fsWatch';
 
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
+import { registerSessionReleaseHook } from './sessionReleaseHook';
 
 const MAX_PATHS_PER_CONNECTION = 100;
 
@@ -70,6 +72,8 @@ export interface FsWatchAck {
 interface ConnEntry {
   readonly conn: FsWatchConnection;
   readonly paths: Set<string>;
+  /** Per-connection monotonic frame counter; starts at 0, pre-incremented per delivery. */
+  volatileSeq: number;
 }
 
 interface SessionWatch {
@@ -78,20 +82,30 @@ interface SessionWatch {
   readonly fsWatch: ISessionFsWatchService;
   readonly workspace: ISessionWorkspaceContext;
   readonly conns: Map<string, ConnEntry>;
-  union: Set<string>;
-  seq: number;
   sub: IDisposable | undefined;
 }
 
-export class FsWatchBridge {
+export class FsWatchBridge implements IDisposable {
   private readonly core: Scope;
   private readonly logger: JournalLogger | undefined;
+  private readonly sessionReleaseHook: IDisposable;
   private readonly bySession = new Map<string, SessionWatch>();
   private readonly connPathCount = new Map<string, number>();
 
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
     this.logger = opts.logger;
+    this.sessionReleaseHook = registerSessionReleaseHook(
+      this.core,
+      'fsWatchBridge',
+      (sessionId) => this.releaseSession(sessionId),
+    );
+  }
+
+  dispose(): void {
+    this.sessionReleaseHook.dispose();
+    for (const sw of Array.from(this.bySession.values())) this.dropSession(sw, 'teardown');
+    this.connPathCount.clear();
   }
 
   async addWatch(
@@ -126,7 +140,7 @@ export class FsWatchBridge {
     }
 
     if (entry === undefined) {
-      entry = { conn, paths: new Set() };
+      entry = { conn, paths: new Set(), volatileSeq: 0 };
       sw.conns.set(conn.id, entry);
     }
     for (const rel of toAdd) entry.paths.add(rel);
@@ -155,7 +169,7 @@ export class FsWatchBridge {
     this.connPathCount.set(conn.id, Math.max(0, this.countFor(conn.id) - removed));
     if (entry.paths.size === 0) sw.conns.delete(conn.id);
     this.recomputeAndApply(sw);
-    if (sw.conns.size === 0) this.teardownSession(sw);
+    if (sw.conns.size === 0) this.dropSession(sw, 'teardown');
 
     return this.ok(sw, conn);
   }
@@ -168,7 +182,7 @@ export class FsWatchBridge {
       sw.conns.delete(conn.id);
       this.connPathCount.set(conn.id, Math.max(0, this.countFor(conn.id) - entry.paths.size));
       this.recomputeAndApply(sw);
-      if (sw.conns.size === 0) this.teardownSession(sw);
+      if (sw.conns.size === 0) this.dropSession(sw, 'teardown');
     }
     this.connPathCount.delete(conn.id);
   }
@@ -184,8 +198,6 @@ export class FsWatchBridge {
       fsWatch: session.accessor.get(ISessionFsWatchService),
       workspace: session.accessor.get(ISessionWorkspaceContext),
       conns: new Map(),
-      union: new Set(),
-      seq: 0,
       sub: undefined,
     };
     this.bySession.set(sessionId, sw);
@@ -197,35 +209,51 @@ export class FsWatchBridge {
     for (const { paths } of sw.conns.values()) {
       for (const p of paths) union.add(p);
     }
-    sw.union = union;
     sw.fsWatch.setWatchedPaths([...union]);
     if (union.size > 0 && sw.sub === undefined) {
       sw.sub = sw.fsWatch.onDidChangeFiles((ev) => this.onSessionEvent(sw.id, ev));
     }
   }
 
-  private teardownSession(sw: SessionWatch): void {
+  private releaseSession(sessionId: string): void {
+    const sw = this.bySession.get(sessionId);
+    if (sw === undefined) return;
+    this.dropSession(sw, 'scope-released');
+  }
+
+  private dropSession(sw: SessionWatch, reason: 'teardown' | 'scope-released'): void {
     sw.sub?.dispose();
     sw.sub = undefined;
-    sw.fsWatch.setWatchedPaths([]);
+    for (const entry of sw.conns.values()) {
+      const remaining = Math.max(0, this.countFor(entry.conn.id) - entry.paths.size);
+      if (remaining === 0) this.connPathCount.delete(entry.conn.id);
+      else this.connPathCount.set(entry.conn.id, remaining);
+    }
+    sw.conns.clear();
+    if (reason === 'teardown') sw.fsWatch.setWatchedPaths([]);
     this.bySession.delete(sw.id);
   }
 
   private onSessionEvent(sessionId: string, ev: FsChangeEvent): void {
     const sw = this.bySession.get(sessionId);
     if (sw === undefined) return;
-    for (const { conn, paths } of sw.conns.values()) {
+    for (const entry of sw.conns.values()) {
+      const { conn, paths } = entry;
       let changes: FsChangeEntry[];
       if (ev.truncated === true) {
+        // A truncated window is broadcast to every connection of the session
+        // watch, even one whose path set matches nothing: after it, no
+        // incremental state can be trusted, so every client must resync.
         changes = [];
       } else {
         changes = ev.changes.filter((c) => isUnderAny(c.path, paths));
+        // No frame for this connection → its seq does not advance.
         if (changes.length === 0) continue;
       }
-      sw.seq += 1;
+      entry.volatileSeq += 1;
       const frame: FsChangedFrame = {
         type: 'event.fs.changed',
-        seq: sw.seq,
+        seq: entry.volatileSeq,
         session_id: sessionId,
         timestamp: new Date().toISOString(),
         payload: {

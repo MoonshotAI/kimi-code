@@ -64,7 +64,13 @@ beforeEach(async () => {
   ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
   docs = ix.get(IAtomicDocumentStore);
   bytes = ix.get(IFileSystemStorageService);
-  persistence = new AgentTaskPersistence(sessionDir, SESSION_SCOPE, docs, bytes);
+  persistence = new AgentTaskPersistence(
+    sessionDir,
+    SESSION_SCOPE,
+    docs,
+    bytes,
+    undefined,
+  );
 });
 
 afterEach(async () => {
@@ -77,7 +83,13 @@ describe('AgentTaskPersistence', () => {
     scope: string,
     fallbackRoot?: { readonly dir: string; readonly scope: string },
   ): AgentTaskPersistence {
-    return new AgentTaskPersistence(join(sessionDir, scope), scope, docs, bytes, fallbackRoot);
+    return new AgentTaskPersistence(
+      join(sessionDir, scope),
+      scope,
+      docs,
+      bytes,
+      fallbackRoot,
+    );
   }
 
   function sessionRoot(): { readonly dir: string; readonly scope: string } {

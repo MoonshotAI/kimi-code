@@ -15,8 +15,10 @@
  * later flush cannot duplicate data by guessing whether storage committed it.
  * A valid explicit `rewrite` is the recovery boundary: a successful atomic
  * replacement clears that failure before the preserved live tail drains.
- * `flush` and `close` wait for every keyed buffer to settle before reporting
- * the first failure in stable key insertion order.
+ * `flush(scopePrefix)` waits for the matching scope and descendants; omitting
+ * the prefix and `close` wait for every keyed buffer. Retired generations stay
+ * reachable after a failed final flush so later flushes report the same sticky
+ * failure instead of silently losing the in-memory tail.
  *
  * This file ships the interface, error class, and DI token only.
  * The concrete `AppendLogStore` implementation lives in
@@ -52,7 +54,7 @@ export interface IAppendLogStore {
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void;
   read<R>(scope: string, key: string): AsyncIterable<R>;
   rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void>;
-  flush(): Promise<void>;
+  flush(scopePrefix?: string): Promise<void>;
   close(): Promise<void>;
   acquire(scope: string, key: string): IDisposable;
 }

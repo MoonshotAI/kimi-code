@@ -13,6 +13,7 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -71,7 +72,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   });
 
   function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceAliases {
-    const fileStorage = new FileStorageService(homeDir);
+    const fileStorage = new FileStorageService(homeDir, undefined, undefined, new CrossProcessLockService());
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),

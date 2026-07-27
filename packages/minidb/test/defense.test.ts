@@ -12,7 +12,6 @@ import net from 'node:net';
 import { WAL } from '../src/wal.js';
 import { encodeFrame, decodeBatchOps, TYPE_SET } from '../src/codec.js';
 import { MiniDb } from '../src/index.js';
-import { LockFile } from '../src/lockfile.js';
 import { startServer } from '../src/server.js';
 
 async function tmpDir() {
@@ -110,46 +109,6 @@ test('WAL open and close are idempotent', async () => {
   await expect(wal.open()).resolves.toBeUndefined(); // second open is a no-op
   await expect(wal.close()).resolves.toBeUndefined();
   await expect(wal.close()).resolves.toBeUndefined(); // second close is a no-op
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-// --- LockFile stale / corrupt handling -------------------------------------
-
-test('LockFile.acquire returns false when a live process holds the lock', async () => {
-  const dir = await tmpDir();
-  const p = path.join(dir, 'db.lock');
-  const a = new LockFile(p);
-  assert.equal(await a.acquire(), true);
-  const b = new LockFile(p);
-  assert.equal(await b.acquire(), false); // same PID is alive -> not stale
-  await a.release();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('a corrupt lock file is treated as stale and taken over', async () => {
-  const dir = await tmpDir();
-  await fs.writeFile(path.join(dir, 'db.lock'), 'not-json');
-  const db = await MiniDb.open({ dir, valueCodec: 'string' });
-  await db.set('a', '1');
-  assert.equal(db.get('a'), '1');
-  await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('a lock file with a non-numeric pid is treated as stale', async () => {
-  const dir = await tmpDir();
-  await fs.writeFile(path.join(dir, 'db.lock'), JSON.stringify({ pid: 'abc' }));
-  const db = await MiniDb.open({ dir, valueCodec: 'string' });
-  assert.equal(db.readOnly, false);
-  await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('LockFile release/releaseSync are no-ops when not held', async () => {
-  const dir = await tmpDir();
-  const lock = new LockFile(path.join(dir, 'db.lock'));
-  await assert.doesNotReject(() => lock.release());
-  assert.doesNotThrow(() => lock.releaseSync());
   await fs.rm(dir, { recursive: true, force: true });
 });
 

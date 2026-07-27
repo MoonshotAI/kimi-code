@@ -47,6 +47,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.GOAL_OBJECTIVE_EMPTY]: ErrorCode.GOAL_OBJECTIVE_EMPTY,
   [ErrorCodes.GOAL_OBJECTIVE_TOO_LONG]: ErrorCode.GOAL_OBJECTIVE_TOO_LONG,
   [ErrorCodes.GOAL_UNSUPPORTED_AGENT]: ErrorCode.GOAL_UNSUPPORTED_AGENT,
+  [ErrorCodes.SESSION_HELD_BY_PEER]: ErrorCode.SESSION_HELD_BY_PEER,
   // hostFs / storage codes → closest v1 wire equivalent (ENOTDIR collapses
   // into path-not-found); codes without an equivalent fall back to 50001.
   [ErrorCodes.OS_FS_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
@@ -61,12 +62,15 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
 /**
  * Map an internal error to the project envelope. `Error2` keeps its coded
  * mapping; everything else becomes `50001`. Stack traces are intentionally not
- * surfaced.
+ * surfaced. Structured `Error2.details` always ride the mapped envelope
+ * verbatim (omitted when absent), so newly-mapped codes such as
+ * `session.held_by_peer` carry their ownership payload without a per-code
+ * branch.
  */
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
   if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
-    return errEnvelope(code, err.message, requestId, err.stack);
+    return errEnvelope(code, err.message, requestId, err.stack, err.details);
   }
   if (err instanceof TimeoutError) {
     return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId, err.stack);

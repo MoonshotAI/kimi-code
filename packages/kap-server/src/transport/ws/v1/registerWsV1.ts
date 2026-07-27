@@ -15,6 +15,7 @@ import type { CredentialValidator } from '../../../services/auth/credentials';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
 import type { FsWatchBridge } from './fsWatchBridge';
+import type { SkillCatalogBridge } from './skillCatalogBridge';
 import type { JournalLogger } from './sessionEventJournal';
 import { WsConnectionV1 } from './wsConnectionV1';
 import { selectWsBearerProtocol } from '../bearerProtocol';
@@ -27,6 +28,7 @@ export interface RegisterWsV1Options {
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly fsWatchBridge: FsWatchBridge;
+  readonly skillCatalogBridge: SkillCatalogBridge;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
   readonly flushIntervalMs?: number;
@@ -44,6 +46,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       socket,
       broadcaster,
       fsWatchBridge: opts.fsWatchBridge,
+      skillCatalogBridge: opts.skillCatalogBridge,
       connectionRegistry: registry,
       validateCredential: opts.validateCredential,
       remoteAddress: req.socket.remoteAddress ?? null,

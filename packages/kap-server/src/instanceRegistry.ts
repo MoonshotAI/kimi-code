@@ -16,9 +16,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+import { syncDir } from '@moonshot-ai/agent-core-v2/_base/utils/fs';
 import { ulid } from 'ulid';
 
 /** Default cadence for refreshing `heartbeat_at`. */
@@ -147,7 +148,7 @@ async function readInstanceFile(filePath: string): Promise<ServerInstanceInfo | 
   }
 }
 
-/** Atomic (rename-based) write. Single-writer per file, so no lock is needed. */
+/** Atomic (rename-based), durable write. Single-writer per file, so no lock is needed. */
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
   const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   let renamed = false;
@@ -155,11 +156,15 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
     const fh = await open(tmpPath, 'w');
     try {
       await fh.writeFile(content);
+      // Flush the payload before the rename, so a crash can't resurrect a 0-byte entry.
+      await fh.sync();
     } finally {
       await fh.close();
     }
     await rename(tmpPath, filePath);
     renamed = true;
+    // The rename itself is not durable — fsync the directory so the new entry survives a crash.
+    await syncDir(dirname(filePath));
   } finally {
     if (!renamed) {
       try {

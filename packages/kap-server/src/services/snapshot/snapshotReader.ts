@@ -138,6 +138,8 @@ export class SnapshotReader implements ISnapshotReader {
 
     return {
       as_of_seq: snapState.seq,
+      // A journal with no baseline yet has `epoch: undefined`; on the wire the
+      // field is simply absent (never fabricated).
       epoch: snapState.epoch,
       session,
       messages: { items, has_more: hasMore },

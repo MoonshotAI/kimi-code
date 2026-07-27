@@ -66,6 +66,7 @@ export interface SessionFacade {
   update(patch: SessionMetaPatch): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   status(): Promise<SessionStatus>;
+  /** Release the session; failures abandon internally before rejecting. */
   close(): Promise<void>;
   archive(): Promise<void>;
   /** Re-materialize a closed session; `false` when it no longer exists. */

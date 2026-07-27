@@ -28,3 +28,13 @@ export function loadNativePackage<T>(
   if (nativeRequire === null) return null;
   return nativeRequire(packageName) as T;
 }
+
+export function loadNativePackageFile<T>(
+  packageName: string,
+  relativePath: string,
+  options: NativeAssetOptions = {},
+): T | null {
+  const packageRoot = getNativePackageRoot(packageName, options);
+  if (packageRoot === null) return null;
+  return createRequire(import.meta.url)(join(packageRoot, relativePath)) as T;
+}

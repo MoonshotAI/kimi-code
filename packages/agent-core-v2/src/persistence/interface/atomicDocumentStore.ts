@@ -24,6 +24,16 @@ export interface IAtomicDocumentStore {
 
   get<T>(scope: string, key: string): Promise<T | undefined>;
   set<T>(scope: string, key: string, value: T): Promise<void>;
+  update<T>(
+    scope: string,
+    key: string,
+    mutate: (current: T | undefined) => T | Promise<T>,
+  ): Promise<T>;
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T>;
   delete(scope: string, key: string): Promise<void>;
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   watch(scope: string, key: string): Event<void>;

@@ -110,6 +110,8 @@ import {
   IHostFileSystem,
   ISessionBtwService,
   ISessionContext,
+  ISessionLeaseService,
+  ISessionWriteAdmission,
   ISessionProcessRunner,
   IAgentScopeContext,
   IAgentShellCommandService,
@@ -123,6 +125,7 @@ import {
   IAgentToolActivationService,
   IAgentUserToolService,
   IAgentUsageService,
+  IStorageWriteAdmission,
   ISessionWorkspaceContext,
   AgentLLMRequesterService,
   LifecycleScope,
@@ -177,9 +180,12 @@ import { ISessionQuestionService, type QuestionResult } from '#/session/question
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { fakeHostFsWatch } from '../session/sessionFs/stubs';
+import { stubSessionLeaseService } from '../session/sessionLease/stubs';
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -535,13 +541,14 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
     if (homeDir !== undefined) {
       for (const [id, value] of bootstrapSeed({
         homeDir,
+        osHomeDir: homeDir,
         cwd: process.cwd(),
         env: process.env,
       })) {
         reg.defineInstance(id, value);
       }
       const file = (): SyncDescriptor<IFileSystemStorageService> =>
-        new SyncDescriptor(FileStorageService, [homeDir]);
+        new SyncDescriptor(FileStorageService, [homeDir, undefined, undefined]);
       reg.defineDescriptor(IFileSystemStorageService, file());
       reg.define(IBlobStore, BlobStoreService);
     }
@@ -996,6 +1003,7 @@ export class AgentTestContext {
   private readonly root: Scope;
   private readonly session: Scope;
   private readonly agent: Scope;
+  private readonly sessionWriteAdmissionRegistration: IDisposable;
   private readonly disposables: IDisposable[] = [];
   private suppressWireSnapshot = false;
   private pluginSessionStartRegistered = false;
@@ -1035,6 +1043,7 @@ export class AgentTestContext {
           })) {
             reg.defineInstance(id, value);
           }
+          reg.defineInstance(IHostFsWatchService, fakeHostFsWatch().service);
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, []);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());
@@ -1142,6 +1151,10 @@ export class AgentTestContext {
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
     const sessionScope = bootstrap.sessionScope(workspaceId, sessionId);
+    const sessionLease = stubSessionLeaseService();
+    this.sessionWriteAdmissionRegistration = this.root.accessor
+      .get(IStorageWriteAdmission)
+      .registerSession(sessionScope, sessionLease);
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       extra: collectScopeSeed(
         [
@@ -1156,6 +1169,8 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
+            reg.defineInstance(ISessionLeaseService, sessionLease);
+            reg.defineInstance(ISessionWriteAdmission, sessionLease);
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
@@ -1257,7 +1272,11 @@ export class AgentTestContext {
     this.initializeRestorableServices();
     // Resolve the activity view so its constructor subscriptions publish
     // `agent.activity.updated` — production ignites it in agentLifecycle.
-    this.get(IAgentActivityView);
+    // `IAgentActivityView` is a Delayed service: a bare `get` only builds the
+    // proxy and defers the real instance (and its subscriptions) to an idle
+    // callback that can fire after the test's turn already ran. Reading
+    // `state()` forces synchronous instantiation.
+    this.get(IAgentActivityView).state();
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(
@@ -1796,6 +1815,7 @@ export class AgentTestContext {
       disposable.dispose();
     }
     await this.closeWire();
+    this.sessionWriteAdmissionRegistration.dispose();
     this.root.dispose();
   }
 

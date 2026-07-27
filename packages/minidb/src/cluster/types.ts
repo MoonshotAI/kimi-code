@@ -36,15 +36,6 @@ export interface ClusterOpenOptions {
    *  throw; reads always go through revalidated read-only shard instances. */
   readOnly?: boolean;
 
-  /** How long a lock timestamp may go unrefreshed before the lock would be
-   *  considered abandoned (default 30000). Reserved: the underlying LockFile
-   *  currently takes a lock over only when the recorded owner PID is dead,
-   *  never merely because it is old; lockRenewMs keeps the timestamp fresh
-   *  for observability and for a future lease-based check. */
-  lockLeaseMs?: number;
-  /** How often a cached shard writer refreshes its lock timestamp
-   *  (default 10000). Set to 0 to disable renewal. */
-  lockRenewMs?: number;
   /** Maximum number of shard write locks cached in this process; least
    *  recently used, non-busy shards are evicted beyond the cap (default 16). */
   lockPoolMaxShards?: number;

@@ -9,6 +9,7 @@ export * from './ws-control';
 export * from './asyncapi';
 
 export * from './session';
+export * from './session-ownership';
 export * from './workspace';
 export * from './message';
 export * from './approval';
