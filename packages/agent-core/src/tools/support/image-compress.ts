@@ -38,17 +38,13 @@ import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 import {
-  buildMalformedImageNotice,
-  buildUnsupportedImageNotice,
-  decodeBase64Prefix,
-  isDataUrl,
-  isModelAcceptedImageMime,
+  gateImageFormatParts,
   normalizeImageMime,
   parseImageDataUrl,
-  resolveEffectiveImageMime,
-  unsupportedImageMimeFromUrl,
 } from './image-format-policy';
 import { decodeWebp, isAnimatedWebp } from './webp-decode';
+
+export { gateImageFormatParts };
 
 /**
  * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
@@ -491,78 +487,6 @@ export interface CompressedContentParts {
    * the tool's own output can never be mistaken for a generated one.
    */
   readonly captions: readonly string[];
-}
-
-/**
- * Enforce the provider-accepted image format set (see ./image-format-policy)
- * on a content-part list. Inline `data:` image parts whose MIME is outside
- * the accepted set are dropped and replaced with a text notice, so one
- * unsupported image cannot poison the session history. Accepted images are
- * forwarded only as the byte-exact canonical data URL: an alias
- * (`image/jpg`), case/whitespace variants, or MIME parameters
- * (`image/jpeg;charset=utf-8`) all rebuild to the bare canonical form,
- * because strict provider whitelists exact-match the full header. Remote
- * (non-data) image URLs and non-image parts pass through — a URL carries no
- * bytes to inspect.
- *
- * The BYTES are authoritative, not the declared MIME: the header of each
- * inline image is sniffed, and a mismatch (e.g. AVIF bytes an MCP image
- * search tool labels `image/png`) is gated on what the image IS — the
- * provider decodes bytes, not labels. When the sniffer doesn't recognize
- * the bytes (corrupt image, exotic container), the declared MIME stands
- * and the 400-recovery path remains the backstop.
- *
- * This is the format gate shared by every ingestion point; run it BEFORE
- * compression so unsupported bytes are never decoded.
- */
-export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
-  const out: ContentPart[] = [];
-  for (const part of parts) {
-    if (part.type === 'image_url') {
-      const parsed = parseImageDataUrl(part.imageUrl.url);
-      if (parsed === null) {
-        // A `data:` URL that failed to parse (missing `;base64,` separator,
-        // empty MIME, …) is guaranteed to fail at the provider — Anthropic
-        // throws on it, OpenAI-compat servers 400. Drop it for a notice at
-        // ingestion instead of leaving it to poison the session and trigger
-        // the media-stripped resend on every later turn.
-        if (isDataUrl(part.imageUrl.url)) {
-          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
-          continue;
-        }
-        // Remote image URL (no bytes to sniff): reject when its path
-        // extension names a format providers reject (e.g. a search-tool
-        // link ending in `.avif`) — the notice keeps the URL so the model
-        // can still fetch and convert the image. Extensionless / unknown
-        // URLs pass through to the provider — and to the 400 recovery.
-        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
-        if (extMime !== null) {
-          out.push({
-            type: 'text',
-            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
-          });
-          continue;
-        }
-        out.push(part);
-        continue;
-      }
-      const effectiveMime = resolveEffectiveImageMime(
-        parsed.mimeType,
-        decodeBase64Prefix(parsed.base64),
-      );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
-        continue;
-      }
-      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
-      if (part.imageUrl.url !== canonicalUrl) {
-        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
-        continue;
-      }
-    }
-    out.push(part);
-  }
-  return out;
 }
 
 /**

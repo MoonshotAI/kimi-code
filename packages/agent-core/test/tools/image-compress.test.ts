@@ -1069,6 +1069,19 @@ describe('gateImageFormatParts', () => {
     }
   });
 
+  it('drops an empty-payload data URL (clipboard/upload captured nothing)', () => {
+    // `data:image/png;base64,` parses fine but carries zero bytes — the
+    // provider rejects it as an invalid image, so it is dropped for a notice
+    // at ingestion (and at projection for pre-existing history) instead of
+    // poisoning every later request.
+    const out = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' } },
+    ]);
+    expect(out.some((p) => p.type === 'image_url')).toBe(false);
+    expect(out[0]).toMatchObject({ type: 'text' });
+    expect((out[0] as { text: string }).text).toContain('no image data (0 bytes)');
+  });
+
   it('truncates a long malformed data URL in the notice', () => {
     const url = `data:image/png${'x'.repeat(500)}`;
     const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url } }]);

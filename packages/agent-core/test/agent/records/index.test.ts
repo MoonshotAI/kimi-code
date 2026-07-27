@@ -171,7 +171,7 @@ describe('AgentRecords persistence metadata', () => {
     const legacyOutput = [
       { type: 'text', text: summary },
       { type: 'text', text: '<image path="/tmp/a.png">' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,A' } },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQID' } },
       { type: 'text', text: '</image>' },
     ];
     const persistence = new RecordingInMemoryAgentRecordPersistence([
