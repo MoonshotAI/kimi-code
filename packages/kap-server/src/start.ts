@@ -146,12 +146,7 @@ export interface RunningServer {
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
   readonly port: number;
-  close(options?: ServerCloseOptions): Promise<void>;
-}
-
-export interface ServerCloseOptions {
-  /** Absolute Unix timestamp after which telemetry must no longer delay close. */
-  readonly telemetryDeadlineMs?: number;
+  close(): Promise<void>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -323,15 +318,24 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
-  const close = async (options: ServerCloseOptions = {}): Promise<void> => {
+  const close = async (): Promise<void> => {
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    // Flush buffered telemetry before the Core scope (and its storage layer)
-    // is disposed; bounded so a wedged endpoint cannot hold shutdown hostage.
-    await shutdownServerTelemetry(telemetry, options.telemetryDeadlineMs);
-    core.dispose();
-    await registration.release();
+    // Telemetry is best-effort and must never prevent core or instance cleanup.
+    try {
+      await shutdownServerTelemetry(telemetry);
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'telemetry shutdown failed; continuing server cleanup',
+      );
+    }
+    try {
+      core.dispose();
+    } finally {
+      await registration.release();
+    }
   };
 
   const connectionRegistry = new ConnectionRegistry();

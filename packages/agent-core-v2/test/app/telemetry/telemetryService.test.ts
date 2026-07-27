@@ -1,9 +1,3 @@
-/**
- * Telemetry facade tests — exercise appender fan-out, context views, error
- * isolation, lifecycle option forwarding, and App-scope registration through
- * the public `ITelemetryService` surface.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
@@ -12,28 +6,21 @@ import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
-import {
-  type ITelemetryAppender,
-  type TelemetryProperties,
-  type TelemetryShutdownOptions,
-  ITelemetryService,
-} from '#/app/telemetry/telemetry';
+import { type ITelemetryAppender, type TelemetryProperties, ITelemetryService } from '#/app/telemetry/telemetry';
 import { TelemetryService } from '#/app/telemetry/telemetryService';
 
 class CapturingAppender implements ITelemetryAppender {
   readonly events: { event: string; properties?: TelemetryProperties }[] = [];
   flushCalls = 0;
   shutdownCalls = 0;
-  shutdownOptions: TelemetryShutdownOptions | undefined;
   track(event: string, properties?: TelemetryProperties): void {
     this.events.push({ event, properties });
   }
   flush(): void {
     this.flushCalls += 1;
   }
-  shutdown(options?: TelemetryShutdownOptions): void {
+  shutdown(): void {
     this.shutdownCalls += 1;
-    this.shutdownOptions = options;
   }
 }
 
@@ -176,17 +163,6 @@ describe('TelemetryService (unit)', () => {
     await svc.shutdown();
     expect(a.shutdownCalls).toBe(1);
     expect(b.shutdownCalls).toBe(1);
-  });
-
-  it('shutdown forwards deadline options to each appender', async () => {
-    const appender = new CapturingAppender();
-    const svc = telemetryWithAppenders(appender);
-    const signal = new AbortController().signal;
-    const options = { signal, deadlineMs: Date.now() + 25 };
-
-    await svc.shutdown(options);
-
-    expect(appender.shutdownOptions).toBe(options);
   });
 
   it('flush is a no-op for appenders without flush', async () => {

@@ -1,12 +1,4 @@
-/**
- * Cloud telemetry lifecycle tests — sends and retries through the real
- * appender/transport/storage stack, stubbing only the outbound fetch boundary.
- * Covers batching, durable shutdown, startup spool replay, privacy, and wire
- * shaping. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/telemetry/cloudAppender.test.ts`.
- */
-
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,7 +16,6 @@ import { stubBootstrap } from '../bootstrap/stubs';
 interface CapturedRequest {
   readonly url: string;
   readonly headers: Record<string, string>;
-  readonly signal?: AbortSignal;
   readonly body: {
     readonly user_id: string;
     readonly events: readonly Record<string, unknown>[];
@@ -35,15 +26,10 @@ type Responder = (req: CapturedRequest) => Response | Promise<Response>;
 
 function makeFetch(responder: Responder): typeof fetch {
   return (async (input: unknown, init: unknown) => {
-    const requestInit = init as {
-      headers: Record<string, string>;
-      body: string;
-      signal?: AbortSignal;
-    };
+    const requestInit = init as { headers: Record<string, string>; body: string };
     const req: CapturedRequest = {
       url: String(input),
       headers: requestInit.headers,
-      signal: requestInit.signal,
       body: JSON.parse(requestInit.body) as CapturedRequest['body'],
     };
     return responder(req);
@@ -216,73 +202,6 @@ describe('CloudAppender', () => {
     expect(sends).toBe(1);
   });
 
-  it('persists buffered events before shutdown resolves when its deadline aborts a hung send', async () => {
-    let requestSignal: AbortSignal | undefined;
-    let markRequestStarted: (() => void) | undefined;
-    const requestStarted = new Promise<void>((resolve) => {
-      markRequestStarted = resolve;
-    });
-    const appender = new CloudAppender(
-      baseOptions({
-        homeDir,
-        fetchImpl: makeFetch((request) => {
-          requestSignal = request.signal;
-          markRequestStarted?.();
-          return new Promise<Response>(() => {});
-        }),
-      }),
-    );
-    const deadline = new AbortController();
-
-    appender.track('buffered_at_shutdown');
-    const closing = appender.shutdown({ signal: deadline.signal });
-    await requestStarted;
-    deadline.abort();
-    await closing;
-
-    expect(requestSignal?.aborted).toBe(true);
-    const files = readdirSync(join(homeDir, 'telemetry')).filter((file) =>
-      file.startsWith('failed_'),
-    );
-    expect(files).toHaveLength(1);
-    const persisted = readFileSync(join(homeDir, 'telemetry', files[0] as string), 'utf8');
-    expect(JSON.parse(persisted.trim())).toMatchObject({ event: 'buffered_at_shutdown' });
-  });
-
-  it('persists a threshold flush already in flight before deadline shutdown resolves', async () => {
-    let requestSignal: AbortSignal | undefined;
-    let markRequestStarted: (() => void) | undefined;
-    const requestStarted = new Promise<void>((resolve) => {
-      markRequestStarted = resolve;
-    });
-    const appender = new CloudAppender(
-      baseOptions({
-        homeDir,
-        flushThreshold: 1,
-        fetchImpl: makeFetch((request) => {
-          requestSignal = request.signal;
-          markRequestStarted?.();
-          return new Promise<Response>(() => {});
-        }),
-      }),
-    );
-    const deadline = new AbortController();
-
-    appender.track('threshold_in_flight');
-    await requestStarted;
-    const closing = appender.shutdown({ signal: deadline.signal });
-    deadline.abort();
-    await closing;
-
-    expect(requestSignal?.aborted).toBe(true);
-    const files = readdirSync(join(homeDir, 'telemetry')).filter((file) =>
-      file.startsWith('failed_'),
-    );
-    expect(files).toHaveLength(1);
-    const persisted = readFileSync(join(homeDir, 'telemetry', files[0] as string), 'utf8');
-    expect(JSON.parse(persisted.trim())).toMatchObject({ event: 'threshold_in_flight' });
-  });
-
   it('retries on 5xx and saves to disk after exhausting backoffs', async () => {
     let attempts = 0;
     const appender = new CloudAppender(
@@ -344,39 +263,6 @@ describe('CloudAppender', () => {
     await appender.retryDiskEvents();
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
-    ).toHaveLength(0);
-  });
-
-  it('start replays persisted events during the appender lifecycle', async () => {
-    const failingAppender = new CloudAppender(
-      baseOptions({
-        homeDir,
-        fetchImpl: makeFetch(() => statusResponse(500)),
-      }),
-    );
-    failingAppender.track('persisted_before_restart');
-    await failingAppender.flush();
-    expect(
-      readdirSync(join(homeDir, 'telemetry')).filter((file) => file.startsWith('failed_')),
-    ).toHaveLength(1);
-
-    let replayed = 0;
-    const restartedAppender = new CloudAppender(
-      baseOptions({
-        homeDir,
-        fetchImpl: makeFetch(() => {
-          replayed += 1;
-          return okResponse();
-        }),
-      }),
-    );
-
-    restartedAppender.start();
-    await restartedAppender.shutdown();
-
-    expect(replayed).toBe(1);
-    expect(
-      readdirSync(join(homeDir, 'telemetry')).filter((file) => file.startsWith('failed_')),
     ).toHaveLength(0);
   });
 

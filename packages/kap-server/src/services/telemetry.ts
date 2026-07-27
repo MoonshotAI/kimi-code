@@ -28,9 +28,8 @@ const TELEMETRY_DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
 const TELEMETRY_DISABLE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 
 /**
- * Cap on the final flush during server close. A wedged telemetry endpoint must
- * not hold shutdown hostage; whatever remains unsent is persisted by the
- * transport's disk layer.
+ * Cap on how long server close waits for its best-effort final flush. A wedged
+ * telemetry endpoint must not hold shutdown hostage.
  */
 const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
 
@@ -52,12 +51,7 @@ export async function initializeServerTelemetry(
   const service = core.accessor.get(ITelemetryService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
-  let enabled = true;
-  try {
-    enabled = config.get('telemetry') !== false;
-  } catch {
-    enabled = true;
-  }
+  const enabled = config.get('telemetry') !== false;
   if (!enabled || isTelemetryDisabledByEnv(core)) return {};
 
   const auth = core.accessor.get(IOAuthToolkit);
@@ -70,7 +64,8 @@ export async function initializeServerTelemetry(
   });
   const registration = service.addAppender(appender);
   try {
-    appender.start();
+    // The server is long-lived: flush on a timer, not only at the threshold.
+    appender.startPeriodicFlush();
   } catch (error) {
     registration.dispose();
     throw error;
@@ -83,5 +78,16 @@ export async function shutdownServerTelemetry(
   deadlineMs = Date.now() + TELEMETRY_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
   telemetry.registration?.dispose();
-  await telemetry.appender?.shutdown({ deadlineMs });
+  if (telemetry.appender === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      telemetry.appender.shutdown(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

@@ -172,9 +172,7 @@ export async function runV2Print(
         await restorePermission();
       } finally {
         if (telemetryService !== undefined) {
-          await telemetryService.shutdown({
-            deadlineMs: Date.now() + CLI_SHUTDOWN_TIMEOUT_MS,
-          });
+          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
         }
         app.dispose();
       }
@@ -191,15 +189,15 @@ export async function runV2Print(
     // model is reconciled via setContext once resolved.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
-      const appender = createCloudAppender(app.accessor, {
-        deviceId,
-        appName: CLI_USER_AGENT_PRODUCT,
-        uiMode: PROMPT_UI_MODE,
-        model: opts.model ?? defaultModel,
-        getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
-      });
-      telemetryService.setAppender(appender);
-      appender.start();
+      telemetryService.setAppender(
+        createCloudAppender(app.accessor, {
+          deviceId,
+          appName: CLI_USER_AGENT_PRODUCT,
+          uiMode: PROMPT_UI_MODE,
+          model: opts.model ?? defaultModel,
+          getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
+        }),
+      );
     }
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);

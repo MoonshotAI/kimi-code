@@ -11,12 +11,7 @@
 import { join } from 'node:path';
 
 import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
-import {
-  createServerLogger,
-  startServer,
-  type ServerCloseOptions,
-  type ServerLogger,
-} from '@moonshot-ai/kap-server';
+import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
@@ -62,7 +57,7 @@ const WEB_ASSETS_DIR = 'dist-web';
 interface RoutedServer {
   readonly address: string;
   readonly logger: ServerLogger;
-  close(options?: ServerCloseOptions): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface WebCliOptions extends ServerCliOptions {
@@ -255,17 +250,8 @@ async function runServerInProcess(
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
     try {
-      const telemetryDeadlineMs = Date.now() + CLI_SHUTDOWN_TIMEOUT_MS;
-      const results = await Promise.allSettled([
-        running?.close({ telemetryDeadlineMs }),
-        shutdownTelemetry({
-          timeoutMs: Math.max(0, telemetryDeadlineMs - Date.now()),
-        }),
-      ]);
-      const failure = results.find(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      );
-      if (failure !== undefined) throw failure.reason;
+      await running?.close();
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     } catch (error) {
       running?.logger.error(
         { err: error instanceof Error ? error : new Error(String(error)) },
@@ -308,7 +294,7 @@ async function runServerInProcess(
   running = {
     address: `http://${v2.host}:${v2.port}`,
     logger,
-    close: (closeOptions) => v2.close(closeOptions),
+    close: () => v2.close(),
   };
 
   track('server_started', { daemon: false });

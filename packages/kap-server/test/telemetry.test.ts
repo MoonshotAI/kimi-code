@@ -1,8 +1,8 @@
 /**
  * Kap server telemetry composition tests — boot the real App scope and storage,
  * then verify config gating, host-appender preservation, cloud delivery wiring,
- * and owned shutdown. The outbound cloud fetch remains behind the appender and
- * is never contacted by these scenarios.
+ * and owned shutdown. The outbound cloud fetch is stubbed at the network
+ * boundary.
  */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -13,6 +13,7 @@ import {
   bootstrap,
   type ITelemetryAppender,
   ITelemetryService,
+  IOAuthToolkit,
   logSeed,
   resolveConfigPath,
   resolveLoggingConfig,
@@ -34,6 +35,7 @@ describe('server telemetry', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     core?.dispose();
     core = undefined;
     if (home !== undefined) {
@@ -77,7 +79,9 @@ describe('server telemetry', () => {
     await shutdownServerTelemetry(telemetry);
   });
 
-  it('adds cloud delivery without replacing a host appender and removes only its owned appender on shutdown', async () => {
+  it('keeps host delivery independent of the server-owned cloud appender lifecycle', async () => {
+    const cloudFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', cloudFetch);
     const hostEvents: string[] = [];
     const hostAppender: ITelemetryAppender = {
       track: (event) => hostEvents.push(event),
@@ -86,20 +90,30 @@ describe('server telemetry', () => {
     hostTelemetry.addAppender(hostAppender);
     const app = await bootCore(undefined, undefined, [[ITelemetryService, hostTelemetry]]);
     const telemetry = await initializeServerTelemetry(app, home as string);
-    const appender = telemetry.appender;
-    if (appender === undefined) throw new Error('cloud appender was not attached');
-    const cloudTrack = vi.spyOn(appender, 'track');
+    const service = app.accessor.get(ITelemetryService);
 
-    app.accessor.get(ITelemetryService).track('server_probe');
+    service.track('server_probe');
 
     expect(hostEvents).toEqual(['server_probe']);
-    expect(cloudTrack).toHaveBeenCalledWith('server_probe', {});
 
-    await shutdownServerTelemetry(telemetry, Date.now() - 1);
-    app.accessor.get(ITelemetryService).track('host_after_server_shutdown');
+    await shutdownServerTelemetry(telemetry);
+    service.track('host_after_server_shutdown');
+    await service.flush();
 
+    expect(cloudFetch).toHaveBeenCalledOnce();
     expect(hostEvents).toEqual(['server_probe', 'host_after_server_shutdown']);
-    expect(cloudTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns at the deadline when cloud delivery never settles', async () => {
+    const auth = {
+      _serviceBrand: undefined,
+      getCachedAccessToken: () => new Promise<undefined>(() => {}),
+    } as unknown as IOAuthToolkit;
+    const app = await bootCore(undefined, undefined, [[IOAuthToolkit, auth]]);
+    const telemetry = await initializeServerTelemetry(app, home as string);
+    app.accessor.get(ITelemetryService).track('server_probe');
+
+    await expect(shutdownServerTelemetry(telemetry, Date.now())).resolves.toBeUndefined();
   });
 
   it('keeps the null appender when config sets telemetry = false', async () => {

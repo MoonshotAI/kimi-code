@@ -5,8 +5,7 @@
  * telemetry endpoint through `CloudTransport`, which persists failed events
  * through the `storage` byte layer. Reads host facts (`clientVersion`, env,
  * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
- * one from a `ServicesAccessor` so hosts only supply identity facts. Owns
- * periodic flush, startup spool replay, and deadline-aware durable shutdown.
+ * one from a `ServicesAccessor` so hosts only supply identity facts.
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
  */
 
@@ -15,16 +14,10 @@ import { release } from 'node:os';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { abortError } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type {
-  ITelemetryAppender,
-  TelemetryContextPatch,
-  TelemetryProperties,
-  TelemetryShutdownOptions,
-} from './telemetry';
+import type { ITelemetryAppender, TelemetryContextPatch, TelemetryProperties } from './telemetry';
 import {
   type CloudContext,
   type CloudPrimitive,
@@ -91,12 +84,6 @@ export class CloudAppender implements ITelemetryAppender {
   private sessionId: string | null;
   private buffer: EnrichedCloudEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly lifecycleController = new AbortController();
-  private acceptingEvents = true;
-  private started = false;
-  private startupReplay: Promise<void> | null = null;
-  private flushPromise: Promise<void> | null = null;
-  private shutdownPromise: Promise<void> | null = null;
 
   constructor(options: CloudAppenderOptions) {
     this.deviceId = options.deviceId;
@@ -118,7 +105,6 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
-    if (!this.acceptingEvents) return;
     const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
@@ -150,42 +136,20 @@ export class CloudAppender implements ITelemetryAppender {
     }
   }
 
-  flush(): Promise<void> {
-    if (this.flushPromise !== null) return this.flushPromise;
-    if (this.buffer.length === 0) return Promise.resolve();
-    const flush = this.drainBuffer();
-    this.flushPromise = flush;
-    void flush.then(
-      () => {
-        this.clearFlush(flush);
-      },
-      () => {
-        this.clearFlush(flush);
-      },
-    );
-    return flush;
+  async flush(): Promise<void> {
+    if (this.buffer.length === 0) return;
+    const events = this.buffer;
+    this.buffer = [];
+    await this.transport.send(events);
   }
 
-  shutdown(options: TelemetryShutdownOptions = {}): Promise<void> {
-    if (this.shutdownPromise !== null) return this.shutdownPromise;
-    this.acceptingEvents = false;
+  async shutdown(): Promise<void> {
     this.stopPeriodicFlush();
-    const shutdown = this.shutdownOwnedWork(options);
-    this.shutdownPromise = shutdown;
-    return shutdown;
-  }
-
-  start(): void {
-    if (this.started || !this.acceptingEvents) return;
-    this.started = true;
-    this.startPeriodicFlush();
-    this.startupReplay = this.transport
-      .retryDiskEvents(this.lifecycleController.signal)
-      .catch(() => {});
+    await this.flush();
   }
 
   startPeriodicFlush(): void {
-    if (!this.acceptingEvents || this.flushTimer !== null) return;
+    if (this.flushTimer !== null) return;
     this.flushTimer = setInterval(() => {
       void this.flush().catch(() => {});
     }, this.flushIntervalMs);
@@ -199,68 +163,7 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   async retryDiskEvents(): Promise<void> {
-    await this.transport.retryDiskEvents(this.lifecycleController.signal);
-  }
-
-  private async drainBuffer(): Promise<void> {
-    while (this.buffer.length > 0) {
-      const events = this.buffer;
-      this.buffer = [];
-      try {
-        await this.transport.send(events, this.lifecycleController.signal);
-      } catch (error) {
-        this.buffer = [...events, ...this.buffer];
-        throw error;
-      }
-    }
-  }
-
-  private clearFlush(flush: Promise<void>): void {
-    if (this.flushPromise === flush) this.flushPromise = null;
-  }
-
-  private async shutdownOwnedWork(options: TelemetryShutdownOptions): Promise<void> {
-    const clearDeadline = this.armShutdownDeadline(options);
-    try {
-      const results = await Promise.allSettled([
-        this.startupReplay ?? Promise.resolve(),
-        this.flush(),
-      ]);
-      const failure = results.find(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      );
-      if (failure !== undefined) throw failure.reason;
-    } finally {
-      clearDeadline();
-    }
-  }
-
-  private armShutdownDeadline(options: TelemetryShutdownOptions): () => void {
-    const abort = (): void => {
-      if (!this.lifecycleController.signal.aborted) {
-        this.lifecycleController.abort(abortError('Telemetry shutdown deadline reached'));
-      }
-    };
-    const signal = options.signal;
-    if (signal?.aborted === true) {
-      abort();
-    } else {
-      signal?.addEventListener('abort', abort, { once: true });
-    }
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    if (options.deadlineMs !== undefined) {
-      const remainingMs = options.deadlineMs - Date.now();
-      if (remainingMs <= 0) {
-        abort();
-      } else {
-        timeout = setTimeout(abort, remainingMs);
-        timeout.unref?.();
-      }
-    }
-    return () => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      signal?.removeEventListener('abort', abort);
-    };
+    await this.transport.retryDiskEvents();
   }
 }
 
