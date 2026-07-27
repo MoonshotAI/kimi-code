@@ -1,8 +1,9 @@
 import { app } from 'electron';
 
 import { log } from './log';
-import { registerRendererScheme, registerRendererProtocol } from './protocol';
+import { registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
+import { stopShellEnvProbe } from './shell-env';
 import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
 import { initDockIcon } from './dock-icon';
@@ -34,8 +35,6 @@ export function main(): void {
     app.setAppUserModelId('com.kimi.code.desktop');
   }
 
-  registerRendererScheme();
-
   // Packaged launches stay single-instance. Dev intentionally skips this lock
   // because it shares userData with the installed app and must run alongside it.
   if (app.isPackaged && !app.requestSingleInstanceLock()) {
@@ -58,6 +57,7 @@ export function main(): void {
 
   app.on('before-quit', () => {
     log.info('[kimi-desktop] quitting');
+    stopShellEnvProbe();
     destroyTray();
     unregisterGlobalShortcuts();
     closeServerHandle();

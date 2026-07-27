@@ -6,8 +6,18 @@
 import { app } from 'electron';
 
 import { initMainLogging } from './log';
+import { registerRendererScheme } from './protocol';
+import { startShellEnvProbe } from './shell-env';
 
 initMainLogging();
+// registerSchemesAsPrivileged is a no-op once Electron is ready, so this
+// cannot wait for the async work below. protocol.ts's import graph is just
+// electron + node builtins, safe to load here.
+registerRendererScheme();
+
+// Warm up the shell env probe in parallel with the module load below;
+// connect.ts awaits it before starting the embedded server.
+void startShellEnvProbe();
 
 // Linux Wayland sessions: globalShortcut only reaches the app through the
 // XDG GlobalShortcuts portal, which Electron wires up via this feature
