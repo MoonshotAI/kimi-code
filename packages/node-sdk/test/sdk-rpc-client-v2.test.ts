@@ -7,7 +7,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; no provider calls.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,15 +25,15 @@ afterEach(async () => {
   }
 });
 
-async function makeHarness(): Promise<KimiHarness> {
+async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
   tempDirs.push(homeDir);
-  return createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+  return { harness: createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY }), homeDir };
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
   it('serves getExperimentalFeatures from the v2 engine', async () => {
-    const harness = await makeHarness();
+    const { harness } = await makeHarness();
     try {
       const features = await harness.getExperimentalFeatures();
       expect(Array.isArray(features)).toBe(true);
@@ -50,8 +50,30 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
+  it('serves listWorkspaceSkills through the engineAccessor escape hatch', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeSkill(join(homeDir, 'skills', 'demo-user-skill'), 'demo-user-skill');
+    await writeSkill(join(workDir, '.kimi-code', 'skills', 'demo-project-skill'), 'demo-project-skill');
+    try {
+      const skills = await harness.listWorkspaceSkills(workDir);
+      const byName = new Map(skills.map((skill) => [skill.name, skill]));
+      expect(byName.get('demo-user-skill')).toMatchObject({
+        description: 'Skill demo-user-skill for the escape-hatch test',
+        source: 'user',
+      });
+      expect(byName.get('demo-project-skill')).toMatchObject({
+        description: 'Skill demo-project-skill for the escape-hatch test',
+        source: 'project',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('fails loudly with not_implemented for methods not yet migrated', async () => {
-    const harness = await makeHarness();
+    const { harness } = await makeHarness();
     try {
       await expect(harness.listSessions()).rejects.toThrowError(KimiError);
       await expect(harness.listSessions()).rejects.toMatchObject({
@@ -62,3 +84,12 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 });
+
+async function writeSkill(dir: string, name: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: Skill ${name} for the escape-hatch test\n---\n\nBody of ${name}.\n`,
+    'utf-8',
+  );
+}
