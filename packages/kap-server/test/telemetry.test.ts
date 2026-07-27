@@ -10,7 +10,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { readKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { initializeServerTelemetry, shutdownServerTelemetry } from '../src/services/telemetry';
 
@@ -82,4 +82,31 @@ describe('server telemetry', () => {
       await shutdownServerTelemetry(telemetry);
     },
   );
+
+  it('uses only the remaining time before the caller telemetry deadline', async () => {
+    const app = await bootCore('telemetry = false\n');
+    const telemetry = await initializeServerTelemetry(app, home as string);
+    const shutdown = vi
+      .spyOn(telemetry.service, 'shutdown')
+      .mockReturnValue(new Promise<void>(() => {}));
+
+    vi.useFakeTimers({ now: 1_000 });
+    let settled = false;
+    try {
+      const result = shutdownServerTelemetry(telemetry, 2_500).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await result;
+
+      expect(shutdown).toHaveBeenCalledOnce();
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      shutdown.mockRestore();
+    }
+  });
 });

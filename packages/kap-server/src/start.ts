@@ -147,7 +147,12 @@ export interface RunningServer {
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
   readonly port: number;
-  close(): Promise<void>;
+  close(options?: ServerCloseOptions): Promise<void>;
+}
+
+export interface ServerCloseOptions {
+  /** Absolute Unix timestamp after which telemetry must no longer delay close. */
+  readonly telemetryDeadlineMs?: number;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -319,13 +324,13 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
-  const close = async (): Promise<void> => {
+  const close = async (options: ServerCloseOptions = {}): Promise<void> => {
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     // Flush buffered telemetry before the Core scope (and its storage layer)
     // is disposed; bounded so a wedged endpoint cannot hold shutdown hostage.
-    await shutdownServerTelemetry(telemetry);
+    await shutdownServerTelemetry(telemetry, options.telemetryDeadlineMs);
     core.dispose();
     await registration.release();
   };

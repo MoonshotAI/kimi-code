@@ -73,12 +73,20 @@ export async function initializeServerTelemetry(
   return { service, appender };
 }
 
-export async function shutdownServerTelemetry(telemetry: ServerTelemetry): Promise<void> {
-  await Promise.race([
-    telemetry.service.shutdown(),
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, TELEMETRY_SHUTDOWN_TIMEOUT_MS);
-      timer.unref?.();
-    }),
-  ]);
+export async function shutdownServerTelemetry(
+  telemetry: ServerTelemetry,
+  deadlineMs = Date.now() + TELEMETRY_SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      telemetry.service.shutdown(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
