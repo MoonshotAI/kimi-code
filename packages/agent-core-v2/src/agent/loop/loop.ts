@@ -149,6 +149,34 @@ export type LoopTurnOverride = (input: {
   readonly signal: AbortSignal;
 }) => Promise<LoopRunResult>;
 
+/**
+ * Process-wide factory for the turn override, registered once by the host
+ * app. Every `AgentLoopService` — main agents, subagents, kap-server/web
+ * sessions — resolves it lazily with its own agent-scope accessor on first
+ * run, so a single registration covers every v2 agent in the process.
+ *
+ * The accessor is only valid during the synchronous part of the call: gather
+ * services before the first `await`. Returning `undefined` leaves the JS
+ * loop in charge for that agent.
+ */
+export type LoopTurnOverrideFactory = (
+  accessor: import('#/_base/di/instantiation').ServicesAccessor,
+) => Promise<LoopTurnOverride | undefined> | LoopTurnOverride | undefined;
+
+let loopTurnOverrideFactory: LoopTurnOverrideFactory | undefined;
+
+/** Register (or clear) the process-wide turn-override factory. */
+export function registerLoopTurnOverrideFactory(
+  factory: LoopTurnOverrideFactory | undefined,
+): void {
+  loopTurnOverrideFactory = factory;
+}
+
+/** @internal consumed by `AgentLoopService`. */
+export function getLoopTurnOverrideFactory(): LoopTurnOverrideFactory | undefined {
+  return loopTurnOverrideFactory;
+}
+
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 

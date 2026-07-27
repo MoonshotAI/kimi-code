@@ -91,7 +91,7 @@ import {
   requireConfiguredModel,
 } from '../run-prompt';
 import { createKimiCodeHostIdentity } from '../version';
-import { installRustEngineV2 } from './rust-engine-v2';
+import { registerRustEngineV2 } from './rust-engine-v2';
 
 const PROMPT_UI_MODE = 'print';
 /** Re-check `goalActive` at least this often while waiting for goal turns. */
@@ -422,10 +422,11 @@ async function runNativeTurn(
 
   await agent.accessor.get(IAuthSummaryService).ensureReady();
 
-  // Rust agent engine bridge: with `agent.engine = "rust"`, turns run in the
-  // Rust engine through the loop-service override seam; a failed install
-  // falls back to the JS loop silently, mirroring the v1 path.
-  await installRustEngineV2(agent.accessor);
+  // Rust agent engine bridge: with `agent.engine = "rust"`, every v2 agent in
+  // this process — main agent and subagents alike — resolves the Rust engine
+  // lazily at its first turn; a failed resolution falls back to the JS loop
+  // silently, mirroring the v1 path.
+  registerRustEngineV2();
 
   const turnEndings = createPrintTurnEndings();
   const subscription = agent.accessor.get(IEventBus).subscribe((event: DomainEvent) => {

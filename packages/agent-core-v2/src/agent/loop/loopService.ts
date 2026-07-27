@@ -37,6 +37,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { t } from '@moonshot-ai/kimi-i18n';
 
 import { InstantiationType } from '#/_base/di/extensions';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
@@ -79,6 +80,7 @@ import {
   type EnqueueReceipt,
   type LoopErrorContext,
   type LoopErrorHandler,
+  getLoopTurnOverrideFactory,
   type LoopErrorHandlerRegistrationOptions,
   type LoopRunOptions,
   type LoopRunResult,
@@ -111,6 +113,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   /** External turn runner (the Rust engine bridge); `run()` delegates to it. */
   private turnOverride: LoopTurnOverride | undefined;
+  /** One-shot latch: the factory is consulted once per agent, not per turn. */
+  private overrideFactoryAttempted = false;
   private readonly pendingAssignments = new Map<
     StepRequest,
     ReturnType<typeof createControlledPromise<import('./loop').StepAssignment>>
@@ -133,8 +137,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
+  }
+
+  /** Resolve the process-wide override factory once, with this agent's scope. */
+  private async resolveTurnOverride(): Promise<void> {
+    if (this.turnOverride !== undefined || this.overrideFactoryAttempted) return;
+    this.overrideFactoryAttempted = true;
+    const factory = getLoopTurnOverrideFactory();
+    if (factory === undefined) return;
+    try {
+      // The accessor dies when invokeFunction returns; the factory gathers its
+      // services synchronously and may finish asynchronously after that.
+      this.turnOverride = await this.instantiation.invokeFunction((accessor) => factory(accessor));
+    } catch {
+      // A failing factory must never take the agent down — JS loop it is.
+    }
   }
 
   override dispose(): void {
@@ -538,9 +558,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   setTurnOverride(override: LoopTurnOverride | undefined): void {
     this.turnOverride = override;
+    // An explicit choice — including an explicit clear — outranks the factory.
+    this.overrideFactoryAttempted = true;
   }
 
   async run(options: LoopRunOptions): Promise<LoopRunResult> {
+    await this.resolveTurnOverride();
     const turnOverride = this.turnOverride;
     if (turnOverride !== undefined) {
       // The external engine drives the whole turn. It owns stepping, retries,

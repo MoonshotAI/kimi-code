@@ -16,20 +16,16 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { t } from '#/i18n';
-
+import { registerRustEngineV2 } from '#/cli/v2/rust-engine-v2';
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { t } from '#/i18n';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
-import {
-  buildKimiDefaultHeaders,
-  getHostPackageRoot,
-  getVersion,
-} from '../../version';
+import { buildKimiDefaultHeaders, getHostPackageRoot, getVersion } from '../../version';
 import {
   accessUrlLines,
   buildOpenableUrl,
@@ -121,15 +117,8 @@ export function buildWebCommand(cmd: Command): Command {
         lanHost: DEFAULT_LAN_HOST,
       }),
     )
-    .option(
-      '--allowed-host <host...>',
-      t('cli.optionDescriptions.serverRunOptionAllowedHost'),
-    )
-    .option(
-      '--insecure-no-tls',
-      t('cli.optionDescriptions.serverRunOptionInsecureNoTls'),
-      true,
-    )
+    .option('--allowed-host <host...>', t('cli.optionDescriptions.serverRunOptionAllowedHost'))
+    .option('--insecure-no-tls', t('cli.optionDescriptions.serverRunOptionInsecureNoTls'), true)
     .option(
       '--allow-remote-shutdown',
       t('cli.optionDescriptions.serverRunOptionAllowRemoteShutdown'),
@@ -149,11 +138,7 @@ export function buildWebCommand(cmd: Command): Command {
       '--log-level <level>',
       t('cli.optionDescriptions.serverRunOptionLogLevel', { levels: VALID_LOG_LEVELS.join('|') }),
     )
-    .option(
-      '--debug-endpoints',
-      t('cli.optionDescriptions.serverRunOptionDebugEndpoints'),
-      false,
-    )
+    .option('--debug-endpoints', t('cli.optionDescriptions.serverRunOptionDebugEndpoints'), false)
     .option('--no-open', t('cli.optionDescriptions.serverRunOptionNoOpen'), true)
     .action(async (opts: WebCliOptions) => {
       try {
@@ -202,9 +187,7 @@ function formatReadyLine(
   token: string | undefined,
   dangerousBypassAuth = false,
 ): string {
-  const notice = dangerousBypassAuth
-    ? `${formatDangerNoticeLines().join('\n')}\n`
-    : '';
+  const notice = dangerousBypassAuth ? `${formatDangerNoticeLines().join('\n')}\n` : '';
   return `${notice}Kimi server: ${buildOpenableUrl(origin, token)}\n`;
 }
 
@@ -271,6 +254,11 @@ async function runServerInProcess(
   // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
   // this runner consumes.
   const logger = createServerLogger({ level: options.logLevel });
+  // Rust agent engine bridge: kap-server runs in-process, so this one
+  // registration covers every session agent it creates. Each agent resolves
+  // the engine lazily at its first turn and falls back to the JS loop when
+  // `agent.engine` is not "rust".
+  registerRustEngineV2();
   const v2 = await startServer({
     host: options.host,
     port: options.port,
@@ -387,7 +375,9 @@ export function formatReadyBanner(
     // Set the token off with surrounding whitespace rather than color, so it is
     // easy to spot without being highlighted.
     lines.push('');
-    lines.push(`  ${label('Token:    ')}${opts.token.slice(0, 8)}...${opts.token.slice(-4)}  ${dim('(use --token to customize)')}`);
+    lines.push(
+      `  ${label('Token:    ')}${opts.token.slice(0, 8)}...${opts.token.slice(-4)}  ${dim('(use --token to customize)')}`,
+    );
     lines.push('');
   }
 
