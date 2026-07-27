@@ -375,8 +375,13 @@ function toInProcessResponse(
         break;
     }
   }
-  const out: { answers: QuestionAnswers; method?: 'enter' | 'space' | 'number_key' } = {
+  const out: {
+    answers: QuestionAnswers;
+    method?: 'enter' | 'space' | 'number_key';
+    note?: string;
+  } = {
     answers: flattened,
+    note: resp.note,
   };
   if (resp.method !== undefined && resp.method !== 'click') {
     // Protocol allows 'click'; the in-process method does not — drop it to

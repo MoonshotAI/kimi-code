@@ -285,6 +285,29 @@ describe('AskUserQuestionTool', () => {
     });
   });
 
+  it('preserves a skipped-question note in the tool output', async () => {
+    const { tool } = makeTool({
+      requestQuestion: async () => ({
+        answers: { 'Which database?': 'SQLite' },
+        note: 'User skipped 1 question: "Which cache?".',
+      }),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_question',
+      args: input(),
+      signal,
+    });
+
+    expect(result.output).toBe(
+      JSON.stringify({
+        answers: { 'Which database?': 'SQLite' },
+        note: 'User skipped 1 question: "Which cache?".',
+      }),
+    );
+  });
+
   it('starts a background question task and stores the eventual answer in task output', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
 

@@ -40,6 +40,7 @@ export type QuestionAnswers = Record<string, string | true>;
 export interface QuestionResponse {
   readonly answers: QuestionAnswers;
   readonly method?: QuestionAnswerMethod;
+  readonly note?: string;
 }
 
 export type QuestionResult = null | QuestionAnswers | QuestionResponse;

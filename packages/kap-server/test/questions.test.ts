@@ -289,9 +289,13 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
         q_0: { kind: 'skipped' },
         q_1: { kind: 'skipped' },
       },
+      note: 'User skipped both questions.',
     });
 
-    await expect(resultPromise).resolves.toEqual({ answers: {} });
+    await expect(resultPromise).resolves.toEqual({
+      answers: {},
+      note: 'User skipped both questions.',
+    });
   });
 
   it('dismisses a pending question', async () => {
