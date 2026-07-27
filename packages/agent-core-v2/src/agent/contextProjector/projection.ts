@@ -2,6 +2,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { gateImageFormatParts } from '#/agent/media/image-format-policy';
 import type { ContentPart, Message } from '#/kosong/contract/message';
 
 export type ProjectionAnomaly =
@@ -344,7 +345,11 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
           note: source.note,
         })
       : source.content;
-  return cleanContent(source, content, onAnomaly);
+  // The image format gate runs at projection time too (not only at ingestion):
+  // a malformed/undeliverable image already persisted in an old session's
+  // history is replaced by a text notice on the wire, so it can no longer
+  // poison every later request. Read-side only — the history keeps its parts.
+  return cleanContent(source, gateImageFormatParts(content), onAnomaly);
 }
 
 function cleanContent(

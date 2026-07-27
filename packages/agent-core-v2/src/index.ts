@@ -571,6 +571,7 @@ export {
 } from '#/agent/media/image-compress';
 export {
   MODEL_ACCEPTED_IMAGE_MIMES,
+  buildEmptyImageNotice,
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
