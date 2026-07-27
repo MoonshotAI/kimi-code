@@ -196,7 +196,16 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
         regex += '[^/]';
         break;
       case '[': {
-        const end = pattern.indexOf(']', i + 1);
+        // POSIX (and Python fnmatch): a `]` in the first position of the class
+        // body — after an optional negating `!` — is a literal member rather
+        // than the terminator, so the scan for the real terminator has to start
+        // past it. Treating it as the terminator yields an empty JS class
+        // (`[]`), which matches nothing at all, so the pattern silently stops
+        // matching instead of matching a literal `]`.
+        let scanFrom = i + 1;
+        if (pattern[scanFrom] === '!') scanFrom++;
+        if (pattern[scanFrom] === ']') scanFrom++;
+        const end = pattern.indexOf(']', scanFrom);
         if (end === -1) {
           regex += '\\[';
         } else {
@@ -205,8 +214,9 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
           // classes treat it as negation in the first position.
           let charClass = pattern.slice(i + 1, end);
           // Escape backslashes inside the class so a trailing backslash
-          // does not accidentally escape the closing `]`.
-          charClass = charClass.replace(/\\/g, '\\\\');
+          // does not accidentally escape the closing `]`, and `]` itself so a
+          // literal member cannot close the class early.
+          charClass = charClass.replaceAll('\\', '\\\\').replaceAll(']', '\\]');
           if (charClass.startsWith('!')) {
             charClass = '^' + charClass.slice(1);
           } else if (charClass.startsWith('^')) {
