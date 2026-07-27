@@ -542,18 +542,18 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
 /**
  * Provider-compatible markers for a resend with every media part stripped.
  * This projection recovers from both an image-format rejection and a request
- * that remains too large after retaining recent media. The wording must make
- * the removal and its consequence explicit — a vague placeholder reads like a
- * generic compatibility notice and invites the model to hallucinate having
- * seen the attachment.
+ * that remains too large after retaining recent media, so the wording must
+ * stay cause-neutral while making the removal and its consequence explicit —
+ * a vague placeholder reads like a generic compatibility notice and invites
+ * the model to hallucinate having seen the attachment.
  */
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[An image attached to this message was removed before sending because the provider could not accept it (unsupported or unreadable image data). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG.]',
+    '[An image attached to this message was removed before sending because the provider rejected the request (unsupported or unreadable image data, or the request exceeded its size limit). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG, or a smaller copy.]',
   audio_url:
-    '[An audio clip attached to this message was removed before sending because the provider could not accept it. You have NOT heard it — do not describe or guess its contents.]',
+    '[An audio clip attached to this message was removed before sending because the provider rejected the request. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[A video attached to this message was removed before sending because the provider could not accept it. You have NOT seen it — do not describe or guess its contents.]',
+    '[A video attached to this message was removed before sending because the provider rejected the request. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;

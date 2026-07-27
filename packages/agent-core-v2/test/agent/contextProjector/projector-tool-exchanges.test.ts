@@ -767,7 +767,7 @@ describe('projector tool-exchange normalization', () => {
       const texts = allParts.filter((part) => part.type === 'text').map((part) => part.text);
       expect(texts).toContain('look at these');
       expect(texts).toContain('<image path="/tmp/shot.png">');
-      expect(texts.some((text) => text.includes('unsupported or unreadable image data'))).toBe(true);
+      expect(texts.some((text) => text.includes('provider rejected the request'))).toBe(true);
       expect(texts.some((text) => text.includes('You have NOT seen this image'))).toBe(true);
     });
 

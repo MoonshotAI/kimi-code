@@ -600,7 +600,7 @@ describe('image blocks with invalid data', () => {
       false,
     );
     expect(JSON.stringify(secondContent)).toContain(
-      'removed before sending because the provider could not accept it',
+      'removed before sending because the provider rejected the request',
     );
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);

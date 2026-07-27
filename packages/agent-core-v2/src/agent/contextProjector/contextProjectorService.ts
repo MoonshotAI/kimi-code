@@ -23,6 +23,12 @@
  * rejected, then replaces only that snapshot on later steps so a newly
  * generated recovery image remains visible. Both are read-side only — the
  * history keeps its media.
+ *
+ * Every projection also passes each message's content through `media`'s
+ * image format gate, so a malformed or undeliverable image already persisted
+ * in history (e.g. an empty data URL from a failed clipboard read) is
+ * replaced by a text notice on the wire instead of poisoning every later
+ * request — likewise read-side only.
  */
 
 import { createHash } from 'node:crypto';
@@ -199,11 +205,11 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
 
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[An image attached to this message was removed before sending because the provider could not accept it (unsupported or unreadable image data). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG.]',
+    '[An image attached to this message was removed before sending because the provider rejected the request (unsupported or unreadable image data, or the request exceeded its size limit). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG, or a smaller copy.]',
   audio_url:
-    '[An audio clip attached to this message was removed before sending because the provider could not accept it. You have NOT heard it — do not describe or guess its contents.]',
+    '[An audio clip attached to this message was removed before sending because the provider rejected the request. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[A video attached to this message was removed before sending because the provider could not accept it. You have NOT seen it — do not describe or guess its contents.]',
+    '[A video attached to this message was removed before sending because the provider rejected the request. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
@@ -542,10 +548,6 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
           note: source.note,
         })
       : source.content;
-  // The image format gate runs at projection time too (not only at ingestion):
-  // a malformed/undeliverable image already persisted in an old session's
-  // history is replaced by a text notice on the wire, so it can no longer
-  // poison every later request. Read-side only — the history keeps its parts.
   return cleanContent(source, gateImageFormatParts(content), onAnomaly);
 }
 

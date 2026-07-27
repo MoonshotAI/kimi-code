@@ -1037,7 +1037,7 @@ describe('media strip snapshots', () => {
     expect(projected[0]?.content).toEqual([
       {
         type: 'text',
-        text: '[An image attached to this message was removed before sending because the provider could not accept it (unsupported or unreadable image data). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG.]',
+        text: '[An image attached to this message was removed before sending because the provider rejected the request (unsupported or unreadable image data, or the request exceeded its size limit). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG, or a smaller copy.]',
       },
     ]);
   });

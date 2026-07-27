@@ -498,7 +498,7 @@ describe('Agent turn flow', () => {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n'),
-      ).toContain('removed before sending because the provider could not accept it');
+      ).toContain('removed before sending because the provider rejected the request');
     });
 
     it('keeps the same media stripped when a later tool result recreates its container', async () => {
@@ -511,7 +511,7 @@ describe('Agent turn flow', () => {
         finalParts
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
-          .filter((text) => text.includes('removed before sending because the provider could not accept it')),
+          .filter((text) => text.includes('removed before sending because the provider rejected the request')),
       ).toHaveLength(2);
     });
   });

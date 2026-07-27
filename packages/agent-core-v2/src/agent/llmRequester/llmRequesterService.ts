@@ -332,10 +332,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<AgentLLMRequestFinish> {
     const shaped = this.toolSelect.shapeHistory(request.messages);
     let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
-    // Strip is the last-resort recovery: when it fires, the provider never saw
-    // any of the images, so the warn carries the rejection's status/message
-    // (the classification chain swallows both) and a telemetry event records
-    // how often sessions hit this silent-failure mode.
     const reportMediaStripped = (
       message: string,
       reason: MediaStrippedEvent['reason'],

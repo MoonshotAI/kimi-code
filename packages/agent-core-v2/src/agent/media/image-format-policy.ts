@@ -184,17 +184,6 @@ export function buildEmptyImageNotice(name?: string): string {
   );
 }
 
-/**
- * Content-part format gate shared by every image ingestion point — and by the
- * context projector, so a malformed image already sitting in an old session's
- * history is replaced on the wire instead of poisoning every later request
- * ("session poisoning", see the module doc). Images the provider cannot
- * accept never pass through: each is replaced by a text notice that tells the
- * model what happened and how to recover.
- *
- * A parsed data URL is still rejected when its payload is empty
- * (`data:image/png;base64,` — a clipboard/upload failure captured no bytes).
- */
 export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
   const out: ContentPart[] = [];
   for (const part of parts) {
