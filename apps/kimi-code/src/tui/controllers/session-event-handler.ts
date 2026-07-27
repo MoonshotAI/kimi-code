@@ -71,7 +71,11 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
-import { estimateStreamTokens, totalTokensConsumed } from '#/utils/usage/usage-format';
+import {
+  countStreamChars,
+  estimateStreamTokensFromCounts,
+  totalTokensConsumed,
+} from '#/utils/usage/usage-format';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -164,11 +168,14 @@ export class SessionEventHandler {
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
   /**
-   * Live output-token estimate for the in-flight stream, accumulated from
-   * deltas. Mirrored into `AppState.streamingTokensEstimated`; reset on turn
-   * begin, on session reset, and when an official usage record lands.
+   * Live output-token estimate inputs for the in-flight stream: cumulative
+   * character counts accumulated from deltas. The estimate is derived from
+   * the totals (never rounded per delta) and mirrored into
+   * `AppState.streamingTokensEstimated`; reset on turn begin, on session
+   * reset, on turn end, and when an official usage record lands.
    */
-  private streamingTokensEstimated = 0;
+  private streamingAsciiChars = 0;
+  private streamingNonAsciiChars = 0;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -188,18 +195,32 @@ export class SessionEventHandler {
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
-    this.streamingTokensEstimated = 0;
+    this.resetStreamingEstimate();
+  }
+
+  /** Zero the cumulative character counts behind the live token estimate. */
+  private resetStreamingEstimate(): void {
+    this.streamingAsciiChars = 0;
+    this.streamingNonAsciiChars = 0;
   }
 
   /**
    * Accumulate streamed text into the live token estimate and mirror it into
    * AppState so the footer's `+~N` suffix ticks while the model generates.
+   * Character counts accumulate across deltas and rounding happens only on
+   * the totals — chunk-size-independent.
    */
   private bumpStreamingEstimate(text: string | undefined): void {
     if (text === undefined || text.length === 0) return;
-    this.streamingTokensEstimated += estimateStreamTokens(text);
-    if (this.streamingTokensEstimated !== this.host.state.appState.streamingTokensEstimated) {
-      this.host.setAppState({ streamingTokensEstimated: this.streamingTokensEstimated });
+    const { ascii, nonAscii } = countStreamChars(text);
+    this.streamingAsciiChars += ascii;
+    this.streamingNonAsciiChars += nonAscii;
+    const estimate = estimateStreamTokensFromCounts(
+      this.streamingAsciiChars,
+      this.streamingNonAsciiChars,
+    );
+    if (estimate !== this.host.state.appState.streamingTokensEstimated) {
+      this.host.setAppState({ streamingTokensEstimated: estimate });
     }
   }
 
@@ -333,7 +354,7 @@ export class SessionEventHandler {
 
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasAssistantText = false;
-    this.streamingTokensEstimated = 0;
+    this.resetStreamingEstimate();
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
     }
@@ -372,6 +393,13 @@ export class SessionEventHandler {
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.streamingUI.flushNow();
+    // A cancelled/failed turn never records usage for the in-flight step, so
+    // the usage-gated reset never runs; always clear the live estimate here
+    // or a stale "+~N" would linger as though output were still streaming.
+    this.resetStreamingEstimate();
+    if ((this.host.state.appState.streamingTokensEstimated ?? 0) > 0) {
+      this.host.setAppState({ streamingTokensEstimated: 0 });
+    }
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
@@ -689,7 +717,7 @@ export class SessionEventHandler {
       patch.sessionTokensUsed = totalTokensConsumed(event.usage.total);
       // The official record folds in everything streamed so far; restart the
       // live estimate from zero so the footer flips from "+~N" back to exact.
-      this.streamingTokensEstimated = 0;
+      this.resetStreamingEstimate();
       patch.streamingTokensEstimated = 0;
     }
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);

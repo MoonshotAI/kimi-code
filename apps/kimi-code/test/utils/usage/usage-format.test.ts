@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  countStreamChars,
+  estimateStreamTokensFromCounts,
   formatTokenCount,
   renderProgressBar,
   ratioSeverity,
@@ -132,5 +134,31 @@ describe('ratioSeverity', () => {
   it('red at or above 0.85', () => {
     expect(ratioSeverity(0.85)).toBe('danger');
     expect(ratioSeverity(1)).toBe('danger');
+  });
+});
+
+describe('countStreamChars + estimateStreamTokensFromCounts', () => {
+  it('splits ASCII and non-ASCII characters', () => {
+    expect(countStreamChars('hello世界')).toEqual({ ascii: 5, nonAscii: 2 });
+    expect(countStreamChars('')).toEqual({ ascii: 0, nonAscii: 0 });
+  });
+
+  it('estimates ASCII at ~4 chars/token and non-ASCII at ~1 char/token', () => {
+    expect(estimateStreamTokensFromCounts(8, 3)).toBe(5);
+    expect(estimateStreamTokensFromCounts(1, 0)).toBe(1);
+    expect(estimateStreamTokensFromCounts(0, 0)).toBe(0);
+  });
+
+  it('cumulative counts stay chunk-size-independent (no per-delta rounding drift)', () => {
+    // Five one-character ASCII deltas: estimated per delta this would round
+    // up to 5 tokens; the cumulative estimate rounds once on the totals.
+    let ascii = 0;
+    let nonAscii = 0;
+    for (const chunk of ['h', 'e', 'l', 'l', 'o']) {
+      const c = countStreamChars(chunk);
+      ascii += c.ascii;
+      nonAscii += c.nonAscii;
+    }
+    expect(estimateStreamTokensFromCounts(ascii, nonAscii)).toBe(2);
   });
 });

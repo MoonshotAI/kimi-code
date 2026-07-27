@@ -17,23 +17,33 @@ export function totalTokensConsumed(usage: TokenUsage): number {
 }
 
 /**
- * Rough token estimate for streamed text — the same character heuristic
- * agent-core uses (`packages/agent-core/src/utils/tokens.ts`): ASCII at
- * ~4 chars per token, everything else (CJK etc.) at ~1 char per token.
+ * Count ASCII vs non-ASCII characters in a chunk of streamed text. Callers
+ * accumulate these counts across deltas and derive the live token estimate
+ * from the cumulative totals — rounding per delta instead would overcount
+ * up to 4x when providers emit small ASCII chunks.
+ */
+export function countStreamChars(text: string): { ascii: number; nonAscii: number } {
+  let ascii = 0;
+  let nonAscii = 0;
+  for (const char of text) {
+    if (char.codePointAt(0)! <= 127) {
+      ascii++;
+    } else {
+      nonAscii++;
+    }
+  }
+  return { ascii, nonAscii };
+}
+
+/**
+ * Rough token estimate from cumulative streamed character counts — the same
+ * character heuristic agent-core uses (`packages/agent-core/src/utils/tokens.ts`):
+ * ASCII at ~4 chars per token, everything else (CJK etc.) at ~1 char per token.
  * Only used for the live in-flight estimate in the footer; the official
  * usage record always supersedes it when the step completes.
  */
-export function estimateStreamTokens(text: string): number {
-  let asciiCount = 0;
-  let nonAsciiCount = 0;
-  for (const char of text) {
-    if (char.codePointAt(0)! <= 127) {
-      asciiCount++;
-    } else {
-      nonAsciiCount++;
-    }
-  }
-  return Math.ceil(asciiCount / 4) + nonAsciiCount;
+export function estimateStreamTokensFromCounts(asciiChars: number, nonAsciiChars: number): number {
+  return Math.ceil(asciiChars / 4) + nonAsciiChars;
 }
 
 /**
