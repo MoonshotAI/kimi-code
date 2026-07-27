@@ -182,6 +182,9 @@
 - macOS 隐藏标题栏 + 红绿灯位置、CSS `-webkit-app-region: drag` 拖拽区
 - 原生菜单（App/Edit/View/Window）、`Cmd+Alt+K` 全局快捷键
 - 窗口尺寸/位置持久化、`app://renderer` 自定义协议、内嵌 server
+- **文本框原生右键菜单**（2026-07）：`src/main/context-menu.ts`——`webContents` 的 `context-menu` 事件里对 `params.isEditable` 弹原生编辑菜单（macOS 带 Look Up「查找」，走 `showDefinitionForSelection`，Electron 无 lookUp role；undo/redo/cut/copy/paste/selectAll 走 role，按 `editFlags` 门控），一次接入覆盖全部文本框（transcript 搜索框、composer、内联重命名）。双语：全部条目显式 label（字符串表模式，**role 默认 label 只随 OS locale，不随应用内语言**），经 `IPC.locale` 推送（`setContextMenuLocale`），OS 语言兜底；菜单每次右键重建，切语言即时生效。`window.ts` 的 `createWindow` 里 `installEditableContextMenu(win.webContents)` 安装（`installExternalLinkGuard` 同款）。只处理 isEditable；只读文本无菜单（维持现状）。
+- **web 无对应物**：浏览器对 `<input>` 自带原生菜单，`apps/web` 不涉及；主进程文件不参与两端同步。选区预览按 `Intl.Segmenter` 字素簇截断（48 上限），避免切出半个代理对。
+- 测试：`tests/main/context-menu.test.ts`（菜单结构/editFlags 门控/mac-only 项/Look Up 触发与双语 label/选区预览字素簇截断/非编辑目标不弹/locale 推送）。
 
 ## 参考
 

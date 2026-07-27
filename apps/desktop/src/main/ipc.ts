@@ -13,6 +13,7 @@ import {
   setUpdateAutoDownload,
 } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
+import { setContextMenuLocale } from './context-menu';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
 import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
@@ -134,6 +135,7 @@ export function registerIpcHandlers(): void {
     if (locale === 'en' || locale === 'zh') {
       setTrayLocale(locale);
       setMenuLocale(locale);
+      setContextMenuLocale(locale);
       setJumpListLocale(locale);
     }
   });

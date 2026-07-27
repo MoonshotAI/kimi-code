@@ -24,6 +24,7 @@ export default {
   globalTaken: 'This shortcut is already taken by the system or another app',
   reserved: 'Reserved by the system menu',
   reservedSteer: 'Reserved for steer (Ctrl/Cmd+S)',
+  reservedFind: 'Reserved for transcript find (Ctrl/Cmd+F)',
   conflict: 'Already used by “{action}”',
   customBadge: 'Custom',
 };

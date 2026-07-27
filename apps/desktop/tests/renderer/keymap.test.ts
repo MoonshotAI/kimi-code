@@ -8,6 +8,7 @@ import {
   isAltGrShapedBinding,
   isAppleShortcutPlatform,
   isHardcodedBinding,
+  isHardcodedFindBinding,
   isReservedBinding,
   isValidBinding,
   isValidMenuBinding,
@@ -56,6 +57,21 @@ describe('isAppleShortcutPlatform', () => {
     expect(isAppleShortcutPlatform()).toBe(true);
     stubPlatform('Win32');
     expect(isAppleShortcutPlatform()).toBe(false);
+  });
+});
+
+describe('isHardcodedFindBinding', () => {
+  it('reserves mod+f on Apple and leaves ctrl+f free', () => {
+    stubPlatform('MacIntel');
+    expect(isHardcodedFindBinding('mod+f')).toBe(true);
+    expect(isHardcodedFindBinding('ctrl+f')).toBe(false);
+    expect(isHardcodedFindBinding('shift+mod+f')).toBe(false);
+  });
+
+  it('collapses mod/ctrl off Apple — both spellings reserved', () => {
+    stubPlatform('Win32');
+    expect(isHardcodedFindBinding('mod+f')).toBe(true);
+    expect(isHardcodedFindBinding('ctrl+f')).toBe(true);
   });
 });
 

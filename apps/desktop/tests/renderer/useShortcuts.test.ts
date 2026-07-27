@@ -56,3 +56,22 @@ describe('useShortcuts OS-global registration failure surface', () => {
     expect(osGlobalFailures['summonApp']).toBeUndefined();
   });
 });
+
+describe('useShortcuts persisted-override migration', () => {
+  it('migrates legacy overrides killed by reservations to explicit unassigned', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) =>
+        key === 'kimi-web.shortcut-overrides'
+          ? JSON.stringify({ toggleSidebar: 'mod+f', newSession: 'mod+b' })
+          : null,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+    const { resolvedBinding } = await importUseShortcuts();
+    // Unassigned, NOT back to the default: the user may have handed the freed
+    // default (mod+b) to another action (here newSession), and restoring it
+    // would shadow that action behind the registry order.
+    expect(resolvedBinding('toggleSidebar')).toBeNull();
+    expect(resolvedBinding('newSession')).toBe('mod+b');
+  });
+});

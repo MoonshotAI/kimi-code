@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron
 import type { BrowserWindowConstructorOptions } from 'electron';
 
 import { connect } from './connect';
+import { installEditableContextMenu } from './context-menu';
 import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
@@ -362,6 +363,9 @@ export function createWindow(): void {
   // system browser, not in frameless Electron windows; cross-origin
   // navigation of the main window is intercepted the same way.
   installExternalLinkGuard(win.webContents, (url) => shell.openExternal(url));
+  // Right-click in any text field (find bar, composer, rename inputs) shows
+  // the native editing menu — Electron has no default one.
+  installEditableContextMenu(win.webContents);
   // Exports (session zip, trace logs) always prompt a native save dialog and
   // remember the last used directory. The handler outlives this window (one
   // install per session), so the dialog parent is resolved at call time.

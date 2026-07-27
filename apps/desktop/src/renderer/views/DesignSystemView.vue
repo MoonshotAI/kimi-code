@@ -1067,6 +1067,22 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- ===== Find Bar ===== -->
+            <h3 class="sub">Find Bar · transcript search</h3>
+            <p>The in-transcript find bar (Cmd/Ctrl+F), implemented by <code>components/chat/TranscriptSearch.vue</code>. A floating card pinned to the transcript's top-right (<code>top: --panel-head-h + --space-3</code>, <code>right: --space-3</code> — equal inset on both axes), <code>--z-sticky</code>, raised surface + 0.5px hairline + <code>--shadow-menu</code>. <b>One radius for both states</b>: <code>--radius-2xl</code> is a full capsule at the collapsed height and a card once the footer expands — never animate between two radii.</p>
+            <table class="dt">
+              <thead><tr><th>Part</th><th>Rule</th></tr></thead>
+              <tbody>
+                <tr><td class="tk">Input row</td><td>Search icon (muted) + <b>bare input</b> — the list-style bare-input exception family (sidebar search row, inline rename), NOT the boxed Input primitive; the 38px bordered control would break the pill. Circular close <code>IconButton sm</code> (concentric with the capsule end); a 0.5px hairline separator before it. Height comes from the grid: 32px control (<code>--space-8</code>) + 2× <code>--space-1</code> padding = 40px — at which <code>--radius-2xl</code> is exactly the half-height capsule.</td></tr>
+                <tr><td class="tk">Footer (results)</td><td>Expands via the 0fr→1fr grid fold (<code>--duration-slow</code>), hairline top separator, prev/next <code>IconButton sm</code> left, right-aligned muted count (<code>N/M results</code> · <code>--ui-font-size-sm</code>). Only exists once a query has settled — while typing or empty, the bar stays a bare pill.</td></tr>
+                <tr><td class="tk">States</td><td>collapsed (empty query) / searching (<code>Spinner sm</code> in the input row during the ~800ms debounce) / results / no-results (count reads "No results", nav disabled). Disabled is uniformly <code>opacity:.5</code>.</td></tr>
+                <tr><td class="tk">Focus</td><td>Composer-style: a neutral hairline overlay (<code>::after</code> + <code>--color-composer-focus-line</code>) fading in on <code>:focus-within</code>. No accent ring.</td></tr>
+                <tr><td class="tk">Match ink</td><td>CSS Custom Highlight API — the bar mutates no transcript DOM. All matches: <code>--color-search-match</code> (yellow); current: <code>--color-search-match-current</code> + a 2px <code>--color-warning</code> outline ring (a positioned overlay — highlight pseudos can't paint box outlines). Tokens live in <code>web-ui/style.css</code> with light/dark pairs.</td></tr>
+                <tr><td class="tk">Keyboard</td><td>Cmd/Ctrl+F opens + focuses (repeat = re-focus + select-all; hardcoded, reserved in the desktop keymap), Enter / Shift+Enter steps matches (wrapping), Esc closes from ANY control inside (container-level, so it never reaches the conversation's Esc-abort).</td></tr>
+                <tr><td class="tk">Matching semantics</td><td>Rendered transcript DOM only (unloaded older pages are out of scope), capped at 1000 matches (count reads <code>N/1000+</code>). Matches span inline nodes within one block, never cross block breaks; <code>inert</code> and <code>display:none</code> content is excluded. Stepping scrolls the match's own rect into view, not its parent element.</td></tr>
+              </tbody>
+            </table>
+
             <h3 class="sub">SectionLabel</h3>
             <p>A small group title for sidebar lists, used to section the content below (such as <code>Workspaces</code> in the sidebar). Spec: 13px / 700 / uppercase / letter-spacing <code>.08em</code>, color <code>--color-fg-faint</code>; left-aligned to the row's starting padding (<code>--sb-pad-x</code>), keeping the same indent as the group rows below. For scripts without case (such as Chinese), <code>text-transform:uppercase</code> simply has no effect — no special handling needed.</p>
             <div class="stage-wrap">

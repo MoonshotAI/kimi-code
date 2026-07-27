@@ -24,6 +24,7 @@ export default {
   globalTaken: '该快捷键已被系统或其他应用占用',
   reserved: '系统菜单已占用该快捷键',
   reservedSteer: 'steer 固定快捷键（Ctrl/Cmd+S），不可占用',
+  reservedFind: '对话搜索固定快捷键（Ctrl/Cmd+F），不可占用',
   conflict: '已被「{action}」占用',
   customBadge: '自定义',
 };

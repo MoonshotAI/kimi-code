@@ -81,4 +81,14 @@ export default {
     expand: '展开',
     collapse: '收起',
   },
+  search: {
+    placeholder: '搜索对话…',
+    searching: '搜索中…',
+    results: '{current}/{total} 条结果',
+    resultsCapped: '{current}/{total}+ 条结果',
+    noResults: '无结果',
+    previous: '上一个匹配',
+    next: '下一个匹配',
+    close: '关闭搜索',
+  },
 } as const;

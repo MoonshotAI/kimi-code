@@ -19,6 +19,7 @@ import {
   isAcceleratorExpressible,
   isAppleShortcutPlatform,
   isHardcodedBinding,
+  isHardcodedFindBinding,
   isReservedBinding,
   isValidBinding,
   isValidMenuBinding,
@@ -204,6 +205,13 @@ function onRecordKeydown(e: KeyboardEvent): void {
   // before any customizable key — same dead-binding outcome.
   if (isHardcodedBinding(binding)) {
     recordError.value = t('shortcuts.reservedSteer');
+    liveKeys.value = [];
+    return;
+  }
+  // The transcript find bar owns Cmd/Ctrl+F the same way (ConversationPane's
+  // document handler consumes it before the app dispatcher).
+  if (isHardcodedFindBinding(binding)) {
+    recordError.value = t('shortcuts.reservedFind');
     liveKeys.value = [];
     return;
   }

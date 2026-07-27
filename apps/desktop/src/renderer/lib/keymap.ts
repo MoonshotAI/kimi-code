@@ -511,6 +511,18 @@ export function isHardcodedBinding(binding: string): boolean {
   return HARDCODED_BINDINGS.some((hardcoded) => bindingsEquivalent(hardcoded, binding));
 }
 
+/** Same dead-binding problem as steer: ConversationPane's document-level
+ *  handler consumes Cmd/Ctrl+F (transcript find bar) before App.vue's
+ *  dispatcher — preventDefault'd there, the dispatcher returns early, so a
+ *  custom binding on the chord would record fine and never fire. */
+export const HARDCODED_FIND_BINDINGS: readonly string[] = ['mod+f'];
+
+/** True when the binding collides with the hardcoded transcript-find chord
+ *  (platform-aware comparison). */
+export function isHardcodedFindBinding(binding: string): boolean {
+  return HARDCODED_FIND_BINDINGS.some((hardcoded) => bindingsEquivalent(hardcoded, binding));
+}
+
 /** Platform-aware binding equivalence. On non-Apple platforms `mod` and
  *  `ctrl` collapse into the same physical flag (both mean Ctrl), so 'mod+s'
  *  and 'ctrl+s' are the same combo there and must conflict; on Apple they

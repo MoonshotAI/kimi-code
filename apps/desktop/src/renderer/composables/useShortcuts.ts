@@ -12,6 +12,8 @@
 import { reactive, watch } from 'vue';
 import {
   formatBindingKeys,
+  isHardcodedBinding,
+  isHardcodedFindBinding,
   isValidBinding,
   matchBinding,
   MENU_SYNCED_ACTIONS,
@@ -36,6 +38,14 @@ function loadOverrides(): ShortcutOverrides {
     if (value === null) {
       out[id] = null;
     } else if (typeof value === 'string' && isValidBinding(value, action.scope)) {
+      // Legacy overrides a later reservation made dead (e.g. mod+f bound
+      // before the find bar reserved it) migrate to explicitly UNASSIGNED —
+      // dropping them would silently restore the default binding, which the
+      // user may have assigned to another action in the meantime.
+      if (isHardcodedBinding(value) || isHardcodedFindBinding(value)) {
+        out[id] = null;
+        continue;
+      }
       out[id] = value;
     }
   }
