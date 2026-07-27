@@ -1,7 +1,7 @@
 <!-- apps/desktop/src/renderer/components/UpdateIndicator.vue -->
-<!-- Auto-update entry: a yellow pill in the sidebar header (on macOS desktop
-     that header IS the traffic-light drag strip, so the wrapper opts out of
-     app-region drag). Clicking opens the canonical §03 Dialog (Anatomy A,
+<!-- Auto-update entry: a yellow pill in the Windows titlebar or the sidebar
+     header on other desktop surfaces. Both may be window-drag strips, so the
+     wrapper opts out of app-region drag. Clicking opens the canonical §03 Dialog (Anatomy A,
      padded · lg · auto — see §09 in DesignSystemView.vue) with the version,
      release date, the state-dependent actions (download / background /
      restart / retry) and an auto-download checkbox pinned to the foot's left,
@@ -181,8 +181,7 @@ function onRestartNow(): void {
 .upd {
   display: inline-flex;
   flex: none;
-  /* The macOS-desktop sidebar header is a window-drag strip — the pill must
-     stay clickable. */
+  /* The parent chrome may be a window-drag strip — the pill must stay clickable. */
   -webkit-app-region: no-drag;
   animation: upd-in var(--duration-base) var(--ease-out);
 }

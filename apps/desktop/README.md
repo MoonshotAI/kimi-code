@@ -5,6 +5,8 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 `app://renderer` 提供给窗口。它不再 spawn 独立 server 可执行文件（SEA），也不再套壳远
 程/共享 daemon 的网页。
 
+Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls Overlay：完整品牌与四个原生菜单入口在左，系统窗口按钮在右；实现集中在 `src/renderer/components/window/WindowsTitleBar.vue`、`src/main/window.ts` 与 `src/main/menu.ts`。
+
 ## 当前架构
 
 启动时主进程：
@@ -136,6 +138,11 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter kimi-code-app run dist
 只会把 `dependencies` 闭包拷进 app。
 
 注意：不要重命名构建出的 `.app`，重命名会使签名失效，macOS 会提示「已损坏」。
+
+Windows 使用自定义 40px 全局标题栏和原生 Window Controls Overlay。左侧依次为图标随
+主题同向切换（浅色白底、深色深底）的完整品牌、常驻侧栏切换、文件/编辑/视图/帮助菜单及
+帮助右侧按状态出现的更新入口；Windows 托盘固定使用带白色背景的完整品牌图标。Sidebar 不重复
+品牌、切换或更新控件，并省略原品牌 Header，收起后也不显示浮动展开或新建会话按钮。
 
 ### CI 打包（GitHub Actions）
 

@@ -197,6 +197,11 @@ function asLaunchActionPayload(value: unknown): LaunchActionPayload | null {
 
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
+  popupWindowsMenu: (request: {
+    id: 'file' | 'edit' | 'view' | 'help';
+    x: number;
+    y: number;
+  }) => Promise<{ opened: boolean }>;
   /** Dock tile preference ('light'|'dark'|'auto'); the main process swaps the
    *  Dock icon (src/main/dock-icon.ts). macOS-only effect. */
   setDockIconChoice: (choice: 'light' | 'dark' | 'auto') => void;
@@ -299,6 +304,7 @@ export const api: KimiDesktopApi = {
       ipcRenderer.send('kimi:theme', scheme);
     }
   },
+  popupWindowsMenu: (request) => ipcRenderer.invoke('kimi:menu-popup', request),
   setDockIconChoice: (choice) => {
     if (choice === 'light' || choice === 'dark' || choice === 'auto') {
       ipcRenderer.send('kimi:dock-icon-choice', choice);

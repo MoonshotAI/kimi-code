@@ -12,6 +12,7 @@ export const IPC = {
   getServerToken: 'kimi:get-server-token',
   isFullscreen: 'kimi:is-fullscreen',
   menuAction: 'kimi:menu-action',
+  menuPopup: 'kimi:menu-popup',
   shortcut: 'kimi:shortcut',
   fullscreenChanged: 'kimi:fullscreen-changed',
   updateStatus: 'kimi:update-status',
@@ -41,6 +42,14 @@ export const IPC = {
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
+
+export type WindowsMenuId = 'file' | 'edit' | 'view' | 'help';
+
+export interface WindowsMenuPopupRequest {
+  id: WindowsMenuId;
+  x: number;
+  y: number;
+}
 
 /** Launch intent parsed from argv (--new-chat / --workspace=<root>) or a
     Jump List item click, forwarded to the renderer once it is ready. */

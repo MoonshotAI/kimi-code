@@ -501,7 +501,7 @@ describe('isReservedBinding', () => {
     expect(isReservedBinding('mod+q')).toBe(true);
     expect(isReservedBinding('alt+mod+i')).toBe(true);
     expect(isReservedBinding('ctrl+mod+f')).toBe(true);
-    // Minimize is CommandOrControl+M on every platform.
+    // The native Window menu owns minimize on macOS.
     expect(isReservedBinding('mod+m')).toBe(true);
     // Paste-and-match-style is ⌘⌥⇧V on macOS (⇧⌘V is the non-mac form).
     expect(isReservedBinding('alt+shift+mod+v')).toBe(true);
@@ -524,7 +524,7 @@ describe('isReservedBinding', () => {
   it('splits mac-only chords out on non-Apple platforms', () => {
     stubPlatform('Win32');
     expect(isReservedBinding('mod+r')).toBe(true);
-    expect(isReservedBinding('mod+m')).toBe(true);
+    expect(isReservedBinding('mod+m')).toBe(false);
     expect(isReservedBinding('shift+ctrl+i')).toBe(true);
     expect(isReservedBinding('f11')).toBe(true);
     expect(isReservedBinding('alt+f4')).toBe(true);
@@ -532,6 +532,10 @@ describe('isReservedBinding', () => {
     // Non-mac paste-and-match-style (⇧⌃V) and Windows-only redo (Ctrl+Y).
     expect(isReservedBinding('shift+mod+v')).toBe(true);
     expect(isReservedBinding('mod+y')).toBe(true);
+    expect(isReservedBinding('alt+f')).toBe(true);
+    expect(isReservedBinding('alt+e')).toBe(true);
+    expect(isReservedBinding('alt+v')).toBe(true);
+    expect(isReservedBinding('alt+h')).toBe(true);
     // macOS-only chords must NOT collapse into ordinary combos here (ctrl
     // and mod merge on non-Apple): Ctrl+F / Alt+Ctrl+I / Ctrl+H stay free.
     expect(isReservedBinding('ctrl+f')).toBe(false);
@@ -539,10 +543,18 @@ describe('isReservedBinding', () => {
     expect(isReservedBinding('alt+ctrl+i')).toBe(false);
     expect(isReservedBinding('mod+h')).toBe(false);
     expect(isReservedBinding('alt+shift+mod+v')).toBe(false);
+
+    stubPlatform('Linux x86_64');
+    expect(isReservedBinding('alt+f')).toBe(false);
+    expect(isReservedBinding('mod+m')).toBe(true);
   });
 
   it('keeps every reserved entry parseable', () => {
-    for (const reserved of [...RESERVED_NATIVE_BINDINGS.apple, ...RESERVED_NATIVE_BINDINGS.other]) {
+    for (const reserved of [
+      ...RESERVED_NATIVE_BINDINGS.apple,
+      ...RESERVED_NATIVE_BINDINGS.other,
+      ...RESERVED_NATIVE_BINDINGS.windows,
+    ]) {
       expect(parseBinding(reserved), reserved).not.toBeNull();
     }
   });

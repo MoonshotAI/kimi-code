@@ -83,7 +83,7 @@
   - 测试：`tests/main/ui-state.test.ts`（缺失/损坏文件、往返、保留其它 key、目录创建、幂等）；`tests/main/preload.test.ts` 白名单 + 通道断言。
 
 - [x] **系统托盘常驻图标**（已完成，desktop 专属）
-  - 实现：新增 `src/main/tray.ts`——`Tray` + 单一右键/左击菜单（`显示主窗口` / `退出`）；macOS 下 status item 设了 context menu 后单击即弹菜单，Windows 左键额外接 `click → popUpContextMenu` 对齐行为。托盘图标按平台分资产（`trayIconPath` 纯函数）：macOS 用 `trayTemplate.png`/`@2x`（机器人单色剪影、眼睛镂空，`Template` 文件名让 nativeImage 自动标记为 template image，OS 按深浅色菜单栏自动反色）；Windows 用 `tray.ico`，Linux 用 `tray.png`/`tray@2x.png`（满铺白底圆角方块 + 机器人的彩色构图）；经 `electron-builder.config.cjs` `extraResources` 的 `build/` + `filter: ['tray*']` 进 resources（注意 extraResources 的 `from` **不吃 glob**，写成 `build/tray*` 会被当字面路径静默跳过——v0.0.2 就踩了这个、包里没有托盘，见 config 注释）。`index.ts` 模块级持有 `Tray` 引用（无引用会被 GC、图标消失），`before-quit` 里 `tray.destroy()`；`quit` 走 `app.quit()`，server 清理照常执行。
+  - 实现：新增 `src/main/tray.ts`——`Tray` + 单一右键/左击菜单（`显示主窗口` / `退出`）；macOS 下 status item 设了 context menu 后单击即弹菜单，Windows 左键额外接 `click → popUpContextMenu` 对齐行为。托盘图标按平台分资产（`trayIconPath` 纯函数）：macOS 用 `trayTemplate.png`/`@2x`（机器人单色剪影、眼睛镂空，`Template` 文件名让 nativeImage 自动标记为 template image，OS 按深浅色菜单栏自动反色）；Windows 用带白色背景的完整品牌构图 `tray.ico`；Linux 用 `tray.png`/`tray@2x.png`。资源经 `electron-builder.config.cjs` `extraResources` 的 `build/` + `filter: ['tray*']` 进 resources（注意 extraResources 的 `from` **不吃 glob**，写成 `build/tray*` 会被当字面路径静默跳过——v0.0.2 就踩了这个、包里没有托盘，见 config 注释）。`index.ts` 模块级持有 `Tray` 引用（无引用会被 GC、图标消失），`before-quit` 里 `tray.destroy()`；`quit` 走 `app.quit()`，server 清理照常执行。
   - **web 无对应物**：浏览器没有托盘面，`apps/web` 不涉及（非共享文件分叉）。
   - 测试：`tests/main/tray.test.ts`（`trayIconPath` 纯函数 3 用例：win32 取 .ico、mac/linux 取 png、packaged 走 resourcesPath）。
 
@@ -177,6 +177,7 @@
 
 ## 已原生化的（不用动）
 
+- Windows 自定义标题栏：`titleBarStyle: hidden` + Window Controls Overlay 保留原生三键/Snap Layout；renderer 的 `WindowsTitleBar.vue` 显示完整品牌、紧随其后的常驻侧栏切换按钮、文件/编辑/视图/帮助四个入口及帮助右侧按状态出现的更新 pill，通过受控 `kimi:menu-popup` 桥弹主进程同一份原生 submenu。Sidebar 在 Windows 不再渲染品牌 Header，也不承载品牌、切换或更新入口，折叠态不渲染会话 Header 的浮动展开/新建会话按钮；web/macOS 不跟随。
 - 深色模式同步：renderer → `kimi:theme` → `nativeTheme.themeSource`
 - macOS 隐藏标题栏 + 红绿灯位置、CSS `-webkit-app-region: drag` 拖拽区
 - 原生菜单（App/Edit/View/Window）、`Cmd+Alt+K` 全局快捷键

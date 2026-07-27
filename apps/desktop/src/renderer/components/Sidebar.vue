@@ -31,7 +31,7 @@ import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
-import { isDesktop, isMacosDesktop } from '../lib/desktopFlag';
+import { isDesktop, isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
@@ -786,7 +786,13 @@ onBeforeUnmount(() => {
 <template>
   <aside
     class="side"
-    :class="{ 'macos-desktop': isMacosDesktop, vibrancy, collapsed, 'no-anim': dragging }"
+    :class="{
+      'macos-desktop': isMacosDesktop,
+      'windows-desktop': isWindowsDesktop,
+      vibrancy,
+      collapsed,
+      'no-anim': dragging,
+    }"
     :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
   >
     <!-- Session column -->
@@ -798,12 +804,9 @@ onBeforeUnmount(() => {
       @dragleave="onFolderDragLeave"
       @drop="onFolderDrop"
     >
-      <!-- Header: brand + collapse. The collapse button lives INSIDE the header
-           on non-mac platforms (right-aligned); on macOS desktop the brand is
-           hidden (traffic lights own that corner) and the header is just a
-           window-drag strip — there the toggle is App.vue's resident floating
-           button beside the traffic lights. -->
-      <div class="ch">
+      <!-- Header: brand + collapse. Windows owns all of this chrome in its
+           global titlebar, so the header itself is omitted there. -->
+      <div v-if="!isWindowsDesktop" class="ch">
         <div class="ch-brand">
           <template v-if="!isMacosDesktop">
             <!-- Brand mark: the robot mascot (transparent background, no tile).
@@ -856,9 +859,6 @@ onBeforeUnmount(() => {
           >
             <Icon name="panel-collapse" />
           </IconButton>
-          <!-- Auto-update pill (desktop only): rightmost in the header; renders
-               nothing unless the main process reports an update state, so the
-               web build stays untouched. -->
           <UpdateIndicator />
         </div>
       </div>
@@ -1311,6 +1311,9 @@ onBeforeUnmount(() => {
   border-bottom: 0.5px solid transparent;
   transition: border-color var(--duration-base) var(--ease-out),
     box-shadow var(--duration-base) var(--ease-out);
+}
+.side.windows-desktop .sidebar-actions {
+  padding-top: var(--space-2);
 }
 .sidebar-actions::after,
 .side-footer::before {

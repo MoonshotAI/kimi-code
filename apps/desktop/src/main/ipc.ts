@@ -14,16 +14,20 @@ import {
 } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
-import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
+import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
 import { createRendererLogWriter } from './renderer-log';
-import { IPC, type ColorScheme } from './ipc-channels';
+import { IPC, type ColorScheme, type WindowsMenuId } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
   return value === 'light' || value === 'dark' || value === 'system';
+}
+
+function isWindowsMenuId(value: unknown): value is WindowsMenuId {
+  return value === 'file' || value === 'edit' || value === 'view' || value === 'help';
 }
 
 const rendererLogWriter = createRendererLogWriter();
@@ -79,6 +83,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.isFullscreen, () => {
     const win = getMainWindow();
     return win !== null && !win.isDestroyed() && win.isFullScreen();
+  });
+  ipcMain.handle(IPC.menuPopup, (event, request: unknown) => {
+    const win = getMainWindow();
+    if (
+      win === null ||
+      win.isDestroyed() ||
+      event.sender !== win.webContents ||
+      request === null ||
+      typeof request !== 'object'
+    ) {
+      return { opened: false };
+    }
+    const { id, x, y } = request as Record<string, unknown>;
+    if (!isWindowsMenuId(id) || typeof x !== 'number' || typeof y !== 'number') {
+      return { opened: false };
+    }
+    return popupWindowsMenu(id, x, y);
   });
   // Auto-update: the sidebar banner reads the current status once (reload
   // recovery — transitions stream over IPC.updateStatus) and fires the two

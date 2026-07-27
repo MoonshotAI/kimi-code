@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { MenuItemConstructorOptions } from 'electron';
 
-import { bindingToAccelerator, menuTemplate } from '../../src/main/menu';
+import {
+  bindingToAccelerator,
+  menuTemplate,
+  normalizeMenuPopupPoint,
+  windowsMenuTemplate,
+} from '../../src/main/menu';
 import {
   isReservedBinding,
   parseBinding,
@@ -87,10 +92,10 @@ function canonicalFromAccelerator(accelerator: string): string {
   return serializeBinding({ ...mods, key });
 }
 
-/** Roles our menu installs, with menu-role submenus expanded per platform. */
-function installedRoles(isMac: boolean): string[] {
+/** Roles a menu installs, with menu-role submenus expanded per platform. */
+function installedRoles(template: MenuItemConstructorOptions[]): string[] {
   const roles = new Set<string>();
-  for (const item of walkItems(menuTemplate(isMac, 'en'))) {
+  for (const item of walkItems(template)) {
     if (typeof item.role === 'string') roles.add(item.role);
   }
   // windowmenu children (non-mac expansion: minimize / zoom / close)
@@ -110,23 +115,28 @@ afterEach(() => {
 
 describe('native accelerator completeness', () => {
   it('every role the menu installs is in the Electron role table (update both on menu/Electron changes)', () => {
-    for (const isMac of [true, false]) {
-      for (const role of installedRoles(isMac)) {
+    for (const [surface, template] of [
+      ['macOS', menuTemplate(true, 'en')],
+      ['Linux', menuTemplate(false, 'en')],
+      ['Windows', windowsMenuTemplate('en', {}, false, false)],
+    ] as const) {
+      for (const role of installedRoles(template)) {
         expect(
           ELECTRON_ROLE_ACCELERATORS[role],
-          `role '${role}' (isMac=${isMac}) is installed but missing from the role table`,
+          `role '${role}' (${surface}) is installed but missing from the role table`,
         ).toBeDefined();
       }
     }
   });
 
-  it('every installed accelerator is reserved, on both platforms', () => {
-    for (const [isMac, platform, bucket] of [
-      [true, 'MacIntel', 'apple'],
-      [false, 'Win32', 'other'],
+  it('every installed accelerator is reserved on each platform menu', () => {
+    for (const [template, platform, bucket] of [
+      [menuTemplate(true, 'en'), 'MacIntel', 'apple'],
+      [menuTemplate(false, 'en'), 'Linux x86_64', 'other'],
+      [windowsMenuTemplate('en', {}, false, false), 'Win32', 'other'],
     ] as const) {
       stubPlatform(platform);
-      for (const role of installedRoles(isMac)) {
+      for (const role of installedRoles(template)) {
         const accelerator = ELECTRON_ROLE_ACCELERATORS[role]?.[bucket];
         if (accelerator === undefined) continue; // no accelerator on this platform
         const canonical = canonicalFromAccelerator(accelerator);
@@ -362,5 +372,37 @@ describe('bindingToAccelerator', () => {
     expect(bindingToAccelerator('hyper+k')).toBeUndefined();
     // The single quote is NOT in Electron's documented key-code set.
     expect(bindingToAccelerator("mod+'")).toBeUndefined();
+  });
+});
+
+describe('windowsMenuTemplate', () => {
+  it('exposes the four approved top-level menus', () => {
+    const template = windowsMenuTemplate('zh', {}, false, false);
+    expect(template.map((item) => [item.id, item.label])).toEqual([
+      ['file-menu', '文件'],
+      ['edit-menu', '编辑'],
+      ['view-menu', '视图'],
+      ['help-menu', '帮助'],
+    ]);
+    expect(walkItems(template).filter((item) => item.role === 'close')).toHaveLength(1);
+    expect(walkItems(template).some((item) => item.role === 'toggleDevTools')).toBe(false);
+  });
+
+  it('keeps development-only view actions in development', () => {
+    const items = walkItems(windowsMenuTemplate('en', {}, false, true));
+    expect(items.some((item) => item.role === 'forceReload')).toBe(true);
+    expect(items.some((item) => item.role === 'toggleDevTools')).toBe(true);
+  });
+
+  it('reflects the performance trace state in Help', () => {
+    const items = walkItems(windowsMenuTemplate('en', {}, false, true, true));
+    expect(items.find((item) => item.id === 'performance-trace')?.label).toBe('Stop Performance Trace');
+  });
+
+  it('normalizes popup coordinates for zoom and rejects invalid input', () => {
+    expect(normalizeMenuPopupPoint(12.4, 40, 1.25)).toEqual({ x: 16, y: 50 });
+    expect(normalizeMenuPopupPoint(-2, -3, 1)).toEqual({ x: 0, y: 0 });
+    expect(normalizeMenuPopupPoint(Number.NaN, 1, 1)).toBeNull();
+    expect(normalizeMenuPopupPoint(1, 1, 0)).toBeNull();
   });
 });

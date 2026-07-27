@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, dialog, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
+import type { BrowserWindowConstructorOptions } from 'electron';
 
 import { connect } from './connect';
 import { installDownloadHandler } from './downloads';
@@ -261,6 +262,38 @@ function saveBounds(win: BrowserWindow): void {
 // the midline of the web UI's 48px header row, same line as the
 // sidebar-toggle button and header icons.
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
+const WINDOWS_TITLEBAR_HEIGHT = 40;
+
+export function titleBarWindowOptions(
+  platform: NodeJS.Platform,
+  dark = false,
+): Partial<
+  Pick<BrowserWindowConstructorOptions, 'titleBarStyle' | 'titleBarOverlay' | 'trafficLightPosition'>
+> {
+  if (platform === 'darwin') {
+    return { titleBarStyle: 'hidden', trafficLightPosition: TRAFFIC_LIGHT_POSITION };
+  }
+  if (platform === 'win32') {
+    return {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        color: '#00000000',
+        symbolColor: dark ? '#f2f2f2' : '#202020',
+        height: WINDOWS_TITLEBAR_HEIGHT,
+      },
+    };
+  }
+  return { titleBarStyle: 'default' };
+}
+
+export function applyWindowsTitleBarOverlay(win: BrowserWindow): void {
+  if (process.platform !== 'win32' || win.isDestroyed()) return;
+  win.setTitleBarOverlay({
+    color: '#00000000',
+    symbolColor: nativeTheme.shouldUseDarkColors ? '#f2f2f2' : '#202020',
+    height: WINDOWS_TITLEBAR_HEIGHT,
+  });
+}
 
 /** macOS frosted chrome: the window carries a native NSVisualEffectView
     ('menu') behind the renderer's unpainted sidebar column, so backgroundColor
@@ -303,8 +336,7 @@ export function createWindow(): void {
     // 'hidden' (not 'hiddenInset') so trafficLightPosition can pin the lights
     // (see TRAFFIC_LIGHT_POSITION). 'default' on other platforms (they keep
     // their native title bar).
-    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
-    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+    ...titleBarWindowOptions(process.platform, nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -313,6 +345,12 @@ export function createWindow(): void {
     },
   });
   mainWindow = win;
+  if (process.platform === 'win32') {
+    win.setMenuBarVisibility(false);
+    const syncTitleBar = (): void => applyWindowsTitleBarOverlay(win);
+    nativeTheme.on('updated', syncTitleBar);
+    win.once('closed', () => nativeTheme.removeListener('updated', syncTitleBar));
+  }
   // Opted-out launch: the window is still created WITH the material (so the
   // 'inactive' pin is stored for any later re-enable) and it is removed
   // immediately — before the first paint, so there is no frosted flash.

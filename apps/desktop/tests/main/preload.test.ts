@@ -35,6 +35,7 @@ const WHITELIST = [
   'onLaunchAction',
   'onMenu',
   'onMenuAction',
+  'popupWindowsMenu',
   'onShortcut',
   'onTraySelectSession',
   'onUpdateStatus',
@@ -98,6 +99,8 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:theme', 'dark');
     exposed.setTheme('bogus');
     expect(send).toHaveBeenCalledTimes(1); // invalid scheme ignored
+    await exposed.popupWindowsMenu({ id: 'file', x: 12, y: 40 });
+    expect(invoke).toHaveBeenCalledWith('kimi:menu-popup', { id: 'file', x: 12, y: 40 });
 
     const attention = {
       unread: 3,

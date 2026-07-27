@@ -8,8 +8,26 @@ import {
   looksMaximizedBounds,
   shouldHideOnClose,
   shouldPersistBounds,
+  titleBarWindowOptions,
   vibrancyWindowOptions,
 } from '../../src/main/window';
+
+describe('titleBarWindowOptions', () => {
+  it('uses Window Controls Overlay only on Windows', () => {
+    expect(titleBarWindowOptions('win32', false)).toMatchObject({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#00000000', symbolColor: '#202020', height: 40 },
+    });
+    expect(titleBarWindowOptions('win32', true)).toMatchObject({
+      titleBarOverlay: { symbolColor: '#f2f2f2' },
+    });
+    expect(titleBarWindowOptions('darwin')).toMatchObject({
+      titleBarStyle: 'hidden',
+      trafficLightPosition: { x: 16, y: 17 },
+    });
+    expect(titleBarWindowOptions('linux')).toEqual({ titleBarStyle: 'default' });
+  });
+});
 
 describe('isAppRendererUrl', () => {
   it('accepts the packaged renderer protocol and the dev-server http URL', () => {

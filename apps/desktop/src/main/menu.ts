@@ -7,6 +7,7 @@ import { getTraceRecorder } from './trace';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
+import type { WindowsMenuId } from './ipc-channels';
 
 // --- localization -------------------------------------------------------------
 //
@@ -573,18 +574,163 @@ export function menuTemplate(
   return silence(template);
 }
 
-export function buildMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate(
-      menuTemplate(
-        process.platform === 'darwin',
-        effectiveMenuLocale(),
-        menuShortcutOverrides,
-        menuSuspended,
-        getTraceRecorder().isRecording(),
-      ),
-    ),
+export function windowsMenuTemplate(
+  locale: TrayLocale,
+  shortcutOverrides: Record<string, string | null> = {},
+  suspended = false,
+  isDev = !app.isPackaged,
+  tracing = false,
+): MenuItemConstructorOptions[] {
+  const base = menuTemplate(false, locale, shortcutOverrides, false, tracing);
+  const appItems = (base[0]?.submenu ?? []) as MenuItemConstructorOptions[];
+  const fileItems = (base[1]?.submenu ?? []) as MenuItemConstructorOptions[];
+  const edit = base[2] as MenuItemConstructorOptions;
+  const view = base[3] as MenuItemConstructorOptions;
+  const help = base[5] as MenuItemConstructorOptions;
+  const byId = (items: MenuItemConstructorOptions[], id: string) =>
+    items.find((item) => item.id === id);
+  const withoutClose = (items: MenuItemConstructorOptions[]) =>
+    items.filter((item) => item.role !== 'close');
+  const trimSeparators = (items: MenuItemConstructorOptions[]) => {
+    const result = [...items];
+    while (result[0]?.type === 'separator') result.shift();
+    while (result.at(-1)?.type === 'separator') result.pop();
+    return result;
+  };
+  const strings = MENU_STRINGS[locale];
+  const viewItems = ((view.submenu ?? []) as MenuItemConstructorOptions[]).filter(
+    (item) => isDev || (item.role !== 'forceReload' && item.role !== 'toggleDevTools'),
   );
+  const fileSubmenu = trimSeparators([
+    ...withoutClose(fileItems),
+    { type: 'separator' },
+    byId(appItems, 'open-settings') as MenuItemConstructorOptions,
+    { type: 'separator' },
+    { role: 'close', label: strings.closeWindow },
+    { role: 'quit', label: strings.quitApp },
+  ]);
+  const helpSubmenu = trimSeparators([
+    byId(appItems, 'check-for-updates') as MenuItemConstructorOptions,
+    byId(appItems, 'retry-connection') as MenuItemConstructorOptions,
+    { type: 'separator' },
+    ...((help.submenu ?? []) as MenuItemConstructorOptions[]),
+    { type: 'separator' },
+    { role: 'about', label: strings.aboutApp },
+  ]);
+  const template: MenuItemConstructorOptions[] = [
+    { id: 'file-menu', label: strings.file, submenu: fileSubmenu },
+    { ...edit, id: 'edit-menu' },
+    { ...view, id: 'view-menu', label: locale === 'zh' ? '视图' : 'View', submenu: viewItems },
+    { id: 'help-menu', label: strings.help, submenu: helpSubmenu },
+  ];
+  if (!suspended) return template;
+  const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+    items.map((item) => {
+      if (item.type === 'separator' || item.id === 'edit-menu') return item;
+      return {
+        id: item.id,
+        label: item.label,
+        submenu: Array.isArray(item.submenu)
+          ? silence(item.submenu as MenuItemConstructorOptions[])
+          : undefined,
+      };
+    });
+  return silence(template);
+}
+
+let applicationMenu: Menu | null = null;
+let activeWindowsMenu: Menu | null = null;
+let activeWindowsMenuId: WindowsMenuId | null = null;
+let windowsMenuRequest = 0;
+
+export function normalizeMenuPopupPoint(
+  x: number,
+  y: number,
+  zoomFactor: number,
+): { x: number; y: number } | null {
+  if (![x, y, zoomFactor].every(Number.isFinite) || zoomFactor <= 0) return null;
+  return {
+    x: Math.max(0, Math.round(x * zoomFactor)),
+    y: Math.max(0, Math.round(y * zoomFactor)),
+  };
+}
+
+export function popupWindowsMenu(
+  id: WindowsMenuId,
+  x: number,
+  y: number,
+): Promise<{ opened: boolean }> {
+  if (process.platform !== 'win32') return Promise.resolve({ opened: false });
+  const win = getMainWindow();
+  const item = applicationMenu?.getMenuItemById(`${id}-menu`);
+  if (win === null || win.isDestroyed() || item?.submenu === undefined) {
+    return Promise.resolve({ opened: false });
+  }
+  const point = normalizeMenuPopupPoint(x, y, win.webContents.getZoomFactor());
+  if (point === null) return Promise.resolve({ opened: false });
+  const submenu = item.submenu;
+  const request = ++windowsMenuRequest;
+  const previousMenu = activeWindowsMenu;
+  const previousId = activeWindowsMenuId;
+  if (previousMenu !== null) {
+    previousMenu.closePopup(win);
+    activeWindowsMenu = null;
+    activeWindowsMenuId = null;
+    if (previousId === id) {
+      return Promise.resolve({ opened: false });
+    }
+  }
+  return new Promise((resolve) => {
+    const open = () => {
+      if (request !== windowsMenuRequest) {
+        resolve({ opened: false });
+        return;
+      }
+      activeWindowsMenu = submenu;
+      activeWindowsMenuId = id;
+      submenu.popup({
+        window: win,
+        x: point.x,
+        y: point.y,
+        callback: () => {
+          if (request === windowsMenuRequest) {
+            activeWindowsMenu = null;
+            activeWindowsMenuId = null;
+          }
+          resolve({ opened: true });
+        },
+      });
+    };
+    if (previousMenu === null) {
+      open();
+    } else {
+      setImmediate(open);
+    }
+  });
+}
+
+export function buildMenu(): void {
+  applicationMenu = Menu.buildFromTemplate(
+    process.platform === 'win32'
+      ? windowsMenuTemplate(
+          effectiveMenuLocale(),
+          menuShortcutOverrides,
+          menuSuspended,
+          !app.isPackaged,
+          getTraceRecorder().isRecording(),
+        )
+      : menuTemplate(
+          process.platform === 'darwin',
+          effectiveMenuLocale(),
+          menuShortcutOverrides,
+          menuSuspended,
+          getTraceRecorder().isRecording(),
+        ),
+  );
+  Menu.setApplicationMenu(applicationMenu);
+  if (process.platform === 'win32') {
+    getMainWindow()?.setMenuBarVisibility(false);
+  }
 }
 
 /** Follow the renderer's in-app language (IPC.locale): rebuild the menu with
