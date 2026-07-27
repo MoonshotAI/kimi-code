@@ -525,6 +525,7 @@ onUnmounted(() => {
 }
 .tsearch-ring {
   position: absolute;
+  box-sizing: content-box;
   border: var(--p-findring-w) solid var(--color-warning);
   margin: calc(-1 * var(--p-findring-w));
   border-radius: var(--radius-xs);
