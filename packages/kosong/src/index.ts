@@ -81,7 +81,6 @@ export {
   isContextOverflowStatusError,
   isImageFormatError,
   isProviderRateLimitError,
-  isQuotaExhaustedStatusError,
   isRecoverableRequestStructureError,
   isRequestTooLargeStatusError,
   isRetryableGenerateError,

@@ -288,6 +288,7 @@ describe('trait objects are plain declarations', () => {
     expect(hookNames(kimiOpenAITrait).toSorted()).toEqual([
       'buildParams',
       'cacheKey',
+      'convertError',
       'convertMessage',
       'convertTool',
       'endpoint',
@@ -298,7 +299,7 @@ describe('trait objects are plain declarations', () => {
       'withMaxCompletionTokens',
       'withThinking',
     ]);
-    expect(hookNames(kimiAnthropicTrait)).toEqual(['withThinking']);
+    expect(hookNames(kimiAnthropicTrait).toSorted()).toEqual(['convertError', 'withThinking']);
   });
 
   it('marks only the native-transport thinking trait as strict-validation (v1 parity)', () => {

@@ -2,7 +2,7 @@
  * `kosong/protocol` domain (L1) — the declarative trait surface.
  *
  * A `ProtocolTrait` is a stateless declaration of how one vendor deviates
- * from a wire base: sixteen fully optional hooks plus rare metadata markers
+ * from a wire base: seventeen fully optional hooks plus rare metadata markers
  * (non-function fields like `strictThinkingValidation` that qualify how a
  * hook's behavior is governed, without adding a code path). A trait declares
  * a deviation only where one exists; a hook returning `undefined` always
@@ -24,6 +24,7 @@
  */
 
 import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ChatProviderError } from '#/kosong/contract/errors';
 import type { Message, VideoURLPart } from '#/kosong/contract/message';
 import type {
   GenerateOptions,
@@ -134,6 +135,19 @@ export interface ProtocolTrait {
   toolCallIdPolicy?(ctx: TraitContext): ToolCallIdPolicy | undefined;
 
   /**
+   * Single-value: classify one raw failure into a `ChatProviderError` before
+   * the base's own conversion runs. The hook receives the UNCONVERTED object
+   * the base caught at that seam — the SDK error on HTTP paths, the raw error
+   * event on in-stream paths — because base conversion drops vendor-parsed
+   * detail such as the body `error.type`/`error.code`. Returning `undefined`
+   * keeps the base classification; the base runs its abort guard before
+   * consulting the hook, so a user cancellation never reaches it. This is
+   * where a vendor declares what its own wire errors mean (e.g. which 429s
+   * are a non-retryable quota exhaustion rather than a transient rate limit).
+   */
+  convertError?(error: unknown, ctx: TraitContext): ChatProviderError | undefined;
+
+  /**
    * Per-turn thinking intent → generation-kwargs patch. Receives the kwargs
    * already seeded by earlier intents (cacheKey, sampling) and returns the
    * patch to merge in. `undefined` hands the effort back to the base's own
@@ -238,4 +252,22 @@ export function traitDefaultHeaders(
     headers = { ...headers, ...declared };
   }
   return headers;
+}
+
+/**
+ * Bind the `convertError` hook of resolved traits with single-value
+ * semantics: the last declarer wins, its context bound away. Returns
+ * `undefined` when no trait declares the hook, so bases can bypass the
+ * consult entirely.
+ */
+export function traitConvertError(
+  traits: readonly ResolvedTrait[],
+): ((error: unknown) => ChatProviderError | undefined) | undefined {
+  let bound: ((error: unknown) => ChatProviderError | undefined) | undefined;
+  for (const { trait, context } of traits) {
+    if (trait.convertError === undefined) continue;
+    const declared = trait.convertError.bind(trait);
+    bound = (error) => declared(error, context);
+  }
+  return bound;
 }

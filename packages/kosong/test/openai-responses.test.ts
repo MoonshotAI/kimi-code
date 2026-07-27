@@ -2074,7 +2074,10 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(isRetryableGenerateError(caughtError)).toBe(false);
     });
 
-    it('classifies an embedded status_code=429 with billing wording as quota exhausted', async () => {
+    it('keeps an embedded status_code=429 with vendor billing wording a rate limit', async () => {
+      // Vendor billing wordings are no longer recognized by the base — quota
+      // classification for a vendor's own errors lives on that vendor's
+      // convertError hook, and no vendor rides this transport here.
       const events = [
         {
           type: 'error',
@@ -2093,9 +2096,9 @@ describe('OpenAIResponsesChatProvider', () => {
         caughtError = error;
       }
 
-      expect(caughtError).toBeInstanceOf(APIProviderQuotaExhaustedError);
-      expect(caughtError).not.toBeInstanceOf(APIProviderRateLimitError);
-      expect(isRetryableGenerateError(caughtError)).toBe(false);
+      expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
+      expect(caughtError).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect(isRetryableGenerateError(caughtError)).toBe(true);
     });
 
     it('rejects malformed stream events with a non-string type even when message is present', async () => {

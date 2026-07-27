@@ -10,7 +10,6 @@ import {
   ChatProviderError,
   isImageFormatError,
   isProviderRateLimitError,
-  isQuotaExhaustedStatusError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
@@ -694,56 +693,23 @@ describe('APIProviderQuotaExhaustedError', () => {
   });
 });
 
-describe('normalizeAPIStatusError: quota-exhausted 429', () => {
-  // Both Moonshot wordings observed live from the same account (`error.type`
-  // "exceeded_current_quota_error"), plus OpenAI's insufficient_quota wording
-  // and the arrears synonym.
-  it.each([
-    'You exceeded your current token quota: <org-0123456789abcdef> 31275, please check your account balance',
-    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
-    'You exceeded your current quota, please check your plan and billing details.',
-    'Your account is in arrears, please top up',
-  ])('classifies 429 "%s" as quota-exhausted by message', (message) => {
-    const error = normalizeAPIStatusError(429, message, 'req-quota');
-    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
-    expect(error.statusCode).toBe(429);
-    expect(error.requestId).toBe('req-quota');
-  });
-
-  it('classifies a neutral message as quota-exhausted by structured errorType', () => {
-    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
-      errorType: 'exceeded_current_quota_error',
-    });
-    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
-  });
-
-  it('classifies a neutral message as quota-exhausted by structured errorCode', () => {
-    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
-      errorCode: 'insufficient_quota',
-    });
-    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
-  });
-
+describe('normalizeAPIStatusError: 429 stays vendor-neutral', () => {
+  // The shared normalization never decides what a vendor's 429 means: quota
+  // classification lives with the vendor (`classifyKimiQuotaError`, the
+  // OpenAI base's own insufficient_quota check), so even billing wordings
+  // normalize to a retryable rate limit here.
   it.each([
     'Too many requests',
     'request reached user+model max RPM: 50',
     'your token quota per minute was exceeded',
-  ])('keeps transient 429 "%s" an APIProviderRateLimitError', (message) => {
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
+  ])('normalizes 429 "%s" to APIProviderRateLimitError', (message) => {
     const error = normalizeAPIStatusError(429, message);
     expect(error).toBeInstanceOf(APIProviderRateLimitError);
     expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
   });
 
-  it('keeps a 429 with a transient structured type an APIProviderRateLimitError', () => {
-    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
-      errorType: 'rate_limit_reached_error',
-    });
-    expect(error).toBeInstanceOf(APIProviderRateLimitError);
-    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
-  });
-
-  it('is gated on status 429 — billing wording on other statuses stays generic', () => {
-    expect(isQuotaExhaustedStatusError(403, 'insufficient balance')).toBe(false);
+  it('keeps billing wording on other statuses a generic status error', () => {
     const error = normalizeAPIStatusError(403, 'insufficient balance');
     expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
     expect(error.constructor).toBe(APIStatusError);

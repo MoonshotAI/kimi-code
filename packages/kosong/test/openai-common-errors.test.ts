@@ -10,6 +10,7 @@ import {
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart } from '#/message';
+import { classifyKimiQuotaError } from '#/providers/kimi-errors';
 import {
   convertContentPart,
   convertOpenAIError,
@@ -428,13 +429,13 @@ describe('convertOpenAIError: quota-exhausted 429', () => {
   const QUOTA_MESSAGE =
     'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
 
-  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
-    // The SDK parses the body's inner error object onto the APIError, exposing
-    // `type` — the structured path must win regardless of message wording.
+  it("classifies OpenAI's own insufficient_quota code without any vendor hook", () => {
+    // insufficient_quota is OpenAI's documented signal on its own wire, so
+    // the base converter recognizes it directly.
     const err = new OpenAIAPIError(
       429,
-      { message: QUOTA_MESSAGE, type: 'exceeded_current_quota_error' },
-      `429 ${QUOTA_MESSAGE}`,
+      { message: 'You exceeded your current quota.', type: 'insufficient_quota' },
+      '429 You exceeded your current quota.',
       new Headers(),
     );
     const result = convertOpenAIError(err);
@@ -443,9 +444,28 @@ describe('convertOpenAIError: quota-exhausted 429', () => {
     expect(isRetryableGenerateError(result)).toBe(false);
   });
 
-  it('falls back to message wording when no structured body is present', () => {
-    const err = new OpenAIAPIError(429, undefined, QUOTA_MESSAGE, new Headers());
+  it('keeps vendor quota signals a rate limit without the vendor hook', () => {
+    // Moonshot's structured type and billing wordings are vendor knowledge —
+    // the shared base must not decide what another vendor's 429 means.
+    const err = new OpenAIAPIError(
+      429,
+      { message: QUOTA_MESSAGE, type: 'exceeded_current_quota_error' },
+      `429 ${QUOTA_MESSAGE}`,
+      new Headers(),
+    );
     const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('classifies vendor quota signals through the convertError hook', () => {
+    const err = new OpenAIAPIError(
+      429,
+      { message: QUOTA_MESSAGE, type: 'exceeded_current_quota_error' },
+      `429 ${QUOTA_MESSAGE}`,
+      new Headers(),
+    );
+    const result = convertOpenAIError(err, classifyKimiQuotaError);
     expect(result).toBeInstanceOf(APIProviderQuotaExhaustedError);
     expect(isRetryableGenerateError(result)).toBe(false);
   });
@@ -457,7 +477,7 @@ describe('convertOpenAIError: quota-exhausted 429', () => {
       'Too many requests',
       new Headers(),
     );
-    const result = convertOpenAIError(err);
+    const result = convertOpenAIError(err, classifyKimiQuotaError);
     expect(result).toBeInstanceOf(APIProviderRateLimitError);
     expect(result).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
     expect(isRetryableGenerateError(result)).toBe(true);

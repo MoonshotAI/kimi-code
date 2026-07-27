@@ -14,7 +14,10 @@
  *
  * `convertAnthropicError`'s FIRST line is the contract's `throwIfAbortError`
  * guard: a user cancellation is THROWN as the standard abort DOMException at
- * the very front of the classification chain.
+ * the very front of the classification chain. Right after the guard the
+ * converter consults the trait-composed `convertError` hook with the raw SDK
+ * error, so a vendor riding this transport can classify its own wire
+ * failures (e.g. quota 429s) before the base rules run.
  */
 
 import Anthropic, {
@@ -132,6 +135,7 @@ export interface AnthropicHooks {
     options: { readonly keep?: string },
     generationKwargs: AnthropicGenerationKwargs,
   ): AnthropicGenerationKwargs | undefined;
+  convertError?: (error: unknown) => ChatProviderError | undefined;
 }
 
 export interface AnthropicOptions {
@@ -513,11 +517,18 @@ function shouldKeepConvertedMessage(message: MessageParam): boolean {
   return message.role !== 'assistant' || message.content.length > 0;
 }
 
-export function convertAnthropicError(error: unknown): ChatProviderError {
+export function convertAnthropicError(
+  error: unknown,
+  convertErrorHook?: (error: unknown) => ChatProviderError | undefined,
+): ChatProviderError {
   // Abort guard FIRST: throws (never returns) the standard abort DOMException
   // for any abort shape, so a user cancellation is never misclassified as a
   // retryable provider failure.
   throwIfAbortError(error);
+  const hooked = convertErrorHook?.(error);
+  if (hooked !== undefined) {
+    return hooked;
+  }
   if (error instanceof AnthropicTimeoutError) {
     return new APITimeoutError(error.message);
   }
@@ -554,7 +565,13 @@ class AnthropicStreamedMessage implements StreamedMessage {
   private _rawFinishReason: string | null = null;
   private readonly _iter: AsyncGenerator<StreamedMessagePart>;
 
-  constructor(response: unknown, isStream: boolean) {
+  constructor(
+    response: unknown,
+    isStream: boolean,
+    private readonly _convertErrorHook?:
+      | ((error: unknown) => ChatProviderError | undefined)
+      | undefined,
+  ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(response as AsyncIterable<MessageStreamEvent>);
     } else {
@@ -780,7 +797,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
         }
       }
     } catch (error: unknown) {
-      throw convertAnthropicError(error);
+      throw convertAnthropicError(error, this._convertErrorHook);
     }
   }
 }
@@ -1021,9 +1038,9 @@ export class AnthropicChatProvider implements ChatProvider {
               { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
               finalRequestOptions,
             );
-        return new AnthropicStreamedMessage(stream, true);
+        return new AnthropicStreamedMessage(stream, true, this._hooks?.convertError);
       } catch (error: unknown) {
-        throw convertAnthropicError(error);
+        throw convertAnthropicError(error, this._hooks?.convertError);
       }
     }
 
@@ -1037,9 +1054,9 @@ export class AnthropicChatProvider implements ChatProvider {
             { ...createParams, stream: false } as unknown as MessageCreateParams,
             finalRequestOptions,
           );
-      return new AnthropicStreamedMessage(response, false);
+      return new AnthropicStreamedMessage(response, false, this._hooks?.convertError);
     } catch (error: unknown) {
-      throw convertAnthropicError(error);
+      throw convertAnthropicError(error, this._hooks?.convertError);
     }
   }
 

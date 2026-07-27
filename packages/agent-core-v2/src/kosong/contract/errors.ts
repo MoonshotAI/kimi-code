@@ -292,17 +292,6 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
 
 const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
 
-const QUOTA_EXHAUSTED_ERROR_CODES = new Set(['exceeded_current_quota_error', 'insufficient_quota']);
-
-const QUOTA_EXHAUSTED_MESSAGE_PATTERNS = [
-  /exceeded your current (?:token )?quota/,
-  /check your account balance/,
-  /insufficient balance/,
-  /recharge your account|please recharge/,
-  /account (?:is )?in arrears/,
-  /insufficient_quota/,
-] as const;
-
 const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
   /request exceeds the maximum size/,
   /request entity too large/,
@@ -346,12 +335,8 @@ export function normalizeAPIStatusError(
   requestId?: string | null,
   retryAfterMs?: number | null,
   traceId?: string | null,
-  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
 ): APIStatusError {
   if (statusCode === 429) {
-    if (isQuotaExhaustedStatusError(statusCode, message, options)) {
-      return new APIProviderQuotaExhaustedError(message, requestId, retryAfterMs, traceId);
-    }
     return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   if (isContextOverflowStatusError(statusCode, message)) {
@@ -413,20 +398,6 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   if (statusCode !== 413) return false;
   const lowerMessage = message.toLowerCase();
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
-}
-
-export function isQuotaExhaustedStatusError(
-  statusCode: number,
-  message: string,
-  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
-): boolean {
-  if (statusCode !== 429) return false;
-  const errorCode = options?.errorCode;
-  if (typeof errorCode === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorCode)) return true;
-  const errorType = options?.errorType;
-  if (typeof errorType === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorType)) return true;
-  const lowerMessage = message.toLowerCase();
-  return QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
 const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
