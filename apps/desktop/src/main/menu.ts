@@ -3,6 +3,7 @@ import type { MenuItemConstructorOptions } from 'electron';
 
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
+import { getTraceRecorder } from './trace';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
@@ -43,6 +44,10 @@ interface MenuStrings {
   help: string;
   documentation: string;
   console: string;
+  performanceTrace: string;
+  stopPerformanceTrace: string;
+  traceFailed: string;
+  traceKeptAt: string;
 }
 
 const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
@@ -75,6 +80,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     help: '帮助',
     documentation: '文档',
     console: '控制台',
+    performanceTrace: '性能录制',
+    stopPerformanceTrace: '停止性能录制',
+    traceFailed: '性能录制失败:{message}',
+    traceKeptAt: '录制文件已保留在 {path}',
   },
   en: {
     window: 'Window',
@@ -105,6 +114,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     help: 'Help',
     documentation: 'Documentation',
     console: 'Console',
+    performanceTrace: 'Performance Trace',
+    stopPerformanceTrace: 'Stop Performance Trace',
+    traceFailed: 'Performance trace failed: {message}',
+    traceKeptAt: 'Trace file kept at {path}',
   },
 };
 
@@ -298,6 +311,38 @@ async function runMenuUpdateCheck(): Promise<void> {
   });
 }
 
+// Help-menu performance trace toggle (trace.ts holds the recorder). The menu
+// rebuild after every toggle refreshes the label with the authoritative
+// state — an error mid-stop may have flipped it back. A trace menu click is
+// explicit user intent, so failures get a native dialog, same policy as the
+// menu update check.
+async function runTraceToggle(): Promise<void> {
+  const result = await getTraceRecorder().toggle();
+  buildMenu();
+  if (result.status !== 'error') {
+    return;
+  }
+  const strings = MENU_STRINGS[effectiveMenuLocale()];
+  showMainWindow();
+  const win = getMainWindow();
+  // A save failure keeps the temp trace (trace.ts); keptAt carries its path
+  // so the dialog can offer manual retrieval, localized like everything else.
+  const message = strings.traceFailed.replace('{message}', result.message);
+  const options: Electron.MessageBoxOptions = {
+    type: 'error',
+    message:
+      result.keptAt === undefined
+        ? message
+        : `${message}\n${strings.traceKeptAt.replace('{path}', result.keptAt)}`,
+    buttons: [strings.ok],
+  };
+  if (win === null || win.isDestroyed()) {
+    await dialog.showMessageBox(options);
+  } else {
+    await dialog.showMessageBox(win, options);
+  }
+}
+
 // Pure template builder, so tests can cover it without Electron. macOS spells
 // the Window submenu out: the `windowMenu` role expands to Minimize / Zoom /
 // Bring All to Front with NO Close item — Close lives in the File menu
@@ -311,6 +356,7 @@ export function menuTemplate(
   locale: TrayLocale,
   shortcutOverrides: Record<string, string | null> = {},
   suspended = false,
+  tracing = false,
 ): MenuItemConstructorOptions[] {
   const strings = MENU_STRINGS[locale];
   const appMenu: MenuItemConstructorOptions = {
@@ -476,8 +522,8 @@ export function menuTemplate(
     ],
   };
 
-  // TODO(help-menu): add What's New (changelog), Send Feedback, and Start
-  // Performance Trace items — tracked in docs/native-todos.md.
+  // TODO(help-menu): add What's New (changelog) and Send Feedback items —
+  // tracked in docs/native-todos.md.
   const helpMenu: MenuItemConstructorOptions = {
     label: strings.help,
     submenu: [
@@ -493,6 +539,14 @@ export function menuTemplate(
         label: strings.console,
         click: () => {
           void shell.openExternal(HELP_LINKS.console);
+        },
+      },
+      { type: 'separator' },
+      {
+        id: 'performance-trace',
+        label: tracing ? strings.stopPerformanceTrace : strings.performanceTrace,
+        click: () => {
+          void runTraceToggle();
         },
       },
     ],
@@ -527,6 +581,7 @@ export function buildMenu(): void {
         effectiveMenuLocale(),
         menuShortcutOverrides,
         menuSuspended,
+        getTraceRecorder().isRecording(),
       ),
     ),
   );

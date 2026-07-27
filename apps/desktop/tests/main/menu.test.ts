@@ -328,6 +328,18 @@ describe('menuTemplate', () => {
     expect(enItems.find((item) => item.id === 'help-docs')?.label).toBe('Documentation');
     expect(enItems.find((item) => item.id === 'help-console')?.label).toBe('Console');
   });
+
+  it('Help menu relabels Performance Trace to Stop while recording, bilingually', () => {
+    const zhItems = submenuItems(menuTemplate(true, 'zh').find((item) => item.label === '帮助') as MenuItemConstructorOptions);
+    const zhTrace = zhItems.find((item) => item.id === 'performance-trace');
+    expect(zhTrace).toMatchObject({ label: '性能录制' });
+    expect(typeof zhTrace?.click).toBe('function');
+    const zhRecording = submenuItems(menuTemplate(true, 'zh', {}, false, true).find((item) => item.label === '帮助') as MenuItemConstructorOptions);
+    expect(zhRecording.find((item) => item.id === 'performance-trace')?.label).toBe('停止性能录制');
+
+    const enItems = submenuItems(menuTemplate(true, 'en', {}, false, true).find((item) => item.label === 'Help') as MenuItemConstructorOptions);
+    expect(enItems.find((item) => item.id === 'performance-trace')?.label).toBe('Stop Performance Trace');
+  });
 });
 
 describe('bindingToAccelerator', () => {

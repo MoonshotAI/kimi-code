@@ -126,10 +126,11 @@
   - 待接线：打开文件夹 → `createAddWorkspaceEntry` 全链路（desktop 原生目录选择器，web 回退对话框）。
   - 测试：`tests/main/menu.test.ts` 改写 +4 用例（Close 在 File 不在 Window、File 菜单双语 label + accelerator、New Chat 已接线 / New Window 与 Open Folder 展示态无 handler）。
 
-- [x] **Help 菜单（文档 / 控制台）**（已完成，desktop 专属）
+- [x] **Help 菜单（文档 / 控制台 / 性能录制）**（已完成，desktop 专属）
   - 实现：`menu.ts` 新增 Help 菜单（`帮助`/`Help`，位于 Window 之后，菜单序列 App / File / Edit / View / Window / Help）：「文档」`https://www.kimi.com/code/docs/`、「控制台」`https://www.kimi.com/code/console?from=kimi_code_desktop`（带 desktop 归因参数），`shell.openExternal` 走系统浏览器（链接由用户提供，未核验跳转）。macOS 会给 Help 菜单自动加系统搜索框，非我们控制。
-  - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback、Start Performance Trace（性能录制）三项后续再加。
-  - 测试：`tests/main/menu.test.ts` +1 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项）。
+  - 性能录制（2026-07 补）：新增 `src/main/trace.ts`——`contentTracing` 录制 Chromium trace（browser/renderer/GPU 全进程），category 集面向卡顿诊断（`blink,v8,toplevel,ipc,loading,navigation,renderer_host,disabled-by-default-v8.cpu_profiler,disabled-by-default-blink.main_frame`），`record-continuously` 环形缓冲（淘汰早期事件保留最近事件；长录制丢数据按产品决策静默不提示）。菜单项文案随状态切换（录制中显示「停止性能录制」，经 `menuTemplate` 第 5 参传入，`buildMenu` 读 `getTraceRecorder().isRecording()`；不用 checkbox 勾选样式，用户明确决定）：点击开始，再点停止——先 `stopRecording()` 落临时文件，再弹 `dialog.showSaveDialog`（预选 `~/Downloads/kimi-code-trace-<时间戳>.json`，同 runMenuUpdateCheck 的 showMainWindow 父窗模式），确认则 copy+rm 移到目标（跨卷 EXDEV 故不用 rename），取消删临时文件，**保存失败保留临时文件且错误信息带其路径**（唯一副本不主动销毁，用户可手动取走，2026-07 codex review）；产物拖入 ui.perfetto.dev / chrome://tracing 分析。状态机防重入（busy 覆盖 start 与 stop/save 全阶段，双击/快速连点返回 busy）；开始/停止/保存失败弹原生错误框（菜单点击是显式用户意图，同菜单检查更新策略）。`createTraceRecorder(deps)` 依赖注入可测，模块级单例 lazy 接真实 Electron API（contentTracing 需 app-ready）。录制中退出 app 无需清理（数据在内存缓冲，进程结束即消失）。renderer 零改动、无桥接、web 不涉及。
+  - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback 两项后续再加。
+  - 测试：`tests/main/menu.test.ts` +2 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项；性能录制项双语 + checkbox 状态跟随参数）；`tests/main/trace.test.ts`（8 用例：文件名格式、开始带 category、停止保存移动、取消删临时文件、开始/停止/保存失败、重入 busy）。
 
 - [x] **Windows 关窗驻留托盘 + 单实例锁**（已完成，desktop 专属）
   - 实现（2026-07）：`window.ts` `shouldHideOnClose` 平台门控从仅 darwin 扩到 darwin/win32——Windows 点 X 也改为隐藏窗口（内嵌 server / WS / 托盘全保活），真退出走托盘「退出」/ 更新器安装（`before-quit` / `markQuitting` 既有闭环不变）；macOS 的全屏先退再藏分支 Windows 同样适用。`app.ts` 加 `app.requestSingleInstanceLock()`（拿不到锁直接 quit，不起 server 不建窗；dev 与打包版 userData 目录不同、锁互不影响，同机调试能力保留）+ `second-instance` → `showMainWindow()`（并路由 argv，见 Jump List 条目）。窗口位置恢复新增 `clampBoundsToWorkArea`：存档 bounds 不在当前任何显示器 workArea 内时 clamp 回边缘（至少 100px 可见、标题栏不出顶边），修拔外接屏后窗口恢复到屏幕外的问题。`window-all-closed` 非 darwin `app.quit()` 保留为真销毁兜底。
