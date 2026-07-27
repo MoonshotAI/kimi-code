@@ -11,6 +11,7 @@
 import {
   type CloudAppender,
   createCloudAppender,
+  IBootstrapService,
   IConfigService,
   IOAuthToolkit,
   ITelemetryService,
@@ -22,6 +23,8 @@ import { createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 // convention: CLI_USER_AGENT_PRODUCT / WEB_UI_MODE in apps/kimi-code).
 const SERVER_TELEMETRY_APP_NAME = 'kimi-code-cli';
 const SERVER_TELEMETRY_UI_MODE = 'web';
+const TELEMETRY_DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
+const TELEMETRY_DISABLE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 
 /**
  * Cap on the final flush during server close. A wedged telemetry endpoint must
@@ -32,8 +35,13 @@ const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
 
 export interface ServerTelemetry {
   readonly service: ITelemetryService;
-  /** Present only when telemetry is enabled (config `telemetry` !== false). */
+  /** Present only when telemetry is enabled by both config and environment. */
   readonly appender?: CloudAppender;
+}
+
+function isTelemetryDisabledByEnv(core: Scope): boolean {
+  const value = core.accessor.get(IBootstrapService).getEnv(TELEMETRY_DISABLE_ENV);
+  return value !== undefined && TELEMETRY_DISABLE_ENV_VALUES.has(value.trim().toLowerCase());
 }
 
 export async function initializeServerTelemetry(
@@ -49,7 +57,7 @@ export async function initializeServerTelemetry(
   } catch {
     enabled = true;
   }
-  if (!enabled) return { service };
+  if (!enabled || isTelemetryDisabledByEnv(core)) return { service };
 
   const auth = core.accessor.get(IOAuthToolkit);
   const appender = createCloudAppender(core.accessor, {

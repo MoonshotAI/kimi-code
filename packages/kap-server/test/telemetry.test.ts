@@ -31,7 +31,14 @@ describe('server telemetry', () => {
     }
   });
 
-  async function bootCore(toml?: string): Promise<Scope> {
+  async function bootCore(
+    toml?: string,
+    env?: NodeJS.ProcessEnv,
+  ): Promise<Scope> {
+    const resolvedEnv = env ?? {
+      ...process.env,
+      KIMI_DISABLE_TELEMETRY: undefined,
+    };
     if (toml !== undefined) {
       await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
     }
@@ -39,8 +46,9 @@ describe('server telemetry', () => {
       {
         homeDir: home as string,
         configPath: resolveConfigPath({ homeDir: home as string }),
+        env: resolvedEnv,
       },
-      logSeed(resolveLoggingConfig({ homeDir: home as string, env: process.env })),
+      logSeed(resolveLoggingConfig({ homeDir: home as string, env: resolvedEnv })),
     );
     core = app;
     return app;
@@ -60,4 +68,18 @@ describe('server telemetry', () => {
     expect(telemetry.appender).toBeUndefined();
     await shutdownServerTelemetry(telemetry);
   });
+
+  it.each(['1', 'true', 't', 'yes', 'y', ' TRUE '])(
+    'keeps the null appender when KIMI_DISABLE_TELEMETRY=%s',
+    async (value) => {
+      const app = await bootCore(undefined, {
+        ...process.env,
+        KIMI_DISABLE_TELEMETRY: value,
+      });
+      const telemetry = await initializeServerTelemetry(app, home as string);
+      expect(telemetry.appender).toBeUndefined();
+      expect(readKimiDeviceId(home as string)).toBeNull();
+      await shutdownServerTelemetry(telemetry);
+    },
+  );
 });
