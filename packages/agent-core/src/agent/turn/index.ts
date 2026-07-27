@@ -47,6 +47,7 @@ import {
 } from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import { degradeUnresolvedVideoToTag, resolvePromptMedia } from './media-resolve';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -119,6 +120,20 @@ const GOAL_CONTINUATION_PROMPT = [
   'threshold is met and you cannot make meaningful progress without user input or an',
   'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
+].join(' ');
+
+/**
+ * Variant of {@link GOAL_CONTINUATION_PROMPT} used when the previous goal turn
+ * ended by hitting the per-turn step limit (`loop_control.max_steps_per_turn`).
+ * The limit fragments goal work into more continuation turns instead of
+ * pausing the goal; the notice tells the model why, so it can size the next
+ * slice to fit the limit.
+ */
+const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
+  'The previous goal turn reached the per-turn step limit before finishing its work,',
+  'so a new turn was started for you. Pick up where that turn stopped and keep each',
+  'slice of work small enough to fit the limit.',
+  GOAL_CONTINUATION_PROMPT,
 ].join(' ');
 
 export class TurnFlow {
@@ -338,7 +353,13 @@ export class TurnFlow {
     const steers = this.steerBuffer;
     if (steers.length === 0) return false;
     for (const steer of steers) {
-      this.agent.context.appendUserMessage(steer.input, steer.origin);
+      // Steer flushes happen at sites that cannot await an upload, so any
+      // prompt-attached local video is degraded to an always-safe `<video
+      // path>` tag here; the model uploads it in-turn via ReadMediaFile.
+      this.agent.context.appendUserMessage(
+        degradeUnresolvedVideoToTag(steer.input),
+        steer.origin,
+      );
     }
     steers.length = 0;
     return true;
@@ -398,11 +419,15 @@ export class TurnFlow {
       // instead of stopping after the turn that merely started it. (The
       // already-active case took the early return above.)
       const goalBecameActive = this.agent.goal.getGoal().goal?.status === 'active';
+      // The same per-turn-step-limit exemption as the driver's continuation
+      // loop: a turn that failed only at the step cap does not block the
+      // handoff — pursuit starts with a fresh continuation turn (told why).
+      const hitStepCap = isMaxStepsTurnFailure(end);
       if (
         goalBecameActive &&
         end.event.reason !== 'cancelled' &&
-        end.event.reason !== 'failed' &&
-        end.event.reason !== 'blocked'
+        end.event.reason !== 'blocked' &&
+        (end.event.reason !== 'failed' || hitStepCap)
       ) {
         // The ordinary turn created or resumed the goal, so it counts as the
         // first active goal turn before the continuation driver takes over.
@@ -413,7 +438,12 @@ export class TurnFlow {
         }
         return await this.driveGoal(
           this.allocateTurnId(),
-          [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+          [
+            {
+              type: 'text',
+              text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+            },
+          ],
           GOAL_CONTINUATION_ORIGIN,
           signal,
         );
@@ -432,7 +462,9 @@ export class TurnFlow {
    * full turn, then reads the goal status the model set via `UpdateGoal`:
    * `complete` (the record is cleared) / `blocked` stop the loop; `active`
    * (the model didn't decide) re-injects the goal reminder and runs the
-   * next continuation turn. Aborted or failed turns pause the goal. Goal-state
+   * next continuation turn. Aborted or failed turns pause the goal — except a
+   * turn that only failed by reaching the per-turn step limit, which just
+   * fragments goal work into more continuation turns. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
    */
@@ -464,7 +496,12 @@ export class TurnFlow {
         await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
         return end;
       }
-      if (end.event.reason === 'failed') {
+      // A turn that failed only by reaching the per-turn step limit ended at a
+      // clean step boundary, so it is not a goal failure: fall through to the
+      // normal continuation decision below and keep pursuing the goal. The
+      // `turn.ended` event still reports the failure (and the limit) to hosts.
+      const hitStepCap = isMaxStepsTurnFailure(end);
+      if (end.event.reason === 'failed' && !hitStepCap) {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
       }
@@ -489,7 +526,12 @@ export class TurnFlow {
       }
 
       turnId = this.allocateTurnId();
-      turnInput = [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }];
+      turnInput = [
+        {
+          type: 'text',
+          text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+        },
+      ];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
   }
@@ -502,7 +544,9 @@ export class TurnFlow {
     this.agent.usage.beginTurn();
     const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
+    // The budget-exhausted goal turn does not run the model, so it cannot
+    // await an upload — degrade any local video to the always-safe tag form.
+    this.agent.context.appendUserMessage(degradeUnresolvedVideoToTag(input), origin);
     const ended: TurnEndedEvent = {
       type: 'turn.ended',
       turnId,
@@ -533,11 +577,10 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, thinking_effort: this.agent.config.thinkingEffort, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
@@ -547,7 +590,14 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
+      // Resolve any prompt-attached local video (a `file://` video_url) into
+      // its final delivered form — an uploaded `ms://` reference or an
+      // inline/tag fallback — BEFORE it lands in history, so no unresolved
+      // `file://` reference reaches the model or is persisted for resume. Auth
+      // rejections surface as a failed turn via the catch below.
+      const resolvedInput = await resolvePromptMedia(this.agent, input, signal);
+      this.agent.context.appendUserMessage(resolvedInput, origin);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, resolvedInput, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;
@@ -652,6 +702,7 @@ export class TurnFlow {
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       ...this.requestProtocolProps(),
       trace_id: terminalTraceId,
     });
@@ -778,6 +829,8 @@ export class TurnFlow {
       signal.throwIfAborted();
       const model = this.agent.config.model;
       const loopControl = this.agent.kimiConfig?.loopControl;
+      const maxStepsPerTurn = resolveMaxStepsPerTurn(loopControl?.maxStepsPerTurn);
+      const maxRetriesPerStep = resolveMaxRetriesPerStep(loopControl?.maxRetriesPerStep);
       let stopForGoalBudget = false;
       try {
         const result = await runTurn({
@@ -794,8 +847,8 @@ export class TurnFlow {
           buildTools: () => this.agent.tools.loopTools,
           describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
-          maxSteps: loopControl?.maxStepsPerTurn,
-          maxRetryAttempts: loopControl?.maxRetriesPerStep,
+          maxSteps: maxStepsPerTurn,
+          maxRetryAttempts: maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
               const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
@@ -880,7 +933,7 @@ export class TurnFlow {
               ) {
                 goalOutcomeMessageContinuationUsed = true;
                 goalOutcomeToolResultPending = false;
-                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                if (!hasStepBudgetRemaining(maxStepsPerTurn, ctx.stepNumber)) {
                   return { continue: false };
                 }
                 return { continue: true };
@@ -1179,6 +1232,7 @@ export class TurnFlow {
     this.agent.telemetry.track('turn_interrupted', {
       turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       at_step: atStep,
       interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
@@ -1217,8 +1271,50 @@ export class TurnFlow {
   }
 }
 
+const MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
+const MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
+
+/**
+ * Resolve the effective per-turn step cap. Precedence:
+ * `KIMI_LOOP_MAX_STEPS_PER_TURN` (non-negative integer) → config
+ * (`loop_control.max_steps_per_turn`) → `undefined` (no cap). `0` means no
+ * cap, same as the config field; an invalid env value is ignored.
+ */
+export function resolveMaxStepsPerTurn(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_STEPS_PER_TURN_ENV) ?? configValue;
+}
+
+/**
+ * Resolve the effective per-step retry budget. Precedence:
+ * `KIMI_LOOP_MAX_RETRIES_PER_STEP` (non-negative integer) → config
+ * (`loop_control.max_retries_per_step`) → `undefined` (the loop's built-in
+ * default). An invalid env value is ignored.
+ */
+export function resolveMaxRetriesPerStep(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_RETRIES_PER_STEP_ENV) ?? configValue;
+}
+
+function nonNegativeIntFromEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+/**
+ * True when a turn ended `failed` only because it reached the per-turn step
+ * limit (`loop_control.max_steps_per_turn`). Such a turn stopped at a clean
+ * step boundary, so goal pursuit continues instead of pausing.
+ */
+function isMaxStepsTurnFailure(end: TurnEndResult): boolean {
+  return (
+    end.event.reason === 'failed' &&
+    end.event.error?.code === ErrorCodes.LOOP_MAX_STEPS_EXCEEDED
+  );
 }
 
 function isTerminalUpdateGoalResult(

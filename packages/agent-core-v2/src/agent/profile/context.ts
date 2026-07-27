@@ -84,9 +84,13 @@ async function loadAgentsMdForRoots(
 ): Promise<LoadedAgentsMd> {
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
+  const loadWarnings: string[] = [];
+  const warnLoad = (message: string): void => {
+    loadWarnings.push(message);
+  };
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(deps, path);
+    const file = await readAgentFile(deps, path, warnLoad);
     if (file === undefined) return false;
     const key = normalize(file.path);
     if (seen.has(key)) return false;
@@ -122,12 +126,14 @@ async function loadAgentsMdForRoots(
 
   const content = renderAgentFiles(discovered);
   const totalBytes = byteLength(content);
-  const warning =
-    totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES
-      ? `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
+  if (totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES) {
+    loadWarnings.push(
+      `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
         `${formatKB(AGENTS_MD_RECOMMENDED_MAX_BYTES)} KB. Large instruction files ` +
-        `increase cost and may impact performance; consider trimming.`
-      : undefined;
+        `increase cost and may impact performance; consider trimming.`,
+    );
+  }
+  const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   return { content, warning };
 }
 
@@ -179,25 +185,41 @@ interface AgentFile {
 async function readAgentFile(
   deps: ProfileContextDeps,
   path: string,
+  warn: (message: string) => void,
 ): Promise<AgentFile | undefined> {
-  if (!(await isFile(deps, path))) return undefined;
-  const content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  if (!(await isFile(deps, path))) {
+    if (await entryExists(deps, path)) {
+      warn(`Instruction file at ${path} exists but is not a readable regular file; skipping.`);
+    }
+    return undefined;
+  }
+  let content: string;
+  try {
+    content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  } catch {
+    warn(`Instruction file at ${path} could not be read; skipping.`);
+    return undefined;
+  }
   if (content.length === 0) return undefined;
   return { path, content };
 }
 
 async function pathExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    await deps.fs.stat(path);
+    await deps.fs.lstat(path);
     return true;
   } catch {
     return false;
   }
 }
 
+async function entryExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
+  return pathExists(deps, path);
+}
+
 async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    const stat = await deps.fs.stat(path, { followSymlinks: true });
+    const stat = await deps.fs.stat(path);
     return stat.isFile;
   } catch {
     return false;

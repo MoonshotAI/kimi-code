@@ -33,7 +33,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 | `/plugins mcp enable <id> <server>` | 启用 plugin 声明的 MCP server |
 | `/plugins mcp disable <id> <server>` | 禁用 plugin 声明的 MCP server |
 
-**Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。**Official** 和 **Third-party** tab 按 tier 列出 marketplace plugin；**Custom** tab 从 URL 安装。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
+**Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。当一个使用了过时 plugin（其 MCP 工具或 `/<plugin>:<command>` 斜杠命令）的 turn 结束后，也会出现一次性提示，引导你到 `/plugins` 更新；每个新的 marketplace 版本只提醒一次。**Official** 和 **Third-party** tab 按 tier 列出 marketplace plugin；**Custom** tab 从 URL 安装。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
 
 ### 从 GitHub 安装
 
@@ -72,7 +72,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 ## Kimi Datasource
 
-Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直接查询金融行情、宏观经济、企业工商、学术文献和中国法律法规，无需手动调用接口或申请任何数据账号。
+Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直接查询金融行情、宏观经济、企业工商、学术文献和中国法律法规，并接入 Wind、IMF、恒生聚源、SEC EDGAR、S&P Capital IQ 等专业金融数据源，无需手动调用接口或申请任何数据账号。
 
 ### 安装
 
@@ -82,7 +82,7 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直�
 2. 找到 **Kimi Datasource**，按 `Enter` 安装
 3. 安装完成后运行 `/reload` 或 `/new` 激活 plugin
 
-当前最新版本为 v3.2.0。插件安装后不会自动更新，如需升级到新版本，重新执行上述安装步骤即可。
+使用 Kimi Datasource 会消耗你的 Kimi Code 套餐额度，安装结果中会提示这一点。当前最新版本为 v3.3.0。插件安装后不会自动更新，如需升级到新版本，重新执行上述安装步骤即可。
 
 ### 使用方式
 
@@ -100,6 +100,8 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直�
 
 **法律条文速查**：碰上居住权的合同纠纷，拿不准法条？一句话定位《民法典》相关条文原文、效力级别和时效性，再顺手拉几个相近判例佐证，不用翻法规库。
 
+**机构级美股研究**：写美股深度报告？一句话拉出 10-K 年报原文、XBRL 标准化指标、前 50 大股东和分析师一致预期，SEC 披露文件和 S&P 数据一次配齐，不用在多个数据终端之间来回切。
+
 ### 数据覆盖
 
 | 类别 | 覆盖范围 |
@@ -109,6 +111,11 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直�
 | 企业数据 | 中国大陆境内企业工商信息、股权穿透、司法风险、关联图谱 |
 | 学术文献 | 物理、数学、计算机、金融、经济等领域百万量级论文，支持预印本查询 |
 | 法律法规 | 中国法律法规与司法案例：宪法、法律、司法解释、部门规章等各效力层次的法规语义/关键词检索与详情，普通及权威判例检索 |
+| 综合金融终端（Wind） | A 股、基金、债券、指数行情与财务指标，上市公司公告研报，宏观经济数据 |
+| 国际宏观（IMF） | IFS、BOP、DOTS、WEO 等官方数据集：汇率、CPI、国际收支、贸易、GDP 预测 |
+| 智能筛选（恒生聚源） | 自然语言选股 / 选基金 / 基金经理筛选，宏观行业数据、研报、公告与新闻 |
+| 美股披露（SEC EDGAR） | 8,000+ 美股上市公司 10-K/10-Q 财报、XBRL 指标、Form 4 内部人交易、13F 机构持仓、8-K 重大事项（2009 年至今） |
+| 美股基本面（S&P Capital IQ） | 标准化财务报表、估值比率、分析师一致预期、股东与高管、竞争对手关系、公司事件与电话会纪要 |
 
 ### 计费与限制
 

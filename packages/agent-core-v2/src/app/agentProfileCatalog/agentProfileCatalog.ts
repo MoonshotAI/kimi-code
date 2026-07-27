@@ -10,11 +10,20 @@
  *
  * Every profile is self-contained: `systemPrompt(context)` returns the complete
  * prompt (base + role overlay are merged at definition time, not at spawn
- * time). The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the default
- * profile used when an Agent is bound to a Model without naming a profile.
+ * time). Profiles stay independent of concrete model aliases, but may declare
+ * a symbolic primary/secondary preference used as the default when spawned as
+ * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
+ * default profile used when an Agent is bound to a Model without naming a
+ * profile.
+ *
+ * `tools` is an allowlist of exact builtin names plus `mcp__` globs
+ * (`undefined` = every tool active); `disallowedTools` denies with the same
+ * matching semantics, applied on top of the allowlist result. `subagents` is
+ * an allowlist of subagent profile names the agent may delegate to
+ * (`undefined` = any type).
  *
  * Profiles are contributed at module load via `registerAgentProfile(...)`, the
- * same "import = register" pattern used by `registerTool` and
+ * same "import = register" pattern used by `registerAgentToolService` and
  * `registerConfigSection`. `AgentProfileCatalogService` consumes the accumulated
  * contributions on construction and exposes `get(name)` / `getDefault()` /
  * `list()` to callers (the `Agent` tool, the swarm scheduler, and the per-agent
@@ -28,6 +37,8 @@ import type { ILogger } from '#/_base/log/log';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
 
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
+
+export type AgentModelPreference = 'primary' | 'secondary';
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;
@@ -51,6 +62,9 @@ export interface AgentProfileContext {
   readonly shellPath?: string;
   readonly now?: string;
   readonly skills?: string;
+  readonly skillActive?: boolean;
+  readonly productName?: string;
+  readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
 }
 
@@ -58,7 +72,11 @@ export interface AgentProfile {
   readonly name: string;
   readonly description?: string;
   readonly whenToUse?: string;
-  readonly tools: readonly string[];
+  readonly override?: boolean;
+  readonly tools?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
+  readonly modelPreference?: AgentModelPreference;
   systemPrompt(context: AgentProfileContext): string;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;

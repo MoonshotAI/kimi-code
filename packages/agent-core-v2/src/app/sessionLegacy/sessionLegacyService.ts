@@ -17,8 +17,12 @@ import type { GoalSnapshot } from '#/agent/goal/types';
 
 import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -27,7 +31,7 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
-import { IModelResolver } from '#/app/model/modelResolver';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -97,8 +101,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
     if (agentConfig.permission_mode !== undefined) {
       agent.accessor
-        .get(IAgentPermissionModeService)
-        .setMode(agentConfig.permission_mode as PermissionMode);
+        .get(IAgentLifecycleService)
+        .broadcastPermissionMode(agentConfig.permission_mode as PermissionMode);
     }
     if (agentConfig.plan_mode !== undefined) {
       const plan = agent.accessor.get(IAgentPlanService);
@@ -160,9 +164,14 @@ export class SessionLegacyService implements ISessionLegacyService {
     const swarm = agent.accessor.get(IAgentSwarmService);
 
     const model = profile.getModel();
-    const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
+    const caps = profile.getModelCapabilities() as {
+      max_context_tokens?: number;
+      max_input_tokens?: number;
+    };
     const maxTokens =
-      model === '' ? resolveDefaultModelContextTokens(agent) : (caps.max_context_tokens ?? 0);
+      model === ''
+        ? resolveDefaultModelContextTokens(agent)
+        : (caps.max_input_tokens ?? caps.max_context_tokens ?? 0);
     const tokens = contextSize.get().size;
     const planData = await plan.status();
 
@@ -175,7 +184,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       swarm_mode: swarm.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens,
-      context_usage: maxTokens > 0 ? tokens / maxTokens : 0,
+      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,
     };
   }
 
@@ -204,7 +213,8 @@ function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   const defaultModel = agent.accessor.get(IConfigService).get<string>('defaultModel');
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;
   try {
-    return agent.accessor.get(IModelResolver).resolve(defaultModel).capabilities.max_context_tokens;
+    const capabilities = agent.accessor.get(IModelCatalog).get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   } catch {
     return 0;
   }
@@ -214,6 +224,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLegacyService,
   SessionLegacyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionLegacy',
 );

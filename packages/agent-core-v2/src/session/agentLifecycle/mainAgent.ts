@@ -11,8 +11,9 @@
  * `create` is create-or-get for explicit ids — it joins an in-flight creation
  * and returns an already-created main agent as-is — so concurrent
  * bootstrappers always receive the same, fully-bootstrapped handle (activity
- * lane `idle`). Session-level eager ignition (cron, external hooks) lives in
- * `sessionLifecycle.materializeSession`; the default permission posture is
+ * lane `idle`). Session services activated when their scope is created (cron,
+ * external hooks) are materialized by `sessionLifecycle.materializeSession`;
+ * the default permission posture is
  * applied in `bindBootstrap`.
  *
  * Not a Service: a pure composition helper over the session handle.

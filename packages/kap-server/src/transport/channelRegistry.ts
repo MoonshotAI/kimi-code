@@ -1,83 +1,21 @@
 /**
- * `/api/v2` channel registry — the set of Services exposed over the wire.
+ * `/api/v1/debug` channel registry — the set of Services exposed over the
+ * wire, which is simply the ENTIRE scoped DI registry (no whitelist).
  *
- * Replaces the per-method `actionMap` with VS Code's `registerChannel` model:
- * a Service is registered **once**, keyed by its decorator id (used as the
- * public channel name, e.g. `sessionIndex`), and from then on **all** of its
- * methods are reachable by reflection. There is no per-method allowlist, no
- * public renaming, and no aggregation across Services — the registered Service
- * *is* the public contract, shared as source with the client.
- *
- * The registry is the single exposure boundary (which Services are on the wire
- * at all); scope membership is still enforced downstream by `scope.accessor`.
+ * In VS Code's `registerChannel` model a Service is registered once, keyed by
+ * its decorator id (the public channel name), and from then on all of its
+ * methods are reachable by reflection — the registered Service *is* the
+ * public contract, shared as source with the client. There is no per-method
+ * allowlist and no aggregation across Services.
  */
 
 import {
   Disposable,
   getScopedServiceDescriptors,
-  IAgentActivityView,
-  IAgentContextMemoryService,
-  IAgentContextSizeService,
-  IAgentGoalService,
-  IAgentMcpService,
-  IAgentPermissionModeService,
-  IAgentPermissionRulesService,
-  IAgentPlanService,
-  IAgentProfileService,
-  IAgentPromptService,
-  IAgentRPCService,
-  IAgentSwarmService,
-  IAgentTaskService,
-  IAgentToolRegistryService,
-  IAgentUsageService,
-  IAuthSummaryService,
-  IBootstrapService,
-  IConfigService,
-  IFaultInjectionService,
-  IFlagService,
-  IHostFolderBrowser,
-  IModelCatalogService,
-  IModelService,
-  IOAuthService,
-  IPluginService,
-  IProviderService,
-  ISessionApprovalService,
-  ISessionFsService,
-  ISessionIndex,
-  ISessionInitService,
-  ISessionInteractionService,
-  ISessionLifecycleService,
-  ISessionMetadata,
-  ISessionQuestionService,
-  ISessionWorkspaceCommandService,
-  ISessionWorkspaceContext,
-  IWorkspaceRegistry,
   LifecycleScope,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
-
-const channels = new Map<string, ServiceIdentifier<unknown>>();
-
-/** Register one Service as a channel, named by its decorator id (`id.toString()`). */
-export function registerChannel<T>(id: ServiceIdentifier<T>): void {
-  channels.set(id.toString(), id as ServiceIdentifier<unknown>);
-}
-
-/** Resolve a channel name back to its `ServiceIdentifier`, or `undefined`. */
-export function resolveChannel(name: string): ServiceIdentifier<unknown> | undefined {
-  return channels.get(name);
-}
-
-/** Whether a channel name is registered. */
-export function hasChannel(name: string): boolean {
-  return channels.has(name);
-}
-
-/** All registered channel names (decorator ids), sorted — for introspection. */
-export function registeredChannelNames(): readonly string[] {
-  return Array.from(channels.keys()).toSorted();
-}
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
@@ -99,8 +37,7 @@ export interface ChannelDescriptor {
   readonly name: string;
   /**
    * Registration scope — the minimal scope at which the channel resolves.
-   * Derived from the scoped DI registry (the `EXPOSED_SERVICES` comment
-   * grouping is informational and may drift).
+   * Derived from the scoped DI registry.
    */
   readonly scope: 'app' | 'session' | 'agent';
   /** Domain tag recorded at `registerScopedService`. */
@@ -115,15 +52,32 @@ const SCOPE_NAME: Record<LifecycleScope, ChannelDescriptor['scope']> = {
   [LifecycleScope.Agent]: 'agent',
 };
 
-let entryIndex: Map<ServiceIdentifier<unknown>, ScopedEntry> | undefined;
+let serviceNameIndex: Map<string, ServiceIdentifier<unknown>> | undefined;
 
-function scopedEntryIndex(): Map<ServiceIdentifier<unknown>, ScopedEntry> {
-  entryIndex ??= new Map(
-    [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]
-      .flatMap((scope) => getScopedServiceDescriptors(scope))
-      .map((entry) => [entry.id, entry] as const),
-  );
-  return entryIndex;
+/**
+ * Wire name → identifier index over the ENTIRE scoped DI registry. The
+ * decorator registry de-dupes by name, so a wire name maps to exactly one
+ * identifier; a Service registered at several scopes (e.g. `logService`
+ * at App + Session) resolves at its minimal scope, reachable from every
+ * route form.
+ */
+function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
+  serviceNameIndex ??= (() => {
+    const map = new Map<string, ServiceIdentifier<unknown>>();
+    for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
+      for (const entry of getScopedServiceDescriptors(scope)) {
+        const name = entry.id.toString();
+        if (!map.has(name)) map.set(name, entry.id);
+      }
+    }
+    return map;
+  })();
+  return serviceNameIndex;
+}
+
+/** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
+export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
+  return scopedServiceNameIndex().get(name);
 }
 
 /**
@@ -178,114 +132,9 @@ function describeMethods(
 }
 
 /**
- * Describe every registered channel: name, registration scope, and public
- * methods. Served by `GET /api/v2/channels` so clients (kimi-inspect) can
- * render a dynamic service browser without handwritten method lists.
- */
-export function describeChannels(): readonly ChannelDescriptor[] {
-  return registeredChannelNames().map((name) => {
-    const id = resolveChannel(name);
-    const entry = id === undefined ? undefined : scopedEntryIndex().get(id);
-    if (entry === undefined) {
-      return { name, scope: 'app', domain: 'unknown', methods: [] };
-    }
-    return {
-      name,
-      scope: SCOPE_NAME[entry.scope],
-      domain: entry.domain,
-      methods: describeMethods(entry.descriptor.ctor),
-    };
-  });
-}
-
-// The exposed Services. Adding a method to any of these makes it callable over
-// the wire with no further wiring; exposing a new Service is one `registerChannel`.
-const EXPOSED_SERVICES: readonly ServiceIdentifier<unknown>[] = [
-  // core
-  ISessionIndex,
-  IWorkspaceRegistry,
-  IConfigService,
-  IProviderService,
-  IModelService,
-  IModelCatalogService,
-  IOAuthService,
-  IAuthSummaryService,
-  IFlagService,
-  IPluginService,
-  IHostFolderBrowser,
-  IBootstrapService,
-  // session
-  ISessionMetadata,
-  ISessionLifecycleService,
-  ISessionInitService,
-  ISessionApprovalService,
-  ISessionQuestionService,
-  ISessionInteractionService,
-  ISessionWorkspaceContext,
-  ISessionWorkspaceCommandService,
-  ISessionFsService,
-  // agent
-  IAgentGoalService,
-  IAgentPlanService,
-  IAgentTaskService,
-  IAgentUsageService,
-  IAgentContextSizeService,
-  IAgentSwarmService,
-  IAgentActivityView,
-  IAgentPermissionModeService,
-  IAgentPermissionRulesService,
-  IAgentProfileService,
-  IAgentPromptService,
-  IAgentContextMemoryService,
-  IAgentMcpService,
-  IAgentToolRegistryService,
-  IAgentRPCService,
-  IFaultInjectionService,
-];
-
-for (const id of EXPOSED_SERVICES) {
-  registerChannel(id);
-}
-
-// ---------------------------------------------------------------------------
-// Debug surface — every scoped Service, no whitelist (dev-only `/api/v1/debug`)
-// ---------------------------------------------------------------------------
-
-let serviceNameIndex: Map<string, ServiceIdentifier<unknown>> | undefined;
-
-/**
- * Wire name → identifier index over the ENTIRE scoped DI registry. The
- * decorator registry de-dupes by name, so a wire name maps to exactly one
- * identifier; a Service registered at several scopes (e.g. `logService`
- * at App + Session) resolves at its minimal scope, reachable from every
- * route form.
- */
-function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
-  serviceNameIndex ??= (() => {
-    const map = new Map<string, ServiceIdentifier<unknown>>();
-    for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
-      for (const entry of getScopedServiceDescriptors(scope)) {
-        const name = entry.id.toString();
-        if (!map.has(name)) map.set(name, entry.id);
-      }
-    }
-    return map;
-  })();
-  return serviceNameIndex;
-}
-
-/**
- * Resolve a wire name to its `ServiceIdentifier` without the `/api/v2`
- * whitelist — dev-only (`/api/v1/debug`) consumers.
- */
-export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
-  return scopedServiceNameIndex().get(name);
-}
-
-/**
  * Describe EVERY registered scoped Service — served by
  * `GET /api/v1/debug/channels` so dev tooling (kimi-inspect) can load the
- * full protocol surface 1:1 instead of the whitelist subset.
+ * full protocol surface 1:1.
  */
 export function describeAllChannels(): readonly ChannelDescriptor[] {
   const byName = new Map<string, ScopedEntry>();

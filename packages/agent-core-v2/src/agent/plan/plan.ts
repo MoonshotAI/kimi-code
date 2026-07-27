@@ -15,6 +15,7 @@ export interface IAgentPlanService {
   cancel(id?: string): void;
   clear(): Promise<void>;
   exit(id?: string): void;
+  recordRevision(): Promise<void>;
   status(): Promise<PlanData>;
 }
 

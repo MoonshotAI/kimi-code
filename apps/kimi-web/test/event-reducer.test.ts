@@ -302,6 +302,49 @@ describe('reduceAppEvent messageCreated', () => {
     expect(msgs[0]?.content).toEqual(echo.content);
     expect(msgs[0]?.promptId).toBe('p1');
   });
+
+  it('reconciles a structured file-source video echo into the optimistic user message', () => {
+    // The server now echoes an uploaded video back as a structured
+    // `{video, source:{kind:'file'}}` part (mirroring images), not a text tag.
+    // It must collapse into the optimistic file-source copy, not duplicate.
+    const optimistic: AppMessage = {
+      id: 'msg_opt_2',
+      sessionId: 's-vid',
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this' },
+        { type: 'video', source: { kind: 'file', fileId: 'f_abc' } },
+      ],
+      createdAt: '2026-06-01T12:00:00.000Z',
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+    const echo: AppMessage = {
+      id: 'msg_real',
+      sessionId: 's-vid',
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this' },
+        { type: 'video', source: { kind: 'file', fileId: 'f_abc' } },
+      ],
+      createdAt: '2026-06-01T12:00:00.000Z',
+      promptId: 'p1',
+    };
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s-vid', '2026-01-01T00:00:00.000Z')],
+      messagesBySession: { 's-vid': [optimistic] },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: echo },
+      { sessionId: 's-vid', seq: 1 },
+    );
+    const msgs = next.messagesBySession['s-vid'] ?? [];
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.id).toBe('msg_opt_2');
+    expect(msgs[0]?.content).toEqual(echo.content);
+    expect(msgs[0]?.promptId).toBe('p1');
+  });
 });
 
 describe('reduceAppEvent taskProgress', () => {

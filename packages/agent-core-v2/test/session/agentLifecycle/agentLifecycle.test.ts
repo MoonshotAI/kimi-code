@@ -15,10 +15,14 @@ import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { type McpServerConfig } from '#/agent/mcp/config-schema';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import '#/agent/profile/profileService';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeOps';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -48,11 +52,19 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -146,13 +158,14 @@ describe('AgentLifecycleService', () => {
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
-  let beforeExecuteHookIds: string[];
+  let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
   beforeEach(() => {
-    _clearToolContributionsForTests();
+    _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.set(IAgentStateService, new AgentStateService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
@@ -224,17 +237,16 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
-    beforeExecuteHookIds = [];
+    beforeExecuteListeners = 0;
     didExecuteHookIds = [];
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
+      onBeforeExecuteTool: () => {
+        beforeExecuteListeners += 1;
+        return { dispose: () => {} };
+      },
+      onWillExecuteTool: () => ({ dispose: () => {} }),
       hooks: {
-        onBeforeExecuteTool: {
-          register: (id: string) => {
-            beforeExecuteHookIds.push(id);
-            return { dispose: () => {} };
-          },
-        },
         onDidExecuteTool: {
           register: (id: string) => {
             didExecuteHookIds.push(id);
@@ -277,7 +289,45 @@ describe('AgentLifecycleService', () => {
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
+      withContext: () => ({
+        _serviceBrand: undefined,
+        track2: () => {},
+      }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
+    ix.stub(IAgentTelemetryContextService, {
+      _serviceBrand: undefined,
+      get: () => ({ mode: 'agent' }),
+      set: () => {},
+    });
+    ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
+    ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: () => undefined,
+      getDefault: () => {
+        throw new Error('catalog resolution is not expected');
+      },
+      list: () => [],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+      onDidChange: Event.None,
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(ISessionSkillCatalog, {
+      _serviceBrand: undefined,
+      catalog: { skills: [] },
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionSkillCatalog);
+    ix.stub(ISessionToolPolicy, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      disabledTools: () => [],
+      setDisabledTools: () => Promise.resolve(),
+    } as unknown as ISessionToolPolicy);
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
       _serviceBrand: undefined,
@@ -373,11 +423,61 @@ describe('AgentLifecycleService', () => {
     expect(removed).toBe(true);
   });
 
-  it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
+  it('ignites the self-wiring toolDedupe plugin so its listeners exist before the first turn', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
-    expect(beforeExecuteHookIds).toContain('toolDedupe');
+    expect(beforeExecuteListeners).toBeGreaterThan(0);
     expect(didExecuteHookIds).toContain('toolDedupe');
+  });
+
+  it('create skips auto ids that collide with agents persisted by a previous run', async () => {
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChangeMetadata: () => ({ dispose: () => {} }),
+      read: () =>
+        Promise.resolve({
+          id: 'sess_test',
+          createdAt: 0,
+          updatedAt: 0,
+          archived: false,
+          agents: {
+            'agent-0': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-0', type: 'sub' },
+            'agent-1': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-1', type: 'sub' },
+          },
+        }),
+      update: () => Promise.resolve(),
+      setTitle: () => Promise.resolve(),
+      setArchived: () => Promise.resolve(),
+      registerAgent,
+    });
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = await svc.create({});
+    expect(first.id).toBe('agent-2');
+
+    const second = await svc.create({});
+    expect(second.id).toBe('agent-3');
+  });
+
+  it('seeds each agent scope with a telemetry view bound to its own agent id', async () => {
+    const records: TelemetryRecord[] = [];
+    ix.stub(ITelemetryService, recordingTelemetry(records));
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const sub = await svc.create({});
+
+    main.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: true });
+    sub.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: false });
+
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: 'main', enabled: true },
+    });
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: sub.id, enabled: false },
+    });
   });
 
   it('create assigns sequential ids when unspecified', async () => {
@@ -468,6 +568,27 @@ describe('AgentLifecycleService', () => {
     await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
 
     expect(permissionModeSetMode).not.toHaveBeenCalled();
+  });
+
+  it('broadcastPermissionMode sets the mode on every live agent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    await svc.create({ agentId: 'child' });
+
+    svc.broadcastPermissionMode('yolo');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['yolo'], ['yolo']]);
+  });
+
+  it('broadcastPermissionMode skips agents that have been removed', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    await svc.create({ agentId: 'child' });
+    await svc.remove('child');
+
+    svc.broadcastPermissionMode('auto');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {
@@ -639,6 +760,32 @@ describe('AgentLifecycleService', () => {
   it('fork throws when the source agent does not exist', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await expect(svc.fork('missing')).rejects.toThrow('Source agent "missing" does not exist');
+  });
+
+  it('fork copies the bound profile snapshot without catalog resolution', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    source.accessor.get(IAgentProfileService).applyBindingSnapshot({
+      cwd: '/work',
+      profileName: 'deleted-profile',
+      thinkingLevel: 'high',
+      systemPrompt: 'original prompt',
+      activeToolNames: ['Read'],
+      disallowedTools: ['Bash'],
+      subagents: ['explore'],
+    });
+
+    const child = await svc.fork('main', { agentId: 'forked' });
+
+    expect(child.accessor.get(IAgentProfileService).data()).toMatchObject({
+      cwd: '/work',
+      profileName: 'deleted-profile',
+      thinkingLevel: 'high',
+      systemPrompt: 'original prompt',
+      activeToolNames: ['Read'],
+      disallowedTools: ['Bash'],
+      subagents: ['explore'],
+    });
   });
 
   it('run throws when the agent does not exist', () => {

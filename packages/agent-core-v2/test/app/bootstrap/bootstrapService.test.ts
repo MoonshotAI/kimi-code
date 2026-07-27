@@ -1,22 +1,26 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
-import { IBootstrapService, bootstrapSeed, resolveBootstrapOptions } from '#/app/bootstrap/bootstrap';
-import { bootstrap } from '#/app/bootstrap/bootstrap';
+import {
+  IBootstrapService,
+  bootstrap,
+  bootstrapSeed,
+  resolveBootstrapOptions,
+} from '#/app/bootstrap/bootstrap';
 import { BootstrapService } from '#/app/bootstrap/bootstrapService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 describe('BootstrapService (scoped)', () => {
   beforeEach(() => {
+    // Keep the registry minimal so unrelated OnScopeCreated services do not run.
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,
       IBootstrapService,
       BootstrapService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'bootstrap',
     );
   });

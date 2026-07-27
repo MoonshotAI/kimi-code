@@ -30,8 +30,8 @@ import {
   MAX_LINES,
   type ReadInput,
   ReadInputSchema,
-  ReadTool,
-} from '#/os/backends/node-local/tools/read';
+} from '#/agent/tools/os/read/read';
+import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -220,6 +220,16 @@ describe('ReadTool', () => {
         '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
       ),
     });
+  });
+
+  it('stats the resolved target so symlinked files stay readable', async () => {
+    const { fs, stat } = createSpiedFs('alpha\n');
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/a.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(stat).toHaveBeenCalledWith('/tmp/a.txt');
   });
 
   it('normalizes pure CRLF files to the LF model view', async () => {

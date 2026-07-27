@@ -9,7 +9,7 @@
  *
  * One physical folder may be split across sibling buckets by legacy id
  * spellings (Windows casing/slash variants minted different `workspaceId`s for
- * the same directory; see `IWorkspaceRegistry.resolveAliasIds`). A list or
+ * the same directory; see `IWorkspaceAliases.resolveAliasIds`). A list or
  * `countActive` query takes the workspace-id *set*, enumerates each bucket,
  * and merges before the single recency sort and `limit` step — the merged
  * listing is observably identical to a single-bucket list (same sort key,
@@ -30,17 +30,17 @@
  * backfill on a cold miss. Writes (create / archive / metadata update) keep the
  * read model warm via `SessionMetadata`; new sessions that have not been
  * mirrored yet are simply a cold miss and backfilled on first read. The legacy
- * N+1 path remains as the flag-off fallback — and as the runtime fallback when
- * the query store reports `storage.locked` (another process holds the writer
- * lock): the first lock warns once and disables the read model for the rest of
- * the process lifetime.
+ * N+1 path remains as the flag-off fallback — and as the runtime fallback if
+ * the query store ever reports `storage.locked`: the first lock warns once and
+ * disables the read model for the rest of the process lifetime. (The minidb
+ * backend is a multi-process `ClusterDb` and no longer produces that error;
+ * the wiring stays as defense in depth.)
  *
  * This is the local-deployment backend of `ISessionIndex`; a server deployment
  * would substitute a database-backed `DbSessionIndex`. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -334,6 +334,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionIndex,
   FileSessionIndex,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionIndex',
 );

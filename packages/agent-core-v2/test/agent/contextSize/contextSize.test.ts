@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { TokenUsage } from '#/kosong/contract/usage';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IWireService } from '#/wire/wire';
 

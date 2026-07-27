@@ -9,14 +9,14 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2 } from '#/errors';
 import {
   type HostDirEntry,
   type HostFileStat,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
-import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -28,6 +28,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 
 import { stubContextMemory, type StubContextMemory } from '../../agent/contextMemory/stubs';
+import { registerStateServices } from '../../state/stubs';
 
 const WORK_DIR = '/repo/work';
 const EXTRA_DIR = `${WORK_DIR}/extra`;
@@ -38,6 +39,7 @@ class MemoryHostFs implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
   readonly files = new Map<string, string>();
   readonly dirs = new Set<string>();
+  readonly danglingSymlinks = new Set<string>();
   readonly statErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readsDuringPausedWrite: string[] = [];
@@ -114,11 +116,19 @@ class MemoryHostFs implements IHostFileSystem {
   async stat(path: string): Promise<HostFileStat> {
     const error = this.statErrors.get(path);
     if (error !== undefined) throw error;
+    if (this.danglingSymlinks.has(path)) throw enoent(path);
     if (this.files.has(path)) {
       return { isFile: true, isDirectory: false, size: this.files.get(path)?.length ?? 0 };
     }
     if (this.dirs.has(path)) return { isFile: false, isDirectory: true, size: 0 };
     throw enoent(path);
+  }
+
+  async lstat(path: string): Promise<HostFileStat> {
+    if (this.danglingSymlinks.has(path)) {
+      return { isFile: false, isDirectory: false, isSymbolicLink: true, size: 0 };
+    }
+    return this.stat(path);
   }
 
   async readdir(): Promise<readonly HostDirEntry[]> {
@@ -178,6 +188,7 @@ function agentsStub(): AgentsStub {
     get: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
     setMain: (present) => {
       mainPresent = present;
       if (present) created.fire(mainHandle);
@@ -238,11 +249,12 @@ describe('SessionWorkspaceCommandService', () => {
 
     ix = createServices(disposables, {
       additionalServices: (reg) => {
+        registerStateServices(reg);
         reg.defineInstance(ISessionContext, ctx);
         reg.define(ISessionWorkspaceContext, SessionWorkspaceContextService);
         reg.defineInstance(IBootstrapService, bootstrapStub());
         reg.defineInstance(IHostFileSystem, fs);
-        reg.define(IWorkspaceLocalConfigService, FileWorkspaceLocalConfigService);
+        reg.define(IProjectLocalConfigService, FileProjectLocalConfigService);
         reg.defineInstance(IAgentLifecycleService, agents);
         reg.define(ISessionWorkspaceCommandService, SessionWorkspaceCommandService);
       },
@@ -362,6 +374,20 @@ describe('SessionWorkspaceCommandService', () => {
     expect(result.additionalDirs).toEqual([sharedDir]);
     expect(workspace.additionalDirs).toEqual([sharedDir]);
     expect(fs.files.get(`${projectRoot}/.kimi-code/local.toml`)).toContain(sharedDir);
+  });
+
+  it('keeps a dangling .git symlink as the local project-root marker', async () => {
+    const ancestorRoot = '/repo/project';
+    const workDir = `${ancestorRoot}/apps/foo`;
+    const sharedDir = `${workDir}/shared`;
+    const { svc, fs } = build([sharedDir], true, workDir, `${ancestorRoot}/.git`);
+    fs.danglingSymlinks.add(`${workDir}/.git`);
+
+    const result = await svc.addAdditionalDir({ path: 'shared', persist: true });
+
+    expect(result.projectRoot).toBe(workDir);
+    expect(result.configPath).toBe(`${workDir}/.kimi-code/local.toml`);
+    expect(fs.files.get(`${workDir}/.kimi-code/local.toml`)).toContain(sharedDir);
   });
 
   it('resolves session-only relative dirs against the session workDir when project root is above it', async () => {

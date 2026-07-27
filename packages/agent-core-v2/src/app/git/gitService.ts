@@ -12,8 +12,7 @@
 
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -103,7 +102,7 @@ export class GitService implements IGitService {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
       if (res.stdout.length === 0 && statusRes.stdout.length === 0) {
-        const exists = await this.fs.stat(absPath).then(
+        const exists = await this.fs.lstat(absPath).then(
           () => true,
           () => false,
         );
@@ -228,4 +227,4 @@ async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<stri
   return out;
 }
 
-registerScopedService(LifecycleScope.App, IGitService, GitService, InstantiationType.Eager, 'git');
+registerScopedService(LifecycleScope.App, IGitService, GitService, ScopeActivation.OnScopeCreated, 'git');

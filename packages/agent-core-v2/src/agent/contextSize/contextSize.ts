@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { Message } from '#/app/llmProtocol/message';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { Message } from '#/kosong/contract/message';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 export interface ContextSize {
   readonly size: number;

@@ -25,7 +25,7 @@
  * Both directions receive a `PartsTransformer` — the same function shape — so
  * the model owns the traversal logic and `WireService` owns the storage I/O.
  * `PartsTransformer` uses `readonly unknown[]` rather than `ContentPart[]` so
- * this file stays free of `app/llmProtocol` imports (L2 → L3 boundary); the
+ * this file stays free of `kosong/contract` imports (L2 → L3 boundary); the
  * cast happens once inside `WireService`.
  *
  * A primary Model may register cross-model reducers keyed by foreign op types:

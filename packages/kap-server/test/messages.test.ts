@@ -7,7 +7,7 @@ import {
   IAgentLifecycleService,
   IWireService,
   ISessionLifecycleService,
-  IModelResolver,
+  IModelCatalog,
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
@@ -48,16 +48,33 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
-    // Seed a stub ISessionModelResolver so the agent scope can instantiate if a
+    // Seed a stub IModelCatalog so the agent scope can instantiate if a
     // transitive service needs it; IContextMemory itself does not.
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
-    seeds = [[IModelResolver, modelResolver]];
+    seeds = [[IModelCatalog, modelCatalog]];
     await boot();
   });
 

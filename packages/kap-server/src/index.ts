@@ -3,7 +3,7 @@
  * DI × Scope agent engine (`@moonshot-ai/agent-core-v2`).
  */
 
-export { startServer, ServerLockedError } from './start';
+export { startServer } from './start';
 export type { ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
@@ -16,16 +16,6 @@ export type {
   ServerLogger,
   ServerLogLevel,
 } from './services/pinoLoggerService';
-export { acquireLock, getLiveLock, DEFAULT_LOCK_PATH, DEFAULT_LOCK_DIR } from './lock';
-export type { AcquireLockOptions, AcquireLockResult, LockContents } from './lock';
-export { resolveServiceManager, ServiceUnavailableError, ServiceUnsupportedError } from './svc';
-export type {
-  InstallArgs,
-  InstallResult,
-  LifecycleResult,
-  ServiceManager,
-  ServiceStatus,
-} from './svc';
 export {
   createInstanceRegistry,
   listLiveServerInstances,

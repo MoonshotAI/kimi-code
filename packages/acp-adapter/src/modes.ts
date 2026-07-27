@@ -39,12 +39,12 @@ export const ACP_MODES = [
   {
     id: 'auto',
     name: 'Auto',
-    description: 'Auto-approve safe operations.',
+    description: 'Fully autonomous — agent decides everything without asking.',
   },
   {
     id: 'yolo',
     name: 'YOLO',
-    description: 'Auto-approve everything.',
+    description: 'Auto-approve tool actions, but the agent may still ask questions.',
   },
 ] as const satisfies readonly SessionMode[];
 

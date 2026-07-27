@@ -7,6 +7,8 @@ import { extname } from 'node:path';
 
 import { highlight, supportsLanguage } from 'cli-highlight';
 
+import { codeHighlightTheme } from '#/tui/theme/highlight-theme';
+
 const EXT_LANG_MAP: Record<string, string> = {
   ts: 'typescript',
   tsx: 'typescript',
@@ -45,7 +47,7 @@ export function highlightLines(code: string, lang: string | undefined): string[]
   const normalizedLang = lang?.trim().toLowerCase();
   if (!normalizedLang || !supportsLanguage(normalizedLang)) return code.split('\n');
   try {
-    return highlight(code, { language: normalizedLang, ignoreIllegals: true }).split('\n');
+    return highlight(code, { language: normalizedLang, ignoreIllegals: true, theme: codeHighlightTheme }).split('\n');
   } catch {
     return code.split('\n');
   }

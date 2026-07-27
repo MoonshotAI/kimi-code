@@ -3,7 +3,7 @@ import type {
   PermissionData
 } from '#/agent/permissionPolicy/types';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 
@@ -13,7 +13,7 @@ export interface IAgentPermissionGate {
   data(): PermissionData;
   authorize(
     context: ResolvedToolExecutionHookContext,
-  ): Promise<AuthorizeToolExecutionResult | undefined>;
+  ): Promise<BeforeExecuteDecision | undefined>;
 }
 
 export const IAgentPermissionGate =

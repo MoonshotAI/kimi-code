@@ -67,7 +67,7 @@ Self-check: "would a released v1 client get a byte-identical envelope from `pack
 
 Resolve the v2 Service that will back the route. Two cases:
 
-**Case A — the v2 native Service already matches the v1 contract.** Use it directly. Most data/command Services (`IConfigService`, `IWorkspaceRegistry`, `IApprovalService`, `IQuestionService`, `IFileStore`, …) land here: the route is a thin adapter that resolves the scope, calls the method, and wraps the result. Examples: `routes/config.ts`, `routes/messages.ts`, `routes/questions.ts`, `routes/files.ts`.
+**Case A — the v2 native Service already matches the v1 contract.** Use it directly. Most data/command Services (`IConfigService`, `IWorkspaceService`, `IApprovalService`, `IQuestionService`, `IFileStore`, …) land here: the route is a thin adapter that resolves the scope, calls the method, and wraps the result. Examples: `routes/config.ts`, `routes/messages.ts`, `routes/questions.ts`, `routes/files.ts`.
 
 **Case B — the v1 contract needs behavior that would distort the v2 domain.** Introduce a **`*LegacyService`** — an L7 edge adapter that implements the v1 contract **on top of** the v2 native Service, leaving the native Service untouched. The v2 native Service keeps serving `/api/v2`; the LegacyService serves `/api/v1`.
 
@@ -109,6 +109,8 @@ export const IAgentPromptService: ServiceIdentifier<IAgentPromptService> =
 
 ```ts
 // promptService.ts — impl delegates to the native v2 Service
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+
 constructor(@IAgentPromptService private readonly prompt: IAgentPromptService /*, ... */) {}
 // submit() builds v2-native input, calls the native Service, projects the result
 // back into the protocol PromptSubmitResult.
@@ -117,7 +119,7 @@ registerScopedService(
   LifecycleScope.Agent,            // scope = the lifetime of the legacy state
   IAgentPromptService,
   AgentPromptLegacyService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'prompt',
 );
 ```

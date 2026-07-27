@@ -16,7 +16,7 @@ import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyCodeBlockFallback, copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import Tooltip from '../ui/Tooltip.vue';
@@ -338,15 +338,6 @@ const codeBlockProps = {
   loading: false,
 };
 
-function copyCodeBlockFallback(code: string): void {
-  // markstream emits `copy` even when it skipped the write because the
-  // Clipboard API is unavailable. Reuse our plain-HTTP fallback in that case,
-  // while avoiding a duplicate write after markstream succeeds on HTTPS.
-  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
-  if (clipboard && typeof clipboard.writeText === 'function') return;
-  void copyTextToClipboard(code);
-}
-
 // Root cause for the "large session turns into code skeletons" failure:
 // markstream mounts every code block in the loaded transcript, then shiki has
 // to tokenize all of them. `loading: false` removes the visible skeleton gate,
@@ -531,6 +522,12 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
   font-size: var(--content-font-size);
+}
+
+/* Themed surfaces swallow white-on-transparent (light) or black-on-transparent
+   (dark) images; the checkerboard canvas keeps both visible. */
+.md :deep(.markdown-renderer img) {
+  background: var(--media-alpha-canvas);
 }
 
 /* Emphasis — keep the weight strong, but soften the ink slightly. */

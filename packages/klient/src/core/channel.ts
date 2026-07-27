@@ -35,6 +35,12 @@ export interface KlientChannel {
   /** Invoke `service.method(...args)` in the given scope; resolves with the raw wire result. */
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
   /**
+   * Invoke `service.method(...args)` in the given scope and return a streaming
+   * result. The callee must return an `AsyncIterable`; each yielded chunk is
+   * surfaced as-is (after the transport's serialization round-trip).
+   */
+  stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
+  /**
    * Subscribe to an event source; `handler` receives raw wire payloads.
    * `onError` reports asynchronous subscription failures (bad source, dropped
    * remote subscription) — synchronous validation may also throw.

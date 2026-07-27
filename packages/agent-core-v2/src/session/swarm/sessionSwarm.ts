@@ -7,7 +7,7 @@
  * lives in the internal `agentRunBatch` module. Bound at Session scope.
  */
 
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
@@ -28,6 +28,7 @@ type SessionSwarmTaskBase<T> = {
 export type SessionSwarmSpawnTask<T = unknown> = SessionSwarmTaskBase<T> & {
   readonly kind: 'spawn';
   readonly resumeAgentId?: undefined;
+  readonly binding?: { readonly model: string; readonly thinking?: string };
 };
 
 export type SessionSwarmResumeTask<T = unknown> = SessionSwarmTaskBase<T> & {

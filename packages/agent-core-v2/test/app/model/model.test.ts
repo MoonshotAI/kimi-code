@@ -1,29 +1,59 @@
 /**
- * `model` domain tests — covers `ModelService` CRUD over the `models` config
- * section, schema registration, and the delete-via-replace semantics.
+ * `model` domain tests — covers `effectiveModelConfig`, the `models` config
+ * section registration + TOML transforms (now owned by the app/kosongConfig
+ * persistence wrapper), and the `KIMI_MODEL_*` env overlay.
+ *
+ * The registry itself (`ModelService`) is a pure in-memory store covered by
+ * `test/kosong/model/modelService.test.ts`; persistence through the config
+ * bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { ErrorCodes, Error2 } from '#/errors';
-import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/app/model/envOverlay';
+import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/app/kosongConfig/envOverlay';
 import {
-  IModelService,
-  type ModelAlias,
+  ENV_MODEL_PROVIDER_KEY,
   MODELS_SECTION,
   ModelsSectionSchema,
-} from '#/app/model/model';
-import { modelsFromToml, modelsToToml } from '#/app/model/configSection';
-import { ModelService } from '#/app/model/modelService';
-import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
-import { effectiveModelConfig } from '#/app/model/modelAuth';
-import type { ModelConfig } from '#/app/model/model';
+  modelsFromToml,
+  modelsToToml,
+} from '#/app/kosongConfig/configSection';
+import { type ModelRecord } from '#/kosong/model/model';
+import { effectiveModelConfig } from '#/kosong/model/modelAuth';
+
+// Side-effect registrations: endpoint defaults and the trait-driven-thinking
+// verdict (`drivesThinkingThroughTraits`) answer through the provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
+  it('clamps the input cap to the effective total window without mutating the source', () => {
+    const record = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 128000,
+      maxInputSize: 272000,
+    };
+
+    const effective = effectiveModelConfig(record);
+    expect(effective.maxInputSize).toBe(128000);
+    expect(record.maxInputSize).toBe(272000);
+
+    const withOverrides = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 400000,
+      maxInputSize: 272000,
+      overrides: { maxContextSize: 128000 },
+    };
+    const effectiveOverride = effectiveModelConfig(withOverrides);
+    expect(effectiveOverride.maxContextSize).toBe(128000);
+    expect(effectiveOverride.maxInputSize).toBe(128000);
+    expect(withOverrides.maxInputSize).toBe(272000);
+  });
+
   it('derives the official effort metadata from a Claude model name', () => {
     expect(
       effectiveModelConfig({
@@ -38,12 +68,12 @@ describe('effectiveModelConfig', () => {
     });
   });
 
-  it('infers Anthropic effort metadata for an unknown model on a non-Kimi Anthropic provider', () => {
+  it('infers Anthropic effort metadata for an unknown Claude-marked model on a non-Kimi Anthropic provider', () => {
     expect(
       effectiveModelConfig(
         {
           provider: 'custom',
-          model: 'custom-anthropic-model',
+          model: 'custom-claude-model',
           maxContextSize: 200000,
           protocol: 'anthropic',
         },
@@ -56,8 +86,45 @@ describe('effectiveModelConfig', () => {
     });
   });
 
+  it('infers Anthropic effort metadata for a bare Claude family alias on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'sonnet-latest',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for a clearly non-Claude model on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'custom-anthropic-model',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toEqual({
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    });
+  });
+
   it('does not infer Anthropic effort metadata for a Kimi provider routed through the Anthropic protocol', () => {
-    const model: ModelConfig = {
+    const model: ModelRecord = {
       provider: 'managed:kimi-code',
       model: 'kimi-for-coding',
       maxContextSize: 262144,
@@ -70,7 +137,7 @@ describe('effectiveModelConfig', () => {
   });
 
   it('does not infer the fallback profile without provider context', () => {
-    const model: ModelConfig = {
+    const model: ModelRecord = {
       provider: 'custom',
       model: 'custom-anthropic-model',
       maxContextSize: 200000,
@@ -85,7 +152,7 @@ describe('effectiveModelConfig', () => {
       effectiveModelConfig(
         {
           provider: 'custom',
-          model: 'custom-anthropic-model',
+          model: 'custom-claude-model',
           maxContextSize: 200000,
           protocol: 'anthropic',
           adaptiveThinking: false,
@@ -126,79 +193,9 @@ describe('effectiveModelConfig', () => {
   });
 });
 
-describe('ModelService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
-  let registry: ConfigRegistry;
-  let models: Record<string, ModelAlias>;
-  let configSet: ReturnType<typeof vi.fn>;
-  let configReplace: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    registry = new ConfigRegistry();
-    models = {};
-    configSet = vi.fn().mockResolvedValue(undefined);
-    configReplace = vi.fn().mockResolvedValue(undefined);
-    ix = createServices(disposables, {
-      additionalServices: (reg) => {
-        reg.defineInstance(IConfigRegistry, registry);
-        reg.definePartialInstance(IConfigService, {
-          get: ((domain: string) =>
-            domain === MODELS_SECTION ? models : undefined) as IConfigService['get'],
-          set: configSet as unknown as IConfigService['set'],
-          replace: configReplace as unknown as IConfigService['replace'],
-          onDidChangeConfiguration: (() => ({ dispose: () => { } })) as IConfigService['onDidChangeConfiguration'],
-        });
-        reg.define(IModelService, ModelService);
-      },
-    });
-  });
-  afterEach(() => disposables.dispose());
-
-  it('registers the models section schema from configSection import', () => {
-    expect(registry.getSection(MODELS_SECTION)).toBeDefined();
-  });
-
-  it('set delegates to config.set with a single-alias patch', async () => {
-    const svc = ix.get(IModelService);
-    await svc.set('m1', { provider: 'p', model: 'x', maxContextSize: 1000 });
-    expect(configSet).toHaveBeenCalledWith(MODELS_SECTION, {
-      m1: { provider: 'p', model: 'x', maxContextSize: 1000 },
-    });
-  });
-
-  it('get reads a single alias from config', () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    const svc = ix.get(IModelService);
-    expect(svc.get('m1')).toEqual({ provider: 'p', model: 'x', maxContextSize: 1000 });
-    expect(svc.get('missing')).toBeUndefined();
-  });
-
-  it('list returns all aliases', () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    models['m2'] = { provider: 'p', model: 'y', maxContextSize: 2000 };
-    const svc = ix.get(IModelService);
-    expect(svc.list()).toEqual({
-      m1: { provider: 'p', model: 'x', maxContextSize: 1000 },
-      m2: { provider: 'p', model: 'y', maxContextSize: 2000 },
-    });
-  });
-
-  it('delete removes the alias and replaces the whole section', async () => {
-    models['m1'] = { provider: 'p', model: 'x', maxContextSize: 1000 };
-    models['m2'] = { provider: 'p', model: 'y', maxContextSize: 2000 };
-    const svc = ix.get(IModelService);
-    await svc.delete('m1');
-    expect(configReplace).toHaveBeenCalledWith(MODELS_SECTION, {
-      m2: { provider: 'p', model: 'y', maxContextSize: 2000 },
-    });
-  });
-
-  it('delete is a no-op when the alias is absent', async () => {
-    const svc = ix.get(IModelService);
-    await svc.delete('missing');
-    expect(configReplace).not.toHaveBeenCalled();
+describe('models config section', () => {
+  it('self-registers the models section schema', () => {
+    expect(new ConfigRegistry().getSection(MODELS_SECTION)).toBeDefined();
   });
 });
 
@@ -256,6 +253,44 @@ describe('models TOML transforms', () => {
           max_context_size: 500,
           support_efforts: ['low', 'high'],
         },
+      },
+    });
+  });
+
+  it('deletes on-disk fields the new record carries with an explicit undefined', () => {
+    // A field absent from the new record stays (plain overlay), but a field
+    // present with an explicit undefined value must be dropped from the
+    // merged on-disk raw — spreading `{...raw, ...converted}` would resurrect
+    // it (setDefined deletes from `converted`, never from the merge).
+    expect(
+      modelsToToml(
+        {
+          kimi: {
+            provider: 'p',
+            model: 'm',
+            maxContextSize: 1000,
+            displayName: undefined,
+            capabilities: undefined,
+          },
+        },
+        {
+          kimi: {
+            provider: 'p',
+            model: 'm',
+            max_context_size: 128000,
+            display_name: 'Old Name',
+            capabilities: ['tool_use'],
+            beta_api: true,
+          },
+        },
+      ),
+    ).toEqual({
+      kimi: {
+        provider: 'p',
+        model: 'm',
+        max_context_size: 1000,
+        // Unknown/unmentioned fields keep their old on-disk value.
+        beta_api: true,
       },
     });
   });
@@ -337,14 +372,17 @@ describe('kimiModelEnvOverlay', () => {
     });
   });
 
-  it('synthesizes the openai default baseUrl when KIMI_MODEL_BASE_URL is unset', () => {
+  it('omits baseUrl for openai so the base SDK default applies at construction', () => {
     const { effective } = applyKimiModelEnvOverlay(
       { KIMI_MODEL_NAME: 'env-model' },
       { providers: { [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' } } },
     );
 
+    // The registry declares no `defaultBaseUrl` for the canonical vendors
+    // (standard.contrib): construction-time defaults stay inside the bases /
+    // their SDKs, so the overlay leaves baseUrl out — exactly like anthropic.
     expect(effective['providers']).toEqual({
-      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai', baseUrl: 'https://api.openai.com/v1' },
+      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' },
     });
   });
 

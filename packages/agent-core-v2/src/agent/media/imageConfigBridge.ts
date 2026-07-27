@@ -18,10 +18,9 @@
  * Pushes are idempotent (one global config), so multiple agents are harmless.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import {
   setConfiguredMaxImageEdgePx,
@@ -62,6 +61,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IImageConfigBridge,
   ImageConfigBridge,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'media',
 );

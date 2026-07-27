@@ -18,8 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -188,9 +187,9 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async stat(path: string, options?: { followSymlinks?: boolean }): Promise<HostFileStat> {
+  async stat(path: string): Promise<HostFileStat> {
     try {
-      const s = options?.followSymlinks === true ? await nodeStat(path) : await lstat(path);
+      const s = await nodeStat(path);
       return {
         isFile: s.isFile(),
         isDirectory: s.isDirectory(),
@@ -201,6 +200,22 @@ export class HostFileSystem implements IHostFileSystem {
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
+    }
+  }
+
+  async lstat(path: string): Promise<HostFileStat> {
+    try {
+      const s = await lstat(path);
+      return {
+        isFile: s.isFile(),
+        isDirectory: s.isDirectory(),
+        isSymbolicLink: s.isSymbolicLink(),
+        size: s.size,
+        mtimeMs: s.mtimeMs,
+        ino: s.ino,
+      };
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'lstat' });
     }
   }
 
@@ -247,6 +262,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostFileSystem,
   HostFileSystem,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'hostFs',
 );

@@ -6,8 +6,8 @@
  * scope.
  */
 
-import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
@@ -36,13 +36,13 @@ export interface UsageStatus {
 export interface UsageRecordedContext {
   readonly model: string;
   readonly usage: Readonly<TokenUsage>;
-  readonly source?: LLMRequestSource;
+  readonly source?: AgentLLMRequestSource;
 }
 
 export interface IAgentUsageService {
   readonly _serviceBrand: undefined;
 
-  record(model: string, usage: TokenUsage, source?: LLMRequestSource): void;
+  record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void;
   status(): UsageStatus;
 
   readonly onDidRecord: Event<UsageRecordedContext>;

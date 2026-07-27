@@ -124,7 +124,8 @@ export class FullCompaction {
   }
 
   getEffectiveMaxContextTokens(): number {
-    const configured = this.agent.config.modelCapabilities.max_context_tokens;
+    const capability = this.agent.config.modelCapabilities;
+    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
     const modelAlias = this.agent.config.modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);

@@ -1,11 +1,9 @@
 /**
  * `GET /api/v1/connections` (server-v2) — wire-contract test.
  *
- * Adapted from v1's `connections.e2e.test.ts`. server-v2 does not serve
- * `/api/v1/ws`, so the clients listed here are attached to `/api/v2/ws`. The
- * no-handshake case uses a raw `ws` socket (no `hello`); the handshake +
- * subscription cases use `WsClient` (which sends `hello`) and a session-scoped
- * `listen`.
+ * Clients attach to `/api/v1/ws`. The no-handshake case uses a raw `ws`
+ * socket (no `client_hello`); the handshake + subscription cases send
+ * `client_hello` / `unsubscribe` control frames per the v1 ws protocol.
  */
 
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -17,7 +15,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
-import { WsClient } from '../src/transport/ws/wsClient';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -37,7 +34,7 @@ describe('server-v2 GET /api/v1/connections', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-connections-'));
     server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
-    wsUrl = `ws://127.0.0.1:${server.port}/api/v2/ws`;
+    wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
   afterEach(async () => {
@@ -71,15 +68,18 @@ describe('server-v2 GET /api/v1/connections', () => {
     return body.data.id;
   }
 
-  /** Open a raw WS and resolve on the server's first (`ready`) frame — no `hello`. */
-  function openRaw(): Promise<{ ws: WebSocket; closed: Promise<void> }> {
+  function connect(): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       const token = (server as RunningServer).authTokenService.getToken();
       const ws = new WebSocket(wsUrl, [`kimi-code.bearer.${token}`]);
-      const closed = new Promise<void>((res) => ws.on('close', () => res()));
-      ws.once('message', () => resolve({ ws, closed }));
+      // Resolve on the server's first (`server_hello`) frame.
+      ws.once('message', () => resolve(ws));
       ws.once('error', reject);
     });
+  }
+
+  function send(ws: WebSocket, frame: Record<string, unknown>): void {
+    ws.send(JSON.stringify(frame));
   }
 
   async function waitForSize(target: number, timeoutMs = 1000): Promise<void> {
@@ -97,7 +97,8 @@ describe('server-v2 GET /api/v1/connections', () => {
   });
 
   it('lists a raw connection without hello', async () => {
-    const { ws, closed } = await openRaw();
+    const ws = await connect();
+    const closed = new Promise<void>((res) => ws.on('close', () => res()));
     await waitForSize(1);
 
     const connections = await listConnections();
@@ -114,19 +115,16 @@ describe('server-v2 GET /api/v1/connections', () => {
     await closed;
   });
 
-  it('reflects hello and session-scoped listen subscriptions', async () => {
+  it('reflects client_hello and session subscriptions', async () => {
     const sessionId = await createSession(home as string);
-    const client = new WsClient({
-      url: wsUrl,
-      token: (server as RunningServer).authTokenService.getToken(),
-    });
+    const ws = await connect();
     try {
-      // A successful call guarantees the `hello` handshake completed.
-      await client.call('core', 'sessionIndex', 'list', {});
-      await waitForSize(1);
-
-      const { cancel } = client.listen('session', 'interactions', { sessionId });
-      // Let the `listen` register server-side.
+      send(ws, {
+        type: 'client_hello',
+        id: 'h1',
+        payload: { client_id: 'connections-test', subscriptions: [sessionId] },
+      });
+      // Let the `client_hello` register server-side.
       await new Promise((r) => setTimeout(r, 50));
 
       let connections = await listConnections();
@@ -135,24 +133,25 @@ describe('server-v2 GET /api/v1/connections', () => {
       expect(c.has_client_hello).toBe(true);
       expect(c.subscriptions).toContain(sessionId);
 
-      cancel();
+      send(ws, { type: 'unsubscribe', id: 'u1', payload: { session_ids: [sessionId] } });
       await new Promise((r) => setTimeout(r, 50));
       connections = await listConnections();
       expect(connections[0]!.subscriptions).not.toContain(sessionId);
     } finally {
-      client.close();
+      ws.close();
     }
   });
 
   it('removes the connection after the socket closes', async () => {
-    const client = new WsClient({
-      url: wsUrl,
-      token: (server as RunningServer).authTokenService.getToken(),
+    const ws = await connect();
+    send(ws, {
+      type: 'client_hello',
+      id: 'h1',
+      payload: { client_id: 'connections-test', subscriptions: [] },
     });
-    await client.call('core', 'sessionIndex', 'list', {});
     await waitForSize(1);
 
-    client.close();
+    ws.close();
     await waitForSize(0);
 
     const connections = await listConnections();

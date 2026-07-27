@@ -15,13 +15,13 @@ import type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/quer
 import type {
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import type {
   ConfigDiagnostic,
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
@@ -31,10 +31,11 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
-import type {
-  IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+
+import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
 import type {
   PluginCommandDef,
   PluginInfo,
@@ -54,6 +55,14 @@ export type ScopedCaller = (
   args: unknown[],
 ) => Promise<unknown>;
 
+/** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
+export type ScopedStreamCaller = (
+  scope: { readonly sessionId?: string; readonly agentId?: string },
+  service: string,
+  method: string,
+  args: unknown[],
+) => AsyncIterable<unknown>;
+
 // ---------------------------------------------------------------------------
 // Wire-type aliases for shapes the engine sources from `@moonshot-ai/protocol`
 // (not a direct klient dependency) — derived through the service interfaces.
@@ -67,15 +76,15 @@ export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['ge
 export type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
 export type OAuthLogoutResponse = Awaited<ReturnType<IOAuthService['logout']>>;
 
-export type ModelCatalogItem = Awaited<ReturnType<IModelCatalogService['listModels']>>[number];
+export type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
 export type ProviderCatalogItem = Awaited<
-  ReturnType<IModelCatalogService['listProviders']>
+  ReturnType<IModelCatalog['listProviders']>
 >[number];
 export type SetDefaultModelResponse = Awaited<
-  ReturnType<IModelCatalogService['setDefaultModel']>
+  ReturnType<IModelCatalog['setDefaultModel']>
 >;
 export type RefreshProviderModelsOptions = NonNullable<
-  Parameters<IModelCatalogService['refreshProviderModels']>[0]
+  Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
@@ -123,26 +132,26 @@ export interface GlobalConfigFacade {
   diagnostics(): Promise<readonly ConfigDiagnostic[]>;
 }
 
-export interface GlobalProvidersFacade {
-  list(): Promise<Readonly<Record<string, ProviderConfig>>>;
-  get(name: string): Promise<ProviderConfig | undefined>;
-  set(input: { name: string; config: ProviderConfig }): Promise<void>;
-  delete(name: string): Promise<void>;
-}
-
-export interface GlobalModelsFacade {
-  list(): Promise<Readonly<Record<string, ModelConfig>>>;
-  get(id: string): Promise<ModelConfig | undefined>;
-  set(input: { id: string; config: ModelConfig }): Promise<void>;
-  delete(id: string): Promise<void>;
-}
-
-export interface GlobalCatalogFacade {
-  listModels(): Promise<readonly ModelCatalogItem[]>;
+export interface GlobalKosongFacade {
+  // -- Provider ---------------------------------------------------------
   listProviders(): Promise<readonly ProviderCatalogItem[]>;
-  getProvider(providerId: string): Promise<ProviderCatalogItem>;
-  setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;
-  refresh(input?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+  getProvider(id: string): Promise<ProviderCatalogItem>;
+  /** Add a named provider (string id + config) or an anonymous single-model provider (object). */
+  addProvider(id: string, config: ProviderInput): Promise<void>;
+  addProvider(config: AnonymousProviderInput): Promise<void>;
+  removeProvider(id: string): Promise<void>;
+  refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+
+  // -- Model ------------------------------------------------------------
+  listModels(): Promise<readonly ModelCatalogItem[]>;
+  setDefaultModel(id: string): Promise<SetDefaultModelResponse>;
+
+  // -- Generate (streaming) -----------------------------------------------
+  generate(
+    modelId: string,
+    input: GenerateInput,
+    params?: GenerateParams,
+  ): AsyncIterable<GenerateEvent>;
 }
 
 export interface GlobalAuthFacade {
@@ -153,8 +162,9 @@ export interface GlobalAuthFacade {
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
   /**
-   * @deprecated Use `catalog.refresh({ scope: 'oauth' })` — the model catalog
-   * owns provider-model refresh; this alias remains for one release cycle.
+   * @deprecated Use `kosong.refreshProviders({ scope: 'oauth' })` — the
+   * kosong facade owns provider-model refresh; this alias remains for one
+   * release cycle.
    */
   refreshProviderModels(): Promise<RefreshProviderModelsResponse>;
 }
@@ -204,9 +214,7 @@ export interface GlobalFacade {
   readonly sessions: GlobalSessionsFacade;
   readonly workspaces: GlobalWorkspacesFacade;
   readonly config: GlobalConfigFacade;
-  readonly providers: GlobalProvidersFacade;
-  readonly models: GlobalModelsFacade;
-  readonly catalog: GlobalCatalogFacade;
+  readonly kosong: GlobalKosongFacade;
   readonly auth: GlobalAuthFacade;
   readonly flags: GlobalFlagsFacade;
   readonly plugins: GlobalPluginsFacade;
@@ -235,8 +243,10 @@ const ENV_PROPERTIES = [
   'logsDir',
 ] as const;
 
-export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
+export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStreamCaller): GlobalFacade {
   const call: Caller = (service, method, args) => scoped({}, service, method, args);
+  const streamCall = (service: string, method: string, args: unknown[]) =>
+    scopedStream({}, service, method, args);
   // The bootstrap snapshot is frozen at process start, so the aggregated
   // env() result can never change — resolve it once and reuse the promise.
   let envPromise: Promise<KlientEnvInfo> | undefined;
@@ -271,13 +281,13 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
     },
 
     workspaces: {
-      list: () => call('workspaceRegistry', 'list', []) as Promise<readonly Workspace[]>,
-      get: (id) => call('workspaceRegistry', 'get', [id]) as Promise<Workspace | undefined>,
+      list: () => call('workspaceService', 'list', []) as Promise<readonly Workspace[]>,
+      get: (id) => call('workspaceService', 'get', [id]) as Promise<Workspace | undefined>,
       createOrTouch: ({ root, name }) =>
-        call('workspaceRegistry', 'createOrTouch', [root, name]) as Promise<Workspace>,
+        call('workspaceService', 'createOrTouch', [root, name]) as Promise<Workspace>,
       update: ({ id, patch }) =>
-        call('workspaceRegistry', 'update', [id, patch]) as Promise<Workspace | undefined>,
-      delete: (id) => call('workspaceRegistry', 'delete', [id]) as Promise<void>,
+        call('workspaceService', 'update', [id, patch]) as Promise<Workspace | undefined>,
+      delete: (id) => call('workspaceService', 'delete', [id]) as Promise<void>,
     },
 
     config: {
@@ -294,39 +304,66 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
         call('configService', 'diagnostics', []) as Promise<readonly ConfigDiagnostic[]>,
     },
 
-    providers: {
-      list: () =>
-        call('providerService', 'list', []) as Promise<Readonly<Record<string, ProviderConfig>>>,
-      get: (name) => call('providerService', 'get', [name]) as Promise<ProviderConfig | undefined>,
-      set: ({ name, config }) => call('providerService', 'set', [name, config]) as Promise<void>,
-      delete: (name) => call('providerService', 'delete', [name]) as Promise<void>,
-    },
-
-    models: {
-      list: () =>
-        call('modelService', 'list', []) as Promise<Readonly<Record<string, ModelConfig>>>,
-      get: (id) => call('modelService', 'get', [id]) as Promise<ModelConfig | undefined>,
-      set: ({ id, config }) => call('modelService', 'set', [id, config]) as Promise<void>,
-      delete: (id) => call('modelService', 'delete', [id]) as Promise<void>,
-    },
-
-    catalog: {
-      listModels: () =>
-        call('modelCatalogService', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
+    kosong: {
       listProviders: () =>
-        call('modelCatalogService', 'listProviders', []) as Promise<
+        call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]
         >,
-      getProvider: (providerId) =>
-        call('modelCatalogService', 'getProvider', [providerId]) as Promise<ProviderCatalogItem>,
-      setDefaultModel: (modelId) =>
-        call('modelCatalogService', 'setDefaultModel', [modelId]) as Promise<
-          SetDefaultModelResponse
-        >,
-      refresh: (input) =>
-        call('modelCatalogService', 'refreshProviderModels', [
-          input,
+      getProvider: (id) =>
+        call('modelResolver', 'getProvider', [id]) as Promise<ProviderCatalogItem>,
+      addProvider: ((
+        idOrConfig: string | AnonymousProviderInput,
+        maybeConfig?: ProviderInput,
+      ): Promise<void> => {
+        if (typeof idOrConfig === 'string') {
+          // Named provider — map ProviderInput to ProviderConfig wire shape.
+          const config = maybeConfig!;
+          const wire: ProviderConfig = {
+            type: config.type,
+            baseUrl: config.baseUrl,
+            defaultModel: config.defaultModel,
+            apiKey: config.auth.method === 'api-key' ? config.auth.apiKey : '',
+          };
+          return call('providerService', 'set', [idOrConfig, wire]) as Promise<void>;
+        }
+        // Anonymous provider — map AnonymousProviderInput to ModelRecord wire shape.
+        const anon = idOrConfig;
+        const capabilities = anon.capabilities
+          ? Object.entries(anon.capabilities)
+              .filter(([, v]) => v)
+              .map(([k]) => k)
+          : undefined;
+        const wire: ModelRecord = {
+          model: anon.model,
+          protocol: anon.protocol as ModelRecord['protocol'],
+          baseUrl: anon.baseUrl,
+          apiKey: anon.auth.method === 'api-key' ? anon.auth.apiKey : '',
+          displayName: anon.displayName,
+          maxContextSize: anon.maxContextSize,
+          capabilities,
+        };
+        return call('modelService', 'set', [anon.id, wire]) as Promise<void>;
+      }) as GlobalKosongFacade['addProvider'],
+      removeProvider: async (id) => {
+        // Try provider registry first; fall back to model registry.
+        const existing = await call('providerService', 'get', [id]);
+        if (existing !== undefined) {
+          return call('providerService', 'delete', [id]) as Promise<void>;
+        }
+        return call('modelService', 'delete', [id]) as Promise<void>;
+      },
+      refreshProviders: (opts) =>
+        call('providerDiscovery', 'refreshProviderModels', [
+          opts,
         ]) as Promise<RefreshProviderModelsResponse>,
+
+      listModels: () =>
+        call('modelResolver', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
+      setDefaultModel: (id) =>
+        call('modelResolver', 'setDefaultModel', [id]) as Promise<SetDefaultModelResponse>,
+
+      generate: (modelId, input, params) =>
+        streamCall('modelResolver', 'generate', [modelId, input, params]) as AsyncIterable<GenerateEvent>,
     },
 
     auth: {

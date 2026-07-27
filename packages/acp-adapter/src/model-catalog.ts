@@ -48,10 +48,19 @@ export interface AcpModelEntry {
   /** Declared 'always_thinking' capability — thinking cannot be turned off. */
   readonly alwaysThinking?: boolean;
   /**
-   * The thinking effort to send when the binary ACP toggle flips on: the
-   * model's declared `default_effort`, else the middle `support_efforts`
-   * entry, else `'on'` for boolean models. Mirrors agent-core's
-   * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
+   * The model's selectable thinking-effort levels: declared
+   * `support_efforts` after override/provider-profile resolution (blank
+   * entries dropped, mirroring agent-core's `effortsFor`). Empty for
+   * boolean models, where the ACP picker keeps the legacy `off`/`on`
+   * pair instead of per-level rows.
+   */
+  readonly supportEfforts: readonly string[];
+  /**
+   * The thinking effort to send when the client picks the legacy `'on'`
+   * value: the model's declared `default_effort`, else the middle
+   * `support_efforts` entry, else `'on'` for boolean models. Mirrors
+   * agent-core's `defaultThinkingEffortFor` so the ACP on-state matches
+   * the TUI.
    */
   readonly defaultThinkingEffort: string;
 }
@@ -84,6 +93,21 @@ export function deriveThinkingSupported(alias: ModelAlias, providerType?: Provid
 export function deriveAlwaysThinking(alias: ModelAlias, providerType?: ProviderType): boolean {
   return (effectiveModelAlias(alias, providerType).capabilities ?? []).includes(
     'always_thinking',
+  );
+}
+
+/**
+ * The model's selectable thinking-effort levels: declared
+ * `support_efforts` (after override/provider-profile resolution) with
+ * blank entries dropped — mirrors agent-core's `effortsFor`. Empty for
+ * boolean models (thinking support without `support_efforts`).
+ */
+export function deriveSupportEfforts(
+  alias: ModelAlias,
+  providerType?: ProviderType,
+): readonly string[] {
+  return (effectiveModelAlias(alias, providerType).supportEfforts ?? []).filter(
+    (effort) => effort.length > 0,
   );
 }
 
@@ -133,6 +157,7 @@ export async function listModelsFromHarness(
       name: effective.displayName ?? effective.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias, providerType),
       alwaysThinking: deriveAlwaysThinking(alias, providerType),
+      supportEfforts: deriveSupportEfforts(alias, providerType),
       defaultThinkingEffort: deriveDefaultThinkingEffort(alias, providerType),
     });
   }
@@ -143,9 +168,11 @@ export async function listModelsFromHarness(
  * The alias's provider type, resolved like
  * `ProviderManager.resolveProviderConfig` does: the alias's provider (falling
  * back to the configured default provider). The Anthropic fallback profile in
- * `effectiveModelAlias` only applies to non-Kimi providers, so a custom-named
- * model on a `type = "anthropic"` provider still gets an inferred effort list
- * while managed Kimi models keep only their catalog-declared efforts.
+ * `effectiveModelAlias` only applies to non-Kimi providers, and then only to
+ * model names that still carry a Claude marker — a custom-named Claude model
+ * on a `type = "anthropic"` provider still gets an inferred effort list,
+ * while managed Kimi models and clearly non-Claude names keep only their
+ * catalog-declared efforts.
  */
 function providerTypeOf(
   alias: ModelAlias,
@@ -159,6 +186,6 @@ function providerTypeOf(
     providerName === undefined ? undefined : config.providers?.[providerName]?.type;
   // Flat models (inline base_url, no named provider) have no provider entry to
   // look up; their own protocol declaration plays the provider-identity role,
-  // mirroring the v2 ModelResolverService.
+  // mirroring the v2 ModelCatalog.
   return providerType ?? alias.protocol;
 }

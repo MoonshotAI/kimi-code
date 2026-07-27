@@ -64,6 +64,7 @@ export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<Kl
     connections.add(socket);
     const decoder = new NdjsonDecoder();
     const listens = new Map<string, IDisposable>();
+    const activeStreams = new Map<string, AbortController>();
     let helloDone = false;
 
     const send = (frame: IpcFrame): void => {
@@ -75,6 +76,19 @@ export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<Kl
       } else {
         send({
           type: 'error',
+          id,
+          code: 50001,
+          msg: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    const sendStreamError = (id: string, error: unknown): void => {
+      if (error instanceof RPCError) {
+        send({ type: 'stream_error', id, code: error.code, msg: error.message });
+      } else {
+        send({
+          type: 'stream_error',
           id,
           code: 50001,
           msg: error instanceof Error ? error.message : String(error),
@@ -139,6 +153,47 @@ export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<Kl
           listens.delete(id);
           return;
         }
+        case 'stream': {
+          if (!helloDone) {
+            sendStreamError(id, new RPCError(REQUEST_INVALID, 'expected hello first'));
+            return;
+          }
+          const args = Array.isArray(frame.arg) ? frame.arg : frame.arg === undefined ? [] : [frame.arg];
+          const ac = new AbortController();
+          activeStreams.set(id, ac);
+          const iterable = dispatcher.stream(
+            scopeRefFromFrame(frame),
+            String(frame.service),
+            String(frame.method),
+            args,
+          );
+          void (async () => {
+            try {
+              for await (const chunk of iterable) {
+                if (ac.signal.aborted || socket.destroyed) break;
+                send({ type: 'stream_data', id, data: chunk });
+              }
+              if (!ac.signal.aborted && !socket.destroyed) {
+                send({ type: 'stream_end', id });
+              }
+            } catch (error) {
+              if (!ac.signal.aborted && !socket.destroyed) {
+                sendStreamError(id, error);
+              }
+            } finally {
+              activeStreams.delete(id);
+            }
+          })();
+          return;
+        }
+        case 'stream_cancel': {
+          const ac = activeStreams.get(id);
+          if (ac !== undefined) {
+            ac.abort();
+            activeStreams.delete(id);
+          }
+          return;
+        }
         default:
           return;
       }
@@ -152,6 +207,8 @@ export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<Kl
     const teardown = (): void => {
       for (const sub of listens.values()) sub.dispose();
       listens.clear();
+      for (const ac of activeStreams.values()) ac.abort();
+      activeStreams.clear();
       connections.delete(socket);
     };
     socket.on('close', teardown);

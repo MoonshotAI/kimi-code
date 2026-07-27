@@ -11,10 +11,13 @@ import { z } from 'zod';
 
 const StringRecordSchema = z.record(z.string(), z.string());
 
+export const MAX_MCP_TIMEOUT_MS = 2_147_483_647;
+export const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
+
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
 } as const;

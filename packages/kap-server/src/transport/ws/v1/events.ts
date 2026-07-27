@@ -33,6 +33,14 @@ export interface AgentStatusUpdatedEvent {
   readonly phase?: AgentPhase;
 }
 
+export interface AgentCreatedEvent {
+  readonly type: 'agent.created';
+}
+
+export interface AgentDisposedEvent {
+  readonly type: 'agent.disposed';
+}
+
 export interface SessionMetaUpdatedEvent {
   readonly type: 'session.meta.updated';
   readonly title?: string;
@@ -160,6 +168,8 @@ export interface BackgroundTaskTerminatedEvent {
 export type AgentEvent =
   | DomainEvent
   | AgentStatusUpdatedEvent
+  | AgentCreatedEvent
+  | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | WorkspaceCreatedEvent
@@ -181,6 +191,7 @@ export const VOLATILE_EVENT_TYPES = [
   'tool.progress',
   'shell.output',
   'shell.started',
+  'shell.completed',
   'agent.status.updated',
 ] as const;
 

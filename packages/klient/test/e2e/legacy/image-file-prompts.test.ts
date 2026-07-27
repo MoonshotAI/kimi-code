@@ -1,6 +1,6 @@
 /**
  * Live-server invariant for uploaded image files in prompt content (v1 REST
- * surface only — file upload has no `/api/v2` equivalent):
+ * surface only — the facade has no file-upload method):
  *   - a missing prompt image `file_id` returns `FILE_NOT_FOUND`;
  *   - a non-image uploaded file used as image content returns `VALIDATION_FAILED`;
  *   - an uploaded PNG can be referenced by a prompt submission, and the

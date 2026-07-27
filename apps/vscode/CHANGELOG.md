@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.5
+
+### Patch Changes
+
+- Updated dependencies [[`ec88d35`](https://github.com/MoonshotAI/kimi-code/commit/ec88d352e8f4dc5e8ffd1212f016138458f69893), [`b5efba7`](https://github.com/MoonshotAI/kimi-code/commit/b5efba7abcaf4041f81ec520097a61e6546e8c50), [`ce0e3ce`](https://github.com/MoonshotAI/kimi-code/commit/ce0e3ceb04223bdaad8e8931bad46eff561055b6), [`e458323`](https://github.com/MoonshotAI/kimi-code/commit/e45832398d0d9cad98dbad1cbf1e5b103a20aace)]:
+  - @moonshot-ai/kimi-code-sdk@0.14.0
+
+## 0.6.4
+
+### Changed
+
+- Picking a model's highest thinking effort now applies to the current session
+  only instead of becoming the global default: the top tier saves just the
+  on/off toggle, lower tiers persist as the default as before, and
+  re-confirming the current effort no longer rewrites the saved preference.
+  The model and thinking pickers also note that switching mid-conversation
+  invalidates the existing prompt cache.
+- Unified the YOLO and Auto permission mode naming and descriptions with the
+  CLI (`/afk` is now `/auto`), and approval requests that fall outside the
+  active permission mode (sensitive files, plan reviews, ask rules) are now
+  always shown to you instead of being auto-approved.
+
+## 0.6.3
+
+### Fixed
+
+- Editor mentions now work for files outside the working directory, and paths
+  containing spaces are quoted correctly.
+- Cancelling a running turn now reliably reaches the engine, and the UI no
+  longer reports a task as stopped when there is nothing to cancel.
+- Attaching to or resuming an existing session no longer overwrites its model
+  and thinking effort with the configured defaults; model or effort changes
+  picked in the composer are applied when the prompt is sent.
+
 ## 0.6.2
 
 ### Fixed

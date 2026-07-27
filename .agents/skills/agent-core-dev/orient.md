@@ -60,11 +60,11 @@ So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but
 |---|---|---|
 | L0 | base infrastructure | `_base`, `errors`, `llmProtocol` |
 | L1 | bridges & low-level capabilities | `log`, `telemetry`, `event`, `environment`, `bootstrap`, `storage` |
-| L2 | data & cross-cutting capabilities | `records`, `wireRecord`, `config`, `provider`, `auth`, `workspaceRegistry` |
+| L2 | data & cross-cutting capabilities | `records`, `wireRecord`, `config`, `provider`, `auth`, `workspace` |
 | L3 | registries & capabilities | `tool`, `toolRegistry`, `permission*`, `flag`, `skill`, `plugin` |
 | L4 | agent behaviour | `turn`, `loop`, `prompt`, `profile`, `contextMemory`, `goal`, `plan`, `swarm` |
 | L5 | async lifecycle | `background`, `mcp`, `cron`, `agentTool` |
-| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal` |
+| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal`, `undo` |
 | L7 | boundary / edge | `gateway`, `rpc`, `approval`, `question`, `*Legacy` |
 
 ## File-header comment convention

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import {
   _clearScopedRegistryForTests,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
   type Scope,
 } from '#/_base/di/scope';
@@ -14,6 +14,8 @@ import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import { type QuestionRequest, ISessionQuestionService } from '#/session/question/question';
 import { SessionQuestionService } from '#/session/question/questionService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -41,8 +43,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, InstantiationType.Delayed, 'interaction');
-    registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, InstantiationType.Delayed, 'question');
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
+    registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnDemand, 'question');
 
     disposables = new DisposableStore();
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
@@ -102,6 +105,26 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
       toolCallId: 'tc-q1',
       questions: [{ question: 'Pick one' }],
     });
+  });
+
+  it('records the owning agent on the interaction origin', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
+    expect(interaction.listPending().find((i) => i.id === 'q-sub')?.origin).toMatchObject({
+      agentId: 'sub-1',
+    });
+
+    const main = questions.request(makeRequest('q-main'));
+    expect(
+      interaction.listPending().find((i) => i.id === 'q-main')?.origin.agentId,
+    ).toBeUndefined();
+
+    questions.dismiss('q-sub');
+    questions.dismiss('q-main');
+    await expect(sub).resolves.toBeNull();
+    await expect(main).resolves.toBeNull();
   });
 
   it('request with a pre-aborted signal resolves null and parks nothing', async () => {

@@ -37,7 +37,7 @@
  *    so its raw `<system>` markup never renders in the UI.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { sniffImageDimensions } from './file-type';
 import {

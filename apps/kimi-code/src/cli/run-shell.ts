@@ -217,6 +217,13 @@ export async function runShell(
     }
     removeCrashHandlers();
     restoreStty();
+    if (tui.exitForegroundTask !== undefined) {
+      // `/web` starting a new server: the TUI has shut down cleanly; hand the
+      // terminal to the foreground server instead of exiting. The task runs
+      // until the server stops (Ctrl+C), then this process exits.
+      await tui.exitForegroundTask(exitCode);
+      return;
+    }
     process.exit(exitCode);
   };
   try {

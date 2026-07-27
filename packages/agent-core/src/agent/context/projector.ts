@@ -49,9 +49,10 @@ export interface ProjectOptions {
   readonly mergeConsecutiveAssistants?: boolean;
   /**
    * When `true`, drop assistant tool calls whose id already appeared earlier
-   * (first occurrence wins; a message left with no content and no calls is
-   * dropped), and drop every tool result after the first for a given id so the
-   * kept call keeps exactly one answer. Duplicate ids are wire-invalid on
+   * (first occurrence wins; a message left with no calls and no sendable
+   * content is dropped), and drop every tool result after the first for a
+   * given id so the kept call keeps exactly one answer. Duplicate ids are
+   * wire-invalid on
    * strict providers ("`tool_use` ids must be unique") and no other pass can
    * repair them. Strict-resend only: a provider that accepted the duplicates
    * when it produced them (e.g. per-response counter ids like `call_0`) must
@@ -97,7 +98,15 @@ export type ProjectionAnomaly =
   /** Two adjacent assistant turns were merged into one (strict). */
   | { readonly kind: 'consecutive_assistants_merged' }
   /** A non-empty but all-whitespace text block was dropped (always). */
-  | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
+  | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
+  /**
+   * Every recorded part serialized to nothing on the wire (e.g. an assistant
+   * step that recorded only an empty thinking part from a provider-filtered
+   * response), so the whole message was dropped. Distinct from the silent
+   * empty-content drop: parts were recorded, yet none of them was sendable —
+   * a genuine defect signal, not routine cleanup.
+   */
+  | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
   let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
@@ -212,7 +221,11 @@ function repairToolExchangeAdjacency(
 // Strict providers reject a request whose assistant messages carry two
 // `tool_use` blocks with the same id ("tool_use ids must be unique"). Keep the
 // first occurrence of each call id, drop the rest, and drop an assistant
-// message entirely when duplicates were all it carried. Every result after the
+// message entirely when duplicates were all it carried — or when removing
+// them leaves only vacuous content (e.g. a single empty thinking block),
+// which would serialize as an empty assistant and be rejected again on the
+// strict retry ("the message ... with role 'assistant' must not be empty").
+// Every result after the
 // first for a given id is dropped with its call, so no dangling tool message
 // survives the dedupe; when the kept call has no result of its own, the later
 // duplicate's surviving result is reattached by the adjacency repair. Runs
@@ -239,8 +252,14 @@ function dedupeDuplicateToolCalls(
       });
       if (kept.length === message.toolCalls.length) {
         out.push(message);
-      } else if (kept.length > 0 || message.content.length > 0) {
+      } else if (kept.length > 0 || !message.content.every(isVacuousContentPart)) {
         out.push({ ...message, toolCalls: kept });
+      } else if (message.content.length > 0) {
+        // Every call this message carried was a later duplicate, and only
+        // vacuous content remains: kept, it would serialize as an empty
+        // assistant and be rejected again on the strict retry. Drop it with
+        // a trace (a truly content-free message stays a silent drop).
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
       }
       continue;
     }
@@ -405,7 +424,34 @@ function prepareMessageForProjection(
   // content-free — it must survive the empty-message cleanup or the loaded
   // schemas silently vanish from every outgoing request.
   if (next.tools !== undefined && next.tools.length > 0) return next;
-  return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
+  if (next.toolCalls.length > 0) return next;
+  if (next.content.length === 0) return null;
+  // Every remaining part serializes to nothing on the wire — e.g. an
+  // assistant step that recorded only an empty thinking part from a
+  // provider-filtered response. Sent as-is it becomes an assistant message
+  // with no content and no tool calls, which strict providers reject ("the
+  // message ... with role 'assistant' must not be empty") on every resend,
+  // permanently wedging the session. Drop the whole message here. A message
+  // that carries any real content keeps every part verbatim — including
+  // empty thinking blocks, which preserved-thinking providers require back.
+  if (next.content.every(isVacuousContentPart)) {
+    onAnomaly?.({ kind: 'vacuous_message_dropped', role: next.role });
+    return null;
+  }
+  return next;
+}
+
+/**
+ * True when a content part carries nothing the provider wire can represent:
+ * an empty or whitespace-only text block, or an empty thinking block with no
+ * provider signature. A signed thinking block (`encrypted`) is never vacuous
+ * — reasoning providers require it back verbatim — and media parts always
+ * carry content.
+ */
+function isVacuousContentPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.trim().length === 0;
+  if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
+  return false;
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {

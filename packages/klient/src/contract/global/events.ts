@@ -9,8 +9,8 @@
 import { z } from 'zod';
 
 import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/app/model/model';
-import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 
@@ -43,12 +43,12 @@ export type CatalogChangedPayload = Awaited<
 export interface KlientEventPayloads {
   'config.changed': ConfigChangedEvent;
   'config.sectionChanged': ConfigChangedEvent;
-  'providers.changed': ProvidersChangedEvent;
-  'models.changed': ModelsChangedEvent;
+  'kosong.providers.changed': ProvidersChangedEvent;
+  'kosong.models.changed': ModelsChangedEvent;
   'plugins.reloaded': ReloadSummary;
   'session.archived': SessionArchivedPayload;
   'session.metaUpdated': SessionMetaUpdatedPayload;
-  'catalog.changed': CatalogChangedPayload;
+  'kosong.changed': CatalogChangedPayload;
 }
 
 export type KlientEventName = keyof KlientEventPayloads;
@@ -104,13 +104,13 @@ export const globalEvents = {
     event: 'onDidSectionChange',
     schema: configChangedSchema,
   },
-  'providers.changed': {
+  'kosong.providers.changed': {
     kind: 'emitter',
     service: 'providerService',
     event: 'onDidChangeProviders',
     schema: stringDeltaSchema,
   },
-  'models.changed': {
+  'kosong.models.changed': {
     kind: 'emitter',
     service: 'modelService',
     event: 'onDidChangeModels',
@@ -132,7 +132,7 @@ export const globalEvents = {
     type: 'session.meta.updated',
     schema: sessionMetaUpdatedSchema,
   },
-  'catalog.changed': {
+  'kosong.changed': {
     kind: 'bus',
     type: 'event.model_catalog.changed',
     schema: catalogChangedSchema,

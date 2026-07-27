@@ -2,11 +2,14 @@
  * `loop` test stubs — shared loop and wire doubles for unit tests.
  */
 import { toDisposable } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
+import { OrderedHookSlot } from '#/hooks';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { Op } from '#/wire/op';
@@ -69,6 +72,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     async run() { return { type: 'completed', steps: 0, truncated: false }; },
     status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingTurnIds: [], hasPendingRequests: queue.hasPendingRequests() }; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
+    tryAcquireQuiescence: () => toDisposable(() => {}),
     hasPendingRequests: () => queue.hasPendingRequests(), registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
     drainNextBatch(context) { const batch = queue.takeNextBatch(); if (!batch) return undefined; materialize(batch.driver, context); for (const r of batch.merged) materialize(r, context); return batch; },
@@ -77,4 +81,4 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
 }
 export type StubWire = IWireService & { readonly ops: readonly Op[]; readonly steered: readonly { readonly input: readonly ContentPart[]; readonly origin?: PromptOrigin }[] };
 export function stubWire(): StubWire { const ops: Op[] = []; const steered: { input: readonly ContentPart[]; origin?: PromptOrigin }[] = []; return { _serviceBrand: undefined, hooks: createHooks(['onDidRestore']), ops, steered, dispatch: (...incoming: Op[]) => { for (const op of incoming) { ops.push(op); if (op.type === 'turn.steer') steered.push(op.payload as never); } }, replay: async () => {}, signal: () => {}, flush: async () => {}, getModel: () => ({}), subscribe: () => toDisposable(() => {}), onEmission: () => toDisposable(() => {}) } as unknown as StubWire; }
-export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, hooks: createHooks(['onBeforeExecuteTool', 'onDidExecuteTool']) as IAgentToolExecutorService['hooks'], recordDupType: () => {}, registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
+export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }

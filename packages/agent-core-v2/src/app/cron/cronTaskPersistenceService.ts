@@ -7,8 +7,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
@@ -95,6 +94,6 @@ registerScopedService(
   LifecycleScope.App,
   ICronTaskPersistence,
   CronTaskPersistenceService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'cron',
 );

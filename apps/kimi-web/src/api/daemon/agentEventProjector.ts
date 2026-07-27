@@ -962,6 +962,12 @@ export function createAgentProjector(): AgentProjector {
           // for a "make a plan" prompt). Carry it so the composer's plan toggle
           // reflects the agent's real state, not just the user's manual choice.
           planMode: p?.planMode === true ? true : p?.planMode === false ? false : undefined,
+          // The session's own thinking level, so per-session state stays in sync
+          // across clients (same treatment as plan/swarm above).
+          thinking:
+            typeof p?.thinkingEffort === 'string' && p.thinkingEffort.length > 0
+              ? p.thinkingEffort
+              : undefined,
         });
         break;
       }

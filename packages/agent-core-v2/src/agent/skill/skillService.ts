@@ -12,10 +12,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderUserSlashSkillPrompt } from './prompt';
@@ -138,6 +137,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSkillService,
   AgentSkillService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'skill',
 );

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core-v2",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "The unified agent engine for Kimi (v2 — DI Scope architecture)",
   "license": "MIT",
@@ -48,6 +48,9 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:contract-types": "node scripts/gen-contract-types.mjs",
+    "gen:config-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-config-manifest.mts",
+    "gen:wire-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-wire-manifest.mts",
+    "gen:state-manifest": "tsx scripts/gen-state-manifest.mts",
     "lint:domain": "node scripts/check-domain-layers.mjs",
     "clean": "rm -rf dist",
     "dep-graph:analyze": "tsx scripts/dep-graph/cli.ts",
@@ -72,7 +75,6 @@
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
-    "nunjucks": "^3.2.4",
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
@@ -89,7 +91,6 @@
   "devDependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@types/js-yaml": "^4.0.9",
-    "@types/nunjucks": "^3.2.6",
     "@types/picomatch": "^4.0.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",

@@ -15,8 +15,30 @@ export interface ProcedureContract {
   readonly output: z.ZodType;
 }
 
+/**
+ * A streaming procedure yields an `AsyncIterable` of chunks instead of a
+ * single resolved value. `chunk` validates each yielded element; `streaming`
+ * is a compile-time discriminator so callers can branch without runtime
+ * checks.
+ */
+export interface StreamingProcedureContract {
+  /** Tuple schema over the engine method's positional args. */
+  readonly input: z.ZodType;
+  /** Schema applied to every yielded chunk. */
+  readonly chunk: z.ZodType;
+  /** Discriminator — always `true`. */
+  readonly streaming: true;
+}
+
+/** Type guard: is this contract entry streaming? */
+export function isStreamingContract(
+  contract: ProcedureContract | StreamingProcedureContract,
+): contract is StreamingProcedureContract {
+  return 'streaming' in contract && contract.streaming === true;
+}
+
 /** method name → procedure */
-export type ServiceContract = Readonly<Record<string, ProcedureContract>>;
+export type ServiceContract = Readonly<Record<string, ProcedureContract | StreamingProcedureContract>>;
 
 /** service wire name (decorator id string) → its methods */
 export type KlientContract = Readonly<Record<string, ServiceContract>>;

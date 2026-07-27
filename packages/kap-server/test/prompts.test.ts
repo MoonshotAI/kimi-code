@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -6,6 +6,8 @@ import { deflateSync } from 'node:zlib';
 import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentToolPolicyService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -211,7 +213,50 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
-  it('materializes uploaded video prompts into cache path tags', async () => {
+  it('rejects a stale file reference without creating the agent or mutating the model', async () => {
+    const id = await createSession(home as string);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      content: [
+        { type: 'text', text: 'look' },
+        { type: 'video', source: { kind: 'file', file_id: 'f_does_not_exist' } },
+      ],
+    });
+    expect(body.code).toBe(40407);
+
+    // The failed request must not have materialized the main agent either.
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('rejects a mis-kinded file reference without creating the agent', async () => {
+    const id = await createSession(home as string);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+
+    // A real upload, but referenced with the wrong media kind.
+    const form = new FormData();
+    form.set('file', new Blob([Buffer.from('%PDF-1.4 fake')], { type: 'application/pdf' }), 'spec.pdf');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      content: [
+        { type: 'text', text: 'watch this' },
+        { type: 'video', source: { kind: 'file', file_id: uploaded.data.id } },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('carries an uploaded video into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const videoBytes = Buffer.from('tiny fake mp4 bytes');
@@ -233,16 +278,24 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    // The edge no longer uploads to the provider. The queued prompt reprojects
+    // the video as the file reference it came from — a `{ kind: 'file' }` source
+    // is only ever produced from an internal `kimi-file://` url, so this proves
+    // the enqueued message carries the reference (its materialization path is
+    // never leaked back to the client).
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
-    expect(content[1]?.type).toBe('text');
-    const match = /<video path="([^"]+)"><\/video>/.exec(content[1]?.text ?? '');
-    expect(match).not.toBeNull();
-    const cachePath = match![1]!;
-    expect(cachePath.startsWith(join(home as string, 'cache'))).toBe(true);
-    expect(cachePath.endsWith('.mp4')).toBe(true);
-    expect(await readFile(cachePath)).toEqual(videoBytes);
+    expect(content[1]).toEqual({
+      type: 'video',
+      source: { kind: 'file', file_id: uploaded.data.id },
+    });
+
+    // The `?path=` of that reference points at a materialized copy of the bytes
+    // (written during the submit), which the engine resolver falls back to when
+    // it cannot upload or inline the video.
+    const materialized = join(home as string, 'cache', `${uploaded.data.id}.mp4`);
+    expect(await readFile(materialized)).toEqual(videoBytes);
   });
 
   it('compresses uploaded image prompts into base64 image parts with a readback caption', async () => {
@@ -649,5 +702,203 @@ describe('server-v2 /api/v1 prompts', () => {
       agent_id: 'agent_does_not_exist',
     });
     expect(body.code).toBe(40401);
+  });
+
+  it('rejects an unknown agent profile with 40001', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'agent_does_not_exist',
+      model: 'stub',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('agent_does_not_exist');
+  });
+
+  it('binds a discovered custom agent profile on the first prompt', async () => {
+    // A user-level agent file under $KIMI_CODE_HOME/agents is discovered into
+    // the session profile catalog and selectable by name.
+    await mkdir(join(home as string, 'agents'), { recursive: true });
+    await writeFile(
+      join(home as string, 'agents', 'route-reviewer.md'),
+      [
+        '---',
+        'name: route-reviewer',
+        'description: reviewer defined by a user-level agent file',
+        '---',
+        '',
+        'You are a route-test reviewer.',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // No `model` — the profile bind falls back to the configured default_model.
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'route-reviewer',
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
+    expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+
+    // Repeating the same profile on a later prompt is a no-op, not an error.
+    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      profile: 'route-reviewer',
+    });
+    expect(again.body.code).toBe(0);
+  });
+
+  it('rejects switching to a different profile once bound', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+    });
+    expect(first.body.code).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      profile: 'some-other-agent',
+      model: 'stub',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('already bound');
+  });
+
+  it('applies a requested thinking effort together with the profile bind', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // `thinking` rides along in the bind: the effort is validated up front
+    // and applied with the first bind, not by a separate setThinking after.
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'agent',
+      model: 'stub',
+      thinking: 'high',
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
+    const profile = main?.accessor.get(IAgentProfileService);
+    expect(profile?.data().profileName).toBe('agent');
+    expect(profile?.data().thinkingLevel).toBe('high');
+  });
+
+  it('applies disabled_tools on the first prompt and replaces them on later prompts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // model:'stub' lazily binds the default profile before the route applies
+    // disabled_tools (a session denylist requires a bound profile).
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentToolPolicyService);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
+    expect(toolPolicy?.isToolActive('Read')).toBe(true);
+
+    // Each submission fully replaces the client-managed portion.
+    const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      disabled_tools: ['Write'],
+    });
+    expect(replaced.body.code).toBe(0);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(true);
+    expect(toolPolicy?.isToolActive('Write')).toBe(false);
+
+    // An empty list clears the client-managed portion.
+    const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'once more' }],
+      disabled_tools: [],
+    });
+    expect(cleared.body.code).toBe(0);
+    expect(toolPolicy?.isToolActive('Write')).toBe(true);
+  });
+
+  it('shares disabled_tools with agents created after the request', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const child = await session.accessor.get(IAgentLifecycleService).create({
+      binding: {
+        profile: 'coder',
+        model: 'stub',
+      },
+    });
+
+    const childToolPolicy = child.accessor.get(IAgentToolPolicyService);
+    expect(childToolPolicy.isToolActive('Bash')).toBe(false);
+    expect(childToolPolicy.isToolActive('Read')).toBe(true);
+  });
+
+  it('rejects disabled_tools before the agent profile is bound', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // No profile/model: the agent stays unbound, and a session denylist cannot
+    // be computed before bind (a later bind would silently overwrite it).
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      disabled_tools: ['Bash'],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('persists disabled_tools across a cold resume', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    // Drop the live handle; the next submit cold-resumes the session from disk.
+    await server!.core.accessor.get(ISessionLifecycleService).close(id);
+    expect(server!.core.accessor.get(ISessionLifecycleService).get(id)).toBeUndefined();
+
+    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+    });
+    expect(again.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentToolPolicyService);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
+    expect(toolPolicy?.isToolActive('Read')).toBe(true);
   });
 });

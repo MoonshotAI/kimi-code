@@ -1,7 +1,7 @@
 /**
  * `@moonshot-ai/klient` public surface — the transport-agnostic client facade
  * over the agent-core-v2 engine. Create a klient with one of the transport
- * entry points (`@moonshot-ai/klient/http`, `/ipc`, or `/memory`); everything
+ * entry points (`@moonshot-ai/klient/ipc` or `/memory`); everything
  * exported here behaves identically regardless of which one carried the
  * bytes.
  */
@@ -22,19 +22,17 @@ export {
   type SessionHandle,
 } from './core/klient.js';
 export type { KlientEvents } from './core/events/hub.js';
-export type { Caller, ScopedCaller } from './core/facade/global.js';
+export type { Caller, ScopedCaller, ScopedStreamCaller } from './core/facade/global.js';
 
 export type {
   ConfigTargetLiteral,
   GlobalAuthFacade,
-  GlobalCatalogFacade,
   GlobalConfigFacade,
   GlobalFacade,
   GlobalFlagsFacade,
   GlobalHostFsFacade,
-  GlobalModelsFacade,
+  GlobalKosongFacade,
   GlobalPluginsFacade,
-  GlobalProvidersFacade,
   GlobalSessionsFacade,
   GlobalWorkspacesFacade,
   KlientEnvInfo,
@@ -48,6 +46,15 @@ export type {
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
 } from './core/facade/global.js';
+
+export type {
+  AnonymousProviderInput,
+  GenerateEvent,
+  GenerateInput,
+  GenerateParams,
+  ProviderAuth,
+  ProviderInput,
+} from './core/facade/kosong-types.js';
 
 export type {
   SessionApprovalsFacade,
@@ -87,15 +94,14 @@ export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/quer
 export type {
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 export type {
   ConfigDiagnostic,
   ConfigInspectValue,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-export type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
 export type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -124,5 +130,5 @@ export type {
   Interaction,
   InteractionKind,
 } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-export type { ContentPart } from '@moonshot-ai/agent-core-v2/app/llmProtocol/message';
+export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';

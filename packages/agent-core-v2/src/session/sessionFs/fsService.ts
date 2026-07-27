@@ -13,9 +13,11 @@
  * check first, then re-verifies the candidate through `IHostFileSystem.realpath`
  * (resolving the longest existing prefix, so not-yet-created paths still work):
  * a symlink inside the workspace must not steer fs actions to files outside it.
+ * The plain-data state (`rgResolution`, `realRootsCache`) is registered into
+ * `sessionState` (`ISessionStateService`) and read/written through it.
  */
 
-import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import {
   type FsDiffRequest,
@@ -60,13 +62,22 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
+import {
+  buildEtag,
+  countLines,
+  detectBinary,
+  FS_BINARY_SAMPLE_BYTES,
+  guessLanguageId,
+  guessMime,
+} from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { type FsDownloadResolved, type FsPathResolved, ISessionFsService } from './fs';
@@ -88,25 +99,42 @@ const GREP_TIMEOUT_MS = 30_000;
 const WALK_MAX_DEPTH = 64;
 
 const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
-const FS_BINARY_SAMPLE_BYTES = 4096;
-const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
 const HIDDEN_NAME_RE = /^\./;
 const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
+
+export const sessionFsRgResolutionKey = defineState<RgResolution | null | undefined>(
+  'sessionFs.rgResolution',
+  () => undefined,
+);
+export const sessionFsRealRootsCacheKey = defineState<
+  { readonly key: string; readonly roots: readonly string[] } | undefined
+>('sessionFs.realRootsCache', () => undefined);
 
 export class SessionFsService implements ISessionFsService {
   declare readonly _serviceBrand: undefined;
 
   private readonly gitignoreCache = new Map<string, Ignore>();
-  private rgResolution: RgResolution | null | undefined = undefined;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IGitService private readonly git: IGitService,
-  ) {}
+  ) {
+    this.states.register(sessionFsRgResolutionKey);
+    this.states.register(sessionFsRealRootsCacheKey);
+  }
+
+  private get rgResolution(): RgResolution | null | undefined {
+    return this.states.get(sessionFsRgResolutionKey);
+  }
+
+  private set rgResolution(value: RgResolution | null | undefined) {
+    this.states.set(sessionFsRgResolutionKey, value);
+  }
 
   private absOf(rel: string): string {
     return rel === '' || rel === '.' ? this.workspace.workDir : join(this.workspace.workDir, rel);
@@ -168,7 +196,7 @@ export class SessionFsService implements ISessionFsService {
           continue;
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
-        const st = await this.hostFs.stat(this.absOf(childRel)).catch(() => undefined);
+        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
         if (st === undefined) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
@@ -309,7 +337,7 @@ export class SessionFsService implements ISessionFsService {
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, req.path);
     }
@@ -329,7 +357,7 @@ export class SessionFsService implements ISessionFsService {
     await Promise.all(
       resolved.map(async ({ raw, rel, abs }) => {
         try {
-          const st = await this.hostFs.stat(abs);
+          const st = await this.hostFs.lstat(abs);
           const name = rel === '.' ? basename(this.workspace.workDir) : basename(abs);
           entries[raw] = buildFsEntry(rel, name, st, false);
         } catch {
@@ -359,7 +387,7 @@ export class SessionFsService implements ISessionFsService {
       }
       throw err;
     }
-    const st = await this.hostFs.stat(abs);
+    const st = await this.hostFs.lstat(abs);
     return buildFsEntry(rel, basename(abs), st, false);
   }
 
@@ -368,7 +396,7 @@ export class SessionFsService implements ISessionFsService {
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, relPath);
     }
@@ -687,7 +715,17 @@ export class SessionFsService implements ISessionFsService {
     return this.rgResolution;
   }
 
-  private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined;
+  private get realRootsCache():
+    | { readonly key: string; readonly roots: readonly string[] }
+    | undefined {
+    return this.states.get(sessionFsRealRootsCacheKey);
+  }
+
+  private set realRootsCache(
+    value: { readonly key: string; readonly roots: readonly string[] } | undefined,
+  ) {
+    this.states.set(sessionFsRealRootsCacheKey, value);
+  }
 
   private async realRoots(): Promise<readonly string[]> {
     const dirs = [this.workspace.workDir, ...this.workspace.additionalDirs];
@@ -901,12 +939,6 @@ function sortChildren(
   children.sort(cmp);
 }
 
-function buildEtag(st: HostFileStat): string {
-  const mtime = Math.floor(st.mtimeMs ?? 0);
-  const ino = st.ino ?? 0;
-  return [mtime.toString(36), st.size.toString(36), ino.toString(36)].join('-');
-}
-
 function buildFsEntry(
   relPath: string,
   name: string,
@@ -934,29 +966,6 @@ function buildFsEntry(
     if (lang !== undefined) entry.language_id = lang;
   }
   return entry;
-}
-
-function detectBinary(buf: Uint8Array): boolean {
-  if (buf.length === 0) return false;
-  let nonPrintable = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i]!;
-    if (b === 0) return true;
-    if (b === 9 || b === 10 || b === 13) continue;
-    if (b >= 32 && b <= 126) continue;
-    nonPrintable++;
-  }
-  return nonPrintable / buf.length > FS_BINARY_NONPRINTABLE_FRACTION;
-}
-
-function countLines(text: string): number {
-  if (text.length === 0) return 0;
-  let n = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) n++;
-  }
-  if (text.charCodeAt(text.length - 1) === 10) n--;
-  return Math.max(0, n);
 }
 
 function errnoCode(err: unknown): string | undefined {
@@ -1017,67 +1026,10 @@ function toWireError(err: unknown): { code: number; msg: string } {
   };
 }
 
-const EXT_TO_MIME: Readonly<Record<string, string>> = {
-  '.ts': 'text/typescript',
-  '.tsx': 'text/typescript',
-  '.js': 'text/javascript',
-  '.jsx': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.cjs': 'text/javascript',
-  '.json': 'application/json',
-  '.md': 'text/markdown',
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.pdf': 'application/pdf',
-  '.yaml': 'text/yaml',
-  '.yml': 'text/yaml',
-  '.toml': 'application/toml',
-  '.sh': 'text/x-shellscript',
-  '.py': 'text/x-python',
-  '.rs': 'text/rust',
-  '.go': 'text/x-go',
-};
-
-function guessMime(relPath: string, isBinary: boolean): string {
-  const ext = extname(relPath).toLowerCase();
-  const mapped = EXT_TO_MIME[ext];
-  if (mapped !== undefined) return mapped;
-  return isBinary ? 'application/octet-stream' : 'text/plain';
-}
-
-const EXT_TO_LANGUAGE: Readonly<Record<string, string>> = {
-  '.ts': 'typescript',
-  '.tsx': 'typescriptreact',
-  '.js': 'javascript',
-  '.jsx': 'javascriptreact',
-  '.mjs': 'javascript',
-  '.cjs': 'javascript',
-  '.json': 'json',
-  '.md': 'markdown',
-  '.html': 'html',
-  '.css': 'css',
-  '.yaml': 'yaml',
-  '.yml': 'yaml',
-  '.toml': 'toml',
-  '.sh': 'shellscript',
-  '.py': 'python',
-  '.rs': 'rust',
-  '.go': 'go',
-};
-
-function guessLanguageId(relPath: string): string | undefined {
-  return EXT_TO_LANGUAGE[extname(relPath).toLowerCase()];
-}
-
 registerScopedService(
   LifecycleScope.Session,
   ISessionFsService,
   SessionFsService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionFs',
 );

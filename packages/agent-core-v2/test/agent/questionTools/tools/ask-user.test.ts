@@ -11,17 +11,18 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import {
   AskUserQuestionInputSchema,
-  AskUserQuestionTool,
   type AskUserQuestionInput,
-} from '#/agent/questionTools/tools/ask-user';
+} from '#/agent/tools/ask-user-question/ask-user-question';
+import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   ISessionQuestionService,
   QuestionRequest,
   QuestionResult,
 } from '#/session/question/question';
-import type { QuestionBackgroundTask } from '#/agent/questionTools/tools/question-background-task';
+import type { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -73,7 +74,8 @@ function makeTool(
     id === 'q_test_task_id' ? { status: 'running' } : undefined,
   );
   const tasks = { registerTask, getTask } as unknown as IAgentTaskService;
-  const tool = new AskUserQuestionTool(question, telemetry, tasks);
+  const scopeContext = { agentId: 'main' } as unknown as IAgentScopeContext;
+  const tool = new AskUserQuestionTool(question, telemetry, tasks, scopeContext);
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 
@@ -255,7 +257,7 @@ describe('AskUserQuestionTool', () => {
           },
         ],
       },
-      { signal },
+      { signal, agentId: 'main' },
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
@@ -291,7 +293,7 @@ describe('AskUserQuestionTool', () => {
           }),
         ],
       }),
-      { signal },
+      { signal, agentId: 'main' },
     );
   });
 

@@ -196,9 +196,8 @@ const PLAN_SAVED_TO_RE = /\nPlan saved to: ([^\n]+)\n/;
 /**
  * Parses the ExitPlanMode result content string to recover the approval outcome
  * and optional plan path. Core-side templates live in
- * `packages/agent-core-v2/src/agent/plan/tools/exit-plan-mode.ts` (auto-approved
- * path) and `.../permissionPolicy/policies/exit-plan-mode-review-ask.ts`
- * (user-reviewed path):
+ * `packages/agent-core/src/tools/builtin/planning/exit-plan-mode.ts` and
+ * `.../agent/permission/policies/exit-plan-mode-review-ask.ts`:
  *   - Approved output starts with 'Exited plan mode.' and selected options
  *     are reported as 'Selected approach: <label>'. Older outputs may start
  *     with 'User approved option "<label>".' Plan-file mode may include

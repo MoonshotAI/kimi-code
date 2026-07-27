@@ -5,6 +5,7 @@
 
 import type { ValueCodecName } from '../index.js';
 import type { IndexDef } from '../index-manager.js';
+import type { CompoundIndexDef } from '../compound-index.js';
 import type { FsyncPolicy } from '../wal.js';
 
 /** Cross-shard write semantics.
@@ -89,6 +90,7 @@ export interface ScanOptions {
  *  when an index was created catches up later. */
 export interface ClusterIndexRegistry {
   indexes: { name: string; def: IndexDef }[];
+  compoundIndexes: { name: string; def: CompoundIndexDef }[];
   textIndexes: { name: string; fields: readonly string[] | null }[];
 }
 

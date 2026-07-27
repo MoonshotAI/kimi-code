@@ -1,5 +1,5 @@
 import { ErrorCodes, KimiError } from '#/errors';
-import type { McpServerConfig } from '#/config/schema';
+import { MAX_MCP_TIMEOUT_MS, type McpServerConfig } from '#/config/schema';
 import { log as defaultLog } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { Tool } from '@moonshot-ai/kosong';
@@ -40,6 +40,49 @@ export type McpStatusListener = (entry: McpServerEntry) => void;
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
+export const MCP_STARTUP_TIMEOUT_ENV = 'KIMI_MCP_STARTUP_TIMEOUT_MS';
+export const MCP_TOOL_TIMEOUT_ENV = 'KIMI_MCP_TOOL_TIMEOUT_MS';
+
+/** Parse an env override; anything but an integer from 1 to MAX_MCP_TIMEOUT_MS is ignored. */
+function parseTimeoutMsEnv(raw: string): number | undefined {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_MCP_TIMEOUT_MS
+    ? parsed
+    : undefined;
+}
+
+/**
+ * Resolve the global default MCP server startup (connect + tool discovery)
+ * timeout. Precedence: `KIMI_MCP_STARTUP_TIMEOUT_MS` (integer ms) →
+ * `configMs` (`[mcp] startup_timeout_ms`) → `undefined` (the manager's
+ * built-in default applies). A per-server `startupTimeoutMs` in `mcp.json`
+ * always wins over the resolved value.
+ */
+export function resolveMcpStartupTimeoutMs(configMs?: number): number | undefined {
+  const raw = process.env[MCP_STARTUP_TIMEOUT_ENV];
+  if (raw !== undefined) {
+    const parsed = parseTimeoutMsEnv(raw);
+    if (parsed !== undefined) return parsed;
+  }
+  return configMs;
+}
+
+/**
+ * Resolve the global default single MCP tool-call timeout. Precedence:
+ * `KIMI_MCP_TOOL_TIMEOUT_MS` (integer ms) → `configMs`
+ * (`[mcp] tool_timeout_ms`) → `undefined` (the client built-in default
+ * applies). A per-server `toolTimeoutMs` in `mcp.json` always wins over the
+ * resolved value.
+ */
+export function resolveMcpToolTimeoutMs(configMs?: number): number | undefined {
+  const raw = process.env[MCP_TOOL_TIMEOUT_ENV];
+  if (raw !== undefined) {
+    const parsed = parseTimeoutMsEnv(raw);
+    if (parsed !== undefined) return parsed;
+  }
+  return configMs;
+}
+
 type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
 
 export interface McpConnectionManagerOptions {
@@ -60,6 +103,18 @@ export interface McpConnectionManagerOptions {
    * `session.log` so MCP events land in the session log too.
    */
   readonly log?: Logger;
+  /**
+   * Global default startup (connect + tool discovery) timeout applied when a
+   * server entry does not set its own `startupTimeoutMs`. Falls back to the
+   * built-in default when unset.
+   */
+  readonly defaultStartupTimeoutMs?: number;
+  /**
+   * Global default single tool-call timeout applied when a server entry does
+   * not set its own `toolTimeoutMs`. Falls back to the client built-in when
+   * unset.
+   */
+  readonly defaultToolTimeoutMs?: number;
 }
 
 /**
@@ -267,11 +322,14 @@ export class McpConnectionManager {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
-    const timeoutMs = entry.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const timeoutMs =
+      entry.config.startupTimeoutMs ??
+      this.options.defaultStartupTimeoutMs ??
+      DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
     try {
-      const startupClient = this.createClient(entry.config, entry.name);
+      const startupClient = this.createClient(entry.config, entry.name, timeoutMs);
       client = startupClient;
       entry.client = startupClient;
       const discovered = await withTimeout(
@@ -343,19 +401,29 @@ export class McpConnectionManager {
     return entry.attemptId;
   }
 
-  private createClient(config: McpServerConfig, name: string): RuntimeMcpClient {
-    const toolCallTimeoutMs = config.toolTimeoutMs;
+  private createClient(
+    config: McpServerConfig,
+    name: string,
+    startupTimeoutMs: number,
+  ): RuntimeMcpClient {
+    const toolCallTimeoutMs = config.toolTimeoutMs ?? this.options.defaultToolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
+      return new StdioMcpClient(config, {
+        startupTimeoutMs,
+        toolCallTimeoutMs,
+        defaultCwd: this.options.stdioCwd,
+      });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {
+        startupTimeoutMs,
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: this.resolveOAuthProvider(config, name),
       });
     }
     return new HttpMcpClient(config, {
+      startupTimeoutMs,
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: this.resolveOAuthProvider(config, name),

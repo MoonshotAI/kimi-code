@@ -16,6 +16,8 @@
  * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
  */
 
+import { readFile } from 'node:fs/promises';
+
 import {
   IAgentGoalService,
   IAgentLifecycleService,
@@ -24,17 +26,25 @@ import {
   IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
+  IBootstrapService,
   IConfigService,
   IEventBus,
   IOAuthToolkit,
+  ISessionCronService,
   ISessionIndex,
   ISessionLifecycleService,
   ITelemetryService,
+  PRINT_MAX_TURNS_DEFAULT,
+  PRINT_WAIT_CEILING_S_DEFAULT,
+  agentCatalogRuntimeOptionsSeed,
+  applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
   hostRequestHeadersSeed,
   logSeed,
+  parseAgentFileText,
+  resolveAgentPath,
   resolveAgentTaskConfig,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -84,10 +94,14 @@ import {
 } from '../prompt-render';
 
 const PROMPT_UI_MODE = 'print';
-const DEFAULT_PRINT_WAIT_CEILING_S = 3600;
-const DEFAULT_PRINT_MAX_TURNS = 50;
 /** Re-check `goalActive` at least this often while waiting for goal turns. */
 const GOAL_WAIT_POLL_MS = 250;
+/**
+ * Slack on top of a scheduled cron fire time while waiting for the steered
+ * turn: covers the 1s tick poll interval plus fire → inject → turn-launch
+ * latency.
+ */
+const CRON_FIRE_GRACE_MS = 5_000;
 
 export async function runV2Print(
   opts: CLIOptions,
@@ -120,11 +134,20 @@ export async function runV2Print(
     // `--skillsDir` (v1 print parity): explicit skill dirs replace default
     // user / project discovery for this process.
     ...skillCatalogRuntimeOptionsSeed(opts.skillsDirs),
+    // `--agent-file`: explicit agent definition files, registered with the
+    // highest-precedence source for this process. Passed through unresolved —
+    // the engine expands `~` and resolves relative paths against the session
+    // workDir (mirroring `--skills-dir`).
+    ...agentCatalogRuntimeOptionsSeed(opts.agentFiles),
   ]);
   const auth = app.accessor.get(IOAuthToolkit);
 
   const configService = app.accessor.get(IConfigService);
   await configService.ready;
+  // Print-mode config defaults (task timeouts / loop step cap / subagent
+  // timeout → unbounded) before anything resolves a session; only keys the
+  // user left unset are filled, in the memory layer.
+  await applyPrintModeConfigDefaults(configService);
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
   let telemetryEnabled = true;
   try {
@@ -236,6 +259,63 @@ async function resolveNativeSession(
   const lifecycle = app.accessor.get(ISessionLifecycleService);
   const index = app.accessor.get(ISessionIndex);
 
+  // `--agent` selects a catalog profile by name; otherwise `--agent-file`
+  // implicitly selects the profile that file defines. The file
+  // is parsed here (fatal on error) so a bad file fails before any turn.
+  let agentProfileName = opts.agent;
+  const agentFile = opts.agentFiles[0];
+  if (agentProfileName === undefined && agentFile !== undefined) {
+    const agentFilePath = resolveAgentPath(
+      agentFile,
+      workDir,
+      app.accessor.get(IBootstrapService).osHomeDir,
+    );
+    let agentFileText: string;
+    try {
+      agentFileText = await readFile(agentFilePath, 'utf8');
+    } catch (error) {
+      throw new Error(
+        `Failed to read agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      agentProfileName = parseAgentFileText({
+        path: agentFilePath,
+        source: 'explicit',
+        text: agentFileText,
+      }).name;
+    } catch (error) {
+      throw new Error(
+        `Invalid agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  // `--agent` / `--agent-file` bind an explicit profile; without them the
+  // historical setModel path (default profile on first bind) is kept. A
+  // same-name re-select on a resumed session keeps the profile and only applies
+  // an explicitly requested model; a different name is rejected by the
+  // engine's first-bind guard inside `bind`.
+  const applyProfileSelection = async (
+    profile: IAgentProfileService,
+    model: string | undefined,
+  ): Promise<void> => {
+    if (agentProfileName !== undefined) {
+      if (profile.data().profileName === agentProfileName) {
+        if (model !== undefined) await profile.setModel(model);
+        return;
+      }
+      await profile.bind({
+        profile: agentProfileName,
+        model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),
+      });
+    } else if (model !== undefined) {
+      await profile.setModel(model);
+    }
+  };
+
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
     const session = await lifecycle.resume(id);
     if (session === undefined) {
@@ -273,9 +353,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    if (opts.model !== undefined) {
-      await profile.setModel(opts.model);
-    }
+    await applyProfileSelection(profile, opts.model);
     const currentModel = profile.getModel();
     const { restorePermission } = forceAuto(agent);
     return {
@@ -294,9 +372,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
       const profile = agent.accessor.get(IAgentProfileService);
-      if (opts.model !== undefined) {
-        await profile.setModel(opts.model);
-      }
+      await applyProfileSelection(profile, opts.model);
       const currentModel = profile.getModel();
       const { restorePermission } = forceAuto(agent);
       return {
@@ -314,9 +390,12 @@ async function resolveNativeSession(
   const session = await lifecycle.create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    mainAgentBinding: {
+      profile: agentProfileName ?? 'agent',
+      model,
+    },
   });
   const agent = await ensureMainAgent(session);
-  await agent.accessor.get(IAgentProfileService).setModel(model);
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
@@ -382,11 +461,12 @@ async function runNativeTurn(
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
+      const cronService = session.accessor.get(ISessionCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
-          ceilingS: taskConfig?.printWaitCeilingS ?? DEFAULT_PRINT_WAIT_CEILING_S,
-          maxTurns: taskConfig?.printMaxTurns ?? DEFAULT_PRINT_MAX_TURNS,
+          ceilingS: taskConfig?.printWaitCeilingS ?? PRINT_WAIT_CEILING_S_DEFAULT,
+          maxTurns: taskConfig?.printMaxTurns ?? PRINT_MAX_TURNS_DEFAULT,
           countPending: () => countPendingBackgroundTasks(session),
           drain: () => drainBackgroundTasks(session, taskConfig?.printWaitCeilingS),
           turnEndings,
@@ -394,6 +474,7 @@ async function runNativeTurn(
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
+          cronNextFireAt: () => cronService.getNextFireTime(),
         });
       } catch (error) {
         // A steered turn that fails fails the run (v1 parity). Anything else
@@ -476,6 +557,7 @@ function dispatchNativeEvent(
       return;
     case 'turn.step.retrying':
       writer.discardAssistant();
+      writer.writeRetrying(event);
       return;
     case 'assistant.delta':
       writer.writeAssistantDelta(event.delta);
@@ -590,54 +672,106 @@ export interface PrintBackgroundPolicyInput {
    * background policy.
    */
   readonly goalActive?: () => boolean;
+  /**
+   * Reports the next scheduled cron fire time (epoch ms), or `null` when no
+   * cron task has a future fire. While it returns non-null the policy keeps
+   * the process alive — the cron tick timer itself is unref'd — waiting for
+   * the fire to steer a new turn, then re-evaluating (a fired one-shot task
+   * disappears; a recurring one reports its advanced next fire). Cron
+   * liveness is independent of the background mode: it applies under
+   * `exit`/`drain` too (v1 parity). Omitted = no cron waiting.
+   */
+  readonly cronNextFireAt?: () => number | null;
 }
 
 /**
- * Apply the print-mode (`kimi -p`) background-task policy after the main turn
- * completes. Mirrors v1's `Session.handlePrintMainTurnCompleted`:
+ * Apply the print-mode (`kimi -p`) background-resource policy after the main
+ * turn completes. A single loop re-evaluates the Session's live resources in
+ * order on every round and stays alive while any of them is pending:
  *  - goal    : while a goal is `active`, keep waiting for its continuation
  *              turns (bounded by `ceilingS` as a safety net), regardless of
  *              the background mode; the goal summary drives the exit code.
- *  - 'exit'  : return immediately (default).
- *  - 'drain' : suppress + drain background tasks, then return.
- *  - 'steer' : while background tasks are still pending, stay alive so task
- *              completions steer new main turns; return once quiescent, or
- *              when the wall-clock ceiling (`ceilingS`) or the turn cap
- *              (`maxTurns`) is reached. A steered turn that does not complete
- *              fails the run.
+ *  - cron    : while `cronNextFireAt` reports a future fire, keep waiting —
+ *              the cron tick timer is unref'd, so the process must hold the
+ *              event loop itself (v1 parity, independent of the mode). The
+ *              fire steers a new turn; a steered turn that does not complete
+ *              fails the run. Each round re-reads the next fire time, so a
+ *              fired one-shot task ends the wait while a recurring one keeps
+ *              it. A fire time that stays unchanged and in the past across
+ *              two consecutive rounds means the tick is wedged: warn once and
+ *              stop cron waiting instead of spinning.
+ *  - mode    : 'exit'  → return immediately;
+ *              'drain' → suppress + drain background tasks, then return;
+ *              'steer' → while background tasks are still pending, stay alive
+ *              so task completions steer new main turns; return once
+ *              quiescent, or when the wall-clock ceiling (`ceilingS`) or the
+ *              turn cap (`maxTurns`) is reached. A steered turn that does not
+ *              complete fails the run.
+ * The steer ceiling deadline is set once on entry, so goal/cron waiting
+ * consumes the same budget.
  */
 export async function applyPrintBackgroundPolicy(
   input: PrintBackgroundPolicyInput,
 ): Promise<void> {
-  if (input.goalActive !== undefined) {
-    const goalDeadline = input.now() + input.ceilingS * 1000;
-    while (input.goalActive()) {
-      // Also wake on a short poll: a goal can leave `active` without any
-      // further turn.ended (budget block at a turn boundary, or a pause after
-      // a continuation-launch failure), which would otherwise hang the run
-      // until the ceiling.
+  const deadline = input.now() + input.ceilingS * 1000;
+  let turns = 0;
+  // Cron anti-spin guard: the last fire time seen already in the past. Two
+  // consecutive rounds with the same past fire time mean the tick never ran.
+  let lastPastFireAt: number | undefined;
+  let cronWedged = false;
+  for (;;) {
+    // (a) goal: while a goal is `active`, keep waiting for its continuation
+    // turns. Also wake on a short poll: a goal can leave `active` without any
+    // further turn.ended (budget block at a turn boundary, or a pause after a
+    // continuation-launch failure), which would otherwise hang the run until
+    // the ceiling. A continuation turn that does not complete pauses/blocks
+    // the goal, so the condition exits on the next check.
+    while (input.goalActive?.() === true) {
       const ended = await input.turnEndings.next(
-        Math.min(goalDeadline - input.now(), GOAL_WAIT_POLL_MS),
+        Math.min(deadline - input.now(), GOAL_WAIT_POLL_MS),
         input.skipTurnId,
       );
-      if (ended === null && input.now() >= goalDeadline) {
+      if (ended === null && input.now() >= deadline) {
         input.warn(`print goal wait ceiling reached (${input.ceilingS}s), finishing`);
         return;
       }
-      // A continuation turn that does not complete pauses/blocks the goal, so
-      // the loop condition exits on the next check.
     }
-  }
-  if (input.mode === 'exit') return;
-  if (input.mode === 'drain') {
-    await input.drain();
-    return;
-  }
 
-  // 'steer'
-  const deadline = input.now() + input.ceilingS * 1000;
-  let turns = 0;
-  for (;;) {
+    // (b) cron: keep the process alive until the pending fire steered a turn
+    // (one-shot tasks vanish after firing; recurring ones advance their next
+    // fire), then re-evaluate from the top.
+    if (!cronWedged && input.cronNextFireAt !== undefined) {
+      const fireAt = input.cronNextFireAt();
+      if (fireAt !== null) {
+        if (fireAt <= input.now() && lastPastFireAt === fireAt) {
+          cronWedged = true;
+          input.warn(
+            'print cron wait: next fire time stuck in the past; cron tick appears wedged, giving up on cron',
+          );
+        } else {
+          if (fireAt <= input.now()) lastPastFireAt = fireAt;
+          const ended = await input.turnEndings.next(
+            Math.max(fireAt - input.now(), 0) + CRON_FIRE_GRACE_MS,
+            input.skipTurnId,
+          );
+          if (ended !== null && ended.reason !== 'completed') {
+            throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
+          }
+          // Fire observed (or its grace elapsed without a turn): re-read the
+          // next fire time from the top.
+          continue;
+        }
+      }
+    }
+
+    // (c) background-task mode.
+    if (input.mode === 'exit') return;
+    if (input.mode === 'drain') {
+      await input.drain();
+      return;
+    }
+
+    // 'steer'
     turns += 1;
     if (input.now() >= deadline) {
       input.warn(`print steer ceiling reached (${input.ceilingS}s), finishing`);
@@ -682,7 +816,7 @@ async function drainBackgroundTasks(
   const ceilingMs =
     typeof ceilingS === 'number' && Number.isFinite(ceilingS) && ceilingS > 0
       ? ceilingS * 1000
-      : DEFAULT_PRINT_WAIT_CEILING_S * 1000;
+      : PRINT_WAIT_CEILING_S_DEFAULT * 1000;
 
   const deadline = Date.now() + ceilingMs;
   const seen = new Set<string>();

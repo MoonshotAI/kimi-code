@@ -26,14 +26,12 @@ import { WebSocket, type RawData } from 'ws';
 import { startServer, type RunningServer } from '../src/start';
 
 let tmpDir: string;
-let lockPath: string;
 let bridgeHome: string;
 let workspace: string;
 let server: RunningServer | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kap-fswatch-'));
-  lockPath = join(tmpDir, 'lock');
   bridgeHome = mkdtempSync(join(tmpdir(), 'kap-fswatch-home-'));
   workspace = join(tmpDir, 'workspace');
   mkdirSync(workspace, { recursive: true });
@@ -58,7 +56,6 @@ async function boot(): Promise<RunningServer> {
     host: '127.0.0.1',
     port: 0,
     homeDir: bridgeHome,
-    lockPath,
     logger: pino({ level: 'silent' }),
     disableAuth: true,
   });

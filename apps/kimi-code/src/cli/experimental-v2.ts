@@ -7,7 +7,7 @@
  * `cli/update/rollout.ts`) because the CLI must not depend on the core flag
  * registry. Unset / any non-truthy value keeps the v1 harness.
  *
- * Note: `kimi server run` always boots kap-server (the agent-core-v2 engine
+ * Note: `kimi web` always boots kap-server (the agent-core-v2 engine
  * server) — it no longer consults this switch.
  */
 

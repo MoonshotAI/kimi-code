@@ -1,5 +1,5 @@
 /**
- * `/api/v2` dispatcher — resolves the scope + Service + method from a request
+ * `/api/v1/debug` dispatcher — resolves the scope + Service + method from a request
  * and calls it. No facade: Services are reached directly through the scope
  * tree, the channel registry decides which Services are exposed at all, and the
  * method is invoked by reflection (VS Code's `ProxyChannel.fromService` model).
@@ -17,14 +17,14 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopeKind } from './channel';
-import { resolveChannel } from './channelRegistry';
+import { resolveAnyScopedServiceId } from './channelRegistry';
 import { assertSerializable } from './errors';
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
 
 /**
  * Channel name → identifier resolution used to gate which Services are
- * reachable. `/api/v2` passes the whitelist registry (default);
- * `/api/v1/debug` passes the full scoped-registry lookup (dev only).
+ * reachable. The single RPC surface (`/api/v1/debug`) resolves against the
+ * full scoped DI registry (default).
  */
 export type ChannelLookup = (name: string) => ServiceIdentifier<unknown> | undefined;
 
@@ -82,7 +82,7 @@ export async function resolveService(
   scopeKind: ScopeKind,
   params: Record<string, string>,
   serviceName: string,
-  lookup: ChannelLookup = resolveChannel,
+  lookup: ChannelLookup = resolveAnyScopedServiceId,
 ): Promise<object> {
   const scope = await resolveScope(core, scopeKind, params);
   if (scope === undefined) {
@@ -123,7 +123,7 @@ export async function dispatch(
   serviceName: string,
   method: string,
   arg: unknown,
-  lookup: ChannelLookup = resolveChannel,
+  lookup: ChannelLookup = resolveAnyScopedServiceId,
 ): Promise<unknown> {
   const service = await resolveService(core, scopeKind, params, serviceName, lookup);
   const member = (service as Record<string, unknown>)[method];

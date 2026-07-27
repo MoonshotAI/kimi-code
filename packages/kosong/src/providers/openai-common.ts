@@ -6,6 +6,7 @@ import {
   normalizeAPIStatusError,
   parseRetryAfterMs,
   parseTraceId,
+  throwIfAbortError,
 } from '#/errors';
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
@@ -90,8 +91,17 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
 
 /**
  * Convert an OpenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
+ * The FIRST line is the abort guard: a user cancellation (SDK
+ * `APIUserAbortError`, bare `AbortError`, the standard abort DOMException) is
+ * THROWN as the standard abort shape at the very front of the classification
+ * chain — it can never be converted into, nor returned as, a retryable
+ * provider error.
  */
 export function convertOpenAIError(error: unknown): ChatProviderError {
+  // Abort guard FIRST: throws (never returns) the standard abort DOMException
+  // for any abort shape, so a user cancellation is never misclassified as a
+  // retryable provider failure.
+  throwIfAbortError(error);
   if (error instanceof ChatProviderError) {
     return error;
   }

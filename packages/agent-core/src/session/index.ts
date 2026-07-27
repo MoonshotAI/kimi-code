@@ -29,6 +29,8 @@ import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
   McpOAuthService,
+  resolveMcpStartupTimeoutMs,
+  resolveMcpToolTimeoutMs,
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
@@ -49,7 +51,7 @@ import {
   type SkillRoot,
   type SkillSummary,
 } from '../skill';
-import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
+import { noopTelemetryClient, type TelemetryClient, withTelemetryProperties } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
@@ -232,6 +234,8 @@ export class Session {
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
+      defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
+      defaultToolTimeoutMs: resolveMcpToolTimeoutMs(options.config?.mcp?.toolTimeoutMs),
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
@@ -941,7 +945,7 @@ export class Session {
       subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
-      telemetry: this.telemetry,
+      telemetry: withTelemetryProperties(this.telemetry, { agent_id: id }),
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,

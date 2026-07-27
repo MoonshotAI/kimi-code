@@ -12,9 +12,10 @@
  * the provider's `baseUrl`. The explicit config wins over the managed
  * derivation. Both use the host's Kimi identity headers (`IHostRequestHeaders`,
  * mirroring v1's `kimiRequestHeaders`) as default headers. When neither source
- * is configured it yields `undefined` so the self-registering `WebSearch` tool
- * stays hidden. Owns no tool registration — the `WebSearch` tool self-registers
- * via `registerTool(...)` and reads this service from the Agent-scope accessor.
+ * is configured it yields `undefined` so the contributed `WebSearch` tool
+ * stays hidden. Owns no tool registration — the `WebSearch` tool contributes
+ * itself via `registerAgentToolService(...)` and reads this service from the
+ * Agent-scope accessor.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
  */
@@ -24,16 +25,16 @@ import {
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { IProviderService } from '#/app/provider/provider';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IProviderService } from '#/kosong/provider/provider';
+import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
-import type { WebSearchProvider } from './tools/web-search';
+import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { IWebSearchProviderService } from './webSearch';
 
 export class WebSearchProviderService implements IWebSearchProviderService {
@@ -70,7 +71,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
 
   private fromManagedOAuth(): WebSearchProvider | undefined {
     const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
-    if (provider?.type !== 'kimi' || provider.oauth === undefined) {
+    if (provider === undefined || !isOAuthCatalogVendor(provider.type) || provider.oauth === undefined) {
       return undefined;
     }
     const tokenProvider = this.oauth.resolveTokenProvider(
@@ -99,6 +100,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebSearchProviderService,
   WebSearchProviderService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'auth',
 );

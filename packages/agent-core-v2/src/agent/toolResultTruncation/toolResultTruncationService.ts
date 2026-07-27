@@ -9,12 +9,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { join } from 'pathe';
 import {
@@ -115,6 +114,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolResultTruncationService,
   ToolResultTruncationService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolResultTruncation',
 );

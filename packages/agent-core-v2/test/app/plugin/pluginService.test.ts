@@ -17,9 +17,9 @@ import path from 'node:path';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -27,7 +27,7 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
-import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
@@ -152,7 +152,7 @@ describe('PluginService (plugin boundary)', () => {
       LifecycleScope.App,
       IPluginService,
       PluginService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'plugin',
     );
     readInstalled.mockClear();

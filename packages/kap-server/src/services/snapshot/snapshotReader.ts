@@ -27,7 +27,7 @@ import {
   ISessionIndex,
   ISessionInteractionService,
   ISessionLifecycleService,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   normalizeSessionMeta,
   reduceContextTranscript,
   toProtocolMessage,
@@ -157,7 +157,7 @@ export class SnapshotReader implements ISnapshotReader {
     const { core, homeDir } = this.deps;
     const summary = await core.accessor.get(ISessionIndex).get(sid);
     if (summary === undefined) throw new SnapshotNotFoundError(sid);
-    const workspace = await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId);
+    const workspace = await core.accessor.get(IWorkspaceService).get(summary.workspaceId);
     if (workspace === undefined) throw new SnapshotNotFoundError(sid);
 
     const sessionDir = join(homeDir, SESSIONS_ROOT, summary.workspaceId, sid);

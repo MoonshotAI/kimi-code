@@ -56,7 +56,6 @@ describe('RestGateway', () => {
       abort: () => true,
       inject: () => Promise.resolve(undefined),
       retry: () => Promise.resolve(undefined),
-      undo: () => 0,
       clear: () => {},
       hooks: createHooks(['onBeforeSubmitPrompt']) as IAgentPromptService['hooks'],
     };
@@ -79,6 +78,7 @@ describe('RestGateway', () => {
       get: (id) => (id === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),
+      broadcastPermissionMode: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

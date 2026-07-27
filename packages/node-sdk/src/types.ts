@@ -130,6 +130,12 @@ export interface ResumeSessionInput {
   readonly additionalDirs?: readonly string[];
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
+  /**
+   * Limit each returned agent replay to the most recent N user turns. Omit to
+   * return the full replay. Lets UI callers that only render the tail avoid
+   * transferring the entire history over the RPC boundary.
+   */
+  readonly replayTurnLimit?: number;
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 

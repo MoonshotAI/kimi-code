@@ -156,7 +156,7 @@ export type AppMessageContent =
   | { type: 'unknown'; raw: unknown };
 
 export type ImageSource =
-  | { kind: 'url'; url: string }
+  | { kind: 'url'; url: string; id?: string }
   | { kind: 'base64'; mediaType: string; data: string }
   | { kind: 'file'; fileId: string };
 
@@ -426,7 +426,7 @@ export type AppEvent =
       lastTurnReason?: 'completed' | 'cancelled' | 'failed';
     }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
-  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
+  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean; thinking?: string }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
   | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }

@@ -39,6 +39,7 @@ export function wireClone<T>(value: T): T {
 
 export interface MemoryDispatcher {
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
+  stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
   listen(
     scope: ScopeRef,
     source: EventSourceRef,
@@ -155,6 +156,96 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       const clonedArgs = args.map(wireClone);
       const result = await (member as (...a: unknown[]) => unknown).apply(instance, clonedArgs);
       return wireClone(result);
+    },
+
+    stream(scope, service, method, args): AsyncIterable<unknown> {
+      // Special case: modelResolver.generate routes to
+      // getRequester(modelId).request(input, signal, params) because the
+      // catalog has no `generate` method — the facade synthesises the call.
+      if (service === 'modelResolver' && method === 'generate') {
+        return {
+          [Symbol.asyncIterator]() {
+            let source: AsyncIterator<unknown> | undefined;
+            let started: Promise<void> | undefined;
+            const controller = new AbortController();
+
+            const ensureStarted = (): Promise<void> => {
+              started ??= (async () => {
+                const resolved = await resolveScope(scope);
+                const catalog = resolveService(resolved, 'modelResolver');
+                const [modelId, input, params] = args;
+                const requester = (catalog as { getRequester(id: string): { request(...a: unknown[]): AsyncIterable<unknown> } })
+                  .getRequester(modelId as string);
+                const iterable = requester.request(
+                  wireClone(input),
+                  controller.signal,
+                  wireClone(params),
+                );
+                source = iterable[Symbol.asyncIterator]();
+              })();
+              return started;
+            };
+
+            return {
+              async next() {
+                await ensureStarted();
+                const result = await source!.next();
+                if (result.done) return { done: true, value: undefined };
+                return { done: false, value: wireClone(result.value) };
+              },
+              async return(value?: unknown) {
+                controller.abort();
+                await source?.return?.(value);
+                return { done: true as const, value: undefined };
+              },
+            };
+          },
+        };
+      }
+
+      // The underlying service method returns an AsyncIterable; we wire-clone
+      // each yielded chunk so in-process consumers observe the same data as
+      // networked ones.
+      return {
+        [Symbol.asyncIterator]() {
+          let source: AsyncIterator<unknown> | undefined;
+          let started: Promise<void> | undefined;
+
+          const ensureStarted = (): Promise<void> => {
+            started ??= (async () => {
+              const resolved = await resolveScope(scope);
+              const instance = resolveService(resolved, service);
+              const member = instance[method];
+              if (member === undefined) {
+                throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);
+              }
+              if (typeof member !== 'function') {
+                throw new RPCError(REQUEST_INVALID, `not a streaming method: ${service}.${method}`);
+              }
+              const clonedArgs = args.map(wireClone);
+              const iterable = (member as (...a: unknown[]) => unknown).apply(
+                instance,
+                clonedArgs,
+              ) as AsyncIterable<unknown>;
+              source = iterable[Symbol.asyncIterator]();
+            })();
+            return started;
+          };
+
+          return {
+            async next() {
+              await ensureStarted();
+              const result = await source!.next();
+              if (result.done) return { done: true, value: undefined };
+              return { done: false, value: wireClone(result.value) };
+            },
+            async return(value?: unknown) {
+              await source?.return?.(value);
+              return { done: true as const, value: undefined };
+            },
+          };
+        },
+      };
     },
 
     listen(scope, source, handler, onError) {

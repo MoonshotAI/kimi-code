@@ -25,9 +25,10 @@
  *                     wrapping), clear its pending id
  *   - `step.end`    → settle the assistant
  * "Settle" closes any tool exchange left open (interrupted result messages),
- * then drops the partial assistant when it is empty (no content, no tool
- * calls — an empty assistant only trips provider message validation) and
- * seals it (`partial: undefined`) when it carries output. v1 never produced
+ * then drops the partial assistant when nothing sendable was recorded (no
+ * tool calls; every content part vacuous — an output-free assistant only
+ * trips provider message validation) and seals it (`partial: undefined`)
+ * when it carries output. v1 never produced
  * `step.begin` without `step.end` (its retries stayed inside one request), so
  * the drop/seal rule is the v2 extension that makes loop-level retries — a
  * retried attempt is its own `step.begin` — replay to the same history the
@@ -42,11 +43,12 @@
  * concurrent replays of different agent scopes never share fold state.
  */
 
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { FinishReason } from '#/kosong/contract/provider';
+import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import type { ContextMessage } from './types';
+import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
@@ -215,7 +217,7 @@ function settleOpenStep(
   const index = findOpenAssistantIndex(closed);
   if (index === -1) return closed;
   const open = closed[index]!;
-  if (open.content.length === 0 && open.toolCalls.length === 0) {
+  if (open.toolCalls.length === 0 && open.content.every(isVacuousContentPart)) {
     return [...closed.slice(0, index), ...closed.slice(index + 1)];
   }
   const next = closed.slice();

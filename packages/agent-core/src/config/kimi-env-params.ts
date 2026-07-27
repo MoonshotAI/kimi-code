@@ -51,7 +51,7 @@ export function resolveKimiEnvThinkingEffort(
   env: Env = process.env,
 ): ThinkingEffort | undefined {
   if (!kimiProvider || thinkingEffort === 'off') return undefined;
-  const effort = env['KIMI_MODEL_THINKING_EFFORT']?.trim();
+  const effort = env['KIMI_MODEL_THINKING_EFFORT']?.trim().toLowerCase();
   return effort === undefined || effort.length === 0 ? undefined : effort;
 }
 

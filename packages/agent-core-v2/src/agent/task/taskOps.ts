@@ -1,8 +1,9 @@
 /**
- * `task` domain (L5) — wire Model (`TaskModel`) and the `task.started`
- * (`taskStarted`) / `task.terminated` (`taskTerminated`) Ops that record the
- * durable task-info registry, plus the `task.started` / `task.terminated` edge
- * events declared on `DomainEventMap` and derived from the Ops via `toEvent`.
+ * `task` domain (L5) — wire Model (`TaskModel`) and the persisted
+ * `task.started` (`taskStarted`) / `task.terminated` (`taskTerminated`) Ops
+ * that record the durable task-info registry, plus the `task.started` /
+ * `task.terminated` edge events declared on `DomainEventMap` and derived from
+ * the Ops via `toEvent`.
  *
  * The Model is the replayable map of `taskId -> AgentTaskInfo` (initial empty)
  * that rebuilds the restored "ghost" tasks from the persisted `task.*` records
@@ -13,9 +14,14 @@
  * carries no non-determinism. The live `ManagedTask` (the running process, its
  * `AbortController`, output ring, timers) stays OUT of the Model (live-only);
  * the Model is the restore seed for `ghosts`, applied by the service's single
- * `wire.hooks.onDidRestore` hook before disk load + reconcile. The Ops are
- * live-only because task records are not v1 wire types; the durable registry
- * lives in `AgentTaskPersistence` and is reconciled on resume. Consumed by the
+ * `wire.hooks.onDidRestore` hook before disk load + reconcile. The Ops persist
+ * so the wire journal carries the full task lifecycle: replay rebuilds the
+ * Model as the ghost seed, and a cold transcript fold can rebuild task
+ * entities straight from the records. `task.terminated` additionally carries
+ * an optional bounded `outputTail` snapshot of the task's retained output for
+ * that fold; the tail is fold-only and never enters the Model.
+ * `AgentTaskPersistence` (per-task JSON documents + output logs) stays the
+ * full-fidelity registry and is reconciled on resume. Consumed by the
  * Agent-scope `taskService`.
  */
 
@@ -36,18 +42,22 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-const taskInfoSchema = z.object({ info: z.custom<AgentTaskInfo>() });
+const taskStartedSchema = z.object({ info: z.custom<AgentTaskInfo>() });
+
+const taskTerminatedSchema = z.object({
+  info: z.custom<AgentTaskInfo>(),
+  outputTail: z.string().optional(),
+});
 
 declare module '#/wire/types' {
-  interface TransientOpMap {
+  interface PersistedOpMap {
     'task.started': typeof taskStarted;
     'task.terminated': typeof taskTerminated;
   }
 }
 
 export const taskStarted = TaskModel.defineOp('task.started', {
-  schema: taskInfoSchema,
-  persist: false,
+  schema: taskStartedSchema,
   apply: (s, p) => {
     const next = new Map(s);
     next.set(p.info.taskId, p.info);
@@ -57,8 +67,7 @@ export const taskStarted = TaskModel.defineOp('task.started', {
 });
 
 export const taskTerminated = TaskModel.defineOp('task.terminated', {
-  schema: taskInfoSchema,
-  persist: false,
+  schema: taskTerminatedSchema,
   apply: (s, p) => {
     const next = new Map(s);
     next.set(p.info.taskId, p.info);

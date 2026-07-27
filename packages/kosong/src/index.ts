@@ -43,8 +43,16 @@ export {
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
+  resolveCatalogImport,
 } from './catalog';
-export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
+export type {
+  Catalog,
+  CatalogModel,
+  CatalogModelEntry,
+  CatalogProviderEntry,
+  CatalogImportInvalidReason,
+  CatalogImportResolution,
+} from './catalog';
 
 // Core functions
 export { generate } from './generate';
@@ -68,6 +76,8 @@ export {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  createAbortError,
+  isAbortError,
   isContextOverflowStatusError,
   isImageFormatError,
   isProviderRateLimitError,
@@ -76,6 +86,7 @@ export {
   isRequestTooLargeStatusError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
+  throwIfAbortError,
 } from './errors';
 
 /**

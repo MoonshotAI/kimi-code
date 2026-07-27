@@ -1,7 +1,7 @@
 /**
  * `permissionMode` domain (L3) — `IAgentPermissionModeService` implementation.
  *
- * Holds the agent's permission mode (`manual` / `auto`) in the `wire`
+ * Holds the agent's permission mode (`manual` / `yolo` / `auto`) in the `wire`
  * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
  * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
  * `setMode` emits `onDidChangeMode` after an actual change, and mode-aware
@@ -12,8 +12,7 @@
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { IWireService } from '#/wire/wire';
@@ -55,6 +54,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionModeService,
   AgentPermissionModeService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'permissionMode',
 );

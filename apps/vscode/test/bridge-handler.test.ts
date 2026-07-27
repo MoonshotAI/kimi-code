@@ -25,6 +25,7 @@ const host = vi.hoisted(() => {
     homeDir: "/tmp/kimi-code-test-home",
     close: vi.fn(async () => undefined),
     getConfig: vi.fn(),
+    setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     resumeSession: vi.fn(),
     forkSession: vi.fn(),
@@ -424,6 +425,91 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       expect.stringContaining("Session state is invalid JSON at line 4"),
     );
     expect(next).toEqual({ id: "rpc-2", result: { ok: true } });
+  });
+});
+
+describe("Webview config saves (thinking effort persistence parity with the TUI)", () => {
+  const effortModel = {
+    provider: "managed:kimi-code",
+    model: "reasoning",
+    supportEfforts: ["low", "high", "max"],
+    defaultEffort: "high",
+  };
+
+  function mockConfig(thinking?: { enabled: boolean; effort?: string }) {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi/reasoning",
+      thinking,
+      models: { "kimi/reasoning": effortModel },
+    } as never);
+  }
+
+  it("persists a non-top effort as the global default", async () => {
+    mockConfig();
+
+    const result = await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "high" } },
+      "view-1",
+    );
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true, effort: "high" },
+    });
+  });
+
+  it("keeps the model's top declared tier session-only", async () => {
+    mockConfig();
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "max" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true },
+    });
+  });
+
+  it("persists the concrete effort when the model's levels are unknown", async () => {
+    host.harness.getConfig.mockResolvedValue({ defaultModel: "other/model", models: {} });
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/model", thinking: true, effort: "max" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "custom/model",
+      thinking: { enabled: true, effort: "max" },
+    });
+  });
+
+  it("leaves the stored effort alone when the pick re-confirms the active effort", async () => {
+    mockConfig({ enabled: false, effort: "low" });
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "high", effortChanged: false } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true },
+    });
+  });
+
+  it("skips the config write entirely when nothing changed", async () => {
+    mockConfig({ enabled: true, effort: "high" });
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "high" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
   });
 });
 

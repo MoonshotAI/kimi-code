@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { contextAppendMessage, contextUndo } from '#/agent/contextMemory/contextOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import {
@@ -10,6 +11,7 @@ import {
   planModeCancel,
   planModeEnter,
   planModeExit,
+  planRevision,
 } from '#/agent/plan/planOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -59,20 +61,20 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
 
 describe('plan ops (wire-backed)', () => {
   it('enter/cancel/exit drive active state and persist flat records', async () => {
-    expect(wire.getModel(PlanModel).active).toBe(false);
+    expect(wire.getModel(PlanModel).current.active).toBe(false);
 
     wire.dispatch(planModeEnter({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({
+    expect(wire.getModel(PlanModel).current).toEqual({
       active: true,
       id: 'p1',
     });
 
     wire.dispatch(planModeCancel({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     wire.dispatch(planModeEnter({ id: 'p2' }));
     wire.dispatch(planModeExit({}));
-    expect(wire.getModel(PlanModel).active).toBe(false);
+    expect(wire.getModel(PlanModel).current.active).toBe(false);
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -93,11 +95,11 @@ describe('plan ops (wire-backed)', () => {
   it('cancel and exit both deactivate plan mode but emit distinct record types', async () => {
     wire.dispatch(planModeEnter({ id: 'p1' }));
     wire.dispatch(planModeCancel({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     wire.dispatch(planModeEnter({ id: 'p2' }));
     wire.dispatch(planModeExit({ id: 'p2' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -121,6 +123,25 @@ describe('plan ops (wire-backed)', () => {
     expect(wire.getModel(PlanModel)).toBe(active);
   });
 
+  it('ignores an invalid undo count without corrupting checkpoint state', () => {
+    wire.dispatch(
+      contextAppendMessage({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep me' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      }),
+    );
+    const checkpointed = wire.getModel(PlanModel);
+
+    wire.dispatch(contextUndo({ count: 0.5 }));
+
+    expect(wire.getModel(PlanModel)).toBe(checkpointed);
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
+  });
+
   it('replay rebuilds active state silently', async () => {
     wire.dispatch(planModeEnter({ id: 'p1' }));
     const records = await readRecords();
@@ -136,7 +157,7 @@ describe('plan ops (wire-backed)', () => {
       testWireScope(SCOPE, 'plan-replay'),
       records,
     );
-    expect(host.wire.getModel(PlanModel)).toEqual({
+    expect(host.wire.getModel(PlanModel).current).toEqual({
       active: true,
       id: 'p1',
     });
@@ -152,6 +173,137 @@ describe('plan ops (wire-backed)', () => {
       { type: 'plan_mode.cancel', id: 'p1' },
       ],
     );
-    expect(cancelled.wire.getModel(PlanModel).active).toBe(false);
+    expect(cancelled.wire.getModel(PlanModel).current.active).toBe(false);
+  });
+
+  it('plan.revision persists a flat reference record and advances the per-id counter', async () => {
+    wire.dispatch(planModeEnter({ id: 'p1' }));
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    expect(wire.getModel(PlanModel).current).toEqual({
+      active: true,
+      id: 'p1',
+      revisionCount: { p1: 1 },
+    });
+
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 2,
+        path: 'sessions/w/s/agents/main/plan/p1/v2.md',
+        sha256: 'sha-b',
+        bytes: 20,
+      }),
+    );
+    expect(wire.getModel(PlanModel).current.revisionCount).toEqual({ p1: 2 });
+
+    const records = await readRecords();
+    expect(records.map((record) => record.type)).toEqual([
+      'plan_mode.enter',
+      'plan.revision',
+      'plan.revision',
+    ]);
+    expect(records[1]).toEqual(
+      expect.objectContaining({
+        type: 'plan.revision',
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+        time: expect.any(Number),
+      }),
+    );
+    expect(records.every((record) => 'payload' in record === false)).toBe(true);
+  });
+
+  it('keeps the revision counter across the lifecycle and emits the event only live', async () => {
+    const host = buildHost('plan-revision-events');
+    const emissions: unknown[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e);
+    });
+
+    host.wire.dispatch(planModeEnter({ id: 'p1' }));
+    host.wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    host.wire.dispatch(planModeExit({}));
+    expect(host.wire.getModel(PlanModel).current).toEqual({
+      active: false,
+      revisionCount: { p1: 1 },
+    });
+
+    // Re-entering the same plan id continues the counter instead of
+    // restarting it, so later revisions never overwrite earlier blobs.
+    host.wire.dispatch(planModeEnter({ id: 'p1' }));
+    expect(host.wire.getModel(PlanModel).current.revisionCount).toEqual({ p1: 1 });
+
+    expect(
+      emissions.filter((e) => (e as { type: string }).type === 'plan.revision'),
+    ).toEqual([
+      {
+        type: 'plan.revision',
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      },
+    ]);
+  });
+
+  it('replay restores the revision counter silently', async () => {
+    wire.dispatch(planModeEnter({ id: 'p1' }));
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 2,
+        path: 'sessions/w/s/agents/main/plan/p1/v2.md',
+        sha256: 'sha-b',
+        bytes: 20,
+      }),
+    );
+    const records = await readRecords();
+
+    const host = buildHost('plan-revision-replay');
+    const emissions: string[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e.type);
+    });
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'plan-revision-replay'),
+      records,
+    );
+    expect(host.wire.getModel(PlanModel).current).toEqual({
+      active: true,
+      id: 'p1',
+      revisionCount: { p1: 2 },
+    });
+    expect(emissions).toEqual([]);
   });
 });

@@ -13,14 +13,18 @@
  * UserPromptSubmit hook results through `contextMemory`, drives Stop hook
  * continuations by enqueueing a mergeable `StepRequest` onto `loop`, and
  * passes the current session id from `sessionContext`
- * into hook runner payloads.
+ * into hook runner payloads. The one mutable latch
+ * (`stopHookContinuationUsed`, the Stop-hook re-entry guard) is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it; the
+ * hook listener registrations stay ordinary disposables on the instance.
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -32,16 +36,14 @@ import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 import {
-  IAgentPermissionGate,
-} from '#/agent/permissionGate/permissionGate';
-import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt/prompt';
 import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -67,10 +69,13 @@ declare module '#/app/event/eventBus' {
   }
 }
 
+export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
+  'externalHooks.stopHookContinuationUsed',
+  () => false,
+);
+
 export class AgentExternalHooksService extends Disposable implements IAgentExternalHooksService {
   declare readonly _serviceBrand: undefined;
-
-  private stopHookContinuationUsed = false;
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
@@ -78,9 +83,19 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(externalHooksStopHookContinuationUsedKey);
     this.registerListeners();
+  }
+
+  private get stopHookContinuationUsed(): boolean {
+    return this.states.get(externalHooksStopHookContinuationUsedKey);
+  }
+
+  private set stopHookContinuationUsed(value: boolean) {
+    this.states.set(externalHooksStopHookContinuationUsedKey, value);
   }
 
   private fireAndForget(
@@ -100,12 +115,10 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   }
 
   private registerListeners(): void {
+    this.registerPermissionHooks();
+
     this.registerToolHooks(
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
-    );
-
-    this.registerPermissionHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPermissionGate)),
     );
 
     this.registerPromptHooks(
@@ -129,13 +142,11 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register('externalHooks', async (ctx, next) => {
-        const reason = await this.runPreToolUse(ctx);
+      toolExecutor.onBeforeExecuteTool(async (event) => {
+        const reason = await this.runPreToolUse(event);
         if (reason !== undefined) {
-          ctx.decision = { block: true, reason };
-          return;
+          event.veto(denyToolExecution(reason));
         }
-        await next();
       }),
     );
     this._register(
@@ -146,7 +157,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     );
   }
 
-  private registerPermissionHooks(_permission: IAgentPermissionGate): void {
+  private registerPermissionHooks(): void {
     this._register(
       this.eventBus.subscribe('permission.approval.requested', (e) => {
         const { type: _type, ...inputData } = e;
@@ -233,7 +244,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     );
   }
 
-  private async runPreToolUse(ctx: ToolBeforeExecuteContext): Promise<string | undefined> {
+  private async runPreToolUse(ctx: ResolvedToolExecutionHookContext): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
     const toolInput = isPlainRecord(ctx.args) ? ctx.args : {};
     const block = await this.runner.triggerBlock('PreToolUse', {
@@ -404,6 +415,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentExternalHooksService,
   AgentExternalHooksService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'externalHooks',
 );

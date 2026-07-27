@@ -19,6 +19,7 @@ const HOST_COMMANDS = new Set([
   "clear",
   "reset",
   "yolo",
+  "auto",
   "afk",
   "plan",
   "add-dir",
@@ -84,6 +85,7 @@ export async function runHostSlashCommand(
         case "yolo":
           await toggleLegacyPermission(runtime, "yolo", emit);
           break;
+        case "auto":
         case "afk":
           await toggleLegacyPermission(runtime, "afk", emit);
           break;
@@ -120,17 +122,17 @@ async function toggleLegacyPermission(
 
   if (kind === "yolo") {
     emit(flags.yolo
-      ? "You only live once! All actions will be auto-approved."
+      ? "You only live once! Tool actions will be auto-approved; the agent may still ask questions."
       : flags.afk
-        ? "Yolo disabled, but afk is still on — tool calls remain auto-approved."
+        ? "Yolo disabled, but Auto is still on — tool calls remain auto-approved."
         : "You only die once! Actions will require approval.");
     return;
   }
   emit(flags.afk
-    ? "afk mode enabled. Questions will be auto-dismissed and tool calls auto-approved."
+    ? "Auto mode enabled. Questions will be auto-dismissed and tool calls auto-approved."
     : flags.yolo
-      ? "afk mode disabled. You are back at the keyboard. Yolo is still on."
-      : "afk mode disabled. You are back at the keyboard.");
+      ? "Auto mode disabled. You are back at the keyboard. Yolo is still on."
+      : "Auto mode disabled. You are back at the keyboard.");
 }
 
 async function runPlanCommand(

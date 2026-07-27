@@ -16,12 +16,14 @@
  */
 
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
+import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
+  private readonly ownerPromptId: string;
 
   constructor(
     message: ContextMessage,
@@ -30,7 +32,12 @@ abstract class UserMessageStepRequest extends StepRequest {
     options?: StepRequestOptions,
   ) {
     super(options);
-    this.message = { ...message, content: gateImageFormatParts(message.content) };
+    this.ownerPromptId = message.id ?? newMessageId();
+    this.message = {
+      ...message,
+      id: this.ownerPromptId,
+      content: gateImageFormatParts(message.content),
+    };
   }
 
   override get turnSeed(): TurnSeed {
@@ -42,6 +49,7 @@ abstract class UserMessageStepRequest extends StepRequest {
       this.reminders.appendSystemReminder(caption, {
         kind: 'injection',
         variant: 'image_compression',
+        ownerPromptId: this.ownerPromptId,
       });
     }
   }

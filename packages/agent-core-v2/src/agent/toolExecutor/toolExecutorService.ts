@@ -1,16 +1,24 @@
 /**
  * `toolExecutor` domain (L3) — `IAgentToolExecutorService` implementation.
  *
- * Resolves executable tools through `toolRegistry`, runs ordered tool hooks,
- * publishes tool lifecycle events through `event`, records telemetry through
- * `telemetry`, truncates oversized outputs through `toolResultTruncation`,
- * and logs parse diagnostics through `log`. Bound at Agent scope.
+ * Resolves executable tools through `toolRegistry`, adjudicates tool calls
+ * through the `onBeforeExecuteTool` veto event, awaits readiness work
+ * through the `onWillExecuteTool` participation event, finalizes results
+ * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
+ * events through `event`, records telemetry through `telemetry`, truncates
+ * oversized outputs through `toolResultTruncation`, and logs parse
+ * diagnostics through `log`. The mutable dup-type tracking state
+ * (`toolCallDupTypes`, `dupTypeTurnId`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; the emitters, the hook
+ * slot, and the describer/guard registration slots stay plain fields. Bound
+ * at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { AsyncEmitter, type Event } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import {
@@ -31,16 +39,24 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type {
+  BeforeToolExecuteEvent,
+  ResolvedToolExecutionHookContext,
+  ToolDidExecuteContext,
+  WillExecuteToolEvent,
+} from '#/agent/toolExecutor/toolHooks';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
+  type ToolCallGuard,
   type ToolCallDupType,
   type ToolExecutionResult,
   type ToolExecutorExecuteOptions,
@@ -88,20 +104,40 @@ type ToolExecutionStreamEvent =
       readonly settled: SettledToolExecutionResult;
     };
 
+export const toolExecutorToolCallDupTypesKey = defineState<Map<string, ToolCallDupType>>(
+  'toolExecutor.toolCallDupTypes',
+  () => new Map(),
+);
+export const toolExecutorDupTypeTurnIdKey = defineState<number | undefined>(
+  'toolExecutor.dupTypeTurnId',
+  () => undefined as number | undefined,
+);
+
 export class AgentToolExecutorService implements IAgentToolExecutorService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly beforeExecuteEmitter = new BeforeToolExecuteEmitter();
+  readonly onBeforeExecuteTool: Event<BeforeToolExecuteEvent> = this.beforeExecuteEmitter.event;
+  private readonly willExecuteEmitter = new AsyncEmitter<WillExecuteToolEvent>();
+  readonly onWillExecuteTool: Event<WillExecuteToolEvent> = this.willExecuteEmitter.event;
+
   readonly hooks = {
-    onBeforeExecuteTool: new OrderedHookSlot<ToolBeforeExecuteContext>(),
     onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
   };
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
-  private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
-  private dupTypeTurnId: number | undefined;
+  private toolCallGuard: ToolCallGuard | undefined;
 
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
     this.toolCallDupTypes.set(toolCallId, dupType);
+  }
+
+  registerToolCallGuard(guard: ToolCallGuard) {
+    this.toolCallGuard = guard;
+    return toDisposable(() => {
+      if (this.toolCallGuard === guard) this.toolCallGuard = undefined;
+    });
   }
 
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber) {
@@ -124,8 +160,24 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
+    @IAgentStateService private readonly states: IAgentStateService,
     @ILogService private readonly log?: ILogService,
-  ) {}
+  ) {
+    this.states.register(toolExecutorToolCallDupTypesKey);
+    this.states.register(toolExecutorDupTypeTurnIdKey);
+  }
+
+  private get toolCallDupTypes(): Map<string, ToolCallDupType> {
+    return this.states.get(toolExecutorToolCallDupTypesKey);
+  }
+
+  private get dupTypeTurnId(): number | undefined {
+    return this.states.get(toolExecutorDupTypeTurnIdKey);
+  }
+
+  private set dupTypeTurnId(value: number | undefined) {
+    this.states.set(toolExecutorDupTypeTurnIdKey, value);
+  }
 
   async *execute(
     calls: ToolCall[],
@@ -141,6 +193,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       preflightToolCall(
         this.toolRegistry,
         call,
+        this.toolCallGuard,
         this.unavailableToolDescriber,
         this.missingToolDescriber,
         this.log,
@@ -345,26 +398,24 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleSynthetic(call.args, execution, displayFields);
     }
 
-    const willCtx = buildWillExecuteContext(call, execution, allCalls, options);
-    await this.hooks.onBeforeExecuteTool.run(willCtx);
+    const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
+    const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
-    const decision = willCtx.decision;
-    if (decision?.block === true) {
-      return settleError(
-        call.args,
-        decision.reason ?? `Tool call "${call.toolName}" was blocked`,
-        displayFields,
-      );
-    }
-    if (decision?.syntheticResult !== undefined) {
-      return settleSynthetic(
-        call.args,
-        decision.syntheticResult,
-        displayFields,
-      );
+    if (decision?.veto !== undefined) {
+      return settleSynthetic(call.args, decision.veto, displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;
+
+    await this.willExecuteEmitter.fireAsync(
+      {
+        turnId: options.turnId,
+        toolCall: call.toolCall,
+        execution,
+        args: call.args,
+      },
+      options.signal,
+    );
 
     this.dispatchToolCall(call, call.args, options, displayFields);
 
@@ -625,12 +676,12 @@ interface PreparedToolResult {
 
 type ToolCallDisplayFields = { description?: string | undefined; display?: ToolInputDisplay | undefined };
 
-function buildWillExecuteContext(
+function buildBeforeExecuteContext(
   call: RunnableToolCall,
   execution: RunnableToolExecution,
   allCalls: readonly ToolCall[],
   options: ToolExecutorExecuteOptions,
-): ToolBeforeExecuteContext {
+): ResolvedToolExecutionHookContext {
   return {
     turnId: options.turnId,
     signal: options.signal,
@@ -646,6 +697,7 @@ function buildWillExecuteContext(
 function preflightToolCall(
   toolRegistry: IAgentToolRegistryService,
   toolCall: ToolCall,
+  guard: ToolCallGuard | undefined,
   describeUnavailableTool: UnavailableToolDescriber | undefined,
   describeMissingTool: MissingToolDescriber | undefined,
   log?: ILogService,
@@ -660,16 +712,6 @@ function preflightToolCall(
       error: parsedArgs.error,
     });
   }
-  const unavailable = describeUnavailableTool?.(toolName);
-  if (unavailable !== undefined) {
-    return {
-      kind: 'rejected',
-      toolCall,
-      toolName,
-      args: parsedArgs.data,
-      output: unavailable,
-    };
-  }
   const tool = toolRegistry.resolve(toolName);
   if (tool === undefined) {
     return {
@@ -678,6 +720,27 @@ function preflightToolCall(
       toolName,
       args: parsedArgs.data,
       output: describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
+    };
+  }
+  const source = toolRegistry.list().find((entry) => entry.name === toolName)?.source ?? 'builtin';
+  const denied = guard?.({ name: toolName, source });
+  if (denied !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: denied,
+    };
+  }
+  const unavailable = describeUnavailableTool?.(toolName);
+  if (unavailable !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: unavailable,
     };
   }
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
@@ -896,6 +959,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolExecutorService,
   AgentToolExecutorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolExecutor',
 );

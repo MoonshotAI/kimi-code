@@ -5,8 +5,7 @@
  * pending state of its own (the kernel holds it). Bound at Session scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import {
@@ -20,13 +19,13 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   constructor(@ISessionInteractionService private readonly interaction: ISessionInteractionService) {}
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult> {
+  request(req: QuestionRequest, options?: { signal?: AbortSignal; agentId?: string }): Promise<QuestionResult> {
     const id = requestId(req);
     const pending = this.interaction.request<QuestionRequest, QuestionResult>({
       id,
       kind: 'question',
       payload: req,
-      origin: { turnId: req.turnId },
+      origin: { turnId: req.turnId, agentId: options?.agentId },
     });
 
     const signal = options?.signal;
@@ -76,4 +75,4 @@ function requestId(req: QuestionRequest): string {
   return req.id ?? req.toolCallId ?? `question:${String(Date.now())}`;
 }
 
-registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, InstantiationType.Eager, 'question');
+registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnScopeCreated, 'question');

@@ -6,6 +6,114 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.29.2（2026-07-27）
+
+### 修复
+
+- 修复目标执行在单轮达到步数上限（`loop_control.max_steps_per_turn`）后暂停的问题。
+- 修复目标运行期间发送的消息被拒绝的问题。
+- 修复 /undo 无法一致恢复对话历史、待办列表、计划模式和任务通知的问题。
+- web: 修复纯 HTTP 环境下复制选中聊天文本时，剪贴板被事件占位符覆盖的问题。
+
+## 0.29.1（2026-07-24）
+
+### 新功能
+
+- 支持在 `config.toml` 与环境变量中配置全局默认的 MCP 服务器超时时间。
+- 新增用于配置网页搜索与网页抓取服务的环境变量，无需 OAuth 登录。
+- 新增实验性的子 Agent 辅助模型绑定，支持按 Agent 设置模型偏好及仅对子 Agent 生效的模型覆盖。
+
+### 修复
+
+- 修复部分 OpenAI 兼容端点（如新版 vLLM）以其他字段名返回 reasoning 导致思考内容丢失的问题。
+
+## 0.29.0（2026-07-22）
+
+### 新功能
+
+- web: 支持 Markdown 文件定义 agent，声明 system prompt、名称、描述和工具权限。[查看文档](https://moonshotai.github.io/kimi-code/en/customization/agents.html#agent-file-format)
+- web: 可通过 SYSTEM.md 永久覆盖主 agent 的系统提示。[查看文档](https://moonshotai.github.io/kimi-code/en/customization/agents.html#overriding-the-main-agent-s-system-prompt-with-system-md)
+- web: 可通过 config.toml 在所有会话中统一启用/禁用工具。[查看文档](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#tools)
+- 附加到提示词的视频现在会随提示词一起送达模型，无需额外的工具轮次。
+- ACP 客户端现支持选择思考强度。
+- 新增 Agent 循环与后台任务限制的环境变量覆盖：`KIMI_LOOP_MAX_STEPS_PER_TURN`、`KIMI_LOOP_MAX_RETRIES_PER_STEP` 和 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`。
+
+### 优化
+
+- 从 models.dev 目录导入更多供应商。
+- 提升 TUI 在长会话中的性能与恢复速度。
+- 当 MCP 服务器的某个工具被调用时，若连接已断开可自动重连，并自动重试一次该调用。
+- 移除代码预览与 Markdown 代码块语法高亮中的红色配色。
+- 在更新提示中为第三方安装来源增加使用官方安装器的提醒。
+
+### 修复
+
+- 修复内容过滤响应后，会话卡住并报 "message must not be empty" 错误的问题。
+- 修复被取消的模型请求被包装为可重试的供应商错误的问题。
+- 修复为不支持的模型提供思考强度选项的问题。
+- 修复环境变量覆盖值在环境变量设置期间被持久化到 config.toml 的问题。
+- 将会话提示词缓存键发送给 OpenAI 与 OpenAI Responses 供应商。
+- 修复当供应商没有文件上传通道时 `ReadMediaFile` 处理视频失败的问题。
+- 修复恢复会话时目标模式续行提示词泄漏到对话记录中的问题。
+- web: 在透明图片下方显示棋盘格画布。
+- 移除定时任务工具描述中对不存在的 `kimi resume` 命令的引用。
+
+## 0.28.1（2026-07-20）
+
+### 新功能
+
+- ACP 会话现支持使用已配置的非 OAuth 模型凭据启动，无需再在终端登录。
+
+### 优化
+
+- `kimi web` 服务器改为全程前台运行：`/web` 斜杠命令现在总是启动新服务器，`kimi web kill` 与 `kimi web ps` 子命令已移除，前台服务器按 Ctrl+C 即可停止。`kimi server kill` 保留为废弃回退，仅能停止 0.28.0 之前版本启动的服务器。
+
+### 修复
+
+- 修复权限模式切换对已在运行的子 Agent 不生效的问题。
+
+## 0.28.0（2026-07-20）
+
+### 新功能
+
+- **破坏性变更：** 
+  - `kimi server` 命令树已被废弃，请使用 `kimi web` 代替。
+  - `kimi web` 现在在当前终端前台运行并打开浏览器，按 Ctrl+C 停止。
+
+### 优化
+
+- 思考强度仅持久化低于模型最高档（max）的等级。
+- web: 模型切换器新增提示：切换模型或思考强度会使已有提示词缓存失效。
+
+### 修复
+
+- 修正 YOLO 与 Auto 权限模式的描述：YOLO 会自动批准工具操作，但 Agent 仍可能提问；Auto 完全自主，不会提问。
+- 修复 web 后端在加载 AGENTS.md 和读取文件时忽略符号链接的问题。
+
+## 0.27.0（2026-07-17）
+
+### 新功能
+
+- 新增 `/copy` 斜杠命令，可将上一条助手消息复制到剪贴板。
+- 使用 API key 调用 Kimi 编程模型时，现在会自动拉取最新模型列表。
+
+### 优化
+
+- OAuth 连接失败时现在会显示底层网络原因（DNS、连接被拒、TLS、超时），不再是笼统的 `fetch failed`。
+
+### 修复
+
+- 修复打断模型回复后请求被反复拒绝的问题。
+- 修复内置 URL 抓取工具的网络防护缺陷：恶意构造的域名与重定向链无法再访问回环地址或内网服务。
+- web: 修复通过网络访问 web UI 时 LaTeX 公式渲染错乱重叠的问题。
+- web: 修复重新打开会话时，排队消息会静默重发此前已上传文件的问题。
+- web: 按模型分别记忆思考等级，修复模型不支持已存等级时选择器空白卡死的问题。
+- web: 修复 Windows 下同一文件夹以不同路径写法打开时出现重复工作区分组的问题，现在统一归入单个分组。
+- 修复 web 后端忽略以符号链接形式安装的 AGENTS.md 文件的问题。
+- 修复 /btw 面板打开时，按 Esc 或 Ctrl+C 会取消 compaction 而不是关闭面板的问题。
+- 修复纯空白思考内容在对话记录中渲染成空行的问题。
+- 修复对同一会话重复执行 /export-debug-zip 或 kimi export 会覆盖上一份压缩包的问题；文件名现包含时间戳。
+
 ## 0.26.0（2026-07-16）Say hi to the BIIIG DAY!
 
 ### 优化
