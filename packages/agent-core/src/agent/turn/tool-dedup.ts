@@ -54,16 +54,8 @@ function makeKey(toolName: string, args: unknown): string {
   return `${toolName} ${canonicalTelemetryArgs(args)}`;
 }
 
-/**
- * Prepends the reminder to the tool result output.
- *
- * The reminder MUST be at the head, not the tail: oversized text results are
- * later replaced by a head-only preview (see `budgetToolResultForModel` in
- * `agent/turn/tool-result-budget.ts`, which keeps only the first 2000 chars).
- * A tail-appended reminder is silently cut off there, so the model never sees
- * it exactly in the large-output scenarios where repeat loops are most likely.
- */
-function appendReminder(result: ExecutableToolResult, reminderText: string): ExecutableToolResult {
+// Prepend, not append: oversized results are later replaced by a head-only preview that would silently drop a tail reminder.
+function prependReminder(result: ExecutableToolResult, reminderText: string): ExecutableToolResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
   if (typeof output === 'string') {
@@ -87,7 +79,7 @@ function forceStopResult(
   result: ExecutableToolResult,
   reminderText: string,
 ): ExecutableToolResult {
-  const withReminder = appendReminder(result, reminderText);
+  const withReminder = prependReminder(result, reminderText);
   return { ...withReminder, stopTurn: true };
 }
 
@@ -109,7 +101,7 @@ const DEDUP_PLACEHOLDER_RESULT: ExecutableToolResult = { output: '' };
  * - Same-step dedup: a duplicate `(toolName, args)` issued in the same LLM step
  *   reuses the original call's result instead of executing the tool twice.
  * - Cross-step dedup: when the exact same call is repeated consecutively
- *   across steps, the result returned to the model is suffixed with a system
+ *   across steps, the result returned to the model is prefixed with a system
  *   reminder once the streak hits 3. The reminder escalates as the streak
  *   grows: r1 (expectation-setting nudge) from streak 3, r2 (forced decision
  *   menu) from streak 5, r3 (final hand-off instruction) from streak 8. From streak 12
@@ -202,7 +194,7 @@ export class ToolCallDeduplicator {
   /**
    * Called from `finalizeToolResult`, in provider order. For first-occurrence
    * calls, projects the consecutive streak ending at this call and, if the
-   * threshold is reached, appends the system reminder, then resolves the
+   * threshold is reached, prepends the system reminder, then resolves the
    * deferred so subsequent same-step dups can fetch the real result. For
    * synthetic duplicates, awaits the original's deferred and returns its
    * value, discarding the placeholder.
@@ -246,13 +238,13 @@ export class ToolCallDeduplicator {
       finalResult = forceStopResult(result, REMINDER_TEXT_3);
       action = 'stop';
     } else if (streak >= REPEAT_REMINDER_3_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_3);
+      finalResult = prependReminder(result, REMINDER_TEXT_3);
       action = 'r3';
     } else if (streak >= REPEAT_REMINDER_2_START) {
-      finalResult = appendReminder(result, makeReminderText2(streak));
+      finalResult = prependReminder(result, makeReminderText2(streak));
       action = 'r2';
     } else if (streak >= REPEAT_REMINDER_1_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_1);
+      finalResult = prependReminder(result, REMINDER_TEXT_1);
       action = 'r1';
     }
 

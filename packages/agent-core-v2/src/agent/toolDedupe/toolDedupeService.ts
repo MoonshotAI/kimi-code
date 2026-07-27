@@ -80,16 +80,8 @@ interface CheckedToolCall {
   readonly syntheticResult: ToolDedupeResult | null;
 }
 
-/**
- * Prepends the reminder to the tool result output.
- *
- * The reminder MUST be at the head, not the tail: oversized text results are
- * later replaced by a head-only preview (`toolResultTruncation` keeps only the
- * first 2000 chars after `onDidExecuteTool` hooks run). A tail-appended
- * reminder is silently cut off there, so the model never sees it exactly in
- * the large-output scenarios where repeat loops are most likely.
- */
-function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
+// Prepend, not append: oversized results are later replaced by a head-only preview that would silently drop a tail reminder.
+function prependReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
   if (typeof output === 'string') {
@@ -110,7 +102,7 @@ function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDed
 }
 
 function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
-  const withReminder = appendReminder(result, reminderText);
+  const withReminder = prependReminder(result, reminderText);
   return { ...withReminder, stopTurn: true };
 }
 
@@ -286,13 +278,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       finalResult = forceStopResult(result, REMINDER_TEXT_3);
       action = 'stop';
     } else if (streak >= REPEAT_REMINDER_3_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_3);
+      finalResult = prependReminder(result, REMINDER_TEXT_3);
       action = 'r3';
     } else if (streak >= REPEAT_REMINDER_2_START) {
-      finalResult = appendReminder(result, makeReminderText2(streak));
+      finalResult = prependReminder(result, makeReminderText2(streak));
       action = 'r2';
     } else if (streak >= REPEAT_REMINDER_1_START) {
-      finalResult = appendReminder(result, REMINDER_TEXT_1);
+      finalResult = prependReminder(result, REMINDER_TEXT_1);
       action = 'r1';
     }
 

@@ -241,10 +241,6 @@ describe('ToolCallDeduplicator', () => {
   });
 
   describe('reminder survives oversized-result truncation (regression)', () => {
-    // Oversized text results are later replaced by a head-only 2K preview
-    // (agent/turn/tool-result-budget.ts). Reminders used to be appended at the
-    // tail and were silently cut off there — the model looped 12 times with no
-    // reminder ever visible. They must now sit at the head.
     it('keeps the reminder inside the first 2K chars of an oversized result', async () => {
       const dedup = new ToolCallDeduplicator();
       const big = 'x'.repeat(60_000);
@@ -280,8 +276,6 @@ describe('ToolCallDeduplicator', () => {
         last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult(big));
         dedup.endStep();
       }
-      // Compose with the actual oversized-result offload — the exact chain that
-      // used to drop tail-appended reminders in production.
       const homedir = await mkdtemp(join(tmpdir(), 'dedupe-budget-'));
       const modelResult = await budgetToolResultForModel({
         homedir,

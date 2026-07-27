@@ -13,12 +13,15 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
@@ -57,7 +60,7 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean } = {},
+  options: { readonly executorEvents?: boolean; readonly truncation?: 'real' } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
@@ -92,7 +95,12 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
-      registerToolResultTruncationServices(reg);
+      if (options.truncation === 'real') {
+        reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+        reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
+      } else {
+        registerToolResultTruncationServices(reg);
+      }
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
     },
@@ -443,10 +451,6 @@ describe('AgentToolDedupeService', () => {
   });
 
   describe('reminder survives oversized-result truncation (regression)', () => {
-    // Oversized text results are later replaced by a head-only 2K preview
-    // (agent/toolResultTruncation). Reminders used to be appended at the tail
-    // and were silently cut off there — the model looped 12 times with no
-    // reminder ever visible. They must now sit at the head.
     it('keeps the reminder inside the first 2K chars of an oversized result', async () => {
       const h = createHarness();
       const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
@@ -463,13 +467,17 @@ describe('AgentToolDedupeService', () => {
 
     it('prepends the reminder ahead of the original output', async () => {
       const h = createHarness();
-      registerRead(h);
-      const last = await runStreak(h, 3);
-      expect((last.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
+      h.registry.register(new EchoTool('Read'));
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      expect((last!.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
     });
 
     it('keeps the reminder visible through the real ToolResultTruncationService (composition)', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { truncation: 'real' });
       const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
       h.registry.register(tool);
       let last: ToolResult | undefined;
@@ -477,13 +485,7 @@ describe('AgentToolDedupeService', () => {
         const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
         last = result!.result;
       }
-      // Compose with the actual truncation service — the exact chain that used
-      // to drop tail-appended reminders in production.
-      const truncation = new ToolResultTruncationService(
-        { homeDir: '/home/user' } as never,
-        { scope: (s: string) => s } as never,
-        { write: async () => undefined } as never,
-      );
+      const truncation = h.ix.get(IAgentToolResultTruncationService);
       const modelResult = await truncation.truncateForModel({
         toolName: 'Read',
         toolCallId: 'c2',
@@ -518,15 +520,21 @@ describe('AgentToolDedupeService', () => {
     });
 
     it('prepends a new text part when leading part is non-text', async () => {
-      const h = createHarness();
-      const tool = new EchoTool('X', () => ({
+      const h = createHarness(undefined, { executorEvents: true });
+      // The executor pipeline prepends its own text part to non-text outputs,
+      // so drive the hooks directly to exercise the dedupe's unshift branch.
+      const imageOnly = (): ExecutableToolResult => ({
         output: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
-      }));
-      h.registry.register(tool);
-      for (let i = 0; i < 2; i += 1) {
-        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      });
+      let final: ToolDidExecuteContext | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        await beforeStep(h, 1, i + 1);
+        const id = i === 2 ? 'final' : `p${String(i)}`;
+        await h.fireBefore(willCtx(id, 'X', {}));
+        final = didCtx(id, 'X', {}, imageOnly());
+        await h.executor.hooks.onDidExecuteTool.run(final);
+        await afterStep(h, 1, i + 1);
       }
-      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
       const arr = final!.result.output as Array<{ type: string; text?: string }>;
       expect(arr.some((part) => part.type === 'image_url')).toBe(true);
       expect(arr[0]).toEqual({ type: 'text', text: REMINDER_TEXT_1 });
