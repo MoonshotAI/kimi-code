@@ -1,4 +1,5 @@
 import { providerImagePolicy } from '#human/llm/media/image-formats';
+import type { ContentPart } from '#human/llm/message';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 
@@ -173,4 +174,29 @@ export function buildMalformedImageNotice(url: string): string {
     `[Image omitted: "${shown}" is not a valid data URL (its header or payload ` +
     'could not be parsed). Re-encode the image as PNG or JPEG and try again.]'
   );
+}
+
+export function buildEmptyImageNotice(name?: string): string {
+  const what = name === undefined || name.length === 0 ? 'The attached image' : `"${name}"`;
+  return (
+    `[Image omitted: ${what} contained no image data (0 bytes) — the clipboard ` +
+    'or upload captured nothing. Re-paste or re-upload the image and try again.]'
+  );
+}
+
+export function scrubEmptyImageParts(parts: ContentPart[]): ContentPart[] {
+  let replaced = false;
+  const out: ContentPart[] = [];
+  for (const part of parts) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed !== null && decodeBase64Prefix(parsed.base64).length === 0) {
+        out.push({ type: 'text', text: buildEmptyImageNotice() });
+        replaced = true;
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  return replaced ? out : parts;
 }

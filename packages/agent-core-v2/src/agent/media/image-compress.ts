@@ -5,6 +5,7 @@ import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/media/image-formats
 
 import { sniffImageDimensions } from './file-type';
 import {
+  buildEmptyImageNotice,
   buildMalformedImageNotice,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
@@ -300,10 +301,12 @@ export function gateImageFormatParts(
         out.push(part);
         continue;
       }
-      const effectiveMime = resolveEffectiveImageMime(
-        parsed.mimeType,
-        decodeBase64Prefix(parsed.base64),
-      );
+      const head = decodeBase64Prefix(parsed.base64);
+      if (head.length === 0) {
+        out.push({ type: 'text', text: buildEmptyImageNotice() });
+        continue;
+      }
+      const effectiveMime = resolveEffectiveImageMime(parsed.mimeType, head);
       if (!isModelAcceptedImageMime(effectiveMime, providerType)) {
         out.push({
           type: 'text',
