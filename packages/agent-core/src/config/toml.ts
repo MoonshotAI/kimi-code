@@ -369,6 +369,16 @@ function transformProviderData(data: Record<string, unknown>): Record<string, un
 
 function transformModelData(data: Record<string, unknown>): Record<string, unknown> {
   const out = transformPlainObject(data);
+
+  // Compatibility: accept standard max_tokens / max_output_tokens aliases.
+  if (!('maxOutputSize' in out)) {
+    if ('maxOutputTokens' in out && typeof out['maxOutputTokens'] === 'number') {
+      out['maxOutputSize'] = out['maxOutputTokens'];
+    } else if ('maxTokens' in out && typeof out['maxTokens'] === 'number') {
+      out['maxOutputSize'] = out['maxTokens'];
+    }
+  }
+
   if (isPlainObject(out['overrides'])) {
     out['overrides'] = transformPlainObject(out['overrides']);
   }
