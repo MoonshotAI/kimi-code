@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { ICON_GROUPS } from '../lib/icons';
 import Icon from '../components/ui/Icon.vue';
+import Select from '../components/ui/Select.vue';
 
 const emit = defineEmits<{ close: [] }>();
+
+// §03 Select specimen uses the real primitive (data-driven options).
+const demoProvider = ref('anthropic');
+const demoProviderOptions = [
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'moonshot', label: 'Moonshot' },
+];
 
 function close(): void {
   emit('close');
@@ -645,7 +654,7 @@ onUnmounted(() => {
                   </div>
                   <div class="p-field demo-grow">
                     <label class="p-label">Model provider</label>
-                    <select class="p-select"><option>Anthropic</option><option>OpenAI</option><option>Moonshot</option></select>
+                    <Select v-model="demoProvider" :options="demoProviderOptions" aria-label="Model provider" />
                   </div>
                 </div>
                 <div class="p-field">
@@ -1996,15 +2005,15 @@ onUnmounted(() => {
   /* ===== Form Input / Select / Textarea ===== */
   .p-field { display: flex; flex-direction: column; gap: 6px; }
   .p-label { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
-  .p-input, .p-select, .p-textarea {
+  .p-input, .p-textarea {
     width: 100%; height: 38px; padding: 0 12px; border-radius: var(--p-r-md);
     border: 1px solid var(--p-line-strong); background: var(--p-surface-raised);
     font-family: var(--p-font-sans); font-size: var(--p-font-size-base); color: var(--p-text);
     box-shadow: var(--p-sh-xs); transition: border-color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
   }
   .p-textarea { height: auto; min-height: 84px; padding: 10px 12px; resize: vertical; line-height: var(--p-leading-normal); }
-  .p-input:hover, .p-select:hover, .p-textarea:hover { border-color: var(--p-line-strong); }
-  .p-input:focus, .p-select:focus, .p-textarea:focus { outline: none; border-color: var(--p-accent); box-shadow: 0 0 0 3px var(--p-accent-soft); }
+  .p-input:hover, .p-textarea:hover { border-color: var(--p-line-strong); }
+  .p-input:focus, .p-textarea:focus { outline: none; border-color: var(--p-accent); box-shadow: 0 0 0 3px var(--p-accent-soft); }
   .p-input::placeholder, .p-textarea::placeholder { color: var(--p-text-faint); }
   .p-input.sm { height: 32px; font-size: var(--p-font-size-sm); border-radius: var(--p-r-sm); }
   .p-hint { font-size: var(--p-font-size-xs); color: var(--p-text-faint); }

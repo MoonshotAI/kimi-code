@@ -147,6 +147,13 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
+// Flat option list for ui/Select, with the provider carried as the group header.
+const modelSelectOptions = computed(() =>
+  modelGroups.value.flatMap((group) =>
+    group.options.map((o) => ({ value: o.id, label: o.label, group: group.provider })),
+  ),
+);
+
 const defaultPermissionMode = computed(() => {
   const mode = props.config?.defaultPermissionMode;
   return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
@@ -273,6 +280,11 @@ const archiveWorkspaces = computed<string[]>(() => {
   for (const s of archivedItems.value) set.add(s.cwd);
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 });
+
+const archiveWsOptions = computed(() => [
+  { value: 'all', label: t('settings.archivedAllWorkspaces') },
+  ...archiveWorkspaces.value.map((ws) => ({ value: ws, label: ws })),
+]);
 
 const filteredArchived = computed<AppSession[]>(() => {
   const q = archiveQuery.value.trim().toLowerCase();
@@ -483,17 +495,12 @@ function archiveTime(iso: string): string {
                 <div v-if="modelGroups.length > 0" class="select-wrap">
                   <Select
                     :model-value="config.defaultModel ?? ''"
+                    :options="modelSelectOptions"
+                    :placeholder="t('settings.noDefaultModel')"
                     :disabled="configSaving"
                     :aria-label="t('settings.defaultModel')"
                     @update:model-value="setDefaultModel"
-                  >
-                    <option v-if="!config.defaultModel" value="" disabled>{{ t('settings.noDefaultModel') }}</option>
-                    <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
-                      <option v-for="model in group.options" :key="model.id" :value="model.id">
-                        {{ model.label }}
-                      </option>
-                    </optgroup>
-                  </Select>
+                  />
                 </div>
                 <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
               </div>
@@ -610,13 +617,11 @@ function archiveTime(iso: string): string {
             </label>
             <Select
               :model-value="archiveWsFilter"
+              :options="archiveWsOptions"
               size="sm"
               :aria-label="t('settings.archivedAllWorkspaces')"
-              @update:model-value="archiveWsFilter = $event as string"
-            >
-              <option value="all">{{ t('settings.archivedAllWorkspaces') }}</option>
-              <option v-for="ws in archiveWorkspaces" :key="ws" :value="ws">{{ ws }}</option>
-            </Select>
+              @update:model-value="archiveWsFilter = $event"
+            />
             <SegmentedControl
               size="sm"
               :model-value="archiveSort"

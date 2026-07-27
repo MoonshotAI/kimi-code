@@ -61,6 +61,7 @@ const addForm = reactive({
 const addError = ref('');
 
 const PROVIDER_TYPES = ['moonshot', 'anthropic', 'openai', 'custom'];
+const providerTypeOptions = PROVIDER_TYPES.map((pt) => ({ value: pt, label: pt }));
 
 function openAdd(): void {
   addForm.type = 'moonshot';
@@ -191,9 +192,7 @@ function statusLabel(status: AppProvider['status']): string {
         <template v-else>
           <div class="add-form">
             <Field :label="t('providers.fieldType')">
-              <Select v-model="addForm.type">
-                <option v-for="pt in PROVIDER_TYPES" :key="pt" :value="pt">{{ pt }}</option>
-              </Select>
+              <Select v-model="addForm.type" :options="providerTypeOptions" />
             </Field>
             <Field :label="t('providers.fieldApiKey')">
               <Input

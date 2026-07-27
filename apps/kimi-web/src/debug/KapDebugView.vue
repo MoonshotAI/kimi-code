@@ -7,6 +7,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { copyTextToClipboard } from '../lib/clipboard';
 import Tooltip from '../components/ui/Tooltip.vue';
+import Select from '../components/ui/Select.vue';
 import {
   clearTrace,
   downloadTraceLog,
@@ -26,6 +27,22 @@ const textFilter = ref('');
 const sessionFilter = ref<string>('');
 const errorsOnly = ref(false);
 const view = ref<'timeline' | 'aggregate'>('timeline');
+
+const sourceOptions = [
+  { value: 'all', label: 'rest + ws + app' },
+  { value: 'rest', label: 'rest' },
+  { value: 'ws', label: 'ws' },
+  { value: 'client', label: 'app errors' },
+];
+
+function setSourceFilter(v: string): void {
+  if (v === 'all' || v === 'rest' || v === 'ws' || v === 'client') sourceFilter.value = v;
+}
+
+const sessionOptions = computed(() => [
+  { value: '', label: 'all sessions' },
+  ...sessionIds.value.map((sid) => ({ value: sid, label: sid })),
+]);
 
 const all = computed<readonly TraceEntry[]>(() => {
   void traceVersion.value; // re-read the buffer on every push
@@ -166,16 +183,21 @@ function badgeLabel(e: TraceEntry): string {
     </header>
 
     <div class="kap-filters">
-      <select v-model="sourceFilter" aria-label="Source filter">
-        <option value="all">rest + ws + app</option>
-        <option value="rest">rest</option>
-        <option value="ws">ws</option>
-        <option value="client">app errors</option>
-      </select>
-      <select v-model="sessionFilter" aria-label="Session filter">
-        <option value="">all sessions</option>
-        <option v-for="sid in sessionIds" :key="sid" :value="sid">{{ sid }}</option>
-      </select>
+      <Select
+        :model-value="sourceFilter"
+        :options="sourceOptions"
+        size="sm"
+        aria-label="Source filter"
+        class="kap-select"
+        @update:model-value="setSourceFilter"
+      />
+      <Select
+        v-model="sessionFilter"
+        :options="sessionOptions"
+        size="sm"
+        aria-label="Session filter"
+        class="kap-select kap-select--session"
+      />
       <input v-model="textFilter" type="text" placeholder="filter (type / path / id)" aria-label="Text filter" />
       <label class="kap-check"><input v-model="errorsOnly" type="checkbox" /> errors</label>
       <label class="kap-check"><input v-model="follow" type="checkbox" /> follow</label>
@@ -283,7 +305,6 @@ function badgeLabel(e: TraceEntry): string {
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
 }
-.kap-filters select,
 .kap-filters input[type='text'] {
   padding: 3px 6px;
   border: 1px solid var(--line);
@@ -294,6 +315,8 @@ function badgeLabel(e: TraceEntry): string {
   min-width: 0;
 }
 .kap-filters input[type='text'] { flex: 1; min-width: 120px; }
+.kap-select { flex: none; width: 150px; }
+.kap-select--session { width: 200px; }
 .kap-check { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
 .kap-view-toggle { display: flex; gap: 0; }
 .kap-view-toggle button:first-child { border-radius: 6px 0 0 6px; border-right: none; }
