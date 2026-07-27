@@ -5,6 +5,7 @@
 pub mod config;
 pub mod connection_manager;
 pub mod output;
+pub mod runtime;
 pub mod tool_naming;
 pub mod transport_http;
 pub mod transport_stdio;
