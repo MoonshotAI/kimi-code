@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+
 import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
@@ -10,20 +12,33 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   CancelShellCommandPayload,
+  CancelWorkflowRunPayload,
+  CancelWorkflowRunResult,
   CreateGoalPayload,
   DetachBackgroundPayload,
   EmptyPayload,
   EnterSwarmPayload,
+  EnterWorkflowModePayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetWorkflowPayload,
+  GetWorkflowResult,
+  GetWorkflowRunPayload,
+  GetWorkflowRunResult,
   ImportContextPayload,
+  ListWorkflowRunsResult,
+  ListWorkflowsResult,
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
   RunShellCommandPayload,
+  RunWorkflowPayload,
+  RunWorkflowResult,
   ReconnectMcpServerPayload,
   RenameSessionPayload,
   RegisterToolPayload,
+  SaveWorkflowPayload,
+  SaveWorkflowResult,
   SessionAPI,
   SetActiveToolsPayload,
   SetModelPayload,
@@ -36,8 +51,18 @@ import type {
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
+  WorkflowRunSnapshot,
+  WorkflowSummary,
 } from '#/rpc';
 import type { PromisableMethods } from '#/utils/types';
+import {
+  extractWorkflowMeta,
+  resolveWorkflowLimits,
+  saveWorkflow,
+  WorkflowValidationError,
+  type WorkflowDefinition,
+  type WorkflowRunRecord,
+} from '../workflow';
 
 import type { Session, SessionMeta } from '.';
 import {
@@ -120,6 +145,138 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.addAdditionalDir(payload.path, payload.persist);
   }
 
+  // ─── Dynamic workflows (gated by the 'dynamic-workflows' flag) ───────────
+
+  async listWorkflows(_payload: EmptyPayload): Promise<ListWorkflowsResult> {
+    this.requireWorkflowsEnabled();
+    await this.session.workflows.load();
+    return this.workflowListResult();
+  }
+
+  async getWorkflow(payload: GetWorkflowPayload): Promise<GetWorkflowResult> {
+    this.requireWorkflowsEnabled();
+    await this.session.workflows.load();
+    const workflow = this.session.workflows.get(payload.name);
+    if (workflow === undefined) return { workflow: null };
+    return { workflow: { ...summarizeWorkflow(workflow), script: workflow.script } };
+  }
+
+  async reloadWorkflows(_payload: EmptyPayload): Promise<ListWorkflowsResult> {
+    this.requireWorkflowsEnabled();
+    await this.session.reloadWorkflows();
+    return this.workflowListResult();
+  }
+
+  /**
+   * Start a workflow run by registry `name` or inline `script`.
+   *
+   * This method does NOT ask for user confirmation — approval is the caller's
+   * responsibility (e.g. the TUI shows its confirmation dialog before calling;
+   * the model/tool path carries its own approval flow).
+   */
+  async runWorkflow(payload: RunWorkflowPayload): Promise<RunWorkflowResult> {
+    this.requireWorkflowsEnabled();
+    const limits = resolveWorkflowLimits(this.session.options.config?.workflows);
+    let definition: WorkflowDefinition;
+    if (payload.name !== undefined) {
+      await this.session.workflows.load();
+      const found = this.session.workflows.get(payload.name);
+      if (found === undefined) {
+        throw new KimiError(
+          ErrorCodes.REQUEST_INVALID,
+          `Workflow "${payload.name}" was not found`,
+        );
+      }
+      definition = found;
+    } else if (payload.script !== undefined) {
+      let meta;
+      try {
+        meta = extractWorkflowMeta(payload.script, { maxScriptBytes: limits.maxScriptBytes });
+      } catch (error) {
+        if (error instanceof WorkflowValidationError) {
+          throw new KimiError(ErrorCodes.REQUEST_INVALID, error.message);
+        }
+        throw error;
+      }
+      definition = { meta, script: payload.script, path: '', source: 'extra' };
+    } else {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'runWorkflow requires either name or script',
+      );
+    }
+    const { runId, taskId } = this.session.workflowRuns.start(definition, {
+      args: payload.args ?? '',
+      limits,
+    });
+    return { runId, taskId, workflowName: definition.meta.name };
+  }
+
+  listWorkflowRuns(_payload: EmptyPayload): ListWorkflowRunsResult {
+    this.requireWorkflowsEnabled();
+    return {
+      runs: this.session.workflowRuns.list().map((record) => snapshotWorkflowRun(record, 50)),
+    };
+  }
+
+  getWorkflowRun(payload: GetWorkflowRunPayload): GetWorkflowRunResult {
+    this.requireWorkflowsEnabled();
+    const record = this.session.workflowRuns.get(payload.runId);
+    if (record === undefined) return { run: null };
+    return { run: { ...snapshotWorkflowRun(record), script: record.script } };
+  }
+
+  cancelWorkflowRun(payload: CancelWorkflowRunPayload): CancelWorkflowRunResult {
+    this.requireWorkflowsEnabled();
+    return { cancelled: this.session.workflowRuns.cancel(payload.runId) };
+  }
+
+  async saveWorkflow(payload: SaveWorkflowPayload): Promise<SaveWorkflowResult> {
+    this.requireWorkflowsEnabled();
+    const limits = resolveWorkflowLimits(this.session.options.config?.workflows);
+    let saved: { path: string };
+    try {
+      saved = await saveWorkflow({
+        script: payload.script,
+        scope: payload.scope,
+        workDir: this.session.options.kaos.getcwd(),
+        kimiHome: this.session.options.kimiHomeDir,
+        osHome: homedir(),
+        overwrite: payload.overwrite,
+        maxScriptBytes: limits.maxScriptBytes,
+      });
+    } catch (error) {
+      if (error instanceof WorkflowValidationError) {
+        throw new KimiError(ErrorCodes.REQUEST_INVALID, error.message);
+      }
+      throw error;
+    }
+    const name = extractWorkflowMeta(payload.script, {
+      maxScriptBytes: limits.maxScriptBytes,
+    }).name;
+    await this.session.reloadWorkflows();
+    return { path: saved.path, name };
+  }
+
+  private requireWorkflowsEnabled(): void {
+    if (!this.session.experimentalFlags.enabled('dynamic-workflows')) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Dynamic workflows are disabled. Enable the "dynamic-workflows" experimental flag (KIMI_CODE_EXPERIMENTAL_DYNAMIC_WORKFLOWS=1) first.',
+      );
+    }
+  }
+
+  private workflowListResult(): ListWorkflowsResult {
+    return {
+      workflows: this.session.workflows.list().map(summarizeWorkflow),
+      skipped: this.session.workflows.skipped.map((entry) => ({
+        path: entry.path,
+        reason: entry.reason,
+      })),
+    };
+  }
+
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
@@ -191,6 +348,18 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async getSwarmMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).getSwarmMode(payload);
+  }
+
+  async enterWorkflowMode({ agentId, ...payload }: AgentScopedPayload<EnterWorkflowModePayload>) {
+    return (await this.getAgent(agentId)).enterWorkflowMode(payload);
+  }
+
+  async exitWorkflowMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).exitWorkflowMode(payload);
+  }
+
+  async getWorkflowMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getWorkflowMode(payload);
   }
 
   async beginCompaction({ agentId, ...payload }: AgentScopedPayload<BeginCompactionPayload>) {
@@ -350,6 +519,40 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
       },
     });
   }
+}
+
+function summarizeWorkflow(workflow: WorkflowDefinition): WorkflowSummary {
+  return {
+    name: workflow.meta.name,
+    description: workflow.meta.description,
+    whenToUse: workflow.meta.whenToUse,
+    argumentHint: workflow.meta.argumentHint,
+    phases: workflow.meta.phases.map((phase) => ({ title: phase.title, detail: phase.detail })),
+    path: workflow.path,
+    source: workflow.source,
+  };
+}
+
+function snapshotWorkflowRun(record: WorkflowRunRecord, logTail?: number): WorkflowRunSnapshot {
+  return {
+    runId: record.runId,
+    workflowName: record.workflowName,
+    description: record.description,
+    phases: record.phases.map((phase) => ({ title: phase.title, detail: phase.detail })),
+    status: record.status,
+    phase: record.phase,
+    phaseIndex: record.phaseIndex,
+    agentCalls: record.agentCalls,
+    logs: logTail !== undefined ? record.logs.slice(-logTail) : [...record.logs],
+    error: record.error,
+    resultJson: record.resultJson,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    taskId: record.taskId,
+    scriptPath: record.scriptPath,
+    source: record.source,
+    args: record.args,
+  };
 }
 
 function isUntitled(title: unknown): boolean {

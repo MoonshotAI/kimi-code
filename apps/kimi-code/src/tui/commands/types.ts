@@ -1,7 +1,16 @@
 import type { AutocompleteItem, SlashCommand } from '@moonshot-ai/pi-tui';
-import type { FlagId } from '@moonshot-ai/kimi-code-sdk';
+import type { FlagId, Session } from '@moonshot-ai/kimi-code-sdk';
 
 export type SlashCommandAvailability = 'always' | 'idle-only';
+
+/**
+ * Context passed to `completeArgs` callbacks so they can fetch dynamic data
+ * (e.g. the list of workflows from the session) without reaching into the
+ * editor component themselves.
+ */
+export interface SlashCommandCompletionContext {
+  readonly session?: Pick<Session, 'listWorkflows'>;
+}
 
 export interface KimiSlashCommand<Name extends string = string> extends SlashCommand {
   readonly name: Name;
@@ -17,7 +26,10 @@ export interface KimiSlashCommand<Name extends string = string> extends SlashCom
    * property (not a method) so passing it around is `this`-free. Adapted to
    * pi-tui's `getArgumentCompletions` in the autocomplete setup.
    */
-  readonly completeArgs?: (argumentPrefix: string) => AutocompleteItem[] | null;
+  readonly completeArgs?: (
+    argumentPrefix: string,
+    context: SlashCommandCompletionContext,
+  ) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 }
 
 export interface ParsedSlashInput {

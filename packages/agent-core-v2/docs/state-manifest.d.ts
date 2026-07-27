@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 28 keys · Agent: 68 keys)
+// Index (Session: 28 keys · Agent: 69 keys)
 //   Session
 //     cron.inFlight                             src/session/cron/sessionCronServiceImpl.ts
 //     cron.lastSeenAt                           src/session/cron/sessionCronServiceImpl.ts
@@ -122,6 +122,7 @@
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     usage.currentTurn                               src/agent/usage/usageService.ts
 //     usage.currentTurnId                             src/agent/usage/usageService.ts
+//     workflow.wasActive                              src/agent/workflow/workflowModeInjector.ts
 
 /** Session-scope keys registered into ISessionStateService. */
 export interface SessionStateSnapshot {
@@ -1010,7 +1011,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2667": undefined;
+    readonly "__@mediaStripSnapshotBrand@2678": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
@@ -1141,6 +1142,26 @@ export interface AgentStateSnapshot {
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
+  } | /* WorkflowRunTaskInfo — packages/agent-core-v2/src/session/workflow/workflowRunTask.ts */ {
+    readonly kind: 'workflow';
+    readonly runId: string;
+    readonly workflowName: string;
+    readonly phase?: string;
+    readonly phases?: readonly /* WorkflowPhaseMeta — packages/agent-core-v2/src/app/workflow/runtime/types.ts */ {
+      title: string;
+      detail?: string;
+    }[];
+    readonly phaseIndex?: number;
+    readonly agentCalls?: number;
+    readonly taskId: string;
+    readonly description: string;
+    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+    readonly detached?: boolean;
+    readonly startedAt: number;
+    readonly endedAt: number | null;
+    readonly stopReason?: string;
+    readonly terminalNotificationSuppressed?: boolean;
+    readonly timeoutMs?: number;
   }>;
   'task.scheduledNotificationKeys': Set<string>;
   // src/agent/toolDedupe/toolDedupeService.ts
@@ -1167,6 +1188,8 @@ export interface AgentStateSnapshot {
     inputCacheCreation: number;
   } | undefined;
   'usage.currentTurnId': number | undefined;
+  // src/agent/workflow/workflowModeInjector.ts
+  'workflow.wasActive': boolean;
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

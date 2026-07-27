@@ -200,6 +200,7 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private backgroundWorkflowCount = 0;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -239,9 +240,10 @@ export class FooterComponent implements Component {
    * count produces its own bracketed badge on line 1; zeros hide them
    * independently.
    */
-  setBackgroundCounts(counts: { bashTasks: number; agentTasks: number }): void {
+  setBackgroundCounts(counts: { bashTasks: number; agentTasks: number; workflowTasks: number }): void {
     this.backgroundBashTaskCount = Math.max(0, counts.bashTasks);
     this.backgroundAgentCount = Math.max(0, counts.agentTasks);
+    this.backgroundWorkflowCount = Math.max(0, counts.workflowTasks);
   }
 
   invalidate(): void {}
@@ -257,6 +259,7 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) modes.push(chalk.hex(colors.primary).bold('plan'));
     if (state.swarmMode) modes.push(chalk.hex(colors.accent).bold('swarm'));
+    if (state.workflowMode) modes.push(chalk.hex(colors.accent).bold('Dynamic Workflow'));
     if (modes.length > 0) left.push(modes.join(' '));
 
     const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
@@ -297,6 +300,12 @@ export class FooterComponent implements Component {
       const noun = this.backgroundAgentCount === 1 ? 'agent' : 'agents';
       left.push(
         chalk.hex(colors.primary)(`[${String(this.backgroundAgentCount)} ${noun} running]`),
+      );
+    }
+    if (this.backgroundWorkflowCount > 0) {
+      const noun = this.backgroundWorkflowCount === 1 ? 'workflow' : 'workflows';
+      left.push(
+        chalk.hex(colors.accent)(`[${String(this.backgroundWorkflowCount)} ${noun} running]`),
       );
     }
 

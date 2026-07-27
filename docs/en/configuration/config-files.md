@@ -268,6 +268,18 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
 
+## `workflows`
+
+`workflows` tunes the run limits of [dynamic workflows](../customization/workflows.md) and declares extra workflow directories. Dynamic workflows are experimental and disabled by default; see [Dynamic Workflows](../customization/workflows.md#enabling-dynamic-workflows) for how to enable them.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_concurrency` | `integer` | `4` | Maximum number of subagents a workflow runs concurrently (`1`–`16`) |
+| `max_agent_calls` | `integer` | `50` | Maximum number of `agent()` calls a single workflow run may make |
+| `max_duration_ms` | `integer` | `1800000` (30 minutes) | Maximum wall-clock time (milliseconds) of a single workflow run |
+| `max_script_bytes` | `integer` | `262144` (256 KB) | Maximum size in bytes of a workflow script file; larger files are skipped during discovery |
+| `extra_workflow_dirs` | `array<string>` | — | Additional workflow directories, scanned at the extra scope (between user and built-in precedence) |
+
 ## `mcp`
 
 | Field | Type | Default | Description |

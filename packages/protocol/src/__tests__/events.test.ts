@@ -160,6 +160,80 @@ describe('events / display re-exports', () => {
     expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
   });
 
+  it('validates workflow task info and workflow.run.* events', () => {
+    const parsed = eventSchema.parse({
+      type: 'task.started',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      info: {
+        kind: 'workflow',
+        taskId: 'workflow-deadbeef',
+        description: 'Workflow: deep-research',
+        status: 'running',
+        startedAt: 1,
+        endedAt: null,
+        workflowName: 'deep-research',
+        phase: 'Collect',
+        phases: [{ title: 'Collect' }, { title: 'Summarize', detail: 'fan-in' }],
+        phaseIndex: 0,
+        agentCalls: 2,
+      },
+    });
+    expect((parsed as { info: { kind: string } }).info.kind).toBe('workflow');
+
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.started',
+        runId: 'wfrun-1',
+        taskId: 'workflow-deadbeef',
+        workflowName: 'deep-research',
+        description: 'Deep research workflow.',
+        phases: [{ title: 'Collect' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.phase',
+        runId: 'wfrun-1',
+        phase: 'Collect',
+        phaseIndex: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.log',
+        runId: 'wfrun-1',
+        message: 'hello',
+      }).success,
+    ).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.agent_call',
+        runId: 'wfrun-1',
+        index: 1,
+        label: 'worker',
+        phase: 'Collect',
+        state: 'ok',
+      }).success,
+    ).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.completed',
+        runId: 'wfrun-1',
+        status: 'cancelled',
+        agentCalls: 3,
+      }).success,
+    ).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        type: 'workflow.run.completed',
+        runId: 'wfrun-1',
+        status: 'exploded',
+        agentCalls: 3,
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates event.session.created events', () => {
     const parsed = eventSchema.parse({
       type: 'event.session.created',

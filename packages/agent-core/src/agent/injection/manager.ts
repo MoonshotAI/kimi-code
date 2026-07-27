@@ -8,6 +8,7 @@ import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
 import { TodoListReminderInjector } from './todo-list';
 import { ToolsDiffInjector } from './tools-diff';
+import { WorkflowModeInjector } from './workflow-mode';
 
 const ACTIVE_BACKGROUND_TASK_GUIDANCE =
   'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before. Do not start duplicates. Use TaskOutput to fetch a task’s result, TaskList to list them, and TaskStop to cancel one.';
@@ -29,6 +30,7 @@ export class InjectionManager {
       new PluginSessionStartInjector(agent),
       new TodoListReminderInjector(agent),
       new PlanModeInjector(agent),
+      new WorkflowModeInjector(agent),
       new PermissionModeInjector(agent),
     ];
     this.goalInjector = agent.type === 'main' ? new GoalInjector(agent) : null;

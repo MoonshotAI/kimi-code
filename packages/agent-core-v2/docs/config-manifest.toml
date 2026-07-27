@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (22 sections · 3 overlay(s))
+# Index (23 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -31,6 +31,7 @@
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
+#   workflows                src/app/workflow/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
 #   (overlay) secondaryModelOverlay  src/app/kosongConfig/secondaryModelOverlay.ts
@@ -340,6 +341,22 @@ merge_all_available_skills = true
     # oauth_host: string
   # custom_headers: record<string, string>
 
+# [services.langsearch]
+  # api_key: string
+  # base_url: string
+  # tier: "free" | "tier1" | "tier2" | "tier3"
+  # freshness: "oneDay" | "oneWeek" | "oneMonth" | "oneYear" | "noLimit"
+  # summary: boolean
+  # count: integer
+  # custom_headers: record<string, string>
+
+# [services.rerank]
+  # enabled: boolean
+  # provider: "langsearch"
+  # api_key: string
+  # base_url: string
+  # custom_headers: record<string, string>
+
 # ##########################################################################
 # subagent
 #   owner: src/session/subagent/configSection.ts
@@ -396,3 +413,16 @@ timeout_ms = 7200000
 [tools]
 # enabled: string[]
 # disabled: string[]
+
+# ##########################################################################
+# workflows
+#   owner: src/app/workflow/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[workflows]
+max_concurrency = 4
+max_agent_calls = 50
+max_duration_ms = 1800000
+max_script_bytes = 262144
+extra_workflow_dirs = []

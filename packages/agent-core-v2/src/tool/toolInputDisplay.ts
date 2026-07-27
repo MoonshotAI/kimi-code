@@ -81,6 +81,25 @@ export type ToolInputDisplay =
       mode: 'manual' | 'yolo';
     }
   | {
+      kind: 'workflow_run';
+      workflow_name: string;
+      description: string;
+      when_to_use?: string | undefined;
+      phases: { title: string; detail?: string | undefined }[];
+      args?: string | undefined;
+      // Full workflow script so the client can offer "view raw script" before
+      // approving the first run.
+      script: string;
+      // 'project' | 'user' | 'extra' | 'builtin' | 'inline'
+      source: string;
+      limits: {
+        max_concurrency: number;
+        max_agent_calls: number;
+        max_duration_ms: number;
+      };
+      consumption_warning: string;
+    }
+  | {
       kind: 'generic';
       summary: string;
       detail?: unknown;

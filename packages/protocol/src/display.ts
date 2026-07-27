@@ -85,6 +85,25 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     mode: z.enum(['manual', 'yolo']),
   }),
   z.object({
+    kind: z.literal('workflow_run'),
+    workflow_name: z.string(),
+    description: z.string(),
+    when_to_use: z.string().optional(),
+    phases: z.array(z.object({ title: z.string(), detail: z.string().optional() })),
+    args: z.string().optional(),
+    // Full workflow script so the client can offer "view raw script" before
+    // approving the first run.
+    script: z.string(),
+    // 'project' | 'user' | 'extra' | 'builtin' | 'inline'
+    source: z.string(),
+    limits: z.object({
+      max_concurrency: z.number(),
+      max_agent_calls: z.number(),
+      max_duration_ms: z.number(),
+    }),
+    consumption_warning: z.string(),
+  }),
+  z.object({
     kind: z.literal('generic'),
     summary: z.string(),
     detail: z.unknown().optional(),

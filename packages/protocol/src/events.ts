@@ -364,10 +364,25 @@ export interface QuestionTaskInfo extends TaskInfoBase {
   readonly toolCallId?: string;
 }
 
+export interface WorkflowPhaseInfo {
+  readonly title: string;
+  readonly detail?: string;
+}
+
+export interface WorkflowTaskInfo extends TaskInfoBase {
+  readonly kind: 'workflow';
+  readonly workflowName: string;
+  readonly phase?: string;
+  readonly phases?: readonly WorkflowPhaseInfo[];
+  readonly phaseIndex?: number;
+  readonly agentCalls?: number;
+}
+
 export type TaskInfo =
   | ProcessTaskInfo
   | AgentTaskInfo
-  | QuestionTaskInfo;
+  | QuestionTaskInfo
+  | WorkflowTaskInfo;
 
 export interface CompactionResult {
   readonly summary: string;
@@ -489,6 +504,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly workflowMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -844,6 +860,46 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: TaskInfo;
 }
 
+export interface WorkflowRunStartedEvent {
+  readonly type: 'workflow.run.started';
+  readonly runId: string;
+  readonly taskId: string;
+  readonly workflowName: string;
+  readonly description: string;
+  readonly phases: readonly WorkflowPhaseInfo[];
+}
+
+export interface WorkflowRunPhaseEvent {
+  readonly type: 'workflow.run.phase';
+  readonly runId: string;
+  readonly phase: string;
+  readonly phaseIndex: number;
+}
+
+export interface WorkflowRunLogEvent {
+  readonly type: 'workflow.run.log';
+  readonly runId: string;
+  readonly message: string;
+}
+
+export interface WorkflowRunAgentCallEvent {
+  readonly type: 'workflow.run.agent_call';
+  readonly runId: string;
+  readonly index: number;
+  readonly label?: string;
+  readonly phase?: string;
+  readonly state: 'started' | 'ok' | 'refused' | 'error';
+}
+
+export interface WorkflowRunCompletedEvent {
+  readonly type: 'workflow.run.completed';
+  readonly runId: string;
+  readonly status: 'completed' | 'failed' | 'cancelled';
+  readonly agentCalls: number;
+  readonly error?: string;
+  readonly resultJson?: string;
+}
+
 export interface CronFiredEvent {
   readonly type: 'cron.fired';
   readonly origin: CronJobOrigin;
@@ -948,6 +1004,11 @@ export type AgentEvent =
   | TaskTerminatedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent
+  | WorkflowRunStartedEvent
+  | WorkflowRunPhaseEvent
+  | WorkflowRunLogEvent
+  | WorkflowRunAgentCallEvent
+  | WorkflowRunCompletedEvent
   | CronFiredEvent
   | PromptSubmittedEvent
   | PromptCompletedEvent
@@ -1285,10 +1346,25 @@ export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
   toolCallId: z.string().optional(),
 }) satisfies z.ZodType<QuestionTaskInfo>;
 
+export const workflowPhaseInfoSchema = z.object({
+  title: z.string(),
+  detail: z.string().optional(),
+}) satisfies z.ZodType<WorkflowPhaseInfo>;
+
+export const workflowTaskInfoSchema = taskInfoBaseSchema.extend({
+  kind: z.literal('workflow'),
+  workflowName: z.string(),
+  phase: z.string().optional(),
+  phases: z.array(workflowPhaseInfoSchema).optional(),
+  phaseIndex: z.number().optional(),
+  agentCalls: z.number().optional(),
+}) satisfies z.ZodType<WorkflowTaskInfo>;
+
 export const taskInfoSchema = z.discriminatedUnion('kind', [
   processTaskInfoSchema,
   agentTaskInfoSchema,
   questionTaskInfoSchema,
+  workflowTaskInfoSchema,
 ]) satisfies z.ZodType<TaskInfo>;
 
 export const compactionResultSchema = z.object({
@@ -1389,6 +1465,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   contextUsage: z.number().optional(),
   planMode: z.boolean().optional(),
   swarmMode: z.boolean().optional(),
+  workflowMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
@@ -1699,6 +1776,46 @@ export const backgroundTaskTerminatedEventSchema = z.object({
   info: taskInfoSchema,
 }) satisfies z.ZodType<BackgroundTaskTerminatedEvent>;
 
+export const workflowRunStartedEventSchema = z.object({
+  type: z.literal('workflow.run.started'),
+  runId: z.string(),
+  taskId: z.string(),
+  workflowName: z.string(),
+  description: z.string(),
+  phases: z.array(workflowPhaseInfoSchema),
+}) satisfies z.ZodType<WorkflowRunStartedEvent>;
+
+export const workflowRunPhaseEventSchema = z.object({
+  type: z.literal('workflow.run.phase'),
+  runId: z.string(),
+  phase: z.string(),
+  phaseIndex: z.number(),
+}) satisfies z.ZodType<WorkflowRunPhaseEvent>;
+
+export const workflowRunLogEventSchema = z.object({
+  type: z.literal('workflow.run.log'),
+  runId: z.string(),
+  message: z.string(),
+}) satisfies z.ZodType<WorkflowRunLogEvent>;
+
+export const workflowRunAgentCallEventSchema = z.object({
+  type: z.literal('workflow.run.agent_call'),
+  runId: z.string(),
+  index: z.number(),
+  label: z.string().optional(),
+  phase: z.string().optional(),
+  state: z.enum(['started', 'ok', 'refused', 'error']),
+}) satisfies z.ZodType<WorkflowRunAgentCallEvent>;
+
+export const workflowRunCompletedEventSchema = z.object({
+  type: z.literal('workflow.run.completed'),
+  runId: z.string(),
+  status: z.enum(['completed', 'failed', 'cancelled']),
+  agentCalls: z.number(),
+  error: z.string().optional(),
+  resultJson: z.string().optional(),
+}) satisfies z.ZodType<WorkflowRunCompletedEvent>;
+
 export const cronFiredEventSchema = z.object({
   type: z.literal('cron.fired'),
   origin: cronJobOriginSchema,
@@ -1806,6 +1923,11 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   taskTerminatedEventSchema,
   backgroundTaskStartedEventSchema,
   backgroundTaskTerminatedEventSchema,
+  workflowRunStartedEventSchema,
+  workflowRunPhaseEventSchema,
+  workflowRunLogEventSchema,
+  workflowRunAgentCallEventSchema,
+  workflowRunCompletedEventSchema,
   cronFiredEventSchema,
   promptSubmittedEventSchema,
   promptCompletedEventSchema,

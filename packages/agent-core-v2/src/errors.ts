@@ -34,6 +34,7 @@ import { StorageErrors } from '#/persistence/interface/storage';
 import { TerminalErrors } from '#/os/interface/terminalErrors';
 import { UsageErrors } from '#/agent/usage/errors';
 import { WireErrors } from '#/wire/errors';
+import { WorkflowErrors } from '#/app/workflow/errors';
 import { WorkspaceErrors } from '#/app/workspace/errors';
 
 export * from '#/_base/errors/codes';
@@ -67,6 +68,7 @@ export { StorageErrors } from '#/persistence/interface/storage';
 export { TerminalErrors } from '#/os/interface/terminalErrors';
 export { UsageErrors } from '#/agent/usage/errors';
 export { WireErrors } from '#/wire/errors';
+export { WorkflowErrors } from '#/app/workflow/errors';
 export { WorkspaceErrors } from '#/app/workspace/errors';
 
 export const ErrorCodes = {
@@ -97,6 +99,7 @@ export const ErrorCodes = {
   ...TerminalErrors.codes,
   ...UsageErrors.codes,
   ...WireErrors.codes,
+  ...WorkflowErrors.codes,
   ...WorkspaceErrors.codes,
 } as const;
 

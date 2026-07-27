@@ -57,6 +57,9 @@ function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
       // tool-spawned flows (Loop runs them as part of `Question` tool
       // execution), so 'tool' is the closest spec literal.
       return 'tool';
+    case 'workflow':
+      // SCHEMAS §7 has no 'workflow' literal either; 'tool' is the closest.
+      return 'tool';
   }
 }
 

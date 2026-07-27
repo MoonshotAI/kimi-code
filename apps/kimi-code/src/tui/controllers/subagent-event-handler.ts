@@ -131,6 +131,10 @@ export class SubAgentEventHandler {
   }
 
   handleLifecycleEvent(event: SubagentLifecycleEvent): void {
+    // Workflow-run subagents are rendered by WorkflowProgressComponent —
+    // skip the individual transcript entries to keep the transcript clean.
+    if (isWorkflowSubagent(event, this.subagentInfo)) return;
+
     switch (event.type) {
       case 'subagent.spawned':
         this.handleSubagentSpawned(event);
@@ -641,4 +645,21 @@ function isUserCancelledSubagentError(error: string): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Returns true when a subagent lifecycle event belongs to a dynamic workflow
+ * run (identified by the `workflow:<runId>:<n>` pattern in parentToolCallId).
+ * These subagents are rendered by WorkflowProgressComponent instead of as
+ * individual transcript entries.
+ */
+function isWorkflowSubagent(
+  event: SubagentLifecycleEvent,
+  subagentInfo: Map<string, SubagentInfo>,
+): boolean {
+  if (event.type === 'subagent.spawned') {
+    return event.parentToolCallId.startsWith('workflow:');
+  }
+  const info = subagentInfo.get(event.agentId);
+  return info !== undefined && info.parentToolCallId.startsWith('workflow:');
 }

@@ -492,6 +492,17 @@ api_key = "sk-rerank-test"
         source: 'default',
       },
       {
+        id: 'dynamic-workflows',
+        title: 'Dynamic workflows',
+        description:
+          'User-approved JS workflow scripts that orchestrate subagents in phases with parallel fan-out, pipelines, and JSON-schema structured output.',
+        surface: 'core',
+        env: 'KIMI_CODE_EXPERIMENTAL_DYNAMIC_WORKFLOWS',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
+      {
         id: 'langsearch-web-search',
         title: 'LangSearch web search',
         description:

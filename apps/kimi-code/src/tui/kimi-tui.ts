@@ -216,6 +216,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     planMode: input.cliOptions.plan,
     inputMode: 'prompt',
     swarmMode: false,
+    workflowMode: false,
     thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
@@ -435,6 +436,7 @@ export class KimiTUI {
   }
 
   private setupAutocomplete(): void {
+    const session = this.session;
     const slashCommands: SlashAutocompleteCommand[] = this.getSlashCommands().map((cmd) => {
       const completer = cmd.completeArgs;
       return {
@@ -443,7 +445,7 @@ export class KimiTUI {
         description: cmd.description,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
         ...(completer !== undefined
-          ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
+          ? { getArgumentCompletions: (prefix: string) => completer(prefix, { session }) }
           : {}),
       };
     });
@@ -1698,7 +1700,7 @@ export class KimiTUI {
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
     this.btwPanelController.clear();
-    this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
+    this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0, workflowTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
     this.setAppState({ mcpServersSummary: null });

@@ -177,6 +177,7 @@ function createResumeState(overrides: { permissionMode?: string; planMode?: bool
         permission: { mode: overrides.permissionMode ?? 'manual', rules: [] },
         plan: overrides.planMode ? { id: 'plan-1', content: '', path: '/tmp/plan.md' } : null,
         swarmMode: false,
+    workflowMode: false,
         usage: {},
         tools: [],
         background: [],

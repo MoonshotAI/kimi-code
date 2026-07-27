@@ -11,7 +11,7 @@ export interface GoalStartPermissionPromptOptions {
   readonly onCancel: () => void;
 }
 
-export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
+export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption<GoalStartPermissionChoice>[] = [
   {
     value: 'auto',
     label: 'Switch to Auto and start',
@@ -37,7 +37,7 @@ export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
   },
 ];
 
-export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
+export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption<GoalStartPermissionChoice>[] = [
   {
     value: 'auto',
     label: 'Switch to Auto and start',
@@ -57,7 +57,7 @@ export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
   },
 ];
 
-export function goalStartOptions(mode: 'manual' | 'yolo'): readonly StartPermissionOption[] {
+export function goalStartOptions(mode: 'manual' | 'yolo'): readonly StartPermissionOption<GoalStartPermissionChoice>[] {
   return mode === 'yolo' ? GOAL_START_YOLO_OPTIONS : GOAL_START_MANUAL_OPTIONS;
 }
 
@@ -77,7 +77,7 @@ const YOLO_NOTICE_LINES = [
   'Switch to Auto if you want questions skipped during goal work.',
 ] as const;
 
-export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent {
+export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent<GoalStartPermissionChoice> {
   constructor(opts: GoalStartPermissionPromptOptions) {
     super({
       title:

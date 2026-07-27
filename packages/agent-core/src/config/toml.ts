@@ -24,6 +24,7 @@ import {
   type ServicesConfig,
   type SubagentConfig,
   type ThinkingConfig,
+  type WorkflowsConfig,
   validateConfig,
 } from '#/config/schema';
 import { atomicWrite } from '#/utils/fs';
@@ -322,6 +323,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = cloneRecord(value);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'workflows' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'mcp' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (!isPlainObject(value)) {
@@ -500,6 +503,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
   setSection(out, 'background', config.background, backgroundToToml);
   setSection(out, 'subagent', config.subagent, subagentToToml);
+  setSection(out, 'workflows', config.workflows, workflowsToToml);
   setSection(out, 'mcp', config.mcp, mcpToToml);
   setSection(out, 'image', config.image, imageToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
@@ -699,6 +703,21 @@ function subagentToToml(subagent: SubagentConfig, rawSubagent: unknown): Record<
   const out = cloneRecord(rawSubagent);
   for (const [key, value] of Object.entries(subagent)) {
     setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function workflowsToToml(
+  workflows: WorkflowsConfig,
+  rawWorkflows: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawWorkflows);
+  for (const [key, value] of Object.entries(workflows)) {
+    if (Array.isArray(value)) {
+      out[camelToSnake(key)] = [...value];
+    } else {
+      setDefined(out, camelToSnake(key), value);
+    }
   }
   return out;
 }

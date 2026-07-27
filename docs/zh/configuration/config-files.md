@@ -268,6 +268,18 @@ max_output_size = 8192
 | `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
 
+## `workflows`
+
+`workflows` 用于调整 [Dynamic Workflow](../customization/workflows.md) 的运行限制并声明额外的 Workflow 目录。Dynamic Workflow 是实验功能，默认关闭；启用方式见 [Dynamic Workflows](../customization/workflows.md#启用-dynamic-workflow)。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `max_concurrency` | `integer` | `4` | 单个 Workflow 同时运行的子 Agent 数量上限（`1`–`16`） |
+| `max_agent_calls` | `integer` | `50` | 单次运行允许发起的 `agent()` 调用次数上限 |
+| `max_duration_ms` | `integer` | `1800000`（30 分钟） | 单次运行允许的最长时间（毫秒） |
+| `max_script_bytes` | `integer` | `262144`（256 KB） | Workflow 脚本文件的最大字节数；超过的文件在发现时会被跳过 |
+| `extra_workflow_dirs` | `array<string>` | — | 额外的 Workflow 目录，按额外作用域扫描（优先级介于用户与内置之间） |
+
 ## `mcp`
 
 | 字段 | 类型 | 默认值 | 说明 |

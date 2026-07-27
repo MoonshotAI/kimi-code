@@ -38,6 +38,7 @@
     "#/agent/plan": "./src/agent/plan/index.ts",
     "#/agent/swarm": "./src/agent/swarm/index.ts",
     "#/agent/tool": "./src/agent/tool/index.ts",
+    "#/agent/workflow": "./src/agent/workflow/index.ts",
     "#/config": "./src/config/index.ts",
     "#/flags": "./src/flags/index.ts",
     "#/loop": "./src/loop/index.ts",

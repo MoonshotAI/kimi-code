@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (44 record types)
+// Index (46 record types)
 //   config.update                      profile              persisted  src/agent/profile/profileOps.ts
 //   context_size.measured              contextSize          transient  src/agent/contextSize/contextSizeOps.ts
 //   context.append_loop_event          contextMemory        persisted  src/agent/contextMemory/contextOps.ts
@@ -66,6 +66,8 @@
 //   turn.prompt                        turn                 persisted  src/agent/loop/turnOps.ts
 //   turn.steer                         turn                 persisted  src/agent/loop/turnOps.ts
 //   usage.record                       usage                persisted  src/agent/usage/usageOps.ts
+//   workflow_mode.enter                workflow             persisted  src/agent/workflow/workflowModeOps.ts
+//   workflow_mode.exit                 workflow             persisted  src/agent/workflow/workflowModeOps.ts
 
 /**
  * model: profile · persisted
@@ -613,6 +615,24 @@ interface UsageRecordPayload {
   usageScope?: 'session' | 'turn';
 }
 
+/**
+ * model: workflow · persisted · toEvent
+ * owner: src/agent/workflow/workflowModeOps.ts
+ */
+interface WorkflowModeEnterPayload {
+  _name: 'workflow_mode.enter';
+  /** WorkflowModeTrigger */
+  trigger: 'manual' | 'command';
+}
+
+/**
+ * model: workflow · persisted · toEvent
+ * owner: src/agent/workflow/workflowModeOps.ts
+ */
+interface WorkflowModeExitPayload {
+  _name: 'workflow_mode.exit';
+}
+
 /** Record type → payload sketch. */
 interface WirePayloadMap {
   "config.update": ConfigUpdatePayload;
@@ -659,4 +679,6 @@ interface WirePayloadMap {
   "turn.prompt": TurnPromptPayload;
   "turn.steer": TurnSteerPayload;
   "usage.record": UsageRecordPayload;
+  "workflow_mode.enter": WorkflowModeEnterPayload;
+  "workflow_mode.exit": WorkflowModeExitPayload;
 }

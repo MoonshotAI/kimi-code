@@ -44,7 +44,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('renders the task badge alone when only bash tasks are running', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 1, agentTasks: 0 });
+    footer.setBackgroundCounts({ bashTasks: 1, agentTasks: 0, workflowTasks: 0 });
     const out = strip(footer.render(120)[0]!);
     expect(out).toMatch(/\[1 task running\]/);
     expect(out).not.toMatch(/agents? running/);
@@ -52,7 +52,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('renders the agent badge alone when only agent tasks are running', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 1 });
+    footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 1, workflowTasks: 0 });
     const out = strip(footer.render(120)[0]!);
     expect(out).toMatch(/\[1 agent running\]/);
     expect(out).not.toMatch(/tasks? running/);
@@ -60,7 +60,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('renders both badges side by side when both are non-zero', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 2, agentTasks: 3 });
+    footer.setBackgroundCounts({ bashTasks: 2, agentTasks: 3, workflowTasks: 0 });
     const out = strip(footer.render(120)[0]!);
     expect(out).toMatch(/\[2 tasks running\]/);
     expect(out).toMatch(/\[3 agents running\]/);
@@ -70,7 +70,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('pluralizes correctly across both badges', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 1, agentTasks: 1 });
+    footer.setBackgroundCounts({ bashTasks: 1, agentTasks: 1, workflowTasks: 0 });
     const out = strip(footer.render(120)[0]!);
     expect(out).toMatch(/\[1 task running\]/);
     expect(out).toMatch(/\[1 agent running\]/);
@@ -78,9 +78,9 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('updates badges live via setBackgroundCounts', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 2, agentTasks: 1 });
+    footer.setBackgroundCounts({ bashTasks: 2, agentTasks: 1, workflowTasks: 0 });
     expect(strip(footer.render(120)[0]!)).toMatch(/\[2 tasks running\]/);
-    footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
+    footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0, workflowTasks: 0 });
     const after = strip(footer.render(120)[0]!);
     expect(after).not.toMatch(/tasks? running/);
     expect(after).not.toMatch(/agents? running/);
@@ -88,7 +88,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('clamps negative counts to 0', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: -5, agentTasks: -2 });
+    footer.setBackgroundCounts({ bashTasks: -5, agentTasks: -2, workflowTasks: 0 });
     const out = strip(footer.render(120)[0]!);
     expect(out).not.toMatch(/tasks? running/);
     expect(out).not.toMatch(/agents? running/);
@@ -96,7 +96,7 @@ describe('FooterComponent — background task / agent badges', () => {
 
   it('drops the badges when terminal is too narrow to fit them', () => {
     const footer = new FooterComponent(baseState());
-    footer.setBackgroundCounts({ bashTasks: 4, agentTasks: 3 });
+    footer.setBackgroundCounts({ bashTasks: 4, agentTasks: 3, workflowTasks: 0 });
     // Extremely narrow width: footer primary content fills the line, so leftLine wins.
     const [line1] = footer.render(20);
     expect(line1).toBeDefined();

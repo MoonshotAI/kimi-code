@@ -29,6 +29,8 @@ import type {
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
   WarningEvent,
+  WorkflowRunCompletedEvent,
+  WorkflowRunStartedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
@@ -293,6 +295,12 @@ export class SessionEventHandler {
       case 'background.task.started':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
+      case 'workflow.run.started':
+      case 'workflow.run.completed':
+        this.handleWorkflowRunEvent(event); break;
+      case 'workflow.run.phase':
+      case 'workflow.run.log':
+      case 'workflow.run.agent_call': break; // progress is in /workflow runs
       case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
@@ -330,6 +338,28 @@ export class SessionEventHandler {
     });
   }
 
+
+
+  private handleWorkflowRunEvent(
+    event: WorkflowRunStartedEvent | WorkflowRunCompletedEvent,
+  ): void {
+    this.host.streamingUI.flushNow();
+    const content =
+      event.type === 'workflow.run.started'
+        ? `Workflow "${event.workflowName}" started (${String(event.phases.length)} phases) — /workflow runs to follow, /tasks for output.`
+        : event.status === 'completed'
+          ? `Workflow run ${event.runId} completed (${String(event.agentCalls)} agent calls) — /workflow runs to inspect.`
+          : event.status === 'failed'
+            ? `Workflow run ${event.runId} failed: ${event.error ?? 'unknown error'}`
+            : `Workflow run ${event.runId} cancelled.`;
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'status',
+      renderMode: 'plain',
+      content,
+    });
+  }
+
   private handleCronFired(event: CronFiredEvent): void {
     this.host.streamingUI.flushNow();
     this.host.appendTranscriptEntry({
@@ -347,6 +377,7 @@ export class SessionEventHandler {
       },
     });
   }
+
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.streamingUI.flushNow();
@@ -1161,6 +1192,7 @@ export class SessionEventHandler {
     const { state } = this.host;
     let bashTasks = 0;
     let agentTasks = 0;
+    let workflowTasks = 0;
     for (const info of this.backgroundTasks.values()) {
       if (
         info.status === 'completed' ||
@@ -1173,11 +1205,13 @@ export class SessionEventHandler {
       }
       if (info.kind === 'agent') {
         agentTasks += 1;
+      } else if (info.kind === 'workflow') {
+        workflowTasks += 1;
       } else {
         bashTasks += 1;
       }
     }
-    state.footer.setBackgroundCounts({ bashTasks, agentTasks });
+    state.footer.setBackgroundCounts({ bashTasks, agentTasks, workflowTasks });
     state.ui.requestRender();
   }
 }

@@ -222,6 +222,12 @@ const DOMAIN_LAYER = new Map([
   // Its highest real dependency is `agentLifecycle` (target lookup), so it
   // sits in L6 beside it.
   ['subagent', 6],
+  // `workflow` (Dynamic Workflows) spans scopes: the App catalog + the
+  // engine-agnostic sandbox runtime, the Session run service (drives
+  // subagent runs through `agentLifecycle` + `subagent`), and the Agent
+  // review listener. Its highest real dependency is `subagent` / `agentLifecycle`,
+  // so it sits in L6 beside them. The `Workflow` tool itself lives in `tools` (L7).
+  ['workflow', 6],
   ['sessionLifecycle', 6],
   ['externalHooks', 6],
   ['externalHooksRunner', 6],

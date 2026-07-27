@@ -5,7 +5,11 @@ import { basename, dirname, join, relative, resolve } from 'pathe';
 import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
-import type { KimiSlashCommand, SlashCommandAvailability } from './types';
+import type {
+  KimiSlashCommand,
+  SlashCommandAvailability,
+  SlashCommandCompletionContext,
+} from './types';
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
 const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
@@ -31,7 +35,10 @@ const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
-export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+export function goalArgumentCompletions(
+  argumentPrefix: string,
+  _context?: SlashCommandCompletionContext,
+): AutocompleteItem[] | null {
   const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
   if (nextMatch !== null) {
     return (
@@ -44,13 +51,92 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
   return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
 }
 
+/** Subcommands offered when autocompleting `/workflow <…>`. */
+const WORKFLOW_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'list', description: 'List discovered workflows' },
+  { value: 'run', description: 'Run a workflow by name (with confirmation)' },
+  { value: 'runs', description: 'Browse workflow runs' },
+  { value: 'show', description: 'View a workflow script' },
+  { value: 'cancel', description: 'Cancel a running workflow' },
+  { value: 'save', description: 'Save a run as a reusable workflow' },
+  { value: 'reload', description: 'Rediscover workflows from disk' },
+  { value: 'on', description: 'Enable dynamic workflow mode' },
+  { value: 'off', description: 'Disable dynamic workflow mode' },
+];
+
+const WORKFLOW_NAME_SUBCOMMANDS = new Set(['run', 'show']);
+
+/**
+ * Autocompletion for `/workflow`: subcommands as the first token, then for
+ * `run`/`show`/`cancel`/`save`, workflow names (or run-id prefixes for
+ * cancel/save) are suggested from the session. The inserted value includes
+ * the subcommand so the provider replaces the whole argument prefix.
+ */
+export async function workflowArgumentCompletions(
+  argumentPrefix: string,
+  context?: SlashCommandCompletionContext,
+): Promise<AutocompleteItem[] | null> {
+  // No space yet → static subcommand list. Don't auto-complete when the
+  // argument is empty so pressing Tab on `/workflows` doesn't select `list`.
+  if (!argumentPrefix.includes(' ')) {
+    if (argumentPrefix.length === 0) return null;
+    return completeLeadingArg(WORKFLOW_ARG_COMPLETIONS, argumentPrefix);
+  }
+
+  const [subcommand, ...rest] = argumentPrefix.split(/\s+/);
+  const namePrefix = rest.join(' ').trimStart();
+
+  // `cancel`/`save` complete on run-id prefixes, which we don't have statically
+  // (they come from listWorkflowRuns at runtime). Leave them to the user.
+  if (subcommand === 'cancel' || subcommand === 'save') return null;
+
+  if (!WORKFLOW_NAME_SUBCOMMANDS.has(subcommand ?? '')) return null;
+
+  // After the name is complete and the user starts typing args, stop completing.
+  if (namePrefix.includes(' ')) return null;
+
+  const session = context?.session;
+  if (session === undefined) return null;
+
+  let workflows: readonly { name: string; description: string; whenToUse?: string; argumentHint?: string }[];
+  try {
+    workflows = (await session.listWorkflows()).workflows;
+  } catch {
+    return null;
+  }
+  if (workflows.length === 0) return null;
+
+  const prefix = namePrefix.toLowerCase();
+  const matches = workflows.filter((w) => w.name.toLowerCase().startsWith(prefix));
+  if (matches.length === 0) return null;
+
+  return matches.map((w) => {
+    const hint = w.argumentHint !== undefined ? ` ${w.argumentHint}` : '';
+    const desc = w.whenToUse ?? w.description;
+    // When completing the `run` subcommand, add a trailing space so the user
+    // can immediately type arguments after selecting a workflow name.
+    const trailingSpace = subcommand === 'run' ? ' ' : '';
+    return {
+      value: `${subcommand} ${w.name}${trailingSpace}`,
+      label: `${w.name}${hint}`,
+      description: desc.length > 120 ? desc.slice(0, 117) + '…' : desc,
+    };
+  });
+}
+
 /** Argument autocompletion for the `/swarm` command (subcommands). */
-export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+export function swarmArgumentCompletions(
+  argumentPrefix: string,
+  _context?: SlashCommandCompletionContext,
+): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
 }
 
 /** Argument autocompletion for the `/add-dir` command. */
-export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+export function addDirArgumentCompletions(
+  argumentPrefix: string,
+  _context?: SlashCommandCompletionContext,
+): AutocompleteItem[] | null {
   if (isPathLikeAddDirArgument(argumentPrefix)) {
     return completeAddDirPath(argumentPrefix);
   }
@@ -230,6 +316,16 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Browse background tasks',
     priority: 80,
     availability: 'always',
+  },
+  {
+    name: 'workflow',
+    aliases: ['workflows'],
+    description: 'Run and manage dynamic workflows',
+    priority: 80,
+    argumentHint: '[list|run|runs|show|cancel|save|reload|on|off] …',
+    completeArgs: workflowArgumentCompletions,
+    availability: 'always',
+    experimentalFlag: 'dynamic-workflows',
   },
   {
     name: 'mcp',

@@ -52,6 +52,12 @@ import {
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient, withTelemetryProperties } from '../telemetry';
+import {
+  resolveWorkflowLimits,
+  SessionWorkflowRegistry,
+  SubagentWorkflowHost,
+  WorkflowRunManager,
+} from '../workflow';
 import { SessionSubagentHost } from './subagent-host';
 import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
@@ -188,6 +194,8 @@ export class Session {
   private readonly pluginCommands: readonly PluginCommandDef[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
+  private workflowRegistry: SessionWorkflowRegistry | undefined;
+  private workflowRunManager: WorkflowRunManager | undefined;
   metadata: SessionMeta = {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -843,6 +851,43 @@ export class Session {
     return this.pluginCommands;
   }
 
+  /**
+   * Session workflow registry (lazy). Mirrors `loadSkills()` path resolution:
+   * workDir from the tool kaos cwd, brand home from `kimiHomeDir`, OS home
+   * from `homedir()`, plus config `workflows.extraWorkflowDirs`.
+   */
+  get workflows(): SessionWorkflowRegistry {
+    this.workflowRegistry ??= new SessionWorkflowRegistry({
+      workDir: this.options.kaos.getcwd(),
+      kimiHome: this.options.kimiHomeDir,
+      osHome: homedir(),
+      extraDirs: this.options.config?.workflows?.extraWorkflowDirs,
+      maxScriptBytes: resolveWorkflowLimits(this.options.config?.workflows).maxScriptBytes,
+    });
+    return this.workflowRegistry;
+  }
+
+  async reloadWorkflows(): Promise<void> {
+    await this.workflows.reload();
+  }
+
+  /**
+   * Session workflow run manager (lazy). Runs execute as background tasks of
+   * the main agent and spawn subagents through its subagent host. Callers are
+   * responsible for gating on the `dynamic-workflows` experimental flag.
+   */
+  get workflowRuns(): WorkflowRunManager {
+    this.workflowRunManager ??= new WorkflowRunManager({
+      backgroundManager: () => this.requireMainAgent().background,
+      emitEvent: (event) => {
+        this.requireMainAgent().emitEvent(event);
+      },
+      createHost: (runId) =>
+        SubagentWorkflowHost.forSubagentHost(this.requireMainAgent().subagentHost!, runId),
+    });
+    return this.workflowRunManager;
+  }
+
   private async loadSkills(): Promise<void> {
     const roots = await resolveSkillRoots({
       paths: {
@@ -943,6 +988,8 @@ export class Session {
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
       subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
+      workflows: this.workflows,
+      workflowRuns: this.workflowRuns,
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: withTelemetryProperties(this.telemetry, { agent_id: id }),

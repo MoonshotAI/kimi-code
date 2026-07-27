@@ -22,6 +22,7 @@ import {
   UserConfiguredAskPermissionPolicy,
   UserConfiguredDenyPermissionPolicy,
 } from './user-configured-rules';
+import { WorkflowRunReviewAskPermissionPolicy } from './workflow-run-review-ask';
 import { YoloModeApprovePermissionPolicy } from './yolo-mode-approve';
 
 /** Permission policies run in order; the first non-undefined result wins. */
@@ -51,6 +52,9 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     // permission mode to run the goal under, or decline. Applies the mode, then
     // lets the tool create the goal.
     new GoalStartReviewAskPermissionPolicy(agent),
+    // Workflow (non-auto) → ask with the workflow_run review display (name,
+    // phases, limits, full script) before the first run starts.
+    new WorkflowRunReviewAskPermissionPolicy(agent),
     // EnterPlanMode, Write/Edit on the plan file, or ExitPlanMode with no actionable plan_review → approve.
     new PlanModeToolApprovePermissionPolicy(agent),
     // Access touches a sensitive file (.env, SSH key, credentials) → ask.

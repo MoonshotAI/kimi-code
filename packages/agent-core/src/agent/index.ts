@@ -22,6 +22,8 @@ import {
 } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
+import type { SessionWorkflowRegistry } from '../workflow/registry';
+import type { WorkflowRunManager } from '../workflow/run-manager';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
@@ -51,6 +53,7 @@ import { ReplayBuilder, type ReplayBuilderOptions } from './replay';
 import { SkillManager } from './skill';
 import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
+import { WorkflowMode } from './workflow';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
@@ -63,6 +66,7 @@ import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { SwarmModeTrigger } from './swarm';
+export type { WorkflowModeTrigger } from './workflow';
 export type {
   BuiltinTool,
   ToolDisclosure,
@@ -94,6 +98,10 @@ export interface AgentOptions {
   readonly microCompaction?: Partial<MicroCompactionConfig>;
   readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
+  /** Session workflow discovery registry (dynamic-workflows feature). */
+  readonly workflows?: SessionWorkflowRegistry | undefined;
+  /** Session workflow run manager (dynamic-workflows feature). */
+  readonly workflowRuns?: WorkflowRunManager | undefined;
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
@@ -128,6 +136,8 @@ export class Agent {
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
+  readonly workflows?: SessionWorkflowRegistry;
+  readonly workflowRuns?: WorkflowRunManager;
   readonly mcp?: McpConnectionManager;
   readonly hooks?: HookEngine;
   readonly log: Logger;
@@ -148,6 +158,7 @@ export class Agent {
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
   readonly swarmMode: SwarmMode;
+  readonly workflowMode: WorkflowMode;
   readonly usage: UsageRecorder;
   readonly skills: SkillManager | null;
   readonly tools: ToolManager;
@@ -192,6 +203,8 @@ export class Agent {
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
+    this.workflows = options.workflows;
+    this.workflowRuns = options.workflowRuns;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
     this.log = options.log ?? log;
@@ -227,6 +240,7 @@ export class Agent {
     this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.swarmMode = new SwarmMode(this);
+    this.workflowMode = new WorkflowMode(this);
     this.usage = new UsageRecorder(this);
     this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
@@ -576,6 +590,15 @@ export class Agent {
       getSwarmMode: () => {
         return this.swarmMode.isActive;
       },
+      enterWorkflowMode: (payload) => {
+        this.workflowMode.enter(payload.trigger);
+      },
+      exitWorkflowMode: () => {
+        this.workflowMode.exit();
+      },
+      getWorkflowMode: () => {
+        return this.workflowMode.isActive;
+      },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
       },
@@ -697,6 +720,7 @@ export class Agent {
       contextUsage,
       planMode: this.planMode.isActive,
       swarmMode: this.swarmMode.isActive,
+      workflowMode: this.workflowMode.isActive,
       permission: this.permission.mode,
       usage,
     });

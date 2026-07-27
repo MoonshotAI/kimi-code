@@ -476,7 +476,9 @@ export class TasksBrowserApp extends Container implements Focusable {
         ? 'success'
         : task.kind === 'question'
           ? 'warning'
-          : 'accent';
+          : task.kind === 'workflow'
+            ? 'accent'
+            : 'accent';
     const idText = selected
       ? currentTheme.boldFg(idColor, task.taskId)
       : currentTheme.fg(idColor, task.taskId);
@@ -557,6 +559,19 @@ export class TasksBrowserApp extends Container implements Focusable {
       lines.push(`${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`);
       if (task.toolCallId !== undefined) {
         lines.push(`${label('Tool call:')}${currentTheme.fg('textMuted', task.toolCallId)}`);
+      }
+    }
+    if (task.kind === 'workflow') {
+      lines.push(`${label('Workflow:')}${value(task.workflowName)}`);
+      if (task.phase !== undefined) {
+        const phaseProgress =
+          task.phases !== undefined && task.phaseIndex !== undefined
+            ? `${String(task.phaseIndex + 1)}/${String(task.phases.length)}`
+            : task.phase;
+        lines.push(`${label('Phase:')}${value(`${task.phase} (${phaseProgress})`)}`);
+      }
+      if (task.agentCalls !== undefined) {
+        lines.push(`${label('Agent calls:')}${currentTheme.fg('textMuted', String(task.agentCalls))}`);
       }
     }
     const timing =

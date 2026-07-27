@@ -179,6 +179,8 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
       return '';
     case 'goal_start':
       return 'Start a goal?';
+    case 'workflow_run':
+      return `Run workflow ${display.workflow_name}?`;
     case 'generic':
       if (typeof display.detail === 'string' && display.detail.length > 0) {
         return display.detail;
@@ -329,6 +331,26 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
         lines.push(`Done when: ${display.completionCriterion}`);
       }
       return [{ type: 'brief', text: lines.join('\n') }];
+    }
+    case 'workflow_run': {
+      // Summary (name, phases, limits, consumption warning) as a brief block;
+      // the full script as a file_content block so the panel's preview/expand
+      // (ctrl+e) doubles as "view raw script" before the first run.
+      const lines = [
+        `Workflow: ${display.workflow_name}`,
+        display.description,
+        `Phases: ${display.phases.map((phase, index) => `${String(index + 1)}. ${phase.title}${phase.detail !== undefined ? ` — ${phase.detail}` : ''}`).join(' · ')}`,
+      ];
+      if (display.args !== undefined && display.args.length > 0) lines.push(`Args: ${display.args}`);
+      lines.push(
+        `Limits: max ${String(display.limits.max_agent_calls)} agent calls · ${String(display.limits.max_concurrency)} concurrent · ${String(Math.round(display.limits.max_duration_ms / 60000))} min`,
+        display.consumption_warning,
+        `Source: ${display.source}`,
+      );
+      return [
+        { type: 'brief', text: lines.join('\n') },
+        { type: 'file_content', path: `${display.workflow_name}.workflow.js`, content: display.script },
+      ];
     }
     case 'generic':
       return [];

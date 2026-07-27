@@ -449,11 +449,16 @@ function parseSlashArgumentContext(
   textBeforeCursor: string,
   slashCommands: readonly SlashAutocompleteCommand[],
 ): { command: SlashAutocompleteCommand; argumentPrefix: string } | null {
-  const whitespaceMatch = textBeforeCursor.match(/^\/(\S+)\s+(\S*)$/);
+  // The whitespace branch captures the FULL argument text (including spaces)
+  // so subcommands like `/workflow run <name>` can complete the second token.
+  const whitespaceMatch = textBeforeCursor.match(/^\/(\S+)\s+(.*)$/);
   if (whitespaceMatch !== null) {
     const [, commandName = '', argumentPrefix = ''] = whitespaceMatch;
     const command = findSlashCommand(slashCommands, commandName);
     if (command === undefined) return null;
+    // When the cursor is right after the space with no argument text yet,
+    // argumentPrefix === '' — only show completions if the user explicitly
+    // typed a space (textBeforeCursor ends with whitespace).
     if (!textBeforeCursor.endsWith(' ') && argumentPrefix.length === 0) return null;
     return { command, argumentPrefix };
   }

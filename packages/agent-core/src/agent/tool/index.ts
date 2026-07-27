@@ -817,6 +817,10 @@ export class ToolManager {
         this.agent.cron && new b.CronDeleteTool(this.agent.cron),
         this.agent.skills?.registry.listInvocableSkills().length &&
           new b.SkillTool(this.agent),
+        // Dynamic workflows: main-agent only, gated by the experimental flag.
+        this.agent.type === 'main' &&
+          this.agent.experimentalFlags.enabled('dynamic-workflows') &&
+          new b.WorkflowTool(this.agent),
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,

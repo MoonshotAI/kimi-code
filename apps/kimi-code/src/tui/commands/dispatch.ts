@@ -53,6 +53,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleWorkflowCommand } from './workflow';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
 
@@ -347,6 +348,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'goal':
       await handleGoalCommand(host, args);
+      return;
+    case 'workflow':
+      await handleWorkflowCommand(host, args);
       return;
     case 'init':
       await handleInitCommand(host);

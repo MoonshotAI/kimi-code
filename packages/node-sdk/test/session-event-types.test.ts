@@ -117,6 +117,11 @@ describe('Event public types', () => {
         case 'prompt.completed':
         case 'prompt.aborted':
         case 'prompt.steered':
+        case 'workflow.run.started':
+        case 'workflow.run.phase':
+        case 'workflow.run.log':
+        case 'workflow.run.agent_call':
+        case 'workflow.run.completed':
           return;
         default:
           assertNever(event);

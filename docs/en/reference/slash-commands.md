@@ -96,6 +96,22 @@ kimi -p "/goal Fix the failing checkout test"
 
 Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. Other `/goal` subcommands, including `next`, are TUI controls and are not handled by `kimi -p`.
 
+## Dynamic Workflows
+
+`/workflow` (alias `/workflows`) manages [dynamic workflows](../customization/workflows.md) — an experimental feature that runs user-approved JavaScript scripts orchestrating subagents. These commands are available only when the `dynamic-workflows` experimental flag is enabled; every run asks for confirmation before anything executes.
+
+| Command | Description |
+| --- | --- |
+| `/workflow list` | List all discovered workflows |
+| `/workflow run <name> [args]` | Run a workflow by name, passing `args` to the script |
+| `/workflow runs` | Open the run browser: status, current phase, agent calls, logs, and result/error of each run |
+| `/workflow show <name>` | Show a workflow's metadata and script |
+| `/workflow cancel <runId>` | Cancel a running workflow |
+| `/workflow save <runId> [--user]` | Save the script of a run into the project workflow directory (`.kimi-code/workflows/`); with `--user`, into the user directory (`~/.kimi-code/workflows/`) |
+| `/workflow reload` | Rescan the workflow directories |
+| `/workflow on` | Enable Dynamic Workflow mode: the model analyses the task first and proposes dynamic workflows for large multi-phase tasks |
+| `/workflow off` | Disable Dynamic Workflow mode |
+
 ## Information & Status
 
 | Command | Alias | Description | Always available |

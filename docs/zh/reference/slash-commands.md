@@ -94,6 +94,22 @@ kimi -p "/goal 修复 checkout 测试失败"
 
 Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `3` 退出，在目标暂停时以 `6` 退出。其它 `/goal` 子命令，包括 `next`，都是 TUI 控制命令，不由 `kimi -p` 处理。
 
+## Dynamic Workflows
+
+`/workflow`（别名 `/workflows`）用于管理 [Dynamic Workflow](../customization/workflows.md) —— 一项实验功能，运行经用户批准、用于编排子 Agent 的 JavaScript 脚本。这些命令仅在 `dynamic-workflows` 实验 flag 启用时可用；每次运行在执行任何内容之前都会要求确认。
+
+| 命令 | 说明 |
+| --- | --- |
+| `/workflow list` | 列出所有发现的 Workflow |
+| `/workflow run <name> [args]` | 按名称运行 Workflow，并把 `args` 传给脚本 |
+| `/workflow runs` | 打开运行浏览器：每次运行的状态、当前阶段、`agent()` 调用次数、日志以及结果或错误 |
+| `/workflow show <name>` | 查看某个 Workflow 的元数据和脚本 |
+| `/workflow cancel <runId>` | 取消正在运行的 Workflow |
+| `/workflow save <runId> [--user]` | 把某次运行的脚本保存到项目 Workflow 目录（`.kimi-code/workflows/`）；加 `--user` 则保存到用户目录（`~/.kimi-code/workflows/`） |
+| `/workflow reload` | 重新扫描 Workflow 目录 |
+| `/workflow on` | 启用 Dynamic Workflow 模式：模型先分析任务，对大型多阶段任务主动创建动态 Workflow 脚本提交审批 |
+| `/workflow off` | 禁用 Dynamic Workflow 模式 |
+
 ## 信息与状态
 
 | 命令 | 别名 | 说明 | 随时可用 |

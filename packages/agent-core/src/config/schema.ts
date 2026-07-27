@@ -162,6 +162,16 @@ export const BackgroundConfigSchema = z.object({
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
+export const WorkflowsConfigSchema = z.object({
+  maxConcurrency: z.number().int().min(1).max(16).optional(),
+  maxAgentCalls: z.number().int().min(1).optional(),
+  maxDurationMs: z.number().int().min(1000).optional(),
+  maxScriptBytes: z.number().int().min(1024).optional(),
+  extraWorkflowDirs: z.array(z.string()).optional(),
+});
+
+export type WorkflowsConfig = z.infer<typeof WorkflowsConfigSchema>;
+
 export const SubagentConfigSchema = z.object({
   /**
    * Per-subagent (`Agent` / `AgentSwarm`, foreground and background) timeout
@@ -374,6 +384,7 @@ export const KimiConfigSchema = z.object({
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
   subagent: SubagentConfigSchema.optional(),
+  workflows: WorkflowsConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
@@ -391,6 +402,7 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const WorkflowsConfigPatchSchema = WorkflowsConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
@@ -424,6 +436,7 @@ export const KimiConfigPatchSchema = z
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
+    workflows: WorkflowsConfigPatchSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),

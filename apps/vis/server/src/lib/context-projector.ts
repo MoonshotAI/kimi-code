@@ -498,6 +498,12 @@ export function projectContext(
       case 'swarm_mode.exit':
         swarm = { active: false };
         break;
+      case 'workflow_mode.enter':
+        // Projected state for workflow mode is not tracked in the timeline;
+        // the record is acknowledged here to keep the exhaustive match happy.
+        break;
+      case 'workflow_mode.exit':
+        break;
       // Kinds that don't affect the projected timeline / derived state,
       // including the observability records (request trace — `llm.*`,
       // `mcp.tools_discovered`), which are never part of context state:

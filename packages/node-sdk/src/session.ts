@@ -4,6 +4,7 @@ import {
   type AgentContextData,
   type KimiErrorCode,
   type SwarmModeTrigger,
+  type WorkflowModeTrigger,
 } from '@moonshot-ai/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
@@ -33,9 +34,14 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  SkippedWorkflowInfo,
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
+  WorkflowDetail,
+  WorkflowRunDetail,
+  WorkflowRunSnapshot,
+  WorkflowSummary,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -268,6 +274,21 @@ export class Session {
     }
   }
 
+  async setWorkflowMode(enabled: boolean, trigger: WorkflowModeTrigger): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session workflow mode must be a boolean',
+      );
+    }
+    if (enabled) {
+      await this.rpc.setWorkflowMode({ sessionId: this.id, enabled: true, trigger });
+    } else {
+      await this.rpc.setWorkflowMode({ sessionId: this.id, enabled: false });
+    }
+  }
+
   async getPlan(): Promise<SessionPlan> {
     this.ensureOpen();
     return this.rpc.getPlan({ sessionId: this.id });
@@ -332,6 +353,76 @@ export class Session {
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
     this.ensureOpen();
     return this.rpc.listPluginCommands({ sessionId: this.id });
+  }
+
+  // ─── Dynamic workflows (require the 'dynamic-workflows' experimental flag) ─
+
+  async listWorkflows(): Promise<{
+    workflows: readonly WorkflowSummary[];
+    skipped: readonly SkippedWorkflowInfo[];
+  }> {
+    this.ensureOpen();
+    return this.rpc.listWorkflows({ sessionId: this.id });
+  }
+
+  async getWorkflow(name: string): Promise<{ workflow: WorkflowDetail | null }> {
+    this.ensureOpen();
+    return this.rpc.getWorkflow({ sessionId: this.id, name });
+  }
+
+  async reloadWorkflows(): Promise<{
+    workflows: readonly WorkflowSummary[];
+    skipped: readonly SkippedWorkflowInfo[];
+  }> {
+    this.ensureOpen();
+    return this.rpc.reloadWorkflows({ sessionId: this.id });
+  }
+
+  /**
+   * Start a workflow run by discovered `name` or inline `script`. Does NOT ask
+   * for user confirmation — approval is the caller's responsibility.
+   */
+  async runWorkflow(options: {
+    name?: string;
+    script?: string;
+    args?: string;
+  }): Promise<{ runId: string; taskId: string; workflowName: string }> {
+    this.ensureOpen();
+    return this.rpc.runWorkflow({
+      sessionId: this.id,
+      name: options.name,
+      script: options.script,
+      args: options.args,
+    });
+  }
+
+  async listWorkflowRuns(): Promise<{ runs: readonly WorkflowRunSnapshot[] }> {
+    this.ensureOpen();
+    return this.rpc.listWorkflowRuns({ sessionId: this.id });
+  }
+
+  async getWorkflowRun(runId: string): Promise<{ run: WorkflowRunDetail | null }> {
+    this.ensureOpen();
+    return this.rpc.getWorkflowRun({ sessionId: this.id, runId });
+  }
+
+  async cancelWorkflowRun(runId: string): Promise<{ cancelled: boolean }> {
+    this.ensureOpen();
+    return this.rpc.cancelWorkflowRun({ sessionId: this.id, runId });
+  }
+
+  async saveWorkflow(options: {
+    script: string;
+    scope: 'project' | 'user';
+    overwrite?: boolean;
+  }): Promise<{ path: string; name: string }> {
+    this.ensureOpen();
+    return this.rpc.saveWorkflow({
+      sessionId: this.id,
+      script: options.script,
+      scope: options.scope,
+      overwrite: options.overwrite,
+    });
   }
 
   /**

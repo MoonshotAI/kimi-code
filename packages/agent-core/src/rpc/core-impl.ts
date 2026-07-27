@@ -104,6 +104,7 @@ import type {
   ClientTelemetryInfo,
   EmptyPayload,
   EnterSwarmPayload,
+  EnterWorkflowModePayload,
   GoalSnapshot,
   GoalToolResult,
   GlobalMcpServerConfig,
@@ -117,9 +118,17 @@ import type {
   GetCronTasksResult,
   GetKimiConfigPayload,
   GetPluginInfoPayload,
+  CancelWorkflowRunPayload,
+  CancelWorkflowRunResult,
+  GetWorkflowPayload,
+  GetWorkflowResult,
+  GetWorkflowRunPayload,
+  GetWorkflowRunResult,
   InstallPluginPayload,
   ImportContextPayload,
   ListSessionsPayload,
+  ListWorkflowRunsResult,
+  ListWorkflowsResult,
   ListWorkspaceSkillsPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -128,6 +137,8 @@ import type {
   PromptPayload,
   PutGlobalMcpServerPayload,
   RunShellCommandPayload,
+  RunWorkflowPayload,
+  RunWorkflowResult,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
   ReloadSessionPayload,
@@ -138,6 +149,8 @@ import type {
   RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
+  SaveWorkflowPayload,
+  SaveWorkflowResult,
   SessionSummary,
   SetActiveToolsPayload,
   SetKimiConfigPayload,
@@ -903,6 +916,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getSwarmMode(payload);
   }
 
+  enterWorkflowMode({ sessionId, ...payload }: SessionAgentPayload<EnterWorkflowModePayload>) {
+    return this.sessionApi(sessionId).enterWorkflowMode(payload);
+  }
+
+  exitWorkflowMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).exitWorkflowMode(payload);
+  }
+
+  getWorkflowMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getWorkflowMode(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }
@@ -1080,6 +1105,62 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionScopedPayload<AddAdditionalDirPayload>): Promise<AddAdditionalDirResult> {
     return this.requireSession(sessionId).addAdditionalDir(payload.path, payload.persist);
+  }
+
+  listWorkflows({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<ListWorkflowsResult> {
+    return Promise.resolve(this.sessionApi(sessionId).listWorkflows(payload));
+  }
+
+  getWorkflow({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GetWorkflowPayload>): Promise<GetWorkflowResult> {
+    return Promise.resolve(this.sessionApi(sessionId).getWorkflow(payload));
+  }
+
+  reloadWorkflows({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<ListWorkflowsResult> {
+    return Promise.resolve(this.sessionApi(sessionId).reloadWorkflows(payload));
+  }
+
+  runWorkflow({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<RunWorkflowPayload>): Promise<RunWorkflowResult> {
+    return Promise.resolve(this.sessionApi(sessionId).runWorkflow(payload));
+  }
+
+  listWorkflowRuns({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<ListWorkflowRunsResult> {
+    return Promise.resolve(this.sessionApi(sessionId).listWorkflowRuns(payload));
+  }
+
+  getWorkflowRun({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GetWorkflowRunPayload>): Promise<GetWorkflowRunResult> {
+    return Promise.resolve(this.sessionApi(sessionId).getWorkflowRun(payload));
+  }
+
+  cancelWorkflowRun({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<CancelWorkflowRunPayload>): Promise<CancelWorkflowRunResult> {
+    return Promise.resolve(this.sessionApi(sessionId).cancelWorkflowRun(payload));
+  }
+
+  saveWorkflow({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<SaveWorkflowPayload>): Promise<SaveWorkflowResult> {
+    return Promise.resolve(this.sessionApi(sessionId).saveWorkflow(payload));
   }
 
   startBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<string> {

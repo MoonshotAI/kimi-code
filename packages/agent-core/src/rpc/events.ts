@@ -48,6 +48,13 @@ export type {
   TurnStepStartedEvent,
   UsageStatus,
   WarningEvent,
+  WorkflowPhaseInfo,
+  WorkflowRunAgentCallEvent,
+  WorkflowRunCompletedEvent,
+  WorkflowRunLogEvent,
+  WorkflowRunPhaseEvent,
+  WorkflowRunStartedEvent,
+  WorkflowTaskInfo,
 } from '@moonshot-ai/protocol';
 
 export type { KimiErrorPayload } from '../errors';

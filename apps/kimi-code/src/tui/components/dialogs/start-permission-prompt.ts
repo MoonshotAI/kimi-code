@@ -10,7 +10,7 @@ import {
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
-export type StartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
+export type StartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel' | 'run' | 'view';
 
 export interface StartPermissionOption<TChoice extends StartPermissionChoice = StartPermissionChoice> {
   readonly value: TChoice;

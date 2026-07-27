@@ -314,6 +314,9 @@ function mapKind(k: AgentTaskInfo['kind']): TaskKind {
       // SCHEMAS §7 has no 'question' literal; question tasks are
       // tool-spawned flows, so 'tool' is the closest spec literal.
       return 'tool';
+    case 'workflow':
+      // Same situation as 'question': no dedicated spec literal yet.
+      return 'tool';
   }
 }
 

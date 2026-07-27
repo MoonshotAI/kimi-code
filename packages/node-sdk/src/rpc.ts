@@ -21,6 +21,7 @@ import {
   type ToolCallRequest,
   type ToolCallResponse,
   type SwarmModeTrigger,
+  type WorkflowModeTrigger,
 } from '@moonshot-ai/agent-core';
 import type { Kaos } from '@moonshot-ai/kaos';
 
@@ -60,8 +61,13 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SkillSummary,
+  SkippedWorkflowInfo,
   PluginCommandDef,
   Unsubscribe,
+  WorkflowDetail,
+  WorkflowRunDetail,
+  WorkflowRunSnapshot,
+  WorkflowSummary,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -117,6 +123,10 @@ export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
 
 export type SetSessionSwarmModeRpcInput =
   | (SessionIdRpcInput & { readonly enabled: true; readonly trigger: SwarmModeTrigger })
+  | (SessionIdRpcInput & { readonly enabled: false });
+
+export type SetSessionWorkflowModeRpcInput =
+  | (SessionIdRpcInput & { readonly enabled: true; readonly trigger: WorkflowModeTrigger })
   | (SessionIdRpcInput & { readonly enabled: false });
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
@@ -485,6 +495,11 @@ export abstract class SDKRpcClientBase {
     return this.exitSwarmMode(input);
   }
 
+  async setWorkflowMode(input: SetSessionWorkflowModeRpcInput): Promise<void> {
+    if (input.enabled) return this.enterWorkflowMode(input);
+    return this.exitWorkflowMode(input);
+  }
+
   async swarm(input: SessionPromptRpcInput): Promise<void> {
     await this.enterSwarmMode({ sessionId: input.sessionId, trigger: 'task' });
     return this.prompt(input);
@@ -504,6 +519,25 @@ export abstract class SDKRpcClientBase {
   private async exitSwarmMode(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.exitSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  private async enterWorkflowMode(
+    input: SessionIdRpcInput & { readonly trigger: WorkflowModeTrigger },
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.enterWorkflowMode({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      trigger: input.trigger,
+    });
+  }
+
+  private async exitWorkflowMode(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.exitWorkflowMode({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });
@@ -624,6 +658,76 @@ export abstract class SDKRpcClientBase {
   async listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]> {
     const rpc = await this.getRpc();
     return rpc.listPluginCommands({ sessionId: input.sessionId });
+  }
+
+  async listWorkflows(
+    input: SessionIdRpcInput,
+  ): Promise<{ workflows: readonly WorkflowSummary[]; skipped: readonly SkippedWorkflowInfo[] }> {
+    const rpc = await this.getRpc();
+    return rpc.listWorkflows({ sessionId: input.sessionId });
+  }
+
+  async getWorkflow(
+    input: SessionIdRpcInput & { name: string },
+  ): Promise<{ workflow: WorkflowDetail | null }> {
+    const rpc = await this.getRpc();
+    return rpc.getWorkflow({ sessionId: input.sessionId, name: input.name });
+  }
+
+  async reloadWorkflows(
+    input: SessionIdRpcInput,
+  ): Promise<{ workflows: readonly WorkflowSummary[]; skipped: readonly SkippedWorkflowInfo[] }> {
+    const rpc = await this.getRpc();
+    return rpc.reloadWorkflows({ sessionId: input.sessionId });
+  }
+
+  /**
+   * Start a workflow run. Does NOT ask for user confirmation — approval is the
+   * caller's responsibility (show a dialog before calling this).
+   */
+  async runWorkflow(
+    input: SessionIdRpcInput & { name?: string; script?: string; args?: string },
+  ): Promise<{ runId: string; taskId: string; workflowName: string }> {
+    const rpc = await this.getRpc();
+    return rpc.runWorkflow({
+      sessionId: input.sessionId,
+      name: input.name,
+      script: input.script,
+      args: input.args,
+    });
+  }
+
+  async listWorkflowRuns(
+    input: SessionIdRpcInput,
+  ): Promise<{ runs: readonly WorkflowRunSnapshot[] }> {
+    const rpc = await this.getRpc();
+    return rpc.listWorkflowRuns({ sessionId: input.sessionId });
+  }
+
+  async getWorkflowRun(
+    input: SessionIdRpcInput & { runId: string },
+  ): Promise<{ run: WorkflowRunDetail | null }> {
+    const rpc = await this.getRpc();
+    return rpc.getWorkflowRun({ sessionId: input.sessionId, runId: input.runId });
+  }
+
+  async cancelWorkflowRun(
+    input: SessionIdRpcInput & { runId: string },
+  ): Promise<{ cancelled: boolean }> {
+    const rpc = await this.getRpc();
+    return rpc.cancelWorkflowRun({ sessionId: input.sessionId, runId: input.runId });
+  }
+
+  async saveWorkflow(
+    input: SessionIdRpcInput & { script: string; scope: 'project' | 'user'; overwrite?: boolean },
+  ): Promise<{ path: string; name: string }> {
+    const rpc = await this.getRpc();
+    return rpc.saveWorkflow({
+      sessionId: input.sessionId,
+      script: input.script,
+      scope: input.scope,
+      overwrite: input.overwrite,
+    });
   }
 
   async listBackgroundTasks(

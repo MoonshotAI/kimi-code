@@ -107,6 +107,18 @@ export type {
 
 export type { CronFiredEvent } from '@moonshot-ai/agent-core';
 
+// Dynamic-workflow run lifecycle events (require the 'dynamic-workflows'
+// experimental flag).
+export type {
+  WorkflowRunStartedEvent,
+  WorkflowRunPhaseEvent,
+  WorkflowRunLogEvent,
+  WorkflowRunAgentCallEvent,
+  WorkflowRunCompletedEvent,
+  WorkflowPhaseInfo,
+  WorkflowTaskInfo,
+} from '@moonshot-ai/agent-core';
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;

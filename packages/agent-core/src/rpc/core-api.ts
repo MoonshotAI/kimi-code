@@ -14,6 +14,7 @@ import type {
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
+import type { WorkflowModeTrigger } from '#/agent/workflow';
 import type { ToolDisclosure, ToolInfo } from '#/agent/tool';
 import type {
   KimiConfig,
@@ -254,6 +255,9 @@ export interface CancelPlanPayload {
 export interface EnterSwarmPayload {
   readonly trigger: SwarmModeTrigger;
 }
+export interface EnterWorkflowModePayload {
+  readonly trigger: WorkflowModeTrigger;
+}
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
@@ -323,6 +327,121 @@ export interface ActivatePluginCommandPayload {
   readonly pluginId: string;
   readonly commandName: string;
   readonly args?: string | undefined;
+}
+
+// ─── Dynamic workflows (gated by the 'dynamic-workflows' experimental flag) ─
+
+export interface WorkflowPhaseSummary {
+  readonly title: string;
+  readonly detail?: string;
+}
+
+export interface WorkflowSummary {
+  readonly name: string;
+  readonly description: string;
+  readonly whenToUse?: string;
+  readonly argumentHint?: string;
+  readonly phases: readonly WorkflowPhaseSummary[];
+  readonly path: string;
+  readonly source: 'builtin' | 'user' | 'extra' | 'project';
+}
+
+export interface SkippedWorkflowInfo {
+  readonly path: string;
+  readonly reason: string;
+}
+
+export interface ListWorkflowsResult {
+  readonly workflows: readonly WorkflowSummary[];
+  readonly skipped: readonly SkippedWorkflowInfo[];
+}
+
+export interface GetWorkflowPayload {
+  readonly name: string;
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  /** Full script text, for caller-side inspection/confirmation UIs. */
+  readonly script: string;
+}
+
+export interface GetWorkflowResult {
+  readonly workflow: WorkflowDetail | null;
+}
+
+export interface RunWorkflowPayload {
+  /** Name of a discovered workflow; mutually exclusive with `script`. */
+  readonly name?: string;
+  /** Inline script (validated via meta extraction); used when `name` is omitted. */
+  readonly script?: string;
+  readonly args?: string;
+}
+
+export interface RunWorkflowResult {
+  readonly runId: string;
+  readonly taskId: string;
+  readonly workflowName: string;
+}
+
+export type WorkflowRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+/** Lightweight run record for RPC payloads: no script, log tail only. */
+export interface WorkflowRunSnapshot {
+  readonly runId: string;
+  readonly workflowName: string;
+  readonly description: string;
+  readonly phases: readonly WorkflowPhaseSummary[];
+  readonly status: WorkflowRunStatus;
+  readonly phase?: string;
+  readonly phaseIndex?: number;
+  readonly agentCalls: number;
+  /** Most recent log lines (list payloads carry only the last 50). */
+  readonly logs: readonly string[];
+  readonly error?: string;
+  readonly resultJson?: string;
+  readonly startedAt: number;
+  readonly endedAt?: number;
+  readonly taskId?: string;
+  readonly scriptPath?: string;
+  readonly source: 'builtin' | 'user' | 'extra' | 'project';
+  readonly args: string;
+}
+
+export interface ListWorkflowRunsResult {
+  readonly runs: readonly WorkflowRunSnapshot[];
+}
+
+export interface GetWorkflowRunPayload {
+  readonly runId: string;
+}
+
+export interface WorkflowRunDetail extends WorkflowRunSnapshot {
+  /** Full bounded log buffer (up to 200 lines, vs the 50-line list tail). */
+  readonly logs: readonly string[];
+  readonly script: string;
+}
+
+export interface GetWorkflowRunResult {
+  readonly run: WorkflowRunDetail | null;
+}
+
+export interface CancelWorkflowRunPayload {
+  readonly runId: string;
+}
+
+export interface CancelWorkflowRunResult {
+  readonly cancelled: boolean;
+}
+
+export interface SaveWorkflowPayload {
+  readonly script: string;
+  readonly scope: 'project' | 'user';
+  readonly overwrite?: boolean;
+}
+
+export interface SaveWorkflowResult {
+  readonly path: string;
+  readonly name: string;
 }
 
 export interface McpServerInfo {
@@ -499,6 +618,9 @@ export interface AgentAPI {
   enterSwarm: (payload: EnterSwarmPayload) => void;
   exitSwarm: (payload: EmptyPayload) => void;
   getSwarmMode: (payload: EmptyPayload) => boolean;
+  enterWorkflowMode: (payload: EnterWorkflowModePayload) => void;
+  exitWorkflowMode: (payload: EmptyPayload) => void;
+  getWorkflowMode: (payload: EmptyPayload) => boolean;
   beginCompaction: (payload: BeginCompactionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   registerTool: (payload: RegisterToolPayload) => void;
@@ -543,6 +665,23 @@ export interface SessionAPI extends AgentAPIWithId {
   waitForBackgroundTasksOnPrint: (payload: EmptyPayload) => void;
   handlePrintMainTurnCompleted: (payload: EmptyPayload) => 'finish' | 'continue';
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
+  // Dynamic workflows — every method below requires the 'dynamic-workflows'
+  // experimental flag and fails with `request.invalid` when it is disabled.
+  listWorkflows: (payload: EmptyPayload) => ListWorkflowsResult;
+  getWorkflow: (payload: GetWorkflowPayload) => GetWorkflowResult;
+  reloadWorkflows: (payload: EmptyPayload) => ListWorkflowsResult;
+  /**
+   * Start a workflow run by registry `name` or inline `script`.
+   *
+   * This method does NOT ask for user confirmation — approval is the caller's
+   * responsibility (e.g. the TUI shows its confirmation dialog before calling;
+   * the model/tool path carries its own approval flow).
+   */
+  runWorkflow: (payload: RunWorkflowPayload) => RunWorkflowResult;
+  listWorkflowRuns: (payload: EmptyPayload) => ListWorkflowRunsResult;
+  getWorkflowRun: (payload: GetWorkflowRunPayload) => GetWorkflowRunResult;
+  cancelWorkflowRun: (payload: CancelWorkflowRunPayload) => CancelWorkflowRunResult;
+  saveWorkflow: (payload: SaveWorkflowPayload) => SaveWorkflowResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

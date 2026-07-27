@@ -302,6 +302,52 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('renders a workflow_run approval with phases, limits, warning and the full script', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-workflow',
+      toolName: 'Workflow',
+      action: 'Run workflow deep-research',
+      display: {
+        kind: 'workflow_run',
+        workflow_name: 'deep-research',
+        description: 'Deep research harness.',
+        phases: [
+          { title: 'Scope', detail: 'Decompose' },
+          { title: 'Search' },
+        ],
+        args: 'hermes agent',
+        script: 'export const meta = {};',
+        source: 'builtin',
+        limits: { max_concurrency: 4, max_agent_calls: 50, max_duration_ms: 1_800_000 },
+        consumption_warning: 'Runs many subagents — high token usage.',
+      },
+    });
+
+    expect(adapted.description).toBe('Run workflow deep-research?');
+    expect(adapted.display).toEqual([
+      {
+        type: 'brief',
+        text: [
+          'Workflow: deep-research',
+          'Deep research harness.',
+          'Phases: 1. Scope — Decompose · 2. Search',
+          'Args: hermes agent',
+          'Limits: max 50 agent calls · 4 concurrent · 30 min',
+          'Runs many subagents — high token usage.',
+          'Source: builtin',
+        ].join('\n'),
+      },
+      {
+        type: 'file_content',
+        path: 'deep-research.workflow.js',
+        content: 'export const meta = {};',
+      },
+    ]);
+    // Default approve/reject choices — approval starts the run, rejection blocks it.
+    expect(adapted.choices.some((choice) => choice.response === 'approved')).toBe(true);
+    expect(adapted.choices.some((choice) => choice.response === 'rejected')).toBe(true);
+  });
+
   it('maps approved-for-session responses into core approval payloads', () => {
     expect(
       adaptPanelResponse({

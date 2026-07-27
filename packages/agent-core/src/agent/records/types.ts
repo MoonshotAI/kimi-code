@@ -11,6 +11,7 @@ import type { PermissionApprovalResultRecord, PermissionMode } from '../permissi
 import type { McpToolCollision, UserToolRegistration } from '../tool';
 import type { UsageRecordScope } from '../usage';
 import type { SwarmModeTrigger } from '../swarm';
+import type { WorkflowModeTrigger } from '../workflow';
 
 /** One entry of a tools table as sent in a request's top-level `tools[]`. */
 export interface LlmRequestToolSchema {
@@ -74,6 +75,11 @@ export interface AgentRecordEvents {
     trigger: SwarmModeTrigger;
   };
   'swarm_mode.exit': {};
+
+  'workflow_mode.enter': {
+    trigger: WorkflowModeTrigger;
+  };
+  'workflow_mode.exit': {};
 
   'tools.register_user_tool': UserToolRegistration;
   'tools.unregister_user_tool': {
