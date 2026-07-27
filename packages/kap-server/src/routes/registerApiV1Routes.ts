@@ -38,6 +38,7 @@ import { registerShutdownRoutes } from './shutdown';
 import { registerSnapshotRoutes } from './snapshot';
 import { registerSkillsRoutes } from './skills';
 import { registerTasksRoutes } from './tasks';
+import { registerWorkflowsRoutes } from './workflows';
 import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
 import { registerTranscriptRoutes } from './transcript';
@@ -122,6 +123,7 @@ export async function registerApiV1Routes(
         core,
       );
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
+      registerWorkflowsRoutes(apiV1 as unknown as Parameters<typeof registerWorkflowsRoutes>[0], core);
       registerApprovalsRoutes(
         apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
         core,

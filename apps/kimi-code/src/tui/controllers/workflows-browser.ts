@@ -13,6 +13,7 @@ import type { SlashCommandHost } from '../commands/dispatch';
 import { TextViewerComponent } from '../components/dialogs/text-viewer';
 import { WorkflowsBrowserApp } from '../components/dialogs/workflows-browser';
 import { formatErrorMessage } from '../utils/event-payload';
+import { WorkflowV2Client } from '../workflow-v2-client';
 
 interface BrowserState {
   component: WorkflowsBrowserApp;
@@ -32,23 +33,23 @@ interface BrowserState {
     | undefined;
 }
 
-let active: { host: SlashCommandHost; browser: BrowserState } | undefined;
+let active:
+  | { host: SlashCommandHost; client: WorkflowV2Client; browser: BrowserState }
+  | undefined;
 
 export function workflowsBrowserOpen(): boolean {
   return active !== undefined;
 }
 
-export async function showWorkflowsBrowser(host: SlashCommandHost): Promise<void> {
+export async function showWorkflowsBrowser(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+): Promise<void> {
   if (active !== undefined) return;
-  const session = host.session;
-  if (session === undefined) {
-    host.showError('No active session.');
-    return;
-  }
 
   let runs: readonly WorkflowRunSnapshot[];
   try {
-    runs = (await session.listWorkflowRuns()).runs;
+    runs = (await client.listWorkflowRuns()).runs;
   } catch (error) {
     host.showError(`Failed to load workflow runs: ${formatErrorMessage(error)}`);
     return;
@@ -86,6 +87,7 @@ export async function showWorkflowsBrowser(host: SlashCommandHost): Promise<void
 
   active = {
     host,
+    client,
     browser: {
       component,
       savedChildren,
@@ -120,12 +122,10 @@ export function closeWorkflowsBrowser(): void {
 
 async function refresh(silent: boolean): Promise<void> {
   if (active === undefined) return;
-  const { host, browser } = active;
-  const session = host.session;
-  if (session === undefined) return;
+  const { host, client, browser } = active;
   let runs: readonly WorkflowRunSnapshot[];
   try {
-    runs = (await session.listWorkflowRuns()).runs;
+    runs = (await client.listWorkflowRuns()).runs;
   } catch (error) {
     if (!silent) flash(`Refresh failed: ${formatErrorMessage(error)}`);
     return;
@@ -168,14 +168,9 @@ function handleSelect(runId: string): void {
 
 function loadDetail(runId: string): void {
   if (active === undefined) return;
-  const { host, browser } = active;
-  const session = host.session;
-  if (session === undefined) {
-    browser.detailLoading = false;
-    return;
-  }
+  const { client, browser } = active;
   const requestId = ++browser.detailRequestId;
-  void session
+  void client
     .getWorkflowRun(runId)
     .then(({ run }) => {
       if (active === undefined || active.browser !== browser) return;
@@ -195,12 +190,11 @@ function loadDetail(runId: string): void {
 
 async function refreshDetail(runId: string): Promise<void> {
   if (active === undefined) return;
-  const { host, browser } = active;
-  const session = host.session;
-  if (session === undefined || browser.detail === undefined) return;
+  const { client, browser } = active;
+  if (browser.detail === undefined) return;
   const requestId = ++browser.detailRequestId;
   try {
-    const { run } = await session.getWorkflowRun(runId);
+    const { run } = await client.getWorkflowRun(runId);
     if (active === undefined || active.browser !== browser) return;
     if (browser.detailRequestId !== requestId || browser.selectedRunId !== runId) return;
     if (run !== null) browser.detail = run;
@@ -211,11 +205,9 @@ async function refreshDetail(runId: string): Promise<void> {
 
 async function handleCancelRun(runId: string): Promise<void> {
   if (active === undefined) return;
-  const { host } = active;
-  const session = host.session;
-  if (session === undefined) return;
+  const { client } = active;
   try {
-    const { cancelled } = await session.cancelWorkflowRun(runId);
+    const { cancelled } = await client.cancelWorkflowRun(runId);
     flash(cancelled ? `Cancelling ${runId}…` : `${runId} is not running — nothing to cancel.`);
     await refresh(true);
   } catch (error) {
@@ -225,16 +217,14 @@ async function handleCancelRun(runId: string): Promise<void> {
 
 async function handleSaveRun(runId: string, scope: 'project' | 'user'): Promise<void> {
   if (active === undefined) return;
-  const { host } = active;
-  const session = host.session;
-  if (session === undefined) return;
+  const { client } = active;
   try {
-    const { run } = await session.getWorkflowRun(runId);
+    const { run } = await client.getWorkflowRun(runId);
     if (run === null) {
       flash(`Run ${runId} not found.`);
       return;
     }
-    const saved = await session.saveWorkflow({ script: run.script, scope });
+    const saved = await client.saveWorkflow({ script: run.script, scope });
     flash(`Saved "${saved.name}" to ${scope} scope: ${saved.path}`, 4000);
   } catch (error) {
     flash(`Save failed: ${formatErrorMessage(error)}`);
@@ -243,12 +233,10 @@ async function handleSaveRun(runId: string, scope: 'project' | 'user'): Promise<
 
 async function handleViewScript(runId: string): Promise<void> {
   if (active === undefined) return;
-  const { host, browser } = active;
+  const { host, client, browser } = active;
   if (browser.viewer !== undefined) return;
-  const session = host.session;
-  if (session === undefined) return;
   try {
-    const { run } = await session.getWorkflowRun(runId);
+    const { run } = await client.getWorkflowRun(runId);
     if (active === undefined || active.browser !== browser) return;
     if (run === null) {
       flash(`Run ${runId} not found.`);

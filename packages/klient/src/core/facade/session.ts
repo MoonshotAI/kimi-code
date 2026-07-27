@@ -52,6 +52,76 @@ export interface SessionInteractionsFacade {
   respond(id: string, response: unknown): Promise<void>;
 }
 
+// ---------------------------------------------------------------------------
+// Workflow facade — combines catalog (App scope) and runs (Session scope)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowDefinitionMeta {
+  name: string;
+  description: string;
+  whenToUse?: string;
+  argumentHint?: string;
+  phases: Array<{ title: string; detail?: string }>;
+}
+
+export interface WorkflowDefinition {
+  meta: WorkflowDefinitionMeta;
+  script: string;
+  path: string;
+  source: 'project' | 'user' | 'extra' | 'builtin';
+}
+
+export interface WorkflowRunRecordWire {
+  runId: string;
+  workflowName: string;
+  description: string;
+  phases: Array<{ title: string; detail?: string }>;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  phase?: string;
+  phaseIndex?: number;
+  agentCalls: number;
+  logs: string[];
+  error?: string;
+  resultJson?: string;
+  startedAt: number;
+  endedAt?: number;
+  taskId?: string;
+  scriptPath?: string;
+  source: 'project' | 'user' | 'extra' | 'builtin';
+  script: string;
+  args: string;
+  callerAgentId: string;
+}
+
+export interface WorkflowRunResult {
+  runId: string;
+  taskId: string;
+}
+
+export interface StartWorkflowRunInput {
+  name?: string;
+  script?: string;
+  args: string;
+  callerAgentId: string;
+}
+
+export interface SaveWorkflowInput {
+  script: string;
+  scope: 'project' | 'user';
+  overwrite?: boolean;
+}
+
+export interface WorkflowFacade {
+  listWorkflows(): Promise<readonly WorkflowDefinition[]>;
+  getWorkflow(name: string): Promise<WorkflowDefinition | undefined>;
+  runWorkflow(input: StartWorkflowRunInput): Promise<WorkflowRunResult>;
+  listWorkflowRuns(): Promise<readonly WorkflowRunRecordWire[]>;
+  getWorkflowRun(runId: string): Promise<WorkflowRunRecordWire | undefined>;
+  cancelWorkflowRun(runId: string): Promise<boolean>;
+  saveWorkflow(input: SaveWorkflowInput): Promise<{ path: string }>;
+  reloadWorkflows(): Promise<void>;
+}
+
 /**
  * Derived session lifecycle phase. The engine retired its `sessionActivity`
  * service (#1751) — busy is now derived from agent activity views — so the
@@ -80,6 +150,8 @@ export interface SessionFacade {
   readonly interactions: SessionInteractionsFacade;
   /** Agent id → metadata for every agent registered in this session. */
   agents(): Promise<Readonly<Record<string, AgentMeta>>>;
+  /** Dynamic Workflows — catalog (App scope) and runs (Session scope). */
+  workflow(): WorkflowFacade;
 }
 
 export function createSessionFacade(call: ScopedCaller, sessionId: string): SessionFacade {
@@ -170,5 +242,28 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       const meta = await read();
       return meta.agents ?? {};
     },
+
+    workflow: () => ({
+      listWorkflows: () =>
+        call({}, 'workflowCatalogService', 'list', []) as Promise<readonly WorkflowDefinition[]>,
+      getWorkflow: (name) =>
+        call({}, 'workflowCatalogService', 'get', [name]) as Promise<
+          WorkflowDefinition | undefined
+        >,
+      runWorkflow: (input) =>
+        call(scope, 'workflowRunService', 'start', [input]) as Promise<WorkflowRunResult>,
+      listWorkflowRuns: () =>
+        call(scope, 'workflowRunService', 'list', []) as Promise<readonly WorkflowRunRecordWire[]>,
+      getWorkflowRun: (runId) =>
+        call(scope, 'workflowRunService', 'get', [runId]) as Promise<
+          WorkflowRunRecordWire | undefined
+        >,
+      cancelWorkflowRun: (runId) =>
+        call(scope, 'workflowRunService', 'cancel', [runId]) as Promise<boolean>,
+      saveWorkflow: (input) =>
+        call({}, 'workflowCatalogService', 'save', [input]) as Promise<{ path: string }>,
+      reloadWorkflows: () =>
+        call({}, 'workflowCatalogService', 'reload', []) as Promise<void>,
+    }),
   };
 }

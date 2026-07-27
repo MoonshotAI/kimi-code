@@ -22,7 +22,6 @@
  */
 
 import {
-  IAgentLifecycleService,
   IWorkflowCatalogService,
   IWorkflowRunService,
   ISessionIndex,
@@ -38,7 +37,6 @@ import { ensureMainAgent } from '../transport/mainAgent';
 import { z } from 'zod';
 
 import type { WorkflowDefinition, SkippedWorkflow } from '@moonshot-ai/agent-core-v2';
-import type { WorkflowRunRecord } from '@moonshot-ai/agent-core-v2';
 
 interface WorkflowsRouteHost {
   get(
@@ -298,8 +296,8 @@ export function registerWorkflowsRoutes(app: WorkflowsRouteHost, core: Scope): v
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} is not active`, req.id));
         return;
       }
-      const agent = await ensureMainAgent(session);
-      const runService = agent.accessor.get(IWorkflowRunService);
+      await ensureMainAgent(session);
+      const runService = session.accessor.get(IWorkflowRunService);
 
       const body = req.body as z.infer<typeof runWorkflowBodySchema>;
       const result = await runService.start({
@@ -346,12 +344,7 @@ export function registerWorkflowsRoutes(app: WorkflowsRouteHost, core: Scope): v
         reply.send(okEnvelope({ items: [] }, req.id));
         return;
       }
-      const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
-      if (agent === undefined) {
-        reply.send(okEnvelope({ items: [] }, req.id));
-        return;
-      }
-      const runService = agent.accessor.get(IWorkflowRunService);
+      const runService = session.accessor.get(IWorkflowRunService);
       const items = runService.list();
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -512,7 +505,7 @@ function sessionNotFound(sid: string, requestId: string): unknown {
 
 /**
  * Resolve the `IWorkflowRunService` for a session. Returns `undefined` when
- * the session is not live or has no main agent (same gap G10 pattern as tasks).
+ * the session is not live (gap G10 pattern — same as tasks.ts).
  */
 async function resolveRunService(
   core: Scope,
@@ -520,7 +513,5 @@ async function resolveRunService(
 ): Promise<IWorkflowRunService | undefined> {
   const session = core.accessor.get(ISessionLifecycleService).get(sid);
   if (session === undefined) return undefined;
-  const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
-  if (agent === undefined) return undefined;
-  return agent.accessor.get(IWorkflowRunService);
+  return session.accessor.get(IWorkflowRunService);
 }

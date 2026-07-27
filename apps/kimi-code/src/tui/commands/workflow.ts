@@ -62,10 +62,9 @@ export async function handleWorkflowCommand(host: SlashCommandHost, args: string
   }
 }
 
-async function listWorkflows(host: SlashCommandHost): Promise<void> {
-  const session = host.requireSession();
+async function listWorkflows(host: SlashCommandHost, client: WorkflowV2Client): Promise<void> {
   try {
-    const { workflows, skipped } = await session.listWorkflows();
+    const { workflows, skipped } = await client.listWorkflows();
     const lines = workflows.map(
       (workflow) =>
         `• ${workflow.name} (${workflow.source}, ${String(workflow.phases.length)} phases) — ${workflow.description}`,
@@ -83,25 +82,29 @@ async function listWorkflows(host: SlashCommandHost): Promise<void> {
   }
 }
 
-async function runWorkflow(host: SlashCommandHost, input: string, commandText: string): Promise<void> {
+async function runWorkflow(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+  input: string,
+  commandText: string,
+): Promise<void> {
   const name = input.split(/\s+/)[0];
   if (name === undefined || name === '') {
     host.showError(USAGE);
     return;
   }
   const runArgs = input.slice(name.length).trim();
-  const session = host.requireSession();
-  await startRun(host, session, name, runArgs);
+  await startRun(host, client, name, runArgs);
 }
 
 async function startRun(
   host: SlashCommandHost,
-  session: Session,
+  client: WorkflowV2Client,
   name: string,
   runArgs: string,
 ): Promise<void> {
   try {
-    const started = await session.runWorkflow({ name, args: runArgs });
+    const started = await client.runWorkflow({ name, args: runArgs });
     host.showStatus(
       `Workflow "${started.workflowName}" started (run ${started.runId}). Track with /workflow runs or /tasks.`,
     );
@@ -110,14 +113,17 @@ async function startRun(
   }
 }
 
-async function showWorkflowScript(host: SlashCommandHost, name: string): Promise<void> {
+async function showWorkflowScript(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+  name: string,
+): Promise<void> {
   if (name === '') {
     host.showError(USAGE);
     return;
   }
-  const session = host.requireSession();
   try {
-    const { workflow } = await session.getWorkflow(name);
+    const { workflow } = await client.getWorkflow(name);
     if (workflow === null) {
       host.showError(`Workflow "${name}" not found.`);
       return;
@@ -156,16 +162,19 @@ function openScriptViewer(
   ui.requestRender(true);
 }
 
-async function cancelWorkflowRun(host: SlashCommandHost, prefix: string): Promise<void> {
+async function cancelWorkflowRun(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+  prefix: string,
+): Promise<void> {
   if (prefix === '') {
     host.showError(USAGE);
     return;
   }
-  const session = host.requireSession();
   try {
-    const runId = await resolveRunId(host, session, prefix);
+    const runId = await resolveRunId(host, client, prefix);
     if (runId === undefined) return;
-    const { cancelled } = await session.cancelWorkflowRun(runId);
+    const { cancelled } = await client.cancelWorkflowRun(runId);
     host.showStatus(
       cancelled ? `Workflow run ${runId} cancelled.` : `Workflow run ${runId} is not running — nothing to cancel.`,
     );
@@ -174,23 +183,26 @@ async function cancelWorkflowRun(host: SlashCommandHost, prefix: string): Promis
   }
 }
 
-async function saveWorkflowRun(host: SlashCommandHost, input: string): Promise<void> {
+async function saveWorkflowRun(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+  input: string,
+): Promise<void> {
   const useUserScope = input.split(/\s+/).includes('--user');
   const prefix = input.replace(/--user\b/g, '').trim();
   if (prefix === '') {
     host.showError(USAGE);
     return;
   }
-  const session = host.requireSession();
   try {
-    const runId = await resolveRunId(host, session, prefix);
+    const runId = await resolveRunId(host, client, prefix);
     if (runId === undefined) return;
-    const { run } = await session.getWorkflowRun(runId);
+    const { run } = await client.getWorkflowRun(runId);
     if (run === null) {
       host.showError(`Workflow run ${runId} not found.`);
       return;
     }
-    const saved = await session.saveWorkflow({
+    const saved = await client.saveWorkflow({
       script: run.script,
       scope: useUserScope ? 'user' : 'project',
     });
@@ -200,10 +212,9 @@ async function saveWorkflowRun(host: SlashCommandHost, input: string): Promise<v
   }
 }
 
-async function reloadWorkflows(host: SlashCommandHost): Promise<void> {
-  const session = host.requireSession();
+async function reloadWorkflows(host: SlashCommandHost, client: WorkflowV2Client): Promise<void> {
   try {
-    const { workflows, skipped } = await session.reloadWorkflows();
+    const { workflows, skipped } = await client.reloadWorkflows();
     const skippedNote =
       skipped.length > 0 ? ` (${String(skipped.length)} invalid skipped)` : '';
     host.showStatus(`Reloaded workflows: ${String(workflows.length)} discovered${skippedNote}.`);
@@ -214,10 +225,10 @@ async function reloadWorkflows(host: SlashCommandHost): Promise<void> {
 
 async function resolveRunId(
   host: SlashCommandHost,
-  session: Session,
+  client: WorkflowV2Client,
   prefix: string,
 ): Promise<string | undefined> {
-  const { runs } = await session.listWorkflowRuns();
+  const { runs } = await client.listWorkflowRuns();
   const exact = runs.find((run) => run.runId === prefix);
   if (exact !== undefined) return exact.runId;
   const matches = runs.filter((run) => run.runId.startsWith(prefix));
@@ -241,12 +252,13 @@ function showWorkflowError(host: SlashCommandHost, error: unknown): void {
   host.showError(message);
 }
 
-async function toggleWorkflowMode(host: SlashCommandHost, enabled: boolean): Promise<void> {
-  const session = host.requireSession();
+async function toggleWorkflowMode(
+  host: SlashCommandHost,
+  client: WorkflowV2Client,
+  enabled: boolean,
+): Promise<void> {
   try {
-    if ('setWorkflowMode' in session && typeof (session as Session & { setWorkflowMode?: unknown }).setWorkflowMode === 'function') {
-      await (session as Session & { setWorkflowMode: (enabled: boolean, trigger?: 'manual' | 'command') => Promise<void> }).setWorkflowMode(enabled, 'command');
-    }
+    await client.setWorkflowMode(enabled, 'command');
     host.setAppState({ workflowMode: enabled });
     host.showStatus(enabled ? 'Dynamic Workflow mode enabled.' : 'Dynamic Workflow mode disabled.');
   } catch (error) {
