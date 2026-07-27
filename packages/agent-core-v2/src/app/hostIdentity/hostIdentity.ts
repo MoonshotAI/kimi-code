@@ -11,8 +11,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService, type ScopeSeed } from '#/_base/di/scope';
+import { LifecycleScope, registerScopedService, ScopeActivation, type ScopeSeed } from '#/_base/di/scope';
 
 export interface HostIdentityOverrides {
   readonly productName?: string;
@@ -52,6 +51,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostIdentity,
   HostIdentity,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'hostIdentity',
 );
