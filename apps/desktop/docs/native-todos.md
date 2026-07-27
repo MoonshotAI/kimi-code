@@ -90,15 +90,17 @@
   - **web 无对应物**：浏览器没有菜单栏/托盘，桥缺方法即整体 no-op（`setTrayAttention` / `onTraySelectSession` 缺一即退，兼容旧桥）。composable 不同步 apps/web（同 useFullscreen 先例）；`App.vue` 分叉块再添一块（import + `useTrayAttention(client)`），整目录 re-copy 时需保留。
   - 测试：`tests/main/tray.test.ts`（`asTrayAttention` 含 items 校验、`trayAttentionTitle` / `trayAttentionSummary` / `trayAttentionItemLabel` 纯函数，en/zh 双语言断言）；`tests/main/preload.test.ts` 白名单 + 通道/畸形丢弃/转发断言；`tests/renderer/useTrayAttention.test.ts`（items 构建、可见集过滤、幻影未读排除、`pendingInteraction` 兜底与详情接管、locale 映射推送、无桥 no-op、首推 + 变更推、stop 后停推、相同 payload 去重不重复推、点击路由 + 退订）。真机验证（dev:desktop:debug + CDP 驱动 + 读菜单栏 AX 树）：菜单栏数字随推送 5→1→0 增减、清零后图标复原、托盘菜单按会话列出、点击跳转会话，均通过。
 
-- [x] **小蓝 mascot 组件（KimiMascot.vue）**（desktop 专属）
+- [x] **小蓝 mascot 组件（KimiMascot.vue）**
   - 原桌面宠物功能（`src/main/pet.ts` 浮窗 + View 菜单勾选 + `kimi:pet-drag-*` 拖拽 IPC +
     `pet-state.json` 持久化）已整体移除；canvas 渲染部分保留为独立组件
     `components/KimiMascot.vue`（官方 Rive 资产 `assets/mascot/kimi_avatar_default.riv`，
     kimi.com 头像同源，runtime 懒加载 + 静态 SVG 兜底均照 `KimiDoodle.vue` 模式；`useIsDark`
     驱动 `light/dark` 输入，hover→`hoverspace`，click→`click_avator` trigger，输入驱动走
-    `lib/riveInputs.ts`），暂未接入任何 UI，留待复用。
-  - **web 无对应物**：组件、lib 与资产不同步 apps/web，整目录 re-copy 同步时必须保留。
-  - 测试：`tests/renderer/riveInputs.test.ts`（跨状态机查输入、trigger fire、类型不匹配的写入拒绝）。
+    `lib/riveInputs.ts`）。
+  - **已同步 web**：组件、lib 与资产最初为 desktop 专属，2026-07 随聊天工作指示器
+    （`components/chat/WorkingIndicator.vue`，替换 MoonSpinner）一并同步到 `apps/web`，
+    两端文件保持一致，不再是分叉点。
+  - 测试：`tests/renderer/riveInputs.test.ts`（跨状态机查输入、trigger fire、类型不匹配的写入拒绝；web 副本 `apps/web/test/riveInputs.test.ts`）。
 
 - [x] **自动更新（electron-updater + CDN generic feed）**（已完成，desktop 专属）
   - 实现：新增 `src/main/updater.ts`——electron-updater generic provider 轮询 `https://code.kimi.com/kimi-code/desktop/` 的 latest*.yml（feed 在 `electron-builder.config.cjs` 的 `publish` 配置里）；`autoDownload=false`（用户点击才下载；2026-07 起可在设置中开启后台自动下载，见下方"后台自动下载"条）、`autoInstallOnAppQuit=true`（自然退出时静默装）；启动 10s 首查、之后每 4h；状态机 idle→available→downloading→downloaded/error 经 `kimi:update-status` 推送 renderer，status 含 version/percent/releaseDate。只打扰用户该知道的：后台检查失败仅 `console.warn` 保持 idle，仅用户发起的下载失败进 error 态（可重试）；feed 回滚（`update-not-available`）时清掉未开始下载的 available / 失败待重试的 error 态，进行中的下载/安装不动。dev（未打包）整体 no-op。IPC：renderer 初值走 `kimi:update-get-status`，动作走 `kimi:update-download` / `kimi:update-install`（`quitAndInstall(true, true)`）。

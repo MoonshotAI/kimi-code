@@ -4,6 +4,8 @@ export default {
   newMessages: '最新消息',
   loading: '加载中…',
   starting: '正在创建对话…',
+  requesting: '请求中…',
+  working: '工作中…',
   emptyWorkspaceHint: '在 {name} 中发送',
   switchWorkspace: '切换工作区',
   addWorkspace: '添加工作区',

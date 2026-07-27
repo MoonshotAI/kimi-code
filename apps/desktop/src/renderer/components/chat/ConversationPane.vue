@@ -56,7 +56,7 @@ const props = defineProps<{
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
   /** The main conversation has an unfinished prompt (submitted or a main turn
-   *  in flight) — the working moon. */
+   *  in flight) — the working indicator. */
   working?: boolean;
   /** End reason of the session's latest turn (server-persisted) — 'cancelled'
    *  marks the last assistant turn as manually stopped in the transcript. */

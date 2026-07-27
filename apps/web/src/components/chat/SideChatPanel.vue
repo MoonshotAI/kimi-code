@@ -6,7 +6,8 @@
 import { computed, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
-import { Icon, MoonSpinner, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import WorkingIndicator from './WorkingIndicator.vue';
+import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import type { ChatTurn } from '../../types';
 
 const props = defineProps<{
@@ -130,8 +131,8 @@ function autosize(): void {
         :turn-active="running"
         :working="sending || running"
       />
-      <div v-if="showLoading" class="sc-loading" aria-hidden="true">
-        <MoonSpinner />
+      <div v-if="showLoading" class="sc-loading">
+        <WorkingIndicator :label="t('conversation.requesting')" />
       </div>
     </div>
 
@@ -215,14 +216,15 @@ function autosize(): void {
 .sc-send:disabled { opacity: 0.4; cursor: default; }
 .sc-send:not(:disabled):hover { background: var(--color-accent-hover); }
 
-/* Send → first-token loading indicator (replaces ChatPane's working moon). */
+/* Send → first-token loading indicator (replaces ChatPane's working
+   placeholder). */
 .sc-loading {
   flex: none;
   padding: 8px 12px 12px;
 }
 
-/* The side chat reuses ChatPane, but we don't want its working moon/spinner
-   placeholder here — the tab already shows activity via the parent layout. */
+/* The side chat reuses ChatPane, but we don't want its working placeholder
+   here — the tab already shows activity via the parent layout. */
 .sc-body :deep(.sending-placeholder),
 .sc-body :deep(.sending-line) {
   display: none;

@@ -23,7 +23,6 @@ export { default as Kbd } from './components/ui/Kbd.vue';
 export { default as Link } from './components/ui/Link.vue';
 export { default as Menu } from './components/ui/Menu.vue';
 export { default as MenuItem } from './components/ui/MenuItem.vue';
-export { default as MoonSpinner } from './components/ui/MoonSpinner.vue';
 export { default as PanelHeader } from './components/ui/PanelHeader.vue';
 export { default as Pill } from './components/ui/Pill.vue';
 export { default as ScrollArea } from './components/ui/ScrollArea.vue';

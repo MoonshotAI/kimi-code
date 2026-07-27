@@ -726,7 +726,7 @@ export function createAgentProjector(): AgentProjector {
           s.messages.push(msg);
           out.push({ type: 'messageCreated', message: cloneMessage(msg) });
         }
-        // Main-conversation liveness (the moon) keys off the main agent's turn
+        // Main-conversation liveness (the working indicator) keys off the main agent's turn
         // boundary directly — only main-agent frames reach this switch arm.
         out.push({ type: 'turnActiveChanged', sessionId, active: true });
         break;
@@ -995,12 +995,12 @@ export function createAgentProjector(): AgentProjector {
           (turnId !== undefined ? s.turnPromptId.get(turnId) : undefined) ?? s.currentPromptId;
 
         // Main-conversation liveness: the prompt this turn served is done.
-        // This — not the session-busy status — is what ends the working moon.
+        // This — not the session-busy status — is what ends the working indicator.
         // It MUST be emitted first in this arm: the onMainTurnEnd side effect
         // gates on `seq > lastSeqBySession`, and sibling events in this arm
         // advance that cursor — emitted after them, this event would compare
-        // equal and the prompt-finish cleanup (moon, queue drain) would never
-        // fire (observed: moon stuck when a turn ends with background tasks
+        // equal and the prompt-finish cleanup (indicator, queue drain) would never
+        // fire (observed: indicator stuck when a turn ends with background tasks
         // still running, where no work_changed(busy:false) fallback exists).
         out.push({
           type: 'turnActiveChanged',

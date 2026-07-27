@@ -15,7 +15,8 @@ import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import AttachmentChip from './AttachmentChip.vue';
-import { Icon, Kbd, MoonSpinner, Spinner } from '@moonshot-ai/web-ui';
+import WorkingIndicator from './WorkingIndicator.vue';
+import { Icon, Kbd, Spinner } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
@@ -70,7 +71,7 @@ const props = withDefaults(
     turnActive?: boolean;
     /**
      * The main conversation has an unfinished prompt (submitted, or a main
-     * turn in flight). Renders the moon-spinner placeholder at the end of the
+     * turn in flight). Renders the working indicator at the end of the
      * transcript and gates "edit & resend" on the last user message.
      */
     working?: boolean;
@@ -195,12 +196,26 @@ const streamingTurnId = computed<string | null>(() => {
   return last.role === 'assistant' ? last.id : null;
 });
 
-// Trailing "working" moon: shown while the main conversation has an unfinished
-// prompt. `working` is the union of the optimistic submit window and the main
-// turn's liveness (restored from the snapshot's inFlightTurn after a refresh);
-// background agents and BTW side chats never show here — the moon belongs to
-// the main conversation only.
+// Trailing working indicator: shown while the main conversation has an
+// unfinished prompt. `working` is the union of the optimistic submit window
+// and the main turn's liveness (restored from the snapshot's inFlightTurn
+// after a refresh); background agents and BTW side chats never show here —
+// the indicator belongs to the main conversation only.
 const showWorking = computed(() => props.working);
+
+// Phase label: "requesting" until the turn produces its first output. The
+// pending assistant bubble is created at turn.step.started — before any
+// content — so the phase keys off output (text / thinking / tools), not the
+// turn's existence.
+const workingLabel = computed(() => {
+  const last = props.turns.at(-1);
+  const hasOutput =
+    last?.role === 'assistant' &&
+    (last.text.trim().length > 0 ||
+      (last.thinking?.trim().length ?? 0) > 0 ||
+      (last.tools?.length ?? 0) > 0);
+  return t(hasOutput ? 'conversation.working' : 'conversation.requesting');
+});
 
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
@@ -949,14 +964,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     <!-- Pending approvals are rendered in the bottom dock (ConversationPane),
          alongside questions, so both blocking prompts share one position. -->
 
-    <!-- Compaction in progress — body-sized moon activity notice -->
+    <!-- Compaction in progress — body-sized activity notice -->
     <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
 
-    <!-- Working placeholder — moon spinner while the conversation has an
-         unfinished prompt (covers a page refresh mid-stream, where the
+    <!-- Working placeholder — mascot + phase label while the conversation has
+         an unfinished prompt (covers a page refresh mid-stream, where the
          optimistic submit flag was lost but the main turn is still in flight). -->
     <div v-if="showWorking" class="sending-placeholder">
-      <MoonSpinner />
+      <WorkingIndicator :label="workingLabel" />
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.

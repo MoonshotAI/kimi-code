@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ui/Spinner.vue -->
 <!-- Design-system §03 Spinner: the DEFAULT loader (SVG ring). Use everywhere
-     except the chat "waiting for Agent response" state, which uses MoonSpinner. -->
+     except the chat working state, which uses WorkingIndicator. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 

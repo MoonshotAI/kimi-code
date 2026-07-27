@@ -2020,7 +2020,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * Snapshot-driven finish. An authoritative snapshot replaces the event
    * stream on resync (buffer overflow / epoch change / delta gap): no
    * sessionStatusChanged event arrives in that case, so without this the
-   * local in-flight flag would stick forever — the moon keeps spinning and
+   * local in-flight flag would stick forever — the indicator keeps showing and
    * the next prompt queues behind a turn that already ended.
    *
    * Unlike the WS path this adds NO completion side effects (no notification,

@@ -3,9 +3,8 @@
 //
 // Scans src/** for the rules in the design system (§06 of the DesignSystemView spec):
 //   no-gradient-text, no-glassmorphism (.frost exempt), no-color-glow,
-//   icon-from-registry (hand-written <svg>; Icon/Spinner/MoonSpinner + the
-//   32x22 / 32x28.x / 120x120 brand marks exempt), no-emoji-icon (moon in
-//   MoonSpinner exempt),
+//   icon-from-registry (hand-written <svg>; Icon/Spinner + the
+//   32x22 / 32x28.x / 120x120 brand marks exempt), no-emoji-icon,
 //   no-hardcoded-hex (DiffView/Terminal domain colors + var()
 //   fallbacks exempt), no-hardcoded-font (token and @font-face definitions exempt),
 //   radius-from-scale, z-from-scale, weight-from-scale.
@@ -45,6 +44,7 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // is not exempted here.
 const ICON_EXEMPT = new Set([
   'components/GlobalLoading.vue',
+  'components/KimiMascot.vue', // static brand-blob fallback for the Rive canvas
 ]);
 
 // Files entirely exempt from the §06 scan. The design-system showcase view is

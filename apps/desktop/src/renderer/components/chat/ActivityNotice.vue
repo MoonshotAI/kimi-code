@@ -2,8 +2,8 @@
 <!-- Generic in-transcript "working on X" notice: a plain spinner plus a
      body-sized label. Used for long-running session activities that are not a
      chat turn (e.g. "Compacting context…"). Uses the plain Spinner primitive
-     (design-system §03/§06) — MoonSpinner is reserved for the chat "waiting
-     for the agent's first response" state. -->
+     (design-system §03/§06) — WorkingIndicator is reserved for the chat
+     working state after a prompt is sent. -->
 <script setup lang="ts">
 import { Spinner } from '@moonshot-ai/web-ui';
 

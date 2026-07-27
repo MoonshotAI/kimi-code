@@ -24,7 +24,7 @@ export interface Session {
   title: string;
   time: string;
   /** True while the session shows a "working" indicator — the unified
-      condition shared by the sidebar spinner, the chat moon, and the Stop
+      condition shared by the sidebar spinner, the chat working indicator, and the Stop
       button: a prompt submitted but not yet terminated, or a main turn in
       flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;

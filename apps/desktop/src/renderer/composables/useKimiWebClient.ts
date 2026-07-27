@@ -355,7 +355,7 @@ export interface ExtendedState extends KimiClientState {
   // when turn.started races ahead of binding, which the daemon rejects.
   promptIdBySession: Record<string, string>;
   // A prompt this client submitted (or skill-activated) has not reached its
-  // terminal state yet — the OPTIMISTIC half of the working moon, covering the
+  // terminal state yet — the OPTIMISTIC half of the working indicator, covering the
   // window before the turn.started round-trips (and the queue-drain re-arm).
   // Set at every local turn entry point; cleared by finishPromptLocal, the
   // entry points' own error paths, the authoritative-quiet fallback, or session
@@ -1015,7 +1015,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   }
 
   // Prompt-end cleanup. The MAIN agent's turn boundary is the authoritative
-  // "the prompt is done" signal: it drives the in-flight/moon cleanup, the
+  // "the prompt is done" signal: it drives the in-flight/indicator cleanup, the
   // queued-message drain, and the completion side effects. The session may
   // stay busy afterwards (background subagents / BTW) — that must NOT hold
   // any of these. The session's idle/aborted status is only a fallback quiet
@@ -1053,7 +1053,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // A prompt that never produced a turn gets no turn.ended and no session
   // status flip: a QUEUED prompt aborted before launch (prompt.aborted), or a
   // prompt blocked by a pre-submit hook (prompt.completed with reason
-  // 'blocked'). Without this the local in-flight flag — and the working moon —
+  // 'blocked'). Without this the local in-flight flag — and the working indicator —
   // would stick forever. Keyed on the promptId captured at submit: a normal
   // turn's prompt.completed/aborted arrives AFTER its status_changed (which
   // already cleared the id), so it no-ops; another client's prompt never
@@ -1542,12 +1542,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       { inFlightTurn: snap.inFlightTurn, busy: snap.session.busy },
     );
 
-    // The snapshot's inFlightTurn is main-agent-only — seed the moon's
+    // The snapshot's inFlightTurn is main-agent-only — seed the indicator's
     // liveness flag from it (the projector was reset by the resync, so no
     // turn.ended may ever arrive for a turn that was live before it). Gated
     // on the snapshot's busy fact: the live tracker can hold a stale turn
     // whose turn.ended was lost (abrupt agent disposal) — the server-side
-    // busy read is the reconciler, so a dead turn never relights the moon.
+    // busy read is the reconciler, so a dead turn never relights the indicator.
     {
       const mainTurnActive =
         snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
@@ -1671,7 +1671,7 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
 // ---------------------------------------------------------------------------
 
 /** Whether the session should show a "working" indicator (sidebar spinner,
-    row badge gating). ONE unified condition, shared with the working moon and
+    row badge gating). ONE unified condition, shared with the working indicator and
     the Stop button: the main conversation has unfinished work — a prompt
     submitted but not yet terminated (`inFlightBySession`) or a main turn in
     flight (`turnActiveBySession`). Background tasks and subagent turns do NOT
@@ -2045,7 +2045,7 @@ const activeAppTasks = computed<AppTask[]>(() => {
 const taskPoller = useTaskPoller(rawState, activeAppTasks);
 
 /** The MAIN agent of the active session has a turn in flight — the working
- *  moon's authoritative half (the optimistic `inFlight` window covers the gap
+ *  indicator's authoritative half (the optimistic `inFlight` window covers the gap
  *  before the turn.started round-trips). Background agents and BTW side chats
  *  do NOT set this; the session-busy status lives on `activity`. */
 const turnActive = computed<boolean>(() => {
@@ -2080,7 +2080,7 @@ const turns = computed<ChatTurn[]>(() => {
   });
 });
 
-/** The working moon: the main conversation has an unfinished prompt — either
+/** The working indicator: the main conversation has an unfinished prompt — either
  *  submitted-but-not-terminated (`inFlight`) or a main turn in flight
  *  (`turnActive`). */
 const working = computed<boolean>(() => inFlight.value || turnActive.value);
@@ -2235,7 +2235,7 @@ const pendingApprovals = computed<
  * Priority: awaiting-approval > awaiting-question > running > idle
  *
  * `running` is main-conversation liveness — the same condition as the working
- * moon (the optimistic submit window or an in-flight main turn). The wire
+ * indicator (the optimistic submit window or an in-flight main turn). The wire
  * `busy` fact deliberately includes background tasks, but everything driven
  * by `activity` (Stop button, composer/page-title spinners, send-vs-queue
  * gating) follows the main conversation only: a session left with only
@@ -2798,7 +2798,7 @@ const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApp
 // finished in the background kept its in-flight flag forever — every later
 // prompt to it was silently enqueued and never flushed. The session-busy
 // status stream is deliberately NOT the trigger: background agents keep it
-// non-idle past the main turn's end, which would hold the moon and the queue.
+// non-idle past the main turn's end, which would hold the indicator and the queue.
 // ---------------------------------------------------------------------------
 
 const workspaceState = useWorkspaceState(rawState, {
@@ -2863,7 +2863,7 @@ function isUserWatching(sid: string): boolean {
 /**
  * Authoritative-quiet escape hatch. The session's idle/aborted status means no
  * main turn can still be in flight (an awaiting interaction would report
- * awaiting_*, not idle), so both working-moon flags are cleared even when the
+ * awaiting_*, not idle), so both working-indicator flags are cleared even when the
  * turn.ended that owned them never arrived (e.g. abrupt agent disposal). This
  * is the ONLY writer of `turnActiveBySession` outside the reducer /
  * snapshot seed, and the ONLY clearer of `inFlightBySession` outside
