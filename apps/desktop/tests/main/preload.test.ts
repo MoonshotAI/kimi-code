@@ -31,6 +31,7 @@ const WHITELIST = [
   'isFullscreen',
   'listOpenInApps',
   'onFullscreenChanged',
+  'onLaunchAction',
   'onMenu',
   'onMenuAction',
   'onShortcut',
@@ -43,6 +44,7 @@ const WHITELIST = [
   'setDockIconChoice',
   'setGlobalShortcut',
   'setGlobalShortcutSuspended',
+  'setJumpList',
   'setLocale',
   'setMenuShortcuts',
   'setMenuSuspended',
@@ -172,6 +174,14 @@ describe('kimiDesktop preload bridge', () => {
     offOs();
     expect(removeListener).toHaveBeenCalledWith('kimi:os-appearance-changed', expect.any(Function));
 
+    // Jump List: validated workspace lists forward; junk is ignored.
+    const workspaces = [{ name: 'kimi', root: '/work/kimi' }];
+    exposed.setJumpList(workspaces);
+    expect(send).toHaveBeenCalledWith('kimi:jump-list', workspaces);
+    exposed.setJumpList([{ name: 'x', root: '' }]); // empty root ignored
+    exposed.setJumpList('nope'); // junk ignored
+    expect(send).toHaveBeenCalledTimes(9);
+
     const offMenu = exposed.onMenu(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
     offMenu();
@@ -201,6 +211,11 @@ describe('kimiDesktop preload bridge', () => {
     expect(on).toHaveBeenCalledWith('kimi:tray-select-session', expect.any(Function));
     offTraySelect();
     expect(removeListener).toHaveBeenCalledWith('kimi:tray-select-session', expect.any(Function));
+
+    const offLaunchAction = exposed.onLaunchAction(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:launch-action', expect.any(Function));
+    offLaunchAction();
+    expect(removeListener).toHaveBeenCalledWith('kimi:launch-action', expect.any(Function));
 
     await exposed.openExternal('https://example.com');
     expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
@@ -241,7 +256,7 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setVibrancy(false);
     expect(send).toHaveBeenCalledWith('kimi:vibrancy', false);
     exposed.setVibrancy('yes'); // junk ignored
-    expect(send).toHaveBeenCalledTimes(9);
+    expect(send).toHaveBeenCalledTimes(10);
 
     // getVibrancy: only an explicit false from the main process disables.
     invoke.mockResolvedValueOnce(false);
@@ -319,6 +334,18 @@ describe('kimiDesktop preload bridge', () => {
     listeners.get('kimi:update-status')?.({}, { state: 'bogus' });
     listeners.get('kimi:update-status')?.({}, 'available');
     expect(updateCb).toHaveBeenCalledTimes(1);
+
+    // Launch actions forward after structural validation; junk is dropped.
+    const launchCb = vi.fn();
+    exposed.onLaunchAction(launchCb);
+    listeners.get('kimi:launch-action')?.({}, { action: 'new-chat' });
+    expect(launchCb).toHaveBeenCalledWith({ action: 'new-chat' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-workspace', root: '/work/kimi' });
+    expect(launchCb).toHaveBeenCalledWith({ action: 'open-workspace', root: '/work/kimi' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-workspace' }); // no root
+    listeners.get('kimi:launch-action')?.({}, { action: 'bogus' });
+    listeners.get('kimi:launch-action')?.({}, 'new-chat');
+    expect(launchCb).toHaveBeenCalledTimes(2);
   });
 
   it('passes release notes through field-wise validation, dropping junk note fields only', async () => {

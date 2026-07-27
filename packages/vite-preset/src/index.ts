@@ -1,7 +1,28 @@
-import type { UserConfig } from 'vite';
+import type { Plugin, UserConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import Icons from 'unplugin-icons/vite';
 import { FileSystemIconLoader } from 'unplugin-icons/loaders';
+
+const RAW_ICON_PREFIX = '\0kimi-raw-icon:';
+
+function rawIconPlugin(icons: Plugin): Plugin {
+  return {
+    name: 'kimi-raw-icons',
+    enforce: 'pre',
+    resolveId(id) {
+      if (/^(?:\/?~icons\/|virtual[:/]icons\/).+[?&]raw(?:[=&]|$)/.test(id)) {
+        return `${RAW_ICON_PREFIX}${encodeURIComponent(id)}`;
+      }
+      return null;
+    },
+    async load(id) {
+      if (!id.startsWith(RAW_ICON_PREFIX) || typeof icons.load !== 'function') {
+        return null;
+      }
+      return icons.load.call(this, decodeURIComponent(id.slice(RAW_ICON_PREFIX.length)));
+    },
+  };
+}
 
 export interface KimiRendererViteOptions {
   readonly root: string;
@@ -12,16 +33,24 @@ export interface KimiRendererViteOptions {
 
 export function kimiRendererViteConfig(opts: KimiRendererViteOptions): UserConfig {
   const { root, iconsDir, defines, target = 'es2022' } = opts;
+  const iconPlugins = [
+    Icons({
+      compiler: 'vue3',
+      customCollections: {
+        kimi: FileSystemIconLoader(iconsDir),
+      },
+    }),
+  ].flat();
+  const icons = iconPlugins.find(
+    (plugin): plugin is Plugin => plugin.name === 'unplugin-icons' && typeof plugin.load === 'function',
+  );
+  if (!icons) throw new Error('unplugin-icons did not provide a load hook');
   return {
     root,
     plugins: [
       vue(),
-      Icons({
-        compiler: 'vue3',
-        customCollections: {
-          kimi: FileSystemIconLoader(iconsDir),
-        },
-      }),
+      rawIconPlugin(icons),
+      ...iconPlugins,
     ],
     define: {
       // Bundle build time (ISO), shown as "build time" in settings → advanced.

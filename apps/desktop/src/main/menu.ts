@@ -238,7 +238,7 @@ export function bindingToAccelerator(binding: string | null): string | undefined
 // hides the `available` state).
 async function runMenuUpdateCheck(): Promise<void> {
   const strings = MENU_STRINGS[effectiveMenuLocale()];
-  // Parent the dialog to a visible window (macOS hide-on-close may leave it
+  // Parent the dialog to a visible window (hide-on-close may leave it
   // hidden, and a sheet on a hidden window never appears).
   showMainWindow();
   const result = await requestUpdateCheck();
@@ -333,7 +333,7 @@ export function menuTemplate(
         accelerator: bindingToAccelerator(menuBinding(shortcutOverrides, 'openSettings')),
         click: () => {
           // The dialog lives in the renderer; the window may be hidden
-          // (macOS hide-on-close), so surface it before forwarding.
+          // (hide-on-close), so surface it before forwarding.
           showMainWindow();
           sendToRenderer(IPC.menuAction, 'open-settings');
         },

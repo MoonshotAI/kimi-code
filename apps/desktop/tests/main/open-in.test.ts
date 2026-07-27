@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 
 import { listAvailableOpenInApps, openInApp, OPEN_IN_APP_IDS } from '../../src/main/open-in';
 
@@ -14,9 +15,8 @@ function fakeExists(paths: string[]): (p: string) => boolean {
 }
 
 describe('listAvailableOpenInApps', () => {
-  it('returns an empty catalog off macOS (renderer hides the entry)', () => {
+  it('returns an empty catalog on Linux (renderer hides the entry)', () => {
     expect(listAvailableOpenInApps({ platform: 'linux' })).toEqual([]);
-    expect(listAvailableOpenInApps({ platform: 'win32' })).toEqual([]);
   });
 
   it('always includes Finder and Terminal on macOS, even with nothing installed', () => {
@@ -28,10 +28,9 @@ describe('listAvailableOpenInApps', () => {
     const apps = listAvailableOpenInApps({
       platform: 'darwin',
       home: HOME,
-      exists: fakeExists([
-        '/Applications/Ghostty.app',
-        `${HOME}/Applications/Zed.app`,
-      ]),
+      // Built with join(): the implementation joins its candidates the same
+      // way, so the fake stays consistent on Windows (backslash separators).
+      exists: fakeExists([join('/Applications', 'Ghostty.app'), join(HOME, 'Applications', 'Zed.app')]),
     });
     expect(apps.map((a) => a.id)).toEqual(['zed', 'finder', 'terminal', 'ghostty']);
   });
@@ -42,7 +41,19 @@ describe('listAvailableOpenInApps', () => {
       home: HOME,
       exists: () => true,
     });
-    expect(everything.map((a) => a.id)).toEqual([...OPEN_IN_APP_IDS]);
+    expect(everything.map((a) => a.id)).toEqual([
+      'vscode',
+      'vscode-insiders',
+      'cursor',
+      'zed',
+      'finder',
+      'terminal',
+      'iterm',
+      'ghostty',
+      'warp',
+      'kitty',
+      'xcode',
+    ]);
     expect(everything).toContainEqual({ id: 'vscode', label: 'VS Code' });
     expect(everything).toContainEqual({ id: 'vscode-insiders', label: 'VS Code Insiders' });
     expect(everything).toContainEqual({ id: 'kitty', label: 'kitty' });
@@ -58,10 +69,10 @@ describe('openInApp', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('rejects off macOS without spawning', async () => {
+  it('rejects unsupported platforms without spawning', async () => {
     const run = vi.fn();
     const result = await openInApp('vscode', '/work/dir', { platform: 'linux', run });
-    expect(result).toEqual({ ok: false, error: 'open-in is only supported on macOS' });
+    expect(result).toEqual({ ok: false, error: 'open-in is only supported on macOS and Windows' });
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -82,11 +93,11 @@ describe('openInApp', () => {
     const result = await openInApp('ghostty', '/work/dir', {
       platform: 'darwin',
       home: HOME,
-      exists: fakeExists([`${HOME}/Applications/Ghostty.app`]),
+      exists: fakeExists([join(HOME, 'Applications', 'Ghostty.app')]),
       run,
     });
     expect(result).toEqual({ ok: true });
-    expect(run).toHaveBeenCalledWith('open', ['-a', `${HOME}/Applications/Ghostty.app`, '/work/dir']);
+    expect(run).toHaveBeenCalledWith('open', ['-a', join(HOME, 'Applications', 'Ghostty.app'), '/work/dir']);
   });
 
   it('opens directories in Finder with a bare `open <dir>` (default handler)', async () => {
@@ -117,5 +128,170 @@ describe('openInApp', () => {
     const run = vi.fn().mockRejectedValue(new Error('spawn open ENOENT'));
     const result = await openInApp('finder', '/work/dir', { platform: 'darwin', run });
     expect(result).toEqual({ ok: false, error: 'spawn open ENOENT' });
+  });
+});
+
+// --- Windows -------------------------------------------------------------------
+
+const LOCALAPPDATA = '/Users/test/AppData/Local';
+const PROGRAM_FILES = '/Program Files';
+const WIN_ENV = { LOCALAPPDATA, ProgramFiles: PROGRAM_FILES } as NodeJS.ProcessEnv;
+
+const VSCODE_EXE = join(LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe');
+const WT_ALIAS = join(LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'wt.exe');
+const GIT_BASH_EXE = join(PROGRAM_FILES, 'Git', 'git-bash.exe');
+
+describe('listAvailableOpenInApps (win32)', () => {
+  it('exports every app id supported on macOS or Windows', () => {
+    const macIds = listAvailableOpenInApps({
+      platform: 'darwin',
+      home: HOME,
+      exists: () => true,
+    }).map((app) => app.id);
+    const windowsIds = listAvailableOpenInApps({
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: () => true,
+    }).map((app) => app.id);
+
+    expect(OPEN_IN_APP_IDS).toEqual([...new Set([...macIds, ...windowsIds])]);
+  });
+
+  it('always includes File Explorer and a PowerShell-backed Terminal on Windows', () => {
+    const apps = listAvailableOpenInApps({ platform: 'win32', env: WIN_ENV, exists: () => false });
+    expect(apps).toEqual([
+      { id: 'explorer', label: 'File Explorer' },
+      { id: 'windows-terminal', label: 'Terminal' },
+    ]);
+  });
+
+  it('detects per-user editor installs, Windows Terminal, and Git Bash', () => {
+    const apps = listAvailableOpenInApps({
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: fakeExists([VSCODE_EXE, WT_ALIAS, GIT_BASH_EXE]),
+    });
+    expect(apps.map((a) => a.id)).toEqual([
+      'vscode',
+      'explorer',
+      'windows-terminal',
+      'git-bash',
+    ]);
+  });
+
+  it('falls back to Program Files for system-wide installs', () => {
+    const systemCursor = join(PROGRAM_FILES, 'Cursor', 'Cursor.exe');
+    const apps = listAvailableOpenInApps({
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: fakeExists([systemCursor]),
+    });
+    expect(apps.map((a) => a.id)).toEqual(['cursor', 'explorer', 'windows-terminal']);
+  });
+
+  it('keeps the catalog order: editors, file manager, terminals', () => {
+    const apps = listAvailableOpenInApps({ platform: 'win32', env: WIN_ENV, exists: () => true });
+    expect(apps.map((a) => a.id)).toEqual([
+      'vscode',
+      'vscode-insiders',
+      'cursor',
+      'zed',
+      'explorer',
+      'windows-terminal',
+      'git-bash',
+    ]);
+  });
+});
+
+describe('openInApp (win32)', () => {
+  it('rejects unknown app ids (including macOS-only ones) without spawning', async () => {
+    const runDetached = vi.fn();
+    expect(await openInApp('emacs', '/work/dir', { platform: 'win32', runDetached })).toEqual({
+      ok: false,
+      error: 'unknown open-in app: emacs',
+    });
+    expect(await openInApp('finder', '/work/dir', { platform: 'win32', runDetached })).toEqual({
+      ok: false,
+      error: 'unknown open-in app: finder',
+    });
+    expect(runDetached).not.toHaveBeenCalled();
+  });
+
+  it('reports a clear error when the app is not installed', async () => {
+    const runDetached = vi.fn();
+    const result = await openInApp('zed', '/work/dir', {
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: () => false,
+      runDetached,
+    });
+    expect(result).toEqual({ ok: false, error: 'Zed is not installed' });
+    expect(runDetached).not.toHaveBeenCalled();
+  });
+
+  it('launches editors detached with the directory as the single argument', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: null });
+    const result = await openInApp('vscode', '/work/dir', {
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: fakeExists([VSCODE_EXE]),
+      runDetached,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(runDetached).toHaveBeenCalledWith(VSCODE_EXE, ['/work/dir']);
+  });
+
+  it('launches Windows Terminal via its alias with -d <dir>', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: null });
+    const result = await openInApp('windows-terminal', '/work/dir', {
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: fakeExists([WT_ALIAS]),
+      runDetached,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(runDetached).toHaveBeenCalledWith(WT_ALIAS, ['-d', '/work/dir']);
+  });
+
+  it('falls back to Windows PowerShell when the Windows Terminal alias is unavailable', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: null });
+    const targetPath = "C:\\work; Write-Output 'unsafe'";
+    const result = await openInApp('windows-terminal', targetPath, {
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: () => false,
+      runDetached,
+    });
+    expect(result).toEqual({ ok: true });
+    const args = runDetached.mock.calls[0]![1] as string[];
+    expect(args.slice(0, 2)).toEqual(['-NoExit', '-EncodedCommand']);
+    expect(Buffer.from(args[2]!, 'base64').toString('utf16le')).toBe(
+      "Set-Location -LiteralPath 'C:\\work; Write-Output ''unsafe'''",
+    );
+  });
+
+  it('launches Git Bash at the workspace directory', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: null });
+    const result = await openInApp('git-bash', '/work/dir', {
+      platform: 'win32',
+      env: WIN_ENV,
+      exists: fakeExists([GIT_BASH_EXE]),
+      runDetached,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(runDetached).toHaveBeenCalledWith(GIT_BASH_EXE, ['--cd=/work/dir']);
+  });
+
+  it('launches Explorer through PATH resolution', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: null });
+    const result = await openInApp('explorer', '/work/dir', { platform: 'win32', runDetached });
+    expect(result).toEqual({ ok: true });
+    expect(runDetached).toHaveBeenCalledWith('explorer.exe', ['/work/dir']);
+  });
+
+  it('surfaces launcher errors as a result instead of throwing', async () => {
+    const runDetached = vi.fn().mockResolvedValue({ error: 'spawn ENOENT' });
+    const result = await openInApp('explorer', '/work/dir', { platform: 'win32', runDetached });
+    expect(result).toEqual({ ok: false, error: 'spawn ENOENT' });
   });
 });

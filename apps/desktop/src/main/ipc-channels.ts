@@ -35,9 +35,15 @@ export const IPC = {
   vibrancy: 'kimi:vibrancy',
   getVibrancy: 'kimi:get-vibrancy',
   showWindow: 'kimi:show-window',
+  jumpList: 'kimi:jump-list',
+  launchAction: 'kimi:launch-action',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
+
+/** Launch intent parsed from argv (--new-chat / --workspace=<root>) or a
+    Jump List item click, forwarded to the renderer once it is ready. */
+export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string };
 
 // Channels that carry main → renderer events (see window.ts sendToRenderer).
 export type RendererEventChannel =
@@ -46,4 +52,5 @@ export type RendererEventChannel =
   | typeof IPC.fullscreenChanged
   | typeof IPC.updateStatus
   | typeof IPC.traySelectSession
+  | typeof IPC.launchAction
   | typeof IPC.osAppearanceChanged;

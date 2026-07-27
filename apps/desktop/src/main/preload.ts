@@ -160,6 +160,41 @@ function asUpdateCheckResult(value: unknown): UpdateCheckResult | null {
   }
 }
 
+/** One recent workspace shown in the Windows Jump List (main/jump-list.ts). */
+export type JumpListWorkspace = { name: string; root: string };
+
+function asJumpListWorkspaces(value: unknown): value is JumpListWorkspace[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as { name?: unknown }).name === 'string' &&
+        typeof (item as { root?: unknown }).root === 'string' &&
+        (item as { root: string }).root !== '',
+    )
+  );
+}
+
+/** Launch intent forwarded main → renderer (Jump List item, second-instance
+    argv; main/ipc-channels.ts LaunchActionPayload, structurally duplicated). */
+export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string };
+
+function asLaunchActionPayload(value: unknown): LaunchActionPayload | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { action?: unknown; root?: unknown };
+  if (candidate.action === 'new-chat') {
+    return { action: 'new-chat' };
+  }
+  if (candidate.action === 'open-workspace' && typeof candidate.root === 'string' && candidate.root !== '') {
+    return { action: 'open-workspace', root: candidate.root };
+  }
+  return null;
+}
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   /** Dock tile preference ('light'|'dark'|'auto'); the main process swaps the
@@ -237,9 +272,15 @@ export type KimiDesktopApi = {
    *  working shortcut was restored), so the panel can roll back. */
   setGlobalShortcutSuspended: (suspended: boolean) => Promise<boolean>;
   /** Bring the native window back on screen (notification clicks): with
-   *  macOS hide-on-close it may be alive but hidden, and the renderer's own
+   *  hide-on-close it may be alive but hidden, and the renderer's own
    *  window.focus() can't un-hide it. */
   showWindow: () => void;
+  /** Push the recent workspace list for the Windows Jump List (taskbar
+   *  right-click menu). No-op semantics elsewhere (main/jump-list.ts). */
+  setJumpList: (workspaces: JumpListWorkspace[]) => void;
+  /** Main → renderer push of a launch intent (Jump List item click or
+   *  second-instance argv: open a draft / open a workspace by root). */
+  onLaunchAction: (cb: (payload: LaunchActionPayload) => void) => () => void;
   /** macOS frosted-sidebar material toggle (settings → appearance). Persisted
    *  main-side so window creation applies it before the renderer boots. */
   setVibrancy: (enabled: boolean) => void;
@@ -382,6 +423,21 @@ export const api: KimiDesktopApi = {
   },
   showWindow: () => {
     ipcRenderer.send('kimi:show-window');
+  },
+  setJumpList: (workspaces) => {
+    if (asJumpListWorkspaces(workspaces)) {
+      ipcRenderer.send('kimi:jump-list', workspaces);
+    }
+  },
+  onLaunchAction: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      const action = asLaunchActionPayload(payload);
+      if (action !== null) {
+        cb(action);
+      }
+    };
+    ipcRenderer.on('kimi:launch-action', listener);
+    return () => ipcRenderer.removeListener('kimi:launch-action', listener);
   },
   setVibrancy: (enabled) => {
     if (typeof enabled === 'boolean') {

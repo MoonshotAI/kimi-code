@@ -13,6 +13,7 @@ import {
   setUpdateAutoDownload,
 } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
+import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
@@ -100,6 +101,15 @@ export function registerIpcHandlers(): void {
     if (locale === 'en' || locale === 'zh') {
       setTrayLocale(locale);
       setMenuLocale(locale);
+      setJumpListLocale(locale);
+    }
+  });
+  // Windows Jump List: the renderer pushes its recent workspaces (name +
+  // root) whenever they change (useJumpList.ts); malformed payloads drop.
+  ipcMain.on(IPC.jumpList, (_event, payload: unknown) => {
+    const workspaces = asJumpListWorkspaces(payload);
+    if (workspaces !== null) {
+      updateJumpList(workspaces);
     }
   });
   // The renderer's customizable shortcut bindings (canonical keymap format,
@@ -152,7 +162,7 @@ export function registerIpcHandlers(): void {
     return setGlobalShortcutSuspended(suspended);
   });
   // Renderer-initiated "bring the window back" (notification clicks): with
-  // macOS hide-on-close the window may be alive but hidden, and the web
+  // hide-on-close the window may be alive but hidden, and the web
   // window.focus() can't un-hide it — only the main process can.
   ipcMain.on(IPC.showWindow, () => {
     showMainWindow();

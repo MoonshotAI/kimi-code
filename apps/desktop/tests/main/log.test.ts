@@ -95,7 +95,7 @@ describe('defaultMainLogPath', () => {
     const prev = process.env['KIMI_CODE_HOME'];
     process.env['KIMI_CODE_HOME'] = '/tmp/kimi-home-test';
     try {
-      expect(defaultMainLogPath()).toBe('/tmp/kimi-home-test/logs/kimi-code-desktop.log');
+      expect(defaultMainLogPath()).toBe(join('/tmp/kimi-home-test', 'logs', 'kimi-code-desktop.log'));
     } finally {
       if (prev === undefined) delete process.env['KIMI_CODE_HOME'];
       else process.env['KIMI_CODE_HOME'] = prev;

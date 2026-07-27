@@ -2,18 +2,57 @@ import { app } from 'electron';
 
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
-import { createWindow, selectSessionInRenderer, showMainWindow } from './window';
+import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
 import { initDockIcon } from './dock-icon';
 import { buildMenu } from './menu';
 import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
+import { parseLaunchArgs } from './jump-list';
 
 // --- app lifecycle ------------------------------------------------------------
 
+/** Route the launch flags (Jump List items, CLI relaunch) into the renderer:
+    new-chat opens a draft, open-workspace selects (or registers) the root. */
+function forwardLaunchArgs(argv: readonly string[]): void {
+  const launch = parseLaunchArgs(argv);
+  if (launch.newChat) {
+    sendLaunchAction({ action: 'new-chat' });
+  }
+  if (launch.workspace !== undefined) {
+    sendLaunchAction({ action: 'open-workspace', root: launch.workspace });
+  }
+}
+
 export function main(): void {
+  // Windows Toast notifications are grouped and activated by AppUserModelID.
+  // Keep this exactly aligned with electron-builder.config.cjs `appId`, whose
+  // NSIS shortcut supplies the matching Start Menu identity in packaged builds.
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.kimi.code.desktop');
+  }
+
   registerRendererScheme();
+
+  // Packaged launches stay single-instance. Dev intentionally skips this lock
+  // because it shares userData with the installed app and must run alongside it.
+  if (app.isPackaged && !app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+
+  const pendingSecondInstanceArgv: string[][] = [];
+  let launchRoutingReady = false;
+  app.on('second-instance', (_event, argv) => {
+    if (!launchRoutingReady) {
+      pendingSecondInstanceArgv.push(argv);
+      return;
+    }
+    showMainWindow();
+    forwardLaunchArgs(argv);
+  });
+
   registerIpcHandlers();
 
   app.on('before-quit', () => {
@@ -51,6 +90,14 @@ export function main(): void {
     // After the window exists: update statuses push to the renderer. No-op in
     // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
     initAutoUpdater();
+    // Launch flags from the very first invocation (Jump List item click).
+    forwardLaunchArgs(process.argv);
+    const hadPendingSecondInstance = pendingSecondInstanceArgv.length > 0;
+    for (const argv of pendingSecondInstanceArgv.splice(0)) {
+      forwardLaunchArgs(argv);
+    }
+    launchRoutingReady = true;
+    if (hadPendingSecondInstance) showMainWindow();
     app.on('activate', () => {
       // macOS Dock click: un-hide the window (hide-on-close leaves it alive
       // but hidden), or recreate it after a real destroy.

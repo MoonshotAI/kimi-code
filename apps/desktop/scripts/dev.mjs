@@ -18,7 +18,13 @@ const desktopDir = fileURLToPath(new URL('..', import.meta.url));
 
 function run(cmd, args) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(cmd, args, { cwd: desktopDir, stdio: 'inherit' });
+    // On Windows pnpm is a .cmd shim: CreateProcess can't execute batch
+    // files, so spawn must go through the shell. Single-string form (args are
+    // fixed literals) — an args array with shell:true trips Node's DEP0190.
+    const child =
+      process.platform === 'win32'
+        ? spawn(`${cmd} ${args.join(' ')}`, { cwd: desktopDir, stdio: 'inherit', shell: true })
+        : spawn(cmd, args, { cwd: desktopDir, stdio: 'inherit' });
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolvePromise();
@@ -53,7 +59,7 @@ async function shutdown(code) {
 try {
   await run('pnpm', ['exec', 'tsdown']);
 } catch (error) {
-  process.stderr.write(`[dev] tsdown build failed: ${error}\n`);
+  process.stderr.write(`[dev] tsdown build failed: ${String(error)}\n`);
   await shutdown(1);
 }
 

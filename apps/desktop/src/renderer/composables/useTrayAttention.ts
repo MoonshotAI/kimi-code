@@ -11,7 +11,7 @@
 // process only knows what it is told. The reload recovery and the keep-last-
 // known-across-reload behaviour live on the main side (window.ts / the
 // immediate push); the reverse direction (tray click → selectSession) queues
-// in window.ts while the renderer is (re)loading — with macOS hide-on-close
+// in window.ts while the renderer is (re)loading — with hide-on-close
 // it otherwise delivers immediately.
 //
 // With no bridge — plain web, tests — the reporter never starts, so this file

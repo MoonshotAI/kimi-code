@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
+import { join } from 'node:path';
 
 import type { DesktopServerHandle } from '../../src/main/server';
 
@@ -86,7 +87,7 @@ describe('connect', () => {
 
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(mocks.startDesktopServer).toHaveBeenCalledWith({
-      webAssetsDir: '/resources/desktop-dist',
+      webAssetsDir: join('/resources', 'desktop-dist'),
       identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
     });
@@ -158,7 +159,7 @@ describe('connect', () => {
     await connect(win1 as unknown as BrowserWindow);
     expect(mocks.errorHtml).toHaveBeenCalledWith(
       'server already running (pid=1, port=2, started=x)',
-      '/tmp/kimi-test/server/server.log',
+      join('/tmp/kimi-test', 'server', 'server.log'),
     );
     expect(mocks.dataUrl).toHaveBeenCalledWith('<error>');
     expect(win1.loadURL).toHaveBeenCalledWith('error-url');

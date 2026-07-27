@@ -35,8 +35,13 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
 - `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。
 - `src/main/tray.ts` — 系统托盘（macOS 菜单栏 / Windows 通知区）：图标、上下文菜单、待处理
-  badge（菜单栏计数 + 托盘菜单按会话跳转）；主进程原生界面文案的 en/zh 字符串表与
-  `kimi:locale` 语言同步也在这里。
+  badge（macOS 菜单栏计数 + 托盘菜单按会话跳转；Windows 的任务栏角标/闪动在 `taskbar.ts`，
+  Windows 左键 = 显示主窗口）；主进程原生界面文案的 en/zh 字符串表与 `kimi:locale` 语言
+  同步也在这里。macOS 与 Windows 均为关窗 = 隐藏驻留（`window.ts` `shouldHideOnClose`），
+  托盘「退出」为显式退出入口；打包版启动有单实例锁，二次启动聚焦已有窗口并路由其 argv。
+- `src/main/jump-list.ts` — Windows Jump List（任务栏右键）：「新建会话」task + renderer
+  推送的最近工作区（`kimi:jump-list`），条目共用 `--new-chat` / `--workspace="<root>"`
+  argv（`parseLaunchArgs`），经 `window.ts` 的 renderer 就绪队列下发 `kimi:launch-action`。
 - `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist；`server_version`
   经 tsdown 注入的 `__KIMI_CORE_VERSION__`（`scripts/kimi-core-version.mjs` 读 submodule 的 CLI 版本）

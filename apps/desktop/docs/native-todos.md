@@ -38,7 +38,7 @@
   - 测试：`tests/main/open-in.test.ts`（13 用例：平台门控、检测、argv 构造、失败回传）；`tests/main/preload.test.ts` 白名单；`src/renderer/lib/nativeOpenIn.test.ts`（16 用例：桥探测、列表过滤、打开回传、默认目标持久化、快捷解析优先级）。
   - 遗留：打开失败暂无 UI 反馈（静默）；「打开文件 / 在 Finder 显示」（FilePreview 的 `openWorkspaceFile`/`revealWorkspaceFile`）仍走 daemon REST，未原生化。
   - 图标：彩色官方图标从本机 app bundle 的 `.icns` 提取为 128px PNG（`src/renderer/assets/app-icons/`，11 个），经 `lib/nativeOpenIn.ts` 的 `openInAppIcon(id)` 映射；菜单项与快捷按钮用 `<img>` 渲染（nominative use），设置页 Select 靠 web-ui `Select` 新增的 `option.icon` 字段（可选、向后兼容，web 同步受益）。
-  - 已知限制：第一版仅 macOS；Windows/Linux 返回空目录并隐藏入口。
+  - 已知限制：仅 macOS / Windows（2026-07 已补 Windows 侧：VS Code / VS Code Insiders / Cursor / Zed 走 LOCALAPPDATA/ProgramFiles 固定路径探测；File Explorer 恒有；Terminal 优先 `wt.exe`、不可用时回退 Windows PowerShell；Git Bash 走 Git for Windows 的 LOCALAPPDATA/ProgramFiles 路径探测；启动全部 detached spawn——explorer.exe 成功也常返回非零退出码，不看 exit code；图标为从 exe / 安装包资源提取的官方图标）；Linux 返回空目录并隐藏入口。
 
 - [x] **文件导出走保存对话框**（已完成，desktop 专属）
   - 实现：新增 `src/main/downloads.ts`——主进程 `will-download` 统一接管所有下载（会话导出 zip、trace 日志、未来任何下载），`dialog.showSaveDialogSync` 弹系统保存框（预选"上次目录 + 建议文件名"，首次 `~/Downloads`），确认才 `setSavePath` 落盘、取消 `item.cancel()` 不落盘；`WeakSet` 防窗口重建重复注册（renderer 零改动、零 web 分叉，未走 `kimi:dialog-save` IPC）。
@@ -67,9 +67,11 @@
   - **web 刻意不改**：浏览器无 globalShortcut；`summonApp` 在 `SHORTCUT_ACTIONS` 中 scope 为 global 但不进 `App.vue` 的 renderer dispatcher（主进程直接处理，renderer 无需消费）。
   - 测试：`tests/main/shortcuts.test.ts`（14 用例：推送前不注册/推送注册/回调 showMainWindow/重绑/清空/注册失败/重绑失败保旧值（含返回值断言）/重绑失败后挂起循环恢复 committed/deferred 失败回落 committed 并返回 false/恢复回执 true+false/挂起中取消分配/挂起-恢复/相同绑定 no-op/卸载全清）；`tests/main/preload.test.ts` 白名单 + 两全局快捷键通道 invoke 回执校验；`tests/renderer/keymap.test.ts` 补 OS-global 跨 scope 双向查重、`isAcceleratorExpressible`（单引号拒绝）、`isAltGrShapedBinding`（平台分流）、OS-global 默认值可转换+带修饰键 sanity；`tests/renderer/useShortcuts.test.ts`（3 用例：拒绝置位/成功清除/重绑推送/无桥静默）。
 
-- [ ] **最近工作区接入 OS**
-  - 现状：全靠 localStorage + server `recentRoots`。
-  - 做法：`app.addRecentDocument`（macOS dock 最近文档）/ Windows Jump List。
+- [x] **最近工作区接入 OS**（Windows 侧已完成，desktop 专属；macOS `app.addRecentDocument` 仍待做）
+  - 实现（Windows Jump List，2026-07）：主进程 `src/main/jump-list.ts`——renderer 经新 IPC `kimi:jump-list` 推送最近工作区（name + root，上限 9 条，`asJumpListWorkspaces` 结构校验），主进程 `app.setJumpList` 建 custom「最近/Recent」+ tasks「新建会话/New Chat」两段（双语，跟随 `kimi:locale` 推送，OS 语言兜底）；条目为 `type: 'task'` + `program: process.execPath` + `args: --workspace="<root>"` / `--new-chat`（**不用 `type: 'file'`**——目录没有文件关联，点击行为不可靠；root 带空格必须引号包裹）。argv 解析 `parseLaunchArgs`（兼容引号/非引号、剥空值），两个入口：首实例 `process.argv` 与 `second-instance` 的 argv（配合单实例锁），统一 `forwardLaunchArgs` → `window.ts` `sendLaunchAction`——与托盘会话跳转共用同一个 renderer 就绪队列（`did-finish-load` 落定冲刷），新 renderer event channel `kimi:launch-action`。renderer 侧 `composables/useJumpList.ts`（desktop-only，无桥 no-op）：照 useTrayAttention 模式，`initialized` 门控首推（不抹掉加载窗口的旧菜单）、结构去重防重复推；`App.vue` 订阅 launch action（desktop 分叉块）：new-chat → `handleCreateSession()`，open-workspace → `openWorkspaceByRoot`（已注册则选中，未注册走 `addWorkspace` 标准流程并选中）。`second-instance` 回调在 app.ts（单实例锁的配套）。
+  - **web 无对应物**：浏览器没有 Jump List；`useJumpList.ts` 不同步 apps/web（同 useTrayAttention 先例）；`App.vue` 分叉块（import + useJumpList 调用 + openWorkspaceByRoot），整目录 re-copy 时需保留。
+  - 测试：`tests/main/jump-list.test.ts`（parseLaunchArgs 各形态/引号/空值、payload 校验与截断、分类模板双语）；`tests/renderer/useJumpList.test.ts`（去重、门控、截断、路由、无桥）；`tests/main/preload.test.ts` 白名单 + 两通道校验。
+  - 验证注意：Jump List 只对打包版的 exe 路径生效（dev 下 `process.execPath` 是 electron 二进制），dev 可用命令行 `--workspace=...` 验证 argv 路由。
 
 - [ ] **server token 改走 IPC**
   - 现状：`renderer/lib/serverAuth.ts` 从 URL `#token=` hash 读 token 再镜像 localStorage（7 天 TTL）。
@@ -128,6 +130,17 @@
   - 实现：`menu.ts` 新增 Help 菜单（`帮助`/`Help`，位于 Window 之后，菜单序列 App / File / Edit / View / Window / Help）：「文档」`https://www.kimi.com/code/docs/`、「控制台」`https://www.kimi.com/code/console?from=kimi_code_desktop`（带 desktop 归因参数），`shell.openExternal` 走系统浏览器（链接由用户提供，未核验跳转）。macOS 会给 Help 菜单自动加系统搜索框，非我们控制。
   - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback、Start Performance Trace（性能录制）三项后续再加。
   - 测试：`tests/main/menu.test.ts` +1 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项）。
+
+- [x] **Windows 关窗驻留托盘 + 单实例锁**（已完成，desktop 专属）
+  - 实现（2026-07）：`window.ts` `shouldHideOnClose` 平台门控从仅 darwin 扩到 darwin/win32——Windows 点 X 也改为隐藏窗口（内嵌 server / WS / 托盘全保活），真退出走托盘「退出」/ 更新器安装（`before-quit` / `markQuitting` 既有闭环不变）；macOS 的全屏先退再藏分支 Windows 同样适用。`app.ts` 加 `app.requestSingleInstanceLock()`（拿不到锁直接 quit，不起 server 不建窗；dev 与打包版 userData 目录不同、锁互不影响，同机调试能力保留）+ `second-instance` → `showMainWindow()`（并路由 argv，见 Jump List 条目）。窗口位置恢复新增 `clampBoundsToWorkArea`：存档 bounds 不在当前任何显示器 workArea 内时 clamp 回边缘（至少 100px 可见、标题栏不出顶边），修拔外接屏后窗口恢复到屏幕外的问题。`window-all-closed` 非 darwin `app.quit()` 保留为真销毁兜底。
+  - **web 无对应物**；`shouldHideOnClose` / `clampBoundsToWorkArea` 为纯函数。
+  - 测试：`tests/main/window.test.ts`（win32 hide-on-close 两态、linux 仍销毁；clamp 各方向/副屏 origin/无坐标）。
+  - 验证注意：Windows 用户旧习惯「点 X = 退出」改变，托盘菜单「退出」是唯一显式退出入口（更新器安装不受影响）。
+
+- [x] **Windows 托盘交互 + 任务栏待办角标/闪动**（已完成，desktop 专属）
+  - 实现（2026-07）：`tray.ts` win32 左键/双击改为 `showMainWindow()`（右键菜单是 `setContextMenu` 后的系统默认行为，旧行为是左键弹菜单，反 Windows 惯例）。待处理提醒新增 Windows 落点 `src/main/taskbar.ts`：`tray.ts setTrayAttention` 同步调 `setTaskbarAttention(total, summary)`——`win.setOverlayIcon` 数字角标（运行时 `nativeImage.createFromBitmap` 生成紧凑红色圆/胶囊 + 3×5 白色点阵数字，1–99 显示数字、超过 99 显示 `99+`，带 1x/2x representation，无资产文件、不动 extraResources；生成失败降级为只闪动）+ total **增大**且窗口未聚焦时 `flashFrame(true)`（0→N 的启动恢复不闪——窗口聚焦；未变/变小不闪），focus / 归零停闪。控制器按窗口实例缓存、角标按显示文本缓存，窗口重建后重挂。macOS 仍走菜单栏计数 + Dock badge，`setTaskbarAttention` 非 win32 恒 no-op。
+  - **web 无对应物**（主进程-only 改动，renderer 零改动）。
+  - 测试：`tests/main/taskbar.test.ts`（badgePixels 像素格式、overlay 设置/清除、闪动触发条件全集、缺资产降级、窗口销毁 no-op）。
 
 - [x] **拖文件夹到侧边栏创建工作区**（已完成，desktop 专属）
   - 实现：preload 新增 `getPathForFile(file)`（`webUtils.getPathForFile`——sandboxed renderer 拿拖放文件绝对路径的唯一官方姿势，`File.path` 早已移除；空串/异常归 `null`，零新 IPC channel，webUtils 就在 preload 进程内）。renderer 新增 `src/renderer/lib/nativeWorkspaceDrop.ts`：`canDropWorkspaceFolders()` 桥探测（桥缺 `getPathForFile` 方法即 false，旧桥自动降级）；`looksLikeFolderDrag()` dragover 启发式（拖拽处于 protected mode，只有 `kind`/`type` 可读，文件夹 = `kind:'file'` + 空 MIME，误报无害——drop 会权威复核）；`extractDroppedFolderPaths()` drop 权威提取（`webkitGetAsEntry().isDirectory` 过滤、桥解析路径、去重，解析失败跳过）。`Sidebar.vue` 在 `.col` 上挂 dragenter/dragover/dragleave/drop：启发式命中才 `preventDefault + stopPropagation`（后者压住 `useAttachmentUpload` document 级处理，composer 的全窗口附件 overlay 不为文件夹拖亮起；高亮用计数器跟踪嵌套 enter/leave，照抄同款模式），dragleave 刻意不 stopPropagation（document 计数 floor 0 兜底）；drop 提取到 ≥1 个路径才拦截并 `emit('addWorkspacePaths', paths)`，否则原样冒泡回落附件流程——普通文件拖放行为两端零变化；内部工作区排序拖是 `text/plain` payload，天然不命中启发式。高亮 UI 为 `.col` 内绝对定位 overlay（pointer-events:none、纯 CSS show/hide 不用 Transition，虚线 accent 卡片复用 composer drop-overlay 视觉语言）。`App.vue`（desktop 分叉块，同 requestAddWorkspace 区块）`@add-workspace-paths` 顺序循环复用 `addWorkspace()`（自动选中最后一个、接上 pending 首条消息），daemon 拒绝走 `addWorkspaceError` + 回退 dialog（同选择器失败的报错面）。多文件夹一次拖入 = 顺序逐个创建。

@@ -50,8 +50,9 @@ import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
 import { selectContentsOf } from './lib/transcriptSelectAll';
 import { useFullscreen } from './composables/useFullscreen';
+import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
+import { useJumpList } from './composables/useJumpList';
 import { useVibrancy } from './composables/useVibrancy';
-import { useTrayAttention } from './composables/useTrayAttention';
 import { matchShortcutAction } from './composables/useShortcuts';
 import { shortcutActionById } from './lib/keymap';
 import {
@@ -110,6 +111,19 @@ const { vibrancy } = useVibrancy();
 // approvals + awaiting questions) to the native tray: macOS menu-bar count +
 // tray tooltip/menu breakdown. No-op without the desktop bridge (web).
 useTrayAttention(client);
+
+// Push the recent workspaces to the Windows Jump List (taskbar right-click),
+// and route launch actions (Jump List clicks, second-instance argv) back
+// into the app. No-op without the desktop bridge (web).
+useJumpList(client, (payload) => {
+  runWhenInitialized(client.initialized, () => {
+    if (payload.action === 'new-chat') {
+      handleCreateSession();
+    } else {
+      void openWorkspaceByRoot(payload.root);
+    }
+  });
+});
 
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);
@@ -977,6 +991,23 @@ async function handleDropWorkspacePaths(paths: string[]): Promise<void> {
       showAddWorkspace.value = true;
       break;
     }
+  }
+}
+
+// Launch-action "open this workspace" (Jump List item / second-instance
+// argv): select it when already registered, otherwise add it through the
+// standard flow (which also selects it). Part of the desktop-only
+// add-workspace block — keep on web→desktop re-copies (docs/native-todos.md).
+async function openWorkspaceByRoot(root: string): Promise<void> {
+  const existing = client.workspacesView.value.find((workspace) => workspace.root === root);
+  if (existing) {
+    client.openWorkspace(existing.id);
+    return;
+  }
+  const added = await addWorkspace(root);
+  if (!added) {
+    addWorkspaceError.value = t('workspace.addFailed');
+    showAddWorkspace.value = true;
   }
 }
 
