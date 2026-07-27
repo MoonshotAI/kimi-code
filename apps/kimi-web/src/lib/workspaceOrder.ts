@@ -67,6 +67,40 @@ export function moveInOrder(
 export type WorkspaceSortMode = 'manual' | 'recent';
 
 /**
+ * Stable-partition `items` so pinned workspaces lead the list. Applied AFTER
+ * the mode-specific sort (manual or recent), so pinned groups keep that
+ * order among themselves — pinning only lifts a workspace above every
+ * unpinned one, it never reorders within either partition. Unpinning simply
+ * drops the workspace back into its natural sorted position.
+ */
+export function partitionPinnedWorkspaces<T extends { id: string }>(
+  items: T[],
+  pinnedIds: ReadonlySet<string>,
+): T[] {
+  const pinned = items.filter((w) => pinnedIds.has(w.id));
+  const rest = items.filter((w) => !pinnedIds.has(w.id));
+  return [...pinned, ...rest];
+}
+
+/**
+ * Drop pinned ids that no longer exist (workspace removed), so the persisted
+ * pin list never accumulates stale entries. Unlike reconcileWorkspaceOrder
+ * there is nothing to insert — a pin is per-id state, not a position — so a
+ * pure filter is the whole rule. Returns `null` when nothing changed (or when
+ * `currentIds` is empty, so an initial not-yet-loaded state never wipes the
+ * pins), letting callers skip a redundant write.
+ */
+export function reconcilePinnedWorkspaces(
+  currentIds: string[],
+  pinnedIds: string[],
+): string[] | null {
+  if (currentIds.length === 0) return null;
+  const currentSet = new Set(currentIds);
+  const kept = pinnedIds.filter((id) => currentSet.has(id));
+  return kept.length === pinnedIds.length ? null : kept;
+}
+
+/**
  * Sort workspaces by their most recent session activity, newest first.
  * `lastEditedAt` maps a workspace id to the latest `session.updatedAt`
  * (epoch ms) among its sessions. Workspaces absent from the map (no sessions

@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   workspaceOrder: 'kimi-web.workspace-order',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceSort: 'kimi-web.workspace-sort',
+  pinnedWorkspaces: 'kimi-web.pinned-workspaces',
   // Conversation outline (TOC). The value keeps the legacy `beta-toc` name so
   // users who explicitly turned it off while it was experimental keep their
   // preference after it became on-by-default.
@@ -198,4 +199,20 @@ export function loadWorkspaceSort(): string | null {
 
 export function saveWorkspaceSort(mode: string): void {
   safeSetString(STORAGE_KEYS.workspaceSort, mode);
+}
+/**
+ * Ids of workspaces pinned to the top of the sidebar. Persisted as a JSON
+ * array so the pins survive a page refresh; the array order is irrelevant to
+ * rendering (pinned groups follow the active sort mode among themselves) but
+ * is kept stable to avoid noisy rewrites. Stale ids are pruned by the
+ * reconciliation watcher in the composable.
+ */
+export function loadPinnedWorkspaces(): string[] {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.pinnedWorkspaces);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((id): id is string => typeof id === 'string');
+}
+
+export function savePinnedWorkspaces(ids: Iterable<string>): void {
+  safeSetJson(STORAGE_KEYS.pinnedWorkspaces, Array.from(ids));
 }

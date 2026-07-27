@@ -5,6 +5,8 @@ export default {
   sortWorkspaces: 'Sort workspaces',
   sortManual: 'Manual',
   sortRecent: 'Last edited',
+  pinToTop: 'Pin to top',
+  unpinFromTop: 'Unpin',
   collapseAll: 'Collapse all workspaces',
   expandAll: 'Expand all workspaces',
   newSession: 'New Session',

@@ -5,6 +5,8 @@ export default {
   sortWorkspaces: '工作区排序',
   sortManual: '手动排序',
   sortRecent: '按最后编辑时间',
+  pinToTop: '置顶',
+  unpinFromTop: '取消置顶',
   collapseAll: '折叠全部工作区',
   expandAll: '展开全部工作区',
   newSession: '新建会话',

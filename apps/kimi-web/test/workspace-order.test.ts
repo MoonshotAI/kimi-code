@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   moveInOrder,
+  partitionPinnedWorkspaces,
+  reconcilePinnedWorkspaces,
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
@@ -132,5 +134,79 @@ describe('moveInOrder', () => {
   it('returns the original order when an id is missing', () => {
     expect(moveInOrder(['a', 'b'], 'x', 'b')).toEqual(['a', 'b']);
     expect(moveInOrder(['a', 'b'], 'a', 'x')).toEqual(['a', 'b']);
+  });
+});
+
+describe('partitionPinnedWorkspaces', () => {
+  const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+
+  it('lifts pinned items to the front, keeping the sorted order within each partition', () => {
+    expect(partitionPinnedWorkspaces(items, new Set(['c', 'a'])).map((x) => x.id)).toEqual([
+      'a',
+      'c',
+      'b',
+      'd',
+    ]);
+  });
+
+  it('returns the input order unchanged when nothing is pinned', () => {
+    expect(partitionPinnedWorkspaces(items, new Set()).map((x) => x.id)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  it('ignores pinned ids that are not in the list', () => {
+    expect(partitionPinnedWorkspaces(items, new Set(['x', 'd'])).map((x) => x.id)).toEqual([
+      'd',
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = [...items];
+    partitionPinnedWorkspaces(items, new Set(['b']));
+    expect(items).toEqual(copy);
+  });
+
+  it('applies on top of the recent sort: pinned first, recency kept inside each partition', () => {
+    const lastEditedAt = new Map<string, number>([
+      ['a', 100],
+      ['b', 400],
+      ['c', 300],
+      ['d', 200],
+    ]);
+    const sorted = sortWorkspacesByRecent(items, lastEditedAt);
+    expect(partitionPinnedWorkspaces(sorted, new Set(['a'])).map((x) => x.id)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+});
+
+describe('reconcilePinnedWorkspaces', () => {
+  it('returns null for an empty current set so a not-yet-loaded state never wipes the pins', () => {
+    expect(reconcilePinnedWorkspaces([], ['ws-1'])).toBeNull();
+  });
+
+  it('returns null when every pinned workspace still exists', () => {
+    expect(reconcilePinnedWorkspaces(['ws-1', 'ws-2'], ['ws-2'])).toBeNull();
+  });
+
+  it('drops pins whose workspace no longer exists', () => {
+    expect(reconcilePinnedWorkspaces(['ws-1'], ['ws-2', 'ws-1'])).toEqual(['ws-1']);
+  });
+
+  it('keeps the remaining pins in their original order', () => {
+    expect(reconcilePinnedWorkspaces(['ws-3', 'ws-1'], ['ws-2', 'ws-3', 'ws-4', 'ws-1'])).toEqual([
+      'ws-3',
+      'ws-1',
+    ]);
   });
 });

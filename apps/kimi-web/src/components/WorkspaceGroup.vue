@@ -31,6 +31,8 @@ const props = defineProps<{
   /** When true, render all loaded sessions; otherwise only the first page
    *  (`group.initialCount`). Drives the in-group show-more / show-less toggle. */
   isExpanded: (id: string) => boolean;
+  /** Drives the group-header pin badge (workspace pinned to the list top). */
+  isPinned: (id: string) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -134,6 +136,17 @@ function onHeaderDragStart(event: DragEvent): void {
           @keydown.esc="emit('cancelRename')"
           @blur="emit('cancelRename')"
           @click.stop
+        />
+
+        <!-- Pin badge — marks a workspace pinned to the top of the list.
+             Sits in flow after the name (which has flex:1), so it rests at the
+             row's right edge; the floating hover actions cover it like they do
+             the name tail. Hidden while renaming. -->
+        <Icon
+          v-if="renamingId !== group.workspace.id && isPinned(group.workspace.id)"
+          class="gh-pin"
+          name="pin"
+          size="sm"
         />
 
         <!-- Hover actions — float over the row's right edge (no reserved
@@ -265,6 +278,12 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh-folder {
   flex: none;
   color: var(--color-text-muted);
+}
+
+/* Pin badge — one step quieter than the folder icon, like the group name. */
+.gh-pin {
+  flex: none;
+  color: var(--color-text-faint);
 }
 
 /* Group title — quiet by design: regular weight (no bold), muted color (one

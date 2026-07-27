@@ -8,6 +8,8 @@ import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
+  partitionPinnedWorkspaces,
+  reconcilePinnedWorkspaces,
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
@@ -19,12 +21,14 @@ import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
+  loadPinnedWorkspaces,
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
+  savePinnedWorkspaces,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceSort,
@@ -2325,6 +2329,14 @@ const workspaceSortMode = ref<WorkspaceSortMode>(
   loadWorkspaceSort() === 'manual' ? 'manual' : 'recent',
 );
 
+/**
+ * Ids of workspaces pinned to the top of the sidebar, persisted to
+ * localStorage. Pins override the active sort mode: pinned groups always lead
+ * the list and keep the mode's order among themselves (see
+ * partitionPinnedWorkspaces).
+ */
+const pinnedWorkspaces = ref<string[]>(loadPinnedWorkspaces());
+
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
 // matching "createdAt desc" — the closest signal we have without a real
@@ -2346,9 +2358,17 @@ watch(
     if (loading) return;
     const current = idsKey ? idsKey.split('\0') : [];
     const next = reconcileWorkspaceOrder(current, workspaceOrder.value);
-    if (next === null) return;
-    workspaceOrder.value = next;
-    saveWorkspaceOrder(next);
+    if (next !== null) {
+      workspaceOrder.value = next;
+      saveWorkspaceOrder(next);
+    }
+    // Same guard as above: only prune pins against the settled workspace set,
+    // so a mid-load partial list never drops a pin.
+    const keptPins = reconcilePinnedWorkspaces(current, pinnedWorkspaces.value);
+    if (keptPins !== null) {
+      pinnedWorkspaces.value = keptPins;
+      savePinnedWorkspaces(keptPins);
+    }
   },
 );
 
@@ -2356,7 +2376,8 @@ watch(
  *  persisted/dragged order in `manual` mode, or most-recent-session-first in
  *  `recent` mode. The recent map is only built (and `rawState.sessions` only
  *  read) in the recent branch, so manual mode does not re-sort on every session
- *  update. */
+ *  update. Pinned workspaces are lifted to the front afterwards, keeping the
+ *  mode's order within each partition. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -2365,6 +2386,7 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     shortPath: shortenHome(w.root, rawState.fsHome),
     sessionCount: w.sessionCount,
   }));
+  const pinned = new Set(pinnedWorkspaces.value);
   if (workspaceSortMode.value === 'recent') {
     const lastEditedAt = new Map<string, number>();
     for (const s of rawState.sessions) {
@@ -2375,9 +2397,9 @@ const workspacesView = computed<WorkspaceView[]>(() => {
         lastEditedAt.set(wid, t);
       }
     }
-    return sortWorkspacesByRecent(views, lastEditedAt);
+    return partitionPinnedWorkspaces(sortWorkspacesByRecent(views, lastEditedAt), pinned);
   }
-  return sortByWorkspaceOrder(views, workspaceOrder.value);
+  return partitionPinnedWorkspaces(sortByWorkspaceOrder(views, workspaceOrder.value), pinned);
 });
 
 /** The active workspace id, falling back to the first available workspace. */
@@ -2496,6 +2518,20 @@ function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
   if (workspaceSortMode.value === mode) return;
   workspaceSortMode.value = mode;
   saveWorkspaceSort(mode);
+}
+
+/**
+ * Pin a workspace to the top of the sidebar (or unpin it) and persist the
+ * change. The pin list keeps first-pinned-first insertion order, though only
+ * membership matters for rendering — the active sort mode orders pinned
+ * groups among themselves.
+ */
+function toggleWorkspacePinned(id: string): void {
+  const next = pinnedWorkspaces.value.includes(id)
+    ? pinnedWorkspaces.value.filter((w) => w !== id)
+    : [...pinnedWorkspaces.value, id];
+  pinnedWorkspaces.value = next;
+  savePinnedWorkspaces(next);
 }
 
 /**
@@ -2759,6 +2795,7 @@ export function useKimiWebClient() {
     // Workspace view props
     workspacesView,
     workspaceSortMode,
+    pinnedWorkspaces,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -2909,6 +2946,7 @@ export function useKimiWebClient() {
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
     setWorkspaceSortMode,
+    toggleWorkspacePinned,
     archiveSession: workspaceState.archiveSession,
     exportSession: workspaceState.exportSession,
     restoreSession: workspaceState.restoreSession,

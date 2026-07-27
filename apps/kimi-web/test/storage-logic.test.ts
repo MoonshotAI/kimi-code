@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadCollapsedWorkspaces,
+  loadPinnedWorkspaces,
   loadUnread,
   loadWorkspaceOrder,
   saveCollapsedWorkspaces,
+  savePinnedWorkspaces,
   saveUnread,
   saveWorkspaceOrder,
   STORAGE_KEYS,
@@ -221,5 +223,29 @@ describe('loadWorkspaceOrder / saveWorkspaceOrder', () => {
 
     safeSetString(STORAGE_KEYS.workspaceOrder, JSON.stringify({ ws: true }));
     expect(loadWorkspaceOrder()).toEqual([]);
+  });
+});
+
+describe('loadPinnedWorkspaces / savePinnedWorkspaces', () => {
+  it('returns an empty array when the key is missing', () => {
+    expect(loadPinnedWorkspaces()).toEqual([]);
+  });
+
+  it('round-trips the pinned ids', () => {
+    savePinnedWorkspaces(['ws-2', 'ws-1']);
+    expect(loadPinnedWorkspaces()).toEqual(['ws-2', 'ws-1']);
+  });
+
+  it('accepts any iterable of ids', () => {
+    savePinnedWorkspaces(new Set(['ws-3']));
+    expect(loadPinnedWorkspaces()).toEqual(['ws-3']);
+  });
+
+  it('drops non-string entries and returns [] for malformed values', () => {
+    safeSetString(STORAGE_KEYS.pinnedWorkspaces, JSON.stringify(['ws-1', 2, null]));
+    expect(loadPinnedWorkspaces()).toEqual(['ws-1']);
+
+    safeSetString(STORAGE_KEYS.pinnedWorkspaces, JSON.stringify({ ws: true }));
+    expect(loadPinnedWorkspaces()).toEqual([]);
   });
 });

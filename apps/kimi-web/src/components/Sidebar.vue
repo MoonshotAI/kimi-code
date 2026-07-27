@@ -72,6 +72,9 @@ const props = withDefaults(
     activeId: string;
     /** Current workspace sort mode — drives the section-header sort button. */
     workspaceSortMode: WorkspaceSortMode;
+    /** Ids of workspaces pinned to the top of the list — drives the pin/unpin
+     *  menu label and the group-header pin badge. */
+    pinnedWorkspaceIds?: string[];
     /** Backend engine generation from /meta — dev-only badge next to the brand. */
     backend?: 'v1' | 'v2';
     attentionBySession?: Record<string, number>;
@@ -94,6 +97,7 @@ const props = withDefaults(
     attentionBySession: () => ({}),
     pendingBySession: () => ({}),
     unreadBySession: () => ({}),
+    pinnedWorkspaceIds: () => [],
     colWidth: 220,
     collapsed: false,
     dragging: false,
@@ -114,6 +118,7 @@ const emit = defineEmits<{
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
   setWorkspaceSortMode: [mode: WorkspaceSortMode];
+  toggleWorkspacePin: [workspaceId: string];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
@@ -195,6 +200,16 @@ const allCollapsed = computed(
     props.groups.length > 0 &&
     props.groups.every((g) => collapsedIds.value.has(g.workspace.id)),
 );
+
+// ---------------------------------------------------------------------------
+// Pinned workspaces — the pin set lives in the composable (persisted); here we
+// only need membership lookups for the menu label and the group-header badge.
+// ---------------------------------------------------------------------------
+const pinnedSet = computed(() => new Set(props.pinnedWorkspaceIds));
+
+function isPinned(id: string): boolean {
+  return pinnedSet.value.has(id);
+}
 
 // ---------------------------------------------------------------------------
 // In-group expand / collapse (show-more pagination)
@@ -362,6 +377,13 @@ function copyPathFromMenu(): void {
   closeGhMenu();
 }
 
+function togglePinFromMenu(): void {
+  if (ghMenuTarget.value) {
+    emit('toggleWorkspacePin', ghMenuTarget.value.id);
+  }
+  closeGhMenu();
+}
+
 function startRenameFromMenu(): void {
   if (ghMenuTarget.value) {
     startRenameWorkspace(ghMenuTarget.value.id, ghMenuTarget.value.name);
@@ -432,6 +454,11 @@ function closeWsMenu(): void {
 
 function copyWsPath(ws: WorkspaceView): void {
   void copyTextToClipboard(ws.root);
+  closeWsMenu();
+}
+
+function togglePinWs(ws: WorkspaceView): void {
+  emit('toggleWorkspacePin', ws.id);
   closeWsMenu();
 }
 
@@ -770,6 +797,7 @@ onBeforeUnmount(() => {
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
               :is-expanded="isExpanded"
+              :is-pinned="isPinned"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -808,6 +836,9 @@ onBeforeUnmount(() => {
       :style="ghMenuStyle"
       @click.stop
     >
+      <MenuItem @click="togglePinFromMenu">{{
+        ghMenuTarget && isPinned(ghMenuTarget.id) ? t('sidebar.unpinFromTop') : t('sidebar.pinToTop')
+      }}</MenuItem>
       <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
       <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
       <MenuItem danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
@@ -822,6 +853,10 @@ onBeforeUnmount(() => {
       :style="wsMenuStyle"
       @click.stop
     >
+      <MenuItem @click="togglePinWs(wsMenuTarget)">{{
+        isPinned(wsMenuTarget.id) ? t('sidebar.unpinFromTop') : t('sidebar.pinToTop')
+      }}</MenuItem>
+      <MenuItem separator />
       <MenuItem @click="copyWsPath(wsMenuTarget)">{{ t('sidebar.copyPath') }}</MenuItem>
       <MenuItem separator />
       <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
