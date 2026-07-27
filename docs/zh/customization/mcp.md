@@ -67,6 +67,40 @@ Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers �
 项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
 :::
 
+### 示例：带鉴权的 HTTP server
+
+结合一个真实的 server 更容易理解上面这些可选字段。[You.com](https://you.com/docs/build-with-agents/mcp-server?utm_source=moonshotai-kimi-code&utm_medium=oss_integration&utm_campaign=2026-07-oss-integrations&utm_content=docs) 通过 HTTP 提供网页搜索，可以在有凭证和无凭证两种方式下连接：
+
+```json
+{
+  "mcpServers": {
+    "you-free": {
+      "url": "https://api.you.com/mcp?profile=free"
+    },
+    "you": {
+      "url": "https://api.you.com/mcp",
+      "bearerTokenEnvVar": "YDC_API_KEY"
+    }
+  }
+}
+```
+
+`you-free` 不需要凭证，只提供 `you-search`。带鉴权的条目从 `$YDC_API_KEY` 读取 token，并额外提供 `you-contents`、`you-research`、`you-discover` 和 `you-balance`。如果想用浏览器授权而不是静态 token，去掉 `bearerTokenEnvVar` 并运行 `/mcp-config login you`。
+
+用 `enabledTools` 可以把 server 收窄到你真正需要的工具：
+
+```json
+{
+  "mcpServers": {
+    "you": {
+      "url": "https://api.you.com/mcp",
+      "bearerTokenEnvVar": "YDC_API_KEY",
+      "enabledTools": ["you-search", "you-contents"]
+    }
+  }
+}
+```
+
 ## 工具命名与权限
 
 MCP 工具按 `mcp__<server>__<tool>` 格式命名，例如 `mcp__github__create_issue`。权限规则中支持 `*` 和 `**` 通配，例如 `mcp__github__*` 命中该 server 下所有工具。MCP 工具参数不参与权限匹配。

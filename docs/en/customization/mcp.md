@@ -67,6 +67,40 @@ Plugins can also declare MCP servers in their manifest. Servers declared by a pl
 stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.
 :::
 
+### Example: an authenticated HTTP server
+
+The optional fields above are easier to place against a concrete server. [You.com](https://you.com/docs/build-with-agents/mcp-server?utm_source=moonshotai-kimi-code&utm_medium=oss_integration&utm_campaign=2026-07-oss-integrations&utm_content=docs) serves web search over HTTP and can be connected with or without credentials:
+
+```json
+{
+  "mcpServers": {
+    "you-free": {
+      "url": "https://api.you.com/mcp?profile=free"
+    },
+    "you": {
+      "url": "https://api.you.com/mcp",
+      "bearerTokenEnvVar": "YDC_API_KEY"
+    }
+  }
+}
+```
+
+`you-free` needs no credentials and exposes `you-search` on its own. The authenticated entry reads its token from `$YDC_API_KEY` and additionally exposes `you-contents`, `you-research`, `you-discover`, and `you-balance`. To authorize through the browser instead of a static token, omit `bearerTokenEnvVar` and run `/mcp-config login you`.
+
+Use `enabledTools` to narrow a server down to the tools you actually want:
+
+```json
+{
+  "mcpServers": {
+    "you": {
+      "url": "https://api.you.com/mcp",
+      "bearerTokenEnvVar": "YDC_API_KEY",
+      "enabledTools": ["you-search", "you-contents"]
+    }
+  }
+}
+```
+
 ## Tool Naming and Permissions
 
 MCP tools are named in the format `mcp__<server>__<tool>`, for example `mcp__github__create_issue`. Permission rules support `*` and `**` wildcards, for example `mcp__github__*` matches all tools under that server. MCP tool parameters are not included in permission matching.
