@@ -158,6 +158,15 @@ impl NativeToolset {
             "read" => self.read(args),
             "grep" => self.grep(args),
             "glob" => self.glob(args),
+            // Write-class tools execute natively too. The approval flow is
+            // untouched: `execute_tool` only fires after the host's
+            // prepare/authorize hooks have allowed the call, so the UI still
+            // gates every write — only the execution site moves in-process.
+            // Bash stays with the host by design: its semantics (background
+            // task registration, detach, timeout-to-background) belong to the
+            // host's process-lifecycle domain, like approval itself.
+            "write" => self.write(args),
+            "edit" => self.edit(args),
             _ => None,
         }
     }
@@ -367,6 +376,177 @@ impl NativeToolset {
         }
         Some(ok_result(out))
     }
+
+    // ── Write ──────────────────────────────────────────────────────────
+
+    /// Resolve a path for a write: the file may not exist yet, so the
+    /// *parent* is created (mirroring the TS tool's `mkdir(parents=True)`)
+    /// and canonicalized for the sandbox check; the final component is then
+    /// re-checked for sensitivity. `None` falls back to the host.
+    fn resolve_for_write(&self, path: &str) -> Option<PathBuf> {
+        let candidate = if Path::new(path).is_absolute() {
+            PathBuf::from(path)
+        } else {
+            self.root.join(path)
+        };
+        let file_name = candidate.file_name()?.to_owned();
+        let parent = candidate.parent()?;
+        // Creating missing parents is part of the tool's contract; do it
+        // before canonicalizing so the containment check sees the real path.
+        std::fs::create_dir_all(parent).ok()?;
+        let parent = std::fs::canonicalize(parent).ok()?;
+        if !parent.starts_with(&self.root) {
+            return None;
+        }
+        let resolved = parent.join(file_name);
+        // An existing symlink target must not escape the sandbox.
+        if let Ok(existing) = std::fs::canonicalize(&resolved) {
+            if !existing.starts_with(&self.root) {
+                return None;
+            }
+        }
+        if is_sensitive_file(&resolved) {
+            return None;
+        }
+        Some(resolved)
+    }
+
+    /// `Write` — overwrite or append. Output strings mirror the TS tool's
+    /// English locale verbatim (the model reads them).
+    fn write(&self, args: &Value) -> Option<ExecutableToolResult> {
+        let path = args.get("path")?.as_str()?;
+        let content = args.get("content")?.as_str()?;
+        let mode = args.get("mode").and_then(Value::as_str).unwrap_or("overwrite");
+        if mode != "overwrite" && mode != "append" {
+            return None;
+        }
+        let resolved = self.resolve_for_write(path)?;
+        let bytes = content.len();
+        let write_result = if mode == "append" {
+            use std::io::Write as _;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&resolved)
+                .and_then(|mut file| file.write_all(content.as_bytes()))
+        } else {
+            std::fs::write(&resolved, content)
+        };
+        Some(match write_result {
+            Ok(()) => ok_result(if mode == "append" {
+                format!("Appended {bytes} bytes to {path}")
+            } else {
+                format!("Wrote {bytes} bytes to {path}")
+            }),
+            Err(error) => err_result(error.to_string()),
+        })
+    }
+
+    // ── Edit ───────────────────────────────────────────────────────────
+
+    /// `Edit` — literal replacement against the model's Read view.
+    ///
+    /// Line-ending semantics follow the TS tool exactly: a pure-CRLF file is
+    /// matched and edited in its LF-normalised view and written back as CRLF;
+    /// LF and mixed files are edited verbatim. Binary-ish or unreadable files
+    /// fall back to the host.
+    fn edit(&self, args: &Value) -> Option<ExecutableToolResult> {
+        let path = args.get("path")?.as_str()?;
+        let old_string = args.get("old_string")?.as_str()?;
+        let new_string = args.get("new_string")?.as_str()?;
+        let replace_all = args.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
+        if old_string.is_empty() {
+            // The schema forbids this; treat a violation as not-handled so the
+            // host's validation produces its canonical error.
+            return None;
+        }
+        if old_string == new_string {
+            return Some(err_result(
+                "No changes to make: old_string and new_string are exactly the same.".to_string(),
+            ));
+        }
+        let resolved = self.resolve(path)?;
+        let raw = std::fs::read_to_string(&resolved).ok()?;
+
+        // TS `toModelTextView`: only a *pure* CRLF file is normalised.
+        let style = detect_line_ending_style(&raw);
+        let view = if style == LineEndingStyle::Crlf { raw.replace("\r\n", "\n") } else { raw };
+
+        let occurrences = view.matches(old_string).count();
+        if occurrences == 0 {
+            return Some(err_result(format!(
+                "old_string not found in {path}, the file contents may be out of date. \
+                 Please use the Read Tool to reload the content."
+            )));
+        }
+        if !replace_all && occurrences > 1 {
+            return Some(err_result(format!(
+                "old_string is not unique in {path} (found {occurrences} occurrences). \
+                 To replace every occurrence, set replace_all=true. To replace only one \
+                 occurrence, include more surrounding context in old_string."
+            )));
+        }
+
+        let next_view = if replace_all {
+            view.replace(old_string, new_string)
+        } else {
+            view.replacen(old_string, new_string, 1)
+        };
+        // TS `materializeModelText`: re-materialise CRLF for pure-CRLF files,
+        // collapsing any CRLF the replacement text itself carried first so no
+        // `\r\r\n` can be produced.
+        let materialized = if style == LineEndingStyle::Crlf {
+            next_view.replace("\r\n", "\n").replace('\n', "\r\n")
+        } else {
+            next_view
+        };
+        Some(match std::fs::write(&resolved, materialized) {
+            Ok(()) => ok_result(if replace_all && occurrences > 1 {
+                format!("Replaced {occurrences} occurrences in {path}")
+            } else {
+                format!("Replaced 1 occurrence in {path}")
+            }),
+            Err(error) => err_result(error.to_string()),
+        })
+    }
+}
+
+/// TS `detectLineEndingStyle`: lone `\r` or a CRLF/LF mix is `Mixed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineEndingStyle {
+    Lf,
+    Crlf,
+    Mixed,
+}
+
+fn detect_line_ending_style(text: &str) -> LineEndingStyle {
+    let bytes = text.as_bytes();
+    let mut has_crlf = false;
+    let mut has_lf = false;
+    let mut has_lone_cr = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' => {
+                if bytes.get(i + 1) == Some(&b'\n') {
+                    has_crlf = true;
+                    i += 2;
+                    continue;
+                }
+                has_lone_cr = true;
+            }
+            b'\n' => has_lf = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    if has_lone_cr || (has_crlf && has_lf) {
+        LineEndingStyle::Mixed
+    } else if has_crlf {
+        LineEndingStyle::Crlf
+    } else {
+        LineEndingStyle::Lf
+    }
 }
 
 /// Compile a glob, auto-prefixing bare patterns with `**/` the way the JS
@@ -405,6 +585,184 @@ mod tests {
     #[test]
     fn new_rejects_missing_root() {
         assert!(NativeToolset::new("/definitely/not/a/real/dir").is_none());
+    }
+
+    // ── Write ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn write_creates_a_file_and_reports_utf8_bytes() {
+        let (dir, ts) = setup();
+        let result = ts
+            .execute("Write", &json!({ "path": "new.txt", "content": "héllo" }))
+            .unwrap();
+        assert!(!result.is_error);
+        // "héllo" is 6 UTF-8 bytes — the byte count, not the char count.
+        assert_eq!(result.content, "Wrote 6 bytes to new.txt");
+        assert_eq!(std::fs::read_to_string(dir.path().join("new.txt")).unwrap(), "héllo");
+    }
+
+    #[test]
+    fn write_creates_missing_parent_directories() {
+        let (dir, ts) = setup();
+        let result = ts
+            .execute("Write", &json!({ "path": "deep/nested/dir/f.txt", "content": "x" }))
+            .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+        assert!(dir.path().join("deep/nested/dir/f.txt").exists());
+    }
+
+    #[test]
+    fn write_overwrites_and_appends() {
+        let (dir, ts) = setup();
+        ts.execute("Write", &json!({ "path": "a.txt", "content": "fresh\n" })).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "fresh\n");
+        let appended = ts
+            .execute("Write", &json!({ "path": "a.txt", "content": "more\n", "mode": "append" }))
+            .unwrap();
+        assert_eq!(appended.content, "Appended 5 bytes to a.txt");
+        assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "fresh\nmore\n");
+    }
+
+    #[test]
+    fn write_outside_the_sandbox_falls_back_to_the_host() {
+        let (_dir, ts) = setup();
+        assert!(ts.execute("Write", &json!({ "path": "/tmp/escape.txt", "content": "x" })).is_none());
+        assert!(ts
+            .execute("Write", &json!({ "path": "../escape.txt", "content": "x" }))
+            .is_none());
+    }
+
+    #[test]
+    fn write_to_a_sensitive_file_falls_back_to_the_host() {
+        let (_dir, ts) = setup();
+        assert!(ts.execute("Write", &json!({ "path": ".env", "content": "SECRET=1" })).is_none());
+    }
+
+    #[test]
+    fn write_with_an_unknown_mode_falls_back() {
+        let (_dir, ts) = setup();
+        assert!(ts
+            .execute("Write", &json!({ "path": "a.txt", "content": "x", "mode": "patch" }))
+            .is_none());
+    }
+
+    // ── Edit ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn edit_replaces_a_unique_occurrence() {
+        let (dir, ts) = setup();
+        let result = ts
+            .execute(
+                "Edit",
+                &json!({ "path": "a.txt", "old_string": "beta", "new_string": "BETA" }),
+            )
+            .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.content, "Replaced 1 occurrence in a.txt");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn edit_missing_old_string_is_the_reload_error() {
+        let (_dir, ts) = setup();
+        let result = ts
+            .execute("Edit", &json!({ "path": "a.txt", "old_string": "nope", "new_string": "x" }))
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("old_string not found in a.txt"));
+        assert!(result.content.contains("Read Tool"));
+    }
+
+    #[test]
+    fn edit_ambiguous_old_string_demands_replace_all_or_context() {
+        let (dir, ts) = setup();
+        std::fs::write(dir.path().join("dup.txt"), "x y x\n").unwrap();
+        let result = ts
+            .execute("Edit", &json!({ "path": "dup.txt", "old_string": "x", "new_string": "z" }))
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("not unique in dup.txt (found 2 occurrences)"));
+    }
+
+    #[test]
+    fn edit_replace_all_counts_occurrences() {
+        let (dir, ts) = setup();
+        std::fs::write(dir.path().join("dup.txt"), "x y x\n").unwrap();
+        let result = ts
+            .execute(
+                "Edit",
+                &json!({ "path": "dup.txt", "old_string": "x", "new_string": "z", "replace_all": true }),
+            )
+            .unwrap();
+        assert_eq!(result.content, "Replaced 2 occurrences in dup.txt");
+        assert_eq!(std::fs::read_to_string(dir.path().join("dup.txt")).unwrap(), "z y z\n");
+    }
+
+    #[test]
+    fn edit_identical_strings_is_the_no_changes_error() {
+        let (_dir, ts) = setup();
+        let result = ts
+            .execute("Edit", &json!({ "path": "a.txt", "old_string": "beta", "new_string": "beta" }))
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("exactly the same"));
+    }
+
+    #[test]
+    fn edit_pure_crlf_file_matches_lf_and_writes_back_crlf() {
+        let (dir, ts) = setup();
+        std::fs::write(dir.path().join("win.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
+        // The model edits the LF view, per the Read output contract.
+        let result = ts
+            .execute(
+                "Edit",
+                &json!({ "path": "win.txt", "old_string": "one\ntwo", "new_string": "ONE\nTWO" }),
+            )
+            .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("win.txt")).unwrap(),
+            "ONE\r\nTWO\r\nthree\r\n",
+            "pure-CRLF files materialise back to CRLF"
+        );
+    }
+
+    #[test]
+    fn edit_mixed_line_endings_are_edited_verbatim() {
+        let (dir, ts) = setup();
+        std::fs::write(dir.path().join("mix.txt"), "a\r\nb\nc\n").unwrap();
+        let result = ts
+            .execute("Edit", &json!({ "path": "mix.txt", "old_string": "b", "new_string": "B" }))
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("mix.txt")).unwrap(),
+            "a\r\nB\nc\n",
+            "mixed files keep their exact byte layout"
+        );
+    }
+
+    #[test]
+    fn edit_missing_file_and_empty_old_string_fall_back() {
+        let (_dir, ts) = setup();
+        assert!(ts
+            .execute("Edit", &json!({ "path": "ghost.txt", "old_string": "a", "new_string": "b" }))
+            .is_none());
+        assert!(ts
+            .execute("Edit", &json!({ "path": "a.txt", "old_string": "", "new_string": "b" }))
+            .is_none());
+    }
+
+    #[test]
+    fn line_ending_detection_matches_ts() {
+        assert_eq!(detect_line_ending_style("a\nb\n"), LineEndingStyle::Lf);
+        assert_eq!(detect_line_ending_style("a\r\nb\r\n"), LineEndingStyle::Crlf);
+        assert_eq!(detect_line_ending_style("a\r\nb\n"), LineEndingStyle::Mixed);
+        assert_eq!(detect_line_ending_style("a\rb"), LineEndingStyle::Mixed);
+        assert_eq!(detect_line_ending_style("plain"), LineEndingStyle::Lf);
     }
 
     #[test]
@@ -492,11 +850,15 @@ mod tests {
     }
 
     #[test]
-    fn write_tools_are_never_handled() {
+    fn bash_and_unknown_tools_are_never_handled() {
+        // Write/Edit execute natively (post-authorization); Bash stays with
+        // the host, whose task system owns process lifecycle.
         let (_dir, ts) = setup();
-        assert!(ts.execute("Write", &json!({ "path": "a.txt", "content": "x" })).is_none());
-        assert!(ts.execute("Edit", &json!({ "path": "a.txt" })).is_none());
         assert!(ts.execute("Bash", &json!({ "command": "rm -rf /" })).is_none());
+        assert!(ts.execute("FetchURL", &json!({ "url": "https://x" })).is_none());
+        // A malformed Edit (missing fields) is not handled either — the host's
+        // schema validation owns that error.
+        assert!(ts.execute("Edit", &json!({ "path": "a.txt" })).is_none());
     }
 }
 
