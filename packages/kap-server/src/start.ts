@@ -83,7 +83,7 @@ import { createTokenStore } from './services/auth/tokenStore';
 // `IGlobalSearchService` (App scope) into the DI registry as a side effect, so
 // it MUST stay above any `bootstrap()` call — registration happens at module
 // evaluation time.
-import { drainGlobalSearchDisposals } from './search/searchService';
+import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
 
 export interface ServerStartOptions {
   readonly host?: string;
@@ -361,6 +361,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  // The global search service is DI-managed (App scope) while the transcript
+  // service is constructed here by hand — wire the former to the latter so
+  // container-scoped searches on live sessions scan the in-memory transcript.
+  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,

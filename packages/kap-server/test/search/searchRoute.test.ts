@@ -31,12 +31,14 @@ interface SearchPageWire {
   }[];
   has_more: boolean;
   page_token?: string;
+  incomplete?: string;
   index_state: {
     state: string;
     indexed_sessions: number;
     total_sessions: number;
     documents: number;
   };
+  source: string;
 }
 
 const WS = 'ws_route';
@@ -158,6 +160,8 @@ describe('server-v2 /api/v1/search', () => {
     expect(body!.data.items.some((h) => h.role === 'title')).toBe(true);
     expect(body!.data.has_more).toBe(false);
     expect(['building', 'ready', 'readonly']).toContain(body!.data.index_state.state);
+    // No session is live in this server, so the page comes from the index.
+    expect(body!.data.source).toBe('index');
   });
 
   it('rejects invalid bodies with 40001', async () => {
@@ -170,11 +174,36 @@ describe('server-v2 /api/v1/search', () => {
     const badSort = await postSearch({ query: '苹果', sort: 'newest' });
     expect(badSort.code).toBe(40001);
 
+    const badMode = await postSearch({ query: '苹果', mode: 'exact' });
+    expect(badMode.code).toBe(40001);
+
+    // A 1-character literal query is rejected by the service, not the schema.
+    const shortLiteral = await postSearch({ query: '苹', mode: 'literal' });
+    expect(shortLiteral.code).toBe(40001);
+    expect(shortLiteral.msg).toContain('at least 2 characters');
+
     // A page token that decodes to a non-object is a parameter error, not a 500.
     const nullToken = await postSearch({
       query: '苹果',
       page_token: Buffer.from('null').toString('base64url'),
     });
     expect(nullToken.code).toBe(40001);
+  });
+
+  it('serves literal mode through the wire', { timeout: 20_000 }, async () => {
+    let body: Envelope<SearchPageWire> | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      body = await postSearch({ query: '的价格', mode: 'literal' });
+      expect(body.code).toBe(0);
+      if (body.data.items.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(body).toBeDefined();
+    const hit = body!.data.items.find((h) => h.role === 'user');
+    expect(hit).toBeDefined();
+    expect(hit!.snippet).toContain('的价格');
+    expect(hit!.score).toBe(0);
+    expect(body!.data.items.some((h) => h.role === 'assistant')).toBe(false);
+    expect(body!.data.incomplete).toBeUndefined();
   });
 });

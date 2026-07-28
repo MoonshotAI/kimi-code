@@ -45,13 +45,15 @@ import {
   registerScopedService,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import { LockError, MiniDb, type BatchInputOp } from '@moonshot-ai/minidb';
+import { LockError, MiniDb, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
+import type { TranscriptStore } from '@moonshot-ai/transcript';
 
 import type {
   GlobalSearchHit,
   GlobalSearchIndexState,
   GlobalSearchPage,
   GlobalSearchQuery,
+  GlobalSearchSource,
 } from './contract';
 import { makeSnippet } from './snippet';
 import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract';
@@ -62,6 +64,8 @@ import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract
 
 const INDEX_DIR_NAME = 'search-index';
 const TEXT_INDEX_NAME = 'body';
+/** n-gram substring index backing literal mode, alongside 'body'. */
+const TRI_INDEX_NAME = 'tri';
 const WIRE_FILENAME = 'wire.jsonl';
 
 /** Key namespaces inside the single db. */
@@ -82,6 +86,12 @@ function fileMetaKey(filePath: string): string {
 const MAX_DOC_TEXT_CHARS = 20_000;
 /** Upper bound for text-index candidates handed to the scoring map / query. */
 const MAX_TEXT_HITS = 100_000;
+/**
+ * Upper bound for literal-mode n-gram candidates handed to the confirmation
+ * pass (a store `get` plus a substring scan each — pure CPU). Beyond the cap
+ * the page is truncated and flagged `incomplete: 'candidate_cap'`.
+ */
+const LITERAL_CANDIDATE_CAP = 10_000;
 /** Sessions are listed in pages of this size. */
 const SESSION_PAGE_SIZE = 500;
 
@@ -319,9 +329,30 @@ export interface IGlobalSearchService {
   /** Full rebuild: wipe the index and rescan every wire file. */
   reindex(): Promise<{ sessions: number; documents: number }>;
   status(): Promise<{ sessions: number; documents: number; lastIndexedAt: number | null }>;
+  /**
+   * Wire the live-transcript source for the in-memory search route. Called
+   * once from the composition root (start.ts) after `TranscriptService` is
+   * constructed; until then every search takes the index route.
+   */
+  setLiveTranscriptSource(source: LiveTranscriptSource): void;
 }
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
+
+/**
+ * Live-transcript access behind the in-memory (live) search route.
+ * Implemented by `TranscriptService` (`src/services/transcript/`); declared
+ * here with only the three methods the route needs, so the search module
+ * does not import the transcript service's dependency stack.
+ */
+export interface LiveTranscriptSource {
+  /** Transcript store of a session live in this process; undefined when not in memory. */
+  forSessionLive(sessionId: string): TranscriptStore | undefined;
+  /** Resolves when the session's initial history backfill has landed. */
+  whenReady(sessionId: string): Promise<void>;
+  /** Replay one agent's persisted history into the live store (idempotent per agent). */
+  ensureAgentHistory(sessionId: string, agentId: string): Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // Query normalization & page tokens
@@ -329,6 +360,23 @@ export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globa
 
 interface NormalizedQuery {
   readonly query: string;
+  readonly mode: 'terms' | 'literal';
+  /**
+   * Literal mode only: `normalizeLiteral(query)`, computed once here and
+   * reused by candidate confirmation and the snippet anchor. The n-gram
+   * index's query tokenizer applies the same normalization to the query
+   * terms, so index and comparison agree by construction.
+   */
+  readonly literalQuery?: string;
+  /**
+   * Terms mode only: the query's deduplicated terms under minidb's default
+   * `tokenize` (the same tokenizer the 'body' text index applies to both
+   * sides). Computed once here so the live route's in-memory AND match agrees
+   * with the index route by construction. Empty when the query tokenizes to
+   * nothing (e.g. punctuation only) — both routes then match zero docs,
+   * mirroring `TextIndex.search`.
+   */
+  readonly termsQuery?: readonly string[];
   readonly op: 'AND' | 'OR';
   readonly container?: { readonly sessionId?: string; readonly agentId?: string };
   readonly role?: 'user' | 'assistant' | 'title';
@@ -339,16 +387,27 @@ interface NormalizedQuery {
 }
 
 function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
-  const query = input.query.trim();
+  const mode = input.mode ?? 'terms';
+  // Literal matching is byte-exact (mod NFKC/case) — whitespace is part of
+  // the query, so it is never trimmed.
+  const query = mode === 'literal' ? input.query : input.query.trim();
   if (query.length === 0) {
     throw new GlobalSearchError('invalid_query', 'query must be a non-empty string');
   }
+  const literalQuery = mode === 'literal' ? normalizeLiteral(query) : undefined;
+  // NOTE: the <2-code-point gate for literal queries lives in the INDEX route
+  // (`searchIndex`) — it is a constraint of the n-gram candidate index, not of
+  // literal matching itself. The live route (pure in-memory scan) accepts any
+  // non-empty literal query, down to a single code point.
   const pageSize = input.pageSize ?? 20;
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) {
     throw new GlobalSearchError('invalid_query', 'pageSize must be an integer between 1 and 50');
   }
   return {
     query,
+    mode,
+    literalQuery,
+    termsQuery: mode === 'terms' ? [...new Set(tokenize(query))] : undefined,
     op: input.op ?? 'AND',
     container: input.container,
     role: input.role,
@@ -362,11 +421,15 @@ function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
 /**
  * The page token encodes a fingerprint of the query conditions plus the skip
  * offset — changing conditions mid-pagination invalidates the token (same
- * rule as Lark's search API).
+ * rule as Lark's search API). The serving route (`source`) is part of the
+ * fingerprint: a route flip mid-pagination (e.g. the container session
+ * closed and the live route fell away) invalidates the token too, so the
+ * client restarts the search instead of silently switching result sets.
  */
-function tokenFingerprint(q: NormalizedQuery): string {
+function tokenFingerprint(q: NormalizedQuery, source: GlobalSearchSource): string {
   const basis = JSON.stringify([
     q.query,
+    q.mode,
     q.op,
     q.container?.sessionId,
     q.container?.agentId,
@@ -374,15 +437,22 @@ function tokenFingerprint(q: NormalizedQuery): string {
     q.startTime,
     q.endTime,
     q.sort,
+    source,
   ]);
   return createHash('sha256').update(basis).digest('base64url').slice(0, 16);
 }
 
-function encodePageToken(q: NormalizedQuery, skip: number): string {
-  return Buffer.from(JSON.stringify({ f: tokenFingerprint(q), s: skip })).toString('base64url');
+function encodePageToken(q: NormalizedQuery, source: GlobalSearchSource, skip: number): string {
+  return Buffer.from(JSON.stringify({ f: tokenFingerprint(q, source), s: skip })).toString(
+    'base64url',
+  );
 }
 
-function decodePageToken(q: NormalizedQuery, token: string | undefined): number {
+function decodePageToken(
+  q: NormalizedQuery,
+  source: GlobalSearchSource,
+  token: string | undefined,
+): number {
   if (token === undefined) return 0;
   let parsed: unknown;
   try {
@@ -394,7 +464,7 @@ function decodePageToken(q: NormalizedQuery, token: string | undefined): number 
     throw new GlobalSearchError('invalid_page_token', 'pageToken is malformed');
   }
   const p = parsed as { f?: unknown; s?: unknown };
-  if (p.f !== tokenFingerprint(q)) {
+  if (p.f !== tokenFingerprint(q, source)) {
     throw new GlobalSearchError(
       'invalid_page_token',
       'pageToken does not match the query conditions; query conditions must not change mid-pagination',
@@ -416,6 +486,9 @@ export class GlobalSearchService implements IGlobalSearchService {
   /** Minimum interval between search-triggered sync passes (test knob). */
   syncDebounceMs = 2_000;
 
+  /** Literal-mode candidate cap (test knob, see LITERAL_CANDIDATE_CAP). */
+  literalCandidateCap = LITERAL_CANDIDATE_CAP;
+
   private db: MiniDb<SearchDoc> | null = null;
   private openPromise: Promise<void> | null = null;
   private syncPromise: Promise<void> | null = null;
@@ -429,6 +502,8 @@ export class GlobalSearchService implements IGlobalSearchService {
   private disposed = false;
   /** Set while `reindex()` swaps the db — syncs started meanwhile are no-ops. */
   private reindexing = false;
+  /** Live-transcript source for the in-memory route; null until start.ts wires it. */
+  private liveSource: LiveTranscriptSource | null = null;
 
   constructor(
     @ISessionIndex private readonly sessionIndex: ISessionIndex,
@@ -438,6 +513,10 @@ export class GlobalSearchService implements IGlobalSearchService {
     // App-scope OnScopeCreated activation: kick the first full sync off in the
     // background so server bootstrap never blocks on indexing.
     this.kickBackgroundSync();
+  }
+
+  setLiveTranscriptSource(source: LiveTranscriptSource): void {
+    this.liveSource = source;
   }
 
   // -- lifecycle ---------------------------------------------------------------
@@ -467,10 +546,19 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.db = db;
     this.walOffset = db.recoveryInfo?.walScanEnd ?? 0;
     if (!db.readOnly) {
-      try {
-        await db.createTextIndex(TEXT_INDEX_NAME, { fields: ['text'] });
-      } catch (error) {
-        if (!(error instanceof Error && error.message.includes('already exists'))) throw error;
+      // Both indexes are created here (not at first write) so a pre-existing
+      // db gets the tri index built over its current documents on first open
+      // after the upgrade, and a read-only peer only ever reopens on the
+      // definitions-file fingerprint change.
+      for (const [name, options] of [
+        [TEXT_INDEX_NAME, { fields: ['text'] }],
+        [TRI_INDEX_NAME, { fields: ['text'], tokenizer: 'ngram' }],
+      ] as const) {
+        try {
+          await db.createTextIndex(name, options);
+        } catch (error) {
+          if (!(error instanceof Error && error.message.includes('already exists'))) throw error;
+        }
       }
     }
     this.fingerprint = await this.computeFingerprint();
@@ -870,9 +958,157 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   // -- public API ---------------------------------------------------------------
 
+  /**
+   * Route: a container-scoped query on a session that is live in this process
+   * scans the in-memory transcript store instead of the index, in both terms
+   * and literal mode. Anything else takes the index route. The live route
+   * never falls back on error — the store being in hand means the session is
+   * alive, so a scan failure is a real error, not a degradation signal.
+   */
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
     const q = normalizeQuery(input);
-    const skip = decodePageToken(q, input.pageToken);
+    const sessionId = q.container?.sessionId;
+    const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
+    if (liveStore !== undefined && sessionId !== undefined) {
+      return this.searchLive(q, sessionId, liveStore, input.pageToken);
+    }
+    return this.searchIndex(q, input.pageToken);
+  }
+
+  // -- live route (in-memory transcript scan) ------------------------------------
+
+  private async searchLive(
+    q: NormalizedQuery,
+    sessionId: string,
+    store: TranscriptStore,
+    pageToken: string | undefined,
+  ): Promise<GlobalSearchPage> {
+    const skip = decodePageToken(q, 'live', pageToken);
+    const source = this.liveSource;
+    if (source === null) {
+      // Unreachable (the router only enters with a source-wired store), but a
+      // null deref here would mask a wiring bug — fail loudly instead.
+      throw new GlobalSearchError('index_unavailable', 'live transcript source is not wired');
+    }
+    // Backfill gates: the main-agent history, then every agent in scope, so
+    // the scan covers full history rather than only post-resume content.
+    await source.whenReady(sessionId);
+    const agentIds =
+      q.container?.agentId !== undefined
+        ? [q.container.agentId]
+        : store.agents().map((agent) => agent.agentId);
+    for (const agentId of agentIds) {
+      await source.ensureAgentHistory(sessionId, agentId);
+    }
+    const docs = await this.collectLiveDocs(sessionId, store, agentIds);
+    // Literal mode needs no candidate index: every in-memory document is a
+    // candidate and the shared confirmation pass decides. Terms mode runs the
+    // in-memory AND match first, scoring each hit.
+    const matched =
+      q.mode === 'literal'
+        ? this.matchDocs(
+            q,
+            docs.map((value) => ({ value, score: 0 })),
+          )
+        : this.matchDocs(q, matchLiveTerms(q.termsQuery ?? [], docs));
+    return this.toPage(q, 'live', skip, matched, undefined, {
+      state: 'ready',
+      indexedSessions: 1,
+      totalSessions: 1,
+      documents: docs.length,
+    });
+  }
+
+  /**
+   * Flatten the live transcript store into the same document shape the index
+   * route searches (`MessageDoc` / `TitleDoc`):
+   *   - one user doc per non-empty `turn.prompt` (turn ordinal + turn time);
+   *   - one assistant doc per assistant-role text frame (turn ordinal +
+   *     stepId); thinking / tool / notice frames are skipped;
+   *   - one title doc from the session-index summary, same as the sync path.
+   * Text is trimmed and empty results skipped, mirroring the index side's
+   * `wireExtract` (which trims both user and assistant text).
+   */
+  private async collectLiveDocs(
+    sessionId: string,
+    store: TranscriptStore,
+    agentIds: readonly string[],
+  ): Promise<(MessageDoc | TitleDoc)[]> {
+    const summary = await this.sessionIndex.get(sessionId);
+    const workspaceId = summary?.workspaceId ?? '';
+    const sessionTitle = summary?.title ?? '';
+    const fallbackTime = summary?.updatedAt ?? 0;
+    const parseTime = (iso: string | undefined): number => {
+      if (iso === undefined) return fallbackTime;
+      const ms = Date.parse(iso);
+      return Number.isNaN(ms) ? fallbackTime : ms;
+    };
+    const docs: (MessageDoc | TitleDoc)[] = [];
+    for (const agentId of agentIds) {
+      const transcript = store.getAgent(agentId);
+      if (transcript === undefined) continue;
+      for (const item of transcript.snapshot().items) {
+        if (item.kind !== 'turn') continue;
+        const turnTime = parseTime(item.startedAt);
+        const prompt = item.prompt?.trim() ?? '';
+        if (prompt.length > 0) {
+          docs.push({
+            kind: 'message',
+            sessionId,
+            workspaceId,
+            sessionTitle,
+            agentId,
+            role: 'user',
+            text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
+            time: turnTime,
+            turn: item.ordinal,
+            stepId: undefined,
+          });
+        }
+        for (const step of item.steps) {
+          const stepTime = parseTime(step.endedAt ?? step.startedAt ?? item.startedAt);
+          for (const frame of step.frames) {
+            if (frame.kind !== 'text' || frame.role !== 'assistant') continue;
+            const text = frame.text.trim();
+            if (text.length === 0) continue;
+            docs.push({
+              kind: 'message',
+              sessionId,
+              workspaceId,
+              sessionTitle,
+              agentId,
+              role: 'assistant',
+              text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
+              time: stepTime,
+              turn: item.ordinal,
+              stepId: step.stepId,
+            });
+          }
+        }
+      }
+    }
+    if (sessionTitle.length > 0) {
+      docs.push({
+        kind: 'title',
+        sessionId,
+        workspaceId,
+        sessionTitle,
+        agentId: '',
+        role: 'title',
+        text: sessionTitle,
+        time: fallbackTime,
+      });
+    }
+    return docs;
+  }
+
+  // -- index route (minidb) -------------------------------------------------------
+
+  private async searchIndex(
+    q: NormalizedQuery,
+    pageToken: string | undefined,
+  ): Promise<GlobalSearchPage> {
+    const skip = decodePageToken(q, 'index', pageToken);
 
     await this.ensureOpen();
     if (this.db?.readOnly === true) {
@@ -900,8 +1136,31 @@ export class GlobalSearchService implements IGlobalSearchService {
     // memory. (A separate db.query({text}) for pagination would scan the same
     // postings a second time.)
     let candidates: { key: string; value: SearchDoc | undefined; score: number }[];
+    let incomplete: 'candidate_cap' | undefined;
     try {
-      candidates = db.search(TEXT_INDEX_NAME, q.query, { op: q.op, limit: MAX_TEXT_HITS });
+      if (q.mode === 'literal') {
+        // The n-gram index cannot confirm queries shorter than 2 normalized
+        // code points. Judged AFTER normalization on purpose: NFKC can change
+        // the length (the ligature 'ﬀ' folds to 'ff' and becomes legal). The
+        // live route has no such constraint — it never reaches this branch.
+        if (Array.from(q.literalQuery ?? '').length < 2) {
+          throw new GlobalSearchError(
+            'invalid_query',
+            'literal queries need at least 2 characters (after Unicode normalization)',
+          );
+        }
+        // Ask for one past the cap so an over-cap candidate set is detectable.
+        candidates = db.search(TRI_INDEX_NAME, q.query, {
+          op: 'AND',
+          limit: this.literalCandidateCap + 1,
+        });
+        if (candidates.length > this.literalCandidateCap) {
+          candidates.length = this.literalCandidateCap;
+          incomplete = 'candidate_cap';
+        }
+      } else {
+        candidates = db.search(TEXT_INDEX_NAME, q.query, { op: q.op, limit: MAX_TEXT_HITS });
+      }
     } catch (error) {
       // A read-only instance can open before the writer has created the text
       // index — serve an empty page instead of failing the search.
@@ -910,26 +1169,78 @@ export class GlobalSearchService implements IGlobalSearchService {
           items: [],
           hasMore: false,
           pageToken: undefined,
+          incomplete: undefined,
           indexState: this.readIndexState(db),
+          source: 'index',
         };
       }
       throw error;
     }
 
-    const matched: { value: MessageDoc | TitleDoc; score: number }[] = [];
-    for (const hit of candidates) {
-      const doc = hit.value;
+    const matched = this.matchDocs(q, candidates);
+    return this.toPage(q, 'index', skip, matched, incomplete, this.readIndexState(db));
+  }
+
+  // -- shared match & page assembly (both routes) --------------------------------
+
+  /**
+   * Container/role/time filtering plus literal confirmation — one
+   * implementation shared by the index route (confirming n-gram candidates)
+   * and the live route (scanning every in-memory document).
+   */
+  private matchDocs(
+    q: NormalizedQuery,
+    docs: Iterable<{ value: SearchDoc | undefined; score: number }>,
+  ): { value: MessageDoc | TitleDoc; score: number; anchor?: number }[] {
+    const literalQuery = q.literalQuery;
+    const matched: { value: MessageDoc | TitleDoc; score: number; anchor?: number }[] = [];
+    for (const { value: doc, score } of docs) {
       if (doc === undefined || (doc.kind !== 'message' && doc.kind !== 'title')) continue;
       if (q.container?.sessionId !== undefined && doc.sessionId !== q.container.sessionId) continue;
       if (q.container?.agentId !== undefined && doc.agentId !== q.container.agentId) continue;
       if (q.role !== undefined && doc.role !== q.role) continue;
       if (q.startTime !== undefined && doc.time < q.startTime) continue;
       if (q.endTime !== undefined && doc.time > q.endTime) continue;
-      matched.push({ value: doc, score: hit.score });
+      if (literalQuery !== undefined) {
+        // Two-phase execution (same model as Elasticsearch's wildcard field):
+        // candidates (from the n-gram index, or every in-memory doc on the
+        // live route) are confirmed against the document text — hash
+        // collisions and non-contiguous n-gram coverage can produce false
+        // positives. Zero false positives is the hard guarantee of literal
+        // mode. The match offset doubles as the snippet anchor. Deliberate
+        // deviation from ES: the comparison is case-insensitive (NFKC +
+        // lowercase), aligned with the terms tokenizer.
+        const at = normalizeLiteral(doc.text).indexOf(literalQuery);
+        if (at === -1) continue;
+        matched.push({ value: doc, score: 0, anchor: at });
+      } else {
+        matched.push({ value: doc, score });
+      }
     }
-    // 'score' keeps the text index's relevance order.
-    if (q.sort === 'time_desc') matched.sort((a, b) => b.value.time - a.value.time);
-    else if (q.sort === 'time_asc') matched.sort((a, b) => a.value.time - b.value.time);
+    return matched;
+  }
+
+  /** Sort, paginate and project the matched docs into a page (both routes). */
+  private toPage(
+    q: NormalizedQuery,
+    source: GlobalSearchSource,
+    skip: number,
+    matched: { value: MessageDoc | TitleDoc; score: number; anchor?: number }[],
+    incomplete: 'candidate_cap' | undefined,
+    indexState: GlobalSearchIndexState,
+  ): GlobalSearchPage {
+    // Literal mode: the normalized query (computed in normalizeQuery), reused
+    // by confirmation and the snippet anchor.
+    const literalQuery = q.literalQuery;
+    // Literal hits carry no relevance score and always order by time desc
+    // (`sort` is a terms-mode concept). 'score' keeps the relevance order the
+    // route produced: the text index's on the index route, `matchLiveTerms'`
+    // on the live route.
+    if (q.mode === 'literal' || q.sort === 'time_desc') {
+      matched.sort((a, b) => b.value.time - a.value.time);
+    } else if (q.sort === 'time_asc') {
+      matched.sort((a, b) => a.value.time - b.value.time);
+    }
 
     const pageRows = matched.slice(skip, skip + q.pageSize + 1);
     const hasMore = pageRows.length > q.pageSize;
@@ -941,7 +1252,12 @@ export class GlobalSearchService implements IGlobalSearchService {
         sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
         agentId: doc.agentId,
         role: doc.role,
-        snippet: doc.kind === 'title' ? doc.text : makeSnippet(doc.text, q.query),
+        snippet:
+          doc.kind === 'title'
+            ? doc.text
+            : row.anchor !== undefined && literalQuery !== undefined
+              ? makeSnippet(doc.text, q.query, 80, { at: row.anchor, len: literalQuery.length })
+              : makeSnippet(doc.text, q.query),
         time: doc.time,
         turn: doc.kind === 'message' ? doc.turn : undefined,
         stepId: doc.kind === 'message' ? doc.stepId : undefined,
@@ -952,8 +1268,10 @@ export class GlobalSearchService implements IGlobalSearchService {
     return {
       items,
       hasMore,
-      pageToken: hasMore ? encodePageToken(q, skip + q.pageSize) : undefined,
-      indexState: this.readIndexState(db),
+      pageToken: hasMore ? encodePageToken(q, source, skip + q.pageSize) : undefined,
+      incomplete,
+      indexState,
+      source,
     };
   }
 
@@ -1017,6 +1335,47 @@ export class GlobalSearchService implements IGlobalSearchService {
       documents,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// live-route terms matching
+// ---------------------------------------------------------------------------
+
+/**
+ * Terms-mode matching for the live route. Both query (already tokenized and
+ * deduplicated in `normalizeQuery`) and documents are split with minidb's
+ * default `tokenize` — the same tokenizer the index route's 'body' text index
+ * uses — so a document matches when EVERY query term appears in its term set
+ * (AND). The score is Σ log(1 + tf) per query term: it is only comparable
+ * within the live route, since there is no corpus-wide IDF in memory (the
+ * `GlobalSearchSource` contract comment says the same). Hits are returned
+ * score-sorted, mirroring `TextIndex.search`, because the shared `toPage`
+ * keeps the candidate order for `sort: 'score'`.
+ */
+function matchLiveTerms(
+  terms: readonly string[],
+  docs: readonly (MessageDoc | TitleDoc)[],
+): { value: MessageDoc | TitleDoc; score: number }[] {
+  // A query that tokenizes to nothing matches zero docs, same as the index.
+  if (terms.length === 0) return [];
+  const matched: { value: MessageDoc | TitleDoc; score: number }[] = [];
+  for (const doc of docs) {
+    const counts = new Map<string, number>();
+    for (const token of tokenize(doc.text)) counts.set(token, (counts.get(token) ?? 0) + 1);
+    let score = 0;
+    let hit = true;
+    for (const term of terms) {
+      const tf = counts.get(term) ?? 0;
+      if (tf === 0) {
+        hit = false;
+        break;
+      }
+      score += Math.log(1 + tf);
+    }
+    if (hit) matched.push({ value: doc, score });
+  }
+  matched.sort((a, b) => b.score - a.score);
+  return matched;
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import { ActionButton, Badge, ErrorLine, relTime } from '../ui';
 
 type RoleFilter = 'all' | 'user' | 'assistant' | 'title';
 type SortOrder = 'score' | 'time_desc' | 'time_asc';
+type SearchMode = 'terms' | 'literal';
 
 const PAGE_SIZE = 20;
 
@@ -20,9 +21,12 @@ interface ExecutedSearch {
   readonly query: string;
   readonly role?: 'user' | 'assistant' | 'title' | undefined;
   readonly sort: SortOrder;
+  readonly mode: SearchMode;
   readonly items: readonly SearchHit[];
   readonly hasMore: boolean;
   readonly pageToken?: string | undefined;
+  readonly incomplete?: 'candidate_cap' | undefined;
+  readonly source?: 'live' | 'index' | undefined;
   readonly indexState: SearchIndexState;
 }
 
@@ -31,6 +35,7 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
   const [input, setInput] = useState('');
   const [role, setRole] = useState<RoleFilter>('all');
   const [sort, setSort] = useState<SortOrder>('score');
+  const [exact, setExact] = useState(false);
   const [result, setResult] = useState<ExecutedSearch | null>(null);
   const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -43,21 +48,26 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
     setError(null);
     try {
       const token = config.token.trim();
+      const mode: SearchMode = exact ? 'literal' : 'terms';
       const page = await fetchSearchPage({
         baseUrl,
         token: token === '' ? undefined : token,
         query,
         role: role === 'all' ? undefined : role,
         sort,
+        mode,
         pageSize: PAGE_SIZE,
       });
       setResult({
         query,
         role: role === 'all' ? undefined : role,
         sort,
+        mode,
         items: page.items,
         hasMore: page.hasMore,
         pageToken: page.pageToken,
+        incomplete: page.incomplete,
+        source: page.source,
         indexState: page.indexState,
       });
     } catch (error) {
@@ -79,6 +89,7 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
         query: result.query,
         role: result.role,
         sort: result.sort,
+        mode: result.mode,
         pageSize: PAGE_SIZE,
         pageToken: result.pageToken,
       });
@@ -87,6 +98,8 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
         items: [...result.items, ...page.items],
         hasMore: page.hasMore,
         pageToken: page.pageToken,
+        incomplete: page.incomplete,
+        source: page.source,
         indexState: page.indexState,
       });
     } catch (error) {
@@ -123,15 +136,28 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
           <option value="title">title</option>
         </select>
         <select
-          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-[12px] text-neutral-300 outline-none"
+          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-[12px] text-neutral-300 outline-none disabled:opacity-40"
           value={sort}
           onChange={(e) => setSort(e.target.value as SortOrder)}
-          title="Sort order"
+          title={exact ? 'Exact match always sorts by newest first' : 'Sort order'}
+          disabled={exact}
         >
           <option value="score">relevance</option>
           <option value="time_desc">newest first</option>
           <option value="time_asc">oldest first</option>
         </select>
+        <label
+          className="flex cursor-pointer items-center gap-1.5 rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-[12px] text-neutral-300 select-none"
+          title="Substring match, case-insensitive (slower, matches symbols like C++)"
+        >
+          <input
+            type="checkbox"
+            className="accent-sky-600"
+            checked={exact}
+            onChange={(e) => setExact(e.target.checked)}
+          />
+          exact match
+        </label>
         <ActionButton onClick={() => void runSearch()} disabled={searching || input.trim() === ''}>
           {searching ? 'Searching…' : 'Search'}
         </ActionButton>
@@ -140,6 +166,20 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
             {result.indexState.state === 'building'
               ? `index building (${result.indexState.indexedSessions}/${result.indexState.totalSessions} sessions) — results may be incomplete`
               : `${result.indexState.documents} documents indexed (${result.indexState.state})`}
+          </span>
+        ) : null}
+        {result?.source !== undefined ? (
+          <span
+            className="ml-2"
+            title={
+              result.source === 'live'
+                ? 'searched the in-memory session transcript'
+                : 'searched the persisted search index'
+            }
+          >
+            <Badge tone={result.source === 'live' ? 'green' : 'neutral'}>
+              source: {result.source}
+            </Badge>
           </span>
         ) : null}
       </div>
@@ -158,6 +198,11 @@ export function SearchView({ onOpenResult }: { onOpenResult: (hit: SearchHit) =>
           <div className="text-[12px] text-neutral-600 italic">No hits for “{result.query}”.</div>
         ) : (
           <div className="flex flex-col gap-2">
+            {result.incomplete === 'candidate_cap' ? (
+              <div className="text-[11px] text-neutral-600">
+                too many matches — the candidate set was truncated, results may be incomplete
+              </div>
+            ) : null}
             {result.items.map((hit, i) => (
               <HitCard
                 key={`${hit.sessionId}/${hit.agentId}/${hit.time}/${i}`}

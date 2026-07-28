@@ -41,6 +41,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 function toServiceQuery(body: SearchMessagesBody): GlobalSearchQuery {
   return {
     query: body.query,
+    mode: body.mode,
     op: body.op,
     container:
       body.container === undefined
@@ -71,12 +72,14 @@ function toWirePage(page: GlobalSearchPage): SearchMessagesResponse {
     })),
     has_more: page.hasMore,
     page_token: page.pageToken,
+    incomplete: page.incomplete,
     index_state: {
       state: page.indexState.state,
       indexed_sessions: page.indexState.indexedSessions,
       total_sessions: page.indexState.totalSessions,
       documents: page.indexState.documents,
     },
+    source: page.source,
   };
 }
 

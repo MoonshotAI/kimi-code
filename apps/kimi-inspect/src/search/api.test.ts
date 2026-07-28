@@ -107,6 +107,94 @@ describe('fetchSearchPage', () => {
     expect(calls[0]!.init?.headers).toEqual({ 'content-type': 'application/json' });
   });
 
+  it('serializes mode into the body and parses incomplete: candidate_cap', async () => {
+    const { calls, fetchImpl } = fakeFetch(
+      okEnvelope({ ...pageData, has_more: false, incomplete: 'candidate_cap' }),
+    );
+    const page = await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: 'C++',
+      mode: 'literal',
+      fetchImpl,
+    });
+
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      query: 'C++',
+      mode: 'literal',
+    });
+    expect(page.incomplete).toBe('candidate_cap');
+  });
+
+  it('leaves incomplete undefined for absent or unexpected values', async () => {
+    const { fetchImpl } = fakeFetch(okEnvelope(pageData));
+    const page = await fetchSearchPage({ baseUrl: 'http://h:1', query: '苹果', fetchImpl });
+    expect(page.incomplete).toBeUndefined();
+
+    const { fetchImpl: fetchImpl2 } = fakeFetch(
+      okEnvelope({ ...pageData, incomplete: 'something_else' }),
+    );
+    const page2 = await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: '苹果',
+      fetchImpl: fetchImpl2,
+    });
+    expect(page2.incomplete).toBeUndefined();
+  });
+
+  it('serializes container into the body (session only, and session + agent)', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope(pageData));
+    await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: '苹果',
+      container: { sessionId: 's1' },
+      fetchImpl,
+    });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      query: '苹果',
+      container: { session_id: 's1' },
+    });
+
+    const { calls: calls2, fetchImpl: fetchImpl2 } = fakeFetch(okEnvelope(pageData));
+    await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: '苹果',
+      container: { sessionId: 's1', agentId: 'main' },
+      fetchImpl: fetchImpl2,
+    });
+    expect(JSON.parse(String(calls2[0]!.init?.body))).toEqual({
+      query: '苹果',
+      container: { session_id: 's1', agent_id: 'main' },
+    });
+  });
+
+  it('parses source: live and source: index', async () => {
+    const { fetchImpl } = fakeFetch(okEnvelope({ ...pageData, source: 'live' }));
+    const page = await fetchSearchPage({ baseUrl: 'http://h:1', query: '苹果', fetchImpl });
+    expect(page.source).toBe('live');
+
+    const { fetchImpl: fetchImpl2 } = fakeFetch(okEnvelope({ ...pageData, source: 'index' }));
+    const page2 = await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: '苹果',
+      fetchImpl: fetchImpl2,
+    });
+    expect(page2.source).toBe('index');
+  });
+
+  it('leaves source undefined for absent or unknown values', async () => {
+    const { fetchImpl } = fakeFetch(okEnvelope(pageData));
+    const page = await fetchSearchPage({ baseUrl: 'http://h:1', query: '苹果', fetchImpl });
+    expect(page.source).toBeUndefined();
+
+    const { fetchImpl: fetchImpl2 } = fakeFetch(okEnvelope({ ...pageData, source: 'whatever' }));
+    const page2 = await fetchSearchPage({
+      baseUrl: 'http://h:1',
+      query: '苹果',
+      fetchImpl: fetchImpl2,
+    });
+    expect(page2.source).toBeUndefined();
+  });
+
   it('throws on a non-zero envelope code', async () => {
     const { fetchImpl } = fakeFetch({
       code: 40001,

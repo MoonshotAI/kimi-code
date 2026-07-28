@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 export const searchMessagesBodySchema = z.object({
   query: z.string().min(1),
+  mode: z.enum(['terms', 'literal']).optional(),
   op: z.enum(['AND', 'OR']).optional(),
   container: z
     .object({
@@ -43,11 +44,13 @@ export const searchMessagesResponseSchema = z.object({
   items: z.array(searchMessageHitSchema),
   has_more: z.boolean(),
   page_token: z.string().optional(),
+  incomplete: z.enum(['candidate_cap']).optional(),
   index_state: z.object({
     state: z.enum(['building', 'ready', 'readonly']),
     indexed_sessions: z.number(),
     total_sessions: z.number(),
     documents: z.number(),
   }),
+  source: z.enum(['live', 'index']),
 });
 export type SearchMessagesResponse = z.infer<typeof searchMessagesResponseSchema>;

@@ -58,6 +58,7 @@ import {
 
 import { AuditTrail } from '../audit/trail';
 import { useConnection } from '../connection';
+import type { SearchHit } from '../search/api';
 import { fetchTranscriptOps, fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '../transcript/api';
 import {
   createCoalescedRunner,
@@ -68,6 +69,7 @@ import {
 } from '../transcript/store';
 import { TranscriptWs } from '../transcript/ws';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { ChatSearchBar } from './ChatSearchBar';
 
 const noopSubscribe = () => () => {};
 
@@ -342,6 +344,7 @@ export function ChatView({
   onTrailChange,
   jump,
   onJumpHandled,
+  onOpenSearchHit,
 }: {
   sessionId: string | null;
   agentId: string;
@@ -352,6 +355,8 @@ export function ChatView({
   jump?: ChatJump | null | undefined;
   /** Called once the jump has been processed (or found un-actionable). */
   onJumpHandled?: (() => void) | undefined;
+  /** Hands an in-chat search hit up to the app shell (agent switch + jump). */
+  onOpenSearchHit?: ((hit: SearchHit) => void) | undefined;
 }) {
   const { klient, baseUrl, config } = useConnection();
   const [input, setInput] = useState('');
@@ -600,6 +605,8 @@ export function ChatView({
             <Badge tone="amber">{state.pendingInteractions.size} pending</Badge>
           ) : null}
         </div>
+
+        <ChatSearchBar sessionId={sessionId} onOpenHit={onOpenSearchHit} />
 
         <div className="flex-1 overflow-y-auto px-4 py-3" ref={scrollRef} onScroll={onScroll}>
           {state.hasMoreOlder ? (

@@ -22,17 +22,35 @@ export function snippetTerms(query: string): string[] {
   return terms;
 }
 
-export function makeSnippet(text: string, query: string, radius = 80): string {
-  const lower = text.toLowerCase();
-  // Earliest occurrence across all terms wins; on ties prefer the longer term.
+/**
+ * `anchor` — a caller-known hit location (`at` = offset of the match in
+ * `text`, `len` = match length in code units), e.g. the confirmation offset
+ * from literal search. When given, the term-guessing pass is skipped. The
+ * window math clamps out-of-range offsets, so an anchor taken from a
+ * normalized copy of the text (NFKC can shift offsets) degrades to a
+ * slightly shifted window, never an error.
+ */
+export function makeSnippet(
+  text: string,
+  query: string,
+  radius = 80,
+  anchor?: { at: number; len: number },
+): string {
   let hitAt = -1;
   let hitLen = 0;
-  for (const term of snippetTerms(query)) {
-    const i = lower.indexOf(term.toLowerCase());
-    if (i === -1) continue;
-    if (hitAt === -1 || i < hitAt || (i === hitAt && term.length > hitLen)) {
-      hitAt = i;
-      hitLen = term.length;
+  if (anchor !== undefined) {
+    hitAt = anchor.at;
+    hitLen = anchor.len;
+  } else {
+    const lower = text.toLowerCase();
+    // Earliest occurrence across all terms wins; on ties prefer the longer term.
+    for (const term of snippetTerms(query)) {
+      const i = lower.indexOf(term.toLowerCase());
+      if (i === -1) continue;
+      if (hitAt === -1 || i < hitAt || (i === hitAt && term.length > hitLen)) {
+        hitAt = i;
+        hitLen = term.length;
+      }
     }
   }
 

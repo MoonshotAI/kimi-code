@@ -37,6 +37,17 @@ export interface SearchPage {
   readonly items: readonly SearchHit[];
   readonly hasMore: boolean;
   readonly pageToken?: string | undefined;
+  /**
+   * Set when the server truncated the literal-mode candidate set before
+   * confirmation — the page may be missing real hits.
+   */
+  readonly incomplete?: 'candidate_cap' | undefined;
+  /**
+   * Which backend served the search: 'live' scanned the in-memory session
+   * transcript, 'index' queried the persisted search index. Absent when the
+   * server omits it or reports an unknown value.
+   */
+  readonly source?: 'live' | 'index' | undefined;
   readonly indexState: SearchIndexState;
 }
 
@@ -48,6 +59,19 @@ export interface FetchSearchPageOptions {
   readonly role?: 'user' | 'assistant' | 'title' | undefined;
   /** Default server-side 'score'. */
   readonly sort?: 'score' | 'time_desc' | 'time_asc' | undefined;
+  /**
+   * Match mode; default server-side 'terms'. 'literal' is a substring match
+   * (case-insensitive, NFKC-normalized); the server ignores `sort` and orders
+   * by time desc.
+   */
+  readonly mode?: 'terms' | 'literal' | undefined;
+  /**
+   * Scope the search to one session (and optionally one agent). Wire:
+   * `container: { session_id, agent_id? }`.
+   */
+  readonly container?:
+    | { readonly sessionId: string; readonly agentId?: string | undefined }
+    | undefined;
   readonly pageSize?: number | undefined;
   /** Opaque cursor from the previous page; the query conditions must not change. */
   readonly pageToken?: string | undefined;
@@ -100,6 +124,11 @@ export async function fetchSearchPage(opts: FetchSearchPageOptions): Promise<Sea
       query: opts.query,
       role: opts.role,
       sort: opts.sort,
+      mode: opts.mode,
+      container:
+        opts.container === undefined
+          ? undefined
+          : { session_id: opts.container.sessionId, agent_id: opts.container.agentId },
       page_size: opts.pageSize,
       page_token: opts.pageToken,
     }),
@@ -120,6 +149,8 @@ export async function fetchSearchPage(opts: FetchSearchPageOptions): Promise<Sea
     items,
     hasMore: data['has_more'] === true,
     pageToken: typeof data['page_token'] === 'string' ? data['page_token'] : undefined,
+    incomplete: data['incomplete'] === 'candidate_cap' ? 'candidate_cap' : undefined,
+    source: data['source'] === 'live' || data['source'] === 'index' ? data['source'] : undefined,
     indexState: {
       state:
         rawState['state'] === 'building' || rawState['state'] === 'readonly'

@@ -22,6 +22,13 @@
 export interface GlobalSearchQuery {
   /** Keyword(s), required. */
   readonly query: string;
+  /**
+   * 'terms' (default) — the word-level full-text index; 'literal' — exact
+   * substring match over the n-gram index (case-insensitive, NFKC-folded;
+   * needs at least 2 normalized characters). `op`/`sort` only apply to
+   * 'terms'; literal hits carry score 0 and sort by time desc.
+   */
+  readonly mode?: 'terms' | 'literal';
   /** Term combination, default AND. */
   readonly op?: 'AND' | 'OR';
   /** Omit to search across every session. */
@@ -92,10 +99,31 @@ export interface GlobalSearchIndexState {
   readonly documents: number;
 }
 
+/**
+ * Which backend served the page:
+ *   - 'index' — the minidb full-text index (the default; always used when the
+ *     container session is not live in this process);
+ *   - 'live' — an in-memory scan of the live session's `TranscriptStore`
+ *     (container-scoped queries on a session resumed in this process).
+ * Scores are only comparable within one source.
+ */
+export type GlobalSearchSource = 'live' | 'index';
+
 export interface GlobalSearchPage {
   readonly items: GlobalSearchHit[];
   readonly hasMore: boolean;
   /** Present iff `hasMore`. */
   readonly pageToken?: string;
+  /**
+   * 'candidate_cap' — the literal-mode candidate set exceeded the cap, so
+   * confirmation was truncated and the page may miss real hits.
+   */
+  readonly incomplete?: 'candidate_cap';
   readonly indexState: GlobalSearchIndexState;
+  /**
+   * The route that produced this page. The page token's fingerprint covers
+   * it: a route flip mid-pagination (e.g. the session closed) invalidates
+   * the token and the client must restart the search.
+   */
+  readonly source: GlobalSearchSource;
 }

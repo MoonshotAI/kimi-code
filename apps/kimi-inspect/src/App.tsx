@@ -131,6 +131,7 @@ export function App() {
                 onTrailChange={setTrail}
                 jump={jump}
                 onJumpHandled={() => setJump(null)}
+                onOpenSearchHit={openSearchHit}
               />
             )}
             <RightPanel
