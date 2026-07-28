@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Add `systemPrompt` and `systemPromptPath` fields to the plugin manifest so plugins can contribute instructions to the agent's system prompt. Set `systemPrompt` for inline text or `systemPromptPath` to load it from a file in `kimi.plugin.json`.
+Allow enabled plugins to contribute agent system-prompt instructions under `kimi web` and experimental `kimi -p` through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`; the interactive TUI and default `kimi -p` path ignore these fields.

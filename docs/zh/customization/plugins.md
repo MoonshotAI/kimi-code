@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以添加 [Agent Skills](./skills.md)、在会话启动时自动加载指定 Skill，也可以声明 MCP servers 来提供真实工具能力。适合把工作流共享给团队、连接外部服务，或从官方 marketplace 安装扩展。
+Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以添加 [Agent Skills](./skills.md)、在会话启动时自动加载指定 Skill、提供系统提示词指令，也可以声明 MCP servers 来提供真实工具能力。适合把工作流共享给团队、连接外部服务，或从官方 marketplace 安装扩展。
 
 ## 安装与管理
 
@@ -143,6 +143,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
   "version": "1.0.0",
   "description": "Finance data and analysis workflows for Kimi Code CLI",
   "skills": "./skills/",
+  "systemPromptPath": "./SYSTEM.md",
   "sessionStart": {
     "skill": "using-finance"
   },
@@ -163,11 +164,28 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
 | `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到主 Agent |
 | `skillInstructions` | 每次加载此 plugin 的 Skill 时一并附带的额外说明 |
+| `systemPrompt` | plugin 启用期间提供给 Agent 系统提示词的内联指令 |
+| `systemPromptPath` | 指向 UTF-8 文本文件的 `./` 路径；同时设置 `systemPrompt` 时，文件内容拼接在内联指令之后 |
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则；见[插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令；见[插件斜杠命令](#插件斜杠命令) |
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
+
+### 系统提示词指令
+
+短指令可以直接写在 `systemPrompt`，较长内容则用 `systemPromptPath` 指向 plugin 根目录内的文件。两个字段同时存在时，内联文本在前，文件内容在后。例如：
+
+```json
+{
+  "name": "code-review",
+  "systemPromptPath": "./SYSTEM.md"
+}
+```
+
+系统提示词贡献目前仅在 `kimi web`，以及 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的 `kimi -p` 下生效。交互式 TUI 和默认的 `kimi -p` 路径会忽略这两个字段。
+
+内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖主-agent-的系统提示词)。
 
 ## 插件斜杠命令
 
@@ -323,4 +341,3 @@ Plugin 的加载范围有限，以下操作不会在安装或会话启动时发�
 - 所有路径在解析符号链接后仍必须位于 plugin 根目录内
 - 已启用 plugin 的 MCP servers 会在 `/reload` 后或新会话中启动，且可随时从 `/plugins` 禁用
 - 损坏的 manifest 或不安全路径会显示在 `/plugins info <id>` 的 diagnostics 中，不影响其他会话
-
