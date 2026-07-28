@@ -6,6 +6,7 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { sanitizeFilename } from '../src/routes/fs';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 
@@ -302,5 +303,9 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       headers: authHeaders(server as RunningServer, { 'if-none-match': etag as string }),
     } as never);
     expect(cached.status).toBe(304);
+  });
+
+  it('sanitizeFilename strips control characters and path separators', async () => {
+    expect(sanitizeFilename('bad"name\\.txt')).toBe('bad_name_.txt');
   });
 });
