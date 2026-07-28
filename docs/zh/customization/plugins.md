@@ -124,6 +124,34 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你通过自然语言直�
 - 技术指标（MACD、KDJ 等）及实时行情仅在交易时段内可用
 - AI 输出内容仅供参考，不构成任何投资或商业决策建议
 
+## You.com
+
+You.com plugin 是一个精选 marketplace plugin，面向实时网页搜索、URL 内容提取、带引用研究、金融专项回答和集成发现。它安装 You.com Agent Skills，按任务引导 Kimi Code 选择合适的访问路径，包括免费的 MCP 搜索、使用 API 密钥或 OAuth 的 MCP 工具、直接 API 脚本，以及宿主支持时的 MPP/x402 付费流程。
+
+### 安装
+
+1. 运行 `/plugins`，选择 **Third-party**
+2. 找到 **You.com**，按 `Enter` 安装
+3. 安装完成后运行 `/reload` 或 `/new` 激活 plugin
+
+该 plugin 不内置固定的 MCP server 配置。使用需要认证的 You.com 工具时，可以提供来自 [you.com/platform/api-keys](https://you.com/platform/api-keys) 的 `YDC_API_KEY`，在 MCP client 支持时使用 OAuth，或使用免费 MCP profile 做基础免认证搜索。
+
+### 使用方式
+
+安装完成后，可以在自然语言中说明要使用 You.com，或加载特定 Skill：
+
+- `/skill:you-free`：通过免费 You.com MCP profile 进行基础免认证网页搜索
+- `/skill:you-web`：实时网页搜索、URL 读取、带引用综合回答和通用 You.com MCP 路由
+- `/skill:you-research`：在 Agent 主导搜索、Research API 脚本和托管 MCP fallback 之间路由研究任务
+- `/skill:you-finance`：面向市场、ticker、财报和公司财务问题的金融研究路由
+- `/skill:you-discover`：发现 You.com API、MCP servers、SDK、docs 和 Agent 工具的集成路径
+
+### 计费与限制
+
+- 部分 You.com API 和 MCP 工具需要 You.com API 密钥、OAuth 会话或支持付费的 client
+- 免费搜索仅限免费 MCP profile，不覆盖 URL 提取、托管研究或金融工作流
+- 研究和金融任务可能根据所选访问路径发起付费的 You.com API 或 MCP 请求
+
 ## Plugin manifest
 
 Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以下任一位置：

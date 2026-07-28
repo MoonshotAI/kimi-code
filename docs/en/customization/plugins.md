@@ -124,6 +124,34 @@ Once installed, describe your need in natural language and Kimi Code will automa
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
 
+## You.com
+
+The You.com plugin is a curated marketplace plugin for current web search, URL content extraction, cited research, finance-specific answers, and integration discovery. It installs You.com Agent Skills that guide Kimi Code through the right access path for each task, including free MCP search, API key or OAuth-backed MCP tools, direct API scripts, and payment-capable MPP/x402 flows when the host supports them.
+
+### Installation
+
+1. Run `/plugins` and select **Third-party**
+2. Find **You.com** and press `Enter` to install
+3. After installation completes, run `/reload` or `/new` to activate the plugin
+
+The plugin does not bundle a fixed MCP server configuration. For authenticated You.com tools, provide a `YDC_API_KEY` from [you.com/platform/api-keys](https://you.com/platform/api-keys), use OAuth when your MCP client supports it, or use the free MCP profile for basic unauthenticated search.
+
+### How to use
+
+Once installed, ask for You.com in natural language or load a specific Skill:
+
+- `/skill:you-free`: Basic unauthenticated web search with the free You.com MCP profile
+- `/skill:you-web`: Current web search, URL reading, cited synthesis, and general You.com MCP routing
+- `/skill:you-research`: Research routing between agent-led search, Research API scripts, and managed MCP fallback
+- `/skill:you-finance`: Finance research routing for market, ticker, earnings, and company financial questions
+- `/skill:you-discover`: Integration discovery for You.com APIs, MCP servers, SDKs, docs, and agent tools
+
+### Billing and limitations
+
+- Some You.com APIs and MCP tools require a You.com API key, OAuth session, or payment-capable client
+- Free search is limited to the free MCP profile and does not cover URL extraction, managed research, or finance workflows
+- Research and finance tasks may make paid You.com API or MCP requests, depending on the access path selected
+
 ## Plugin Manifest
 
 A plugin is a directory or zip file containing a manifest. The manifest can be placed at either of the following locations:
