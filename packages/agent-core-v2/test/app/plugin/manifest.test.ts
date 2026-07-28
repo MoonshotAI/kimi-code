@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { parseManifest } from '#/app/plugin/manifest';
+import { parseManifest, PLUGIN_SYSTEM_PROMPT_MAX_BYTES } from '#/app/plugin/manifest';
 
 describe('plugin manifest parser', () => {
   let dir: string;
@@ -161,5 +161,51 @@ describe('plugin manifest parser', () => {
     expect(notAFile.diagnostics.map((d) => d.message)).toEqual([
       '"systemPromptPath" is not a file (./docs)',
     ]);
+  });
+
+  it('ignores an oversized inline systemPrompt with a warning', async () => {
+    const oversized = 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1);
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: oversized }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBeUndefined();
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      `"systemPrompt" is ${PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1} bytes, exceeding the 32 KB limit; the field is ignored`,
+    ]);
+  });
+
+  it('ignores an oversized systemPromptPath file with a warning and keeps the inline field', async () => {
+    await writeFile(join(dir, 'PROMPT.md'), 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1), 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: './PROMPT.md' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Inline.');
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      `"systemPromptPath" is ${PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1} bytes, exceeding the 32 KB limit; the file is ignored (./PROMPT.md)`,
+    ]);
+  });
+
+  it('accepts system-prompt content exactly at the byte limit', async () => {
+    await writeFile(join(dir, 'PROMPT.md'), 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES), 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES));
+    expect(result.diagnostics).toEqual([]);
   });
 });

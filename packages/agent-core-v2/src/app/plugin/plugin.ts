@@ -3,9 +3,11 @@
  *
  * Defines `IPluginService`, which manages installed plugins and exposes their
  * enabled commands, skills, session-start content, system-prompt sections,
- * MCP servers, and hooks. Successful catalog mutations expose an awaitable
- * `onDidChange` synchronization point; explicit reloads are also announced
- * through `onDidReload`. Bound at App scope.
+ * MCP servers, and hooks. Successful mutations expose an awaitable
+ * `onDidChange` synchronization point whose `kind` tells consumers whether the
+ * prompt-relevant catalog changed (`catalog`) or only MCP server enablement
+ * did (`mcp`); explicit reloads are also announced through `onDidReload`.
+ * Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -47,7 +49,11 @@ export interface GetPluginInfoInput {
   readonly id: string;
 }
 
-export type PluginChangedEvent = IWaitUntil;
+export type PluginChangeKind = 'catalog' | 'mcp';
+
+export interface PluginChangedEvent extends IWaitUntil {
+  readonly kind: PluginChangeKind;
+}
 
 export interface IPluginService {
   readonly _serviceBrand: undefined;

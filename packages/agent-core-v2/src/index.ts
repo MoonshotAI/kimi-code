@@ -94,6 +94,8 @@ export * from '#/session/sessionActivity/sessionActivity';
 export * from '#/session/sessionActivity/sessionActivityService';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
+export * from '#/session/sessionPluginContribution/sessionPluginContribution';
+export * from '#/session/sessionPluginContribution/sessionPluginContributionService';
 export * from '#/app/config/config';
 export * from '#/app/config/configService';
 import '#/app/kosongConfig/configSection';

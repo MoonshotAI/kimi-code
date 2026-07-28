@@ -43,7 +43,6 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -58,6 +57,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -325,6 +325,7 @@ describe('AgentLifecycleService', () => {
       onDidChange: Event.None,
       load: () => Promise.resolve(),
       reload: () => Promise.resolve(),
+      reloadSource: () => Promise.resolve(),
     } as unknown as ISessionSkillCatalog);
     ix.stub(ISessionToolPolicy, {
       _serviceBrand: undefined,
@@ -333,6 +334,10 @@ describe('AgentLifecycleService', () => {
       disabledTools: () => [],
       setDisabledTools: () => Promise.resolve(),
     } as unknown as ISessionToolPolicy);
+    ix.stub(ISessionPluginContributionService, {
+      _serviceBrand: undefined,
+      onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
+    });
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
       _serviceBrand: undefined,
@@ -575,14 +580,8 @@ describe('AgentLifecycleService', () => {
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 
-  it('rebuilds a restored system prompt from the current plugin snapshot before create returns', async () => {
-    const resumedProfile = {
-      name: 'plugin-profile',
-      tools: [],
-      systemPrompt: (context: { readonly pluginSections?: string }) =>
-        context.pluginSections ?? '',
-    };
-    ix.stub(IAppendLogStore, recordingAppendLog([
+  it('keeps the replayed profile binding untouched on restore', async () => {
+    const log = recordingAppendLog([
       createWireMetadataRecord(1),
       {
         type: 'profile.bind',
@@ -593,51 +592,33 @@ describe('AgentLifecycleService', () => {
         activeToolNames: [],
         disallowedTools: [],
       },
-    ]).store);
-    ix.stub(ISessionAgentProfileCatalog, {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      onDidChange: Event.None,
-      get: (name: string) => name === 'plugin-profile' ? resumedProfile : undefined,
-      getDefault: () => resumedProfile,
-      list: () => [resumedProfile],
-      load: () => Promise.resolve(),
-      reload: () => Promise.resolve(),
-    } as unknown as ISessionAgentProfileCatalog);
-    ix.stub(IPluginService, {
-      ...pluginServiceStub,
-      enabledSystemPrompts: async () => [
-        { pluginId: 'current', content: 'current plugin instructions' },
-      ],
-    } as unknown as IPluginService);
-    ix.stub(IHostEnvironment, {
-      _serviceBrand: undefined,
-      osKind: 'Linux',
-      osArch: 'x64',
-      osVersion: 'test',
-      shellName: 'bash',
-      shellPath: '/bin/bash',
-      pathClass: 'posix',
-      homeDir: '/tmp/kimi-agentLifecycle-home',
-      ready: Promise.resolve(),
-    });
-    ix.stub(IHostIdentity, {
-      _serviceBrand: undefined,
-      productName: 'Kimi Code CLI',
-      replyStyleGuide: 'Reply clearly.',
-    });
-    ix.stub(IHostFileSystem, {
-      _serviceBrand: undefined,
-      stat: async () => { throw new Error('not found'); },
-      lstat: async () => { throw new Error('not found'); },
-      readdir: async () => [],
-    } as unknown as IHostFileSystem);
+    ]);
+    ix.stub(IAppendLogStore, log.store);
+    const svc = ix.get(IAgentLifecycleService);
 
-    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
-
-    expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
-      '<!-- From: plugin current -->\ncurrent plugin instructions',
+    const first = await svc.create({ agentId: 'main' });
+    expect(first.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+      'stale plugin instructions',
     );
+
+    await svc.remove('main');
+    const second = await svc.create({ agentId: 'main' });
+    expect(second.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+      'stale plugin instructions',
+    );
+    expect(second.accessor.get(IAgentProfileService).getActiveToolNames()).toEqual([]);
+
+    const profileWrites = log.appended.filter((record) =>
+      (
+        [
+          'profile.bind',
+          'config.update',
+          'tools.set_active_tools',
+          'tools.reset_active_tools',
+        ] as readonly string[]
+      ).includes(record.type),
+    );
+    expect(profileWrites).toEqual([]);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {

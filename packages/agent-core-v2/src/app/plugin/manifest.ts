@@ -16,6 +16,8 @@ import {
 const KIMI_PLUGIN_ROOT_PATH = 'kimi.plugin.json';
 const KIMI_PLUGIN_DIR_PATH = '.kimi-plugin/plugin.json';
 
+export const PLUGIN_SYSTEM_PROMPT_MAX_BYTES = 32 * 1024;
+
 const UNSUPPORTED_RUNTIME_FIELDS = [
   'tools',
   'apps',
@@ -254,7 +256,19 @@ async function readSystemPrompt(
 ): Promise<string | undefined> {
   const parts: string[] = [];
   const inline = stringField(raw, 'systemPrompt');
-  if (inline !== undefined) parts.push(inline);
+  if (inline !== undefined) {
+    const inlineBytes = Buffer.byteLength(inline, 'utf8');
+    if (inlineBytes > PLUGIN_SYSTEM_PROMPT_MAX_BYTES) {
+      diagnostics.push({
+        severity: 'warn',
+        message:
+          `"systemPrompt" is ${inlineBytes} bytes, exceeding the ` +
+          `${PLUGIN_SYSTEM_PROMPT_MAX_BYTES / 1024} KB limit; the field is ignored`,
+      });
+    } else {
+      parts.push(inline);
+    }
+  }
 
   const pathValue = raw['systemPromptPath'];
   if (pathValue !== undefined) {
@@ -268,10 +282,18 @@ async function readSystemPrompt(
         diagnostics,
       });
       if (resolved !== undefined) {
-        if (!(await isFile(resolved))) {
+        const fileStat = await stat(resolved).catch(() => undefined);
+        if (fileStat === undefined || !fileStat.isFile()) {
           diagnostics.push({
             severity: 'warn',
             message: `"systemPromptPath" is not a file (${pathValue})`,
+          });
+        } else if (fileStat.size > PLUGIN_SYSTEM_PROMPT_MAX_BYTES) {
+          diagnostics.push({
+            severity: 'warn',
+            message:
+              `"systemPromptPath" is ${fileStat.size} bytes, exceeding the ` +
+              `${PLUGIN_SYSTEM_PROMPT_MAX_BYTES / 1024} KB limit; the file is ignored (${pathValue})`,
           });
         } else {
           try {

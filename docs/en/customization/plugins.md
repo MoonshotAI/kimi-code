@@ -185,6 +185,10 @@ Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep
 
 System-prompt contributions are currently consumed only under `kimi web` and under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`. The interactive TUI and the default `kimi -p` path ignore both fields.
 
+Each contribution is limited to 32 KB (UTF-8 bytes): an oversized `systemPrompt` field or `systemPromptPath` file is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning.
+
+New sessions include instructions from the plugins enabled at the time. Installing, enabling, disabling, removing, or reloading a plugin updates every live session's skill list and system prompt together before the operation returns. A session resumed from disk keeps its persisted prompt until the next plugin change. Toggling a plugin's MCP server does not touch prompts.
+
 The built-in agent prompt includes instructions from enabled plugins automatically. A custom `SYSTEM.md` or agent file owns its template, so include `${plugin_sections}` where plugin-contributed instructions should appear. If the custom template includes `${base_prompt}` and that effective default already contains the plugin block, do not add `${plugin_sections}` again. See [Custom agents and SYSTEM.md](./agents.md#overriding-the-main-agent-s-system-prompt-with-system-md) for the complete variable table.
 
 ## Plugin Slash Commands

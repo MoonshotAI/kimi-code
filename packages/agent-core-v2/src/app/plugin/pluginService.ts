@@ -27,6 +27,7 @@ import {
   type GetPluginInfoInput,
   type InstallPluginInput,
   IPluginService,
+  type PluginChangeKind,
   type PluginChangedEvent,
   type RemovePluginInput,
   type SetPluginEnabledInput,
@@ -92,6 +93,7 @@ export class PluginService extends Disposable implements IPluginService {
         if (info === undefined) throw new Error(`Plugin "${record.id}" missing right after install`);
         return info;
       }),
+      'catalog',
     );
   }
 
@@ -100,6 +102,7 @@ export class PluginService extends Disposable implements IPluginService {
       this.runSerializedOperation(async () => {
         await this.manager.setEnabled(input.id, input.enabled);
       }),
+      'catalog',
     );
   }
 
@@ -108,6 +111,7 @@ export class PluginService extends Disposable implements IPluginService {
       this.runSerializedOperation(async () => {
         await this.manager.setMcpServerEnabled(input.id, input.server, input.enabled);
       }),
+      'mcp',
     );
   }
 
@@ -116,6 +120,7 @@ export class PluginService extends Disposable implements IPluginService {
       this.runSerializedOperation(async () => {
         await this.manager.remove(input.id);
       }),
+      'catalog',
     );
   }
 
@@ -135,7 +140,7 @@ export class PluginService extends Disposable implements IPluginService {
         );
       }
     });
-    const reload = this.completePluginChange(mutation).then((summary) => {
+    const reload = this.completePluginChange(mutation, 'catalog').then((summary) => {
       this.onDidReloadEmitter.fire(summary);
       return summary;
     });
@@ -203,10 +208,10 @@ export class PluginService extends Disposable implements IPluginService {
     });
   }
 
-  private completePluginChange<T>(operation: Promise<T>): Promise<T> {
+  private completePluginChange<T>(operation: Promise<T>, kind: PluginChangeKind): Promise<T> {
     const result = this.pluginChangeQueue.then(async () => {
       const value = await operation;
-      await this.onDidChangeEmitter.fireAsync({}, new AbortController().signal);
+      await this.onDidChangeEmitter.fireAsync({ kind }, new AbortController().signal);
       return value;
     });
     this.pluginChangeQueue = result.then(

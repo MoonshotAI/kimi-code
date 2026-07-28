@@ -7,10 +7,25 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AsyncEmitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IPluginService, type PluginChangedEvent } from '#/app/plugin/plugin';
+import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import {
+  ISessionPluginContributionService,
+  type SessionPluginContributionChangedEvent,
+} from '#/session/sessionPluginContribution/sessionPluginContribution';
 
-import { appService, createTestAgent, execEnvServices, hostEnvironmentServices, type TestAgentContext, type TestAgentServiceOverride } from '../../harness';
+import {
+  appService,
+  createTestAgent,
+  execEnvServices,
+  hostEnvironmentServices,
+  InMemoryWireRecordPersistence,
+  sessionService,
+  type TestAgentContext,
+  type TestAgentOptions,
+  type TestAgentServiceOverride,
+} from '../../harness';
 
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
@@ -57,7 +72,7 @@ describe('AgentProfileService.applyProfile', () => {
   });
 
   function buildContext(
-    ...extra: readonly TestAgentServiceOverride[]
+    ...extra: readonly (TestAgentServiceOverride | TestAgentOptions)[]
   ): { ctx: TestAgentContext; profile: IAgentProfileService } {
     const fs = new HostFileSystem();
     ctx = createTestAgent(
@@ -139,40 +154,162 @@ describe('AgentProfileService.applyProfile', () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'Always cite sources.' }] as readonly EnabledPluginSystemPrompt[],
     };
-    const change = new AsyncEmitter<PluginChangedEvent>();
-    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, change)));
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
 
     await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(
       '<!-- From: plugin demo -->\nAlways cite sources.',
     );
-    change.dispose();
   });
 
-  it('refreshes the system prompt before a plugin change completes', async () => {
+  it('refreshes the system prompt when session plugin contributions converge', async () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
     };
-    const change = new AsyncEmitter<PluginChangedEvent>();
-    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, change)));
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { profile: svc } = buildContext(
+      appService(IPluginService, pluginStub(sections)),
+      pluginConvergenceService(converge),
+    );
     await svc.applyProfile(pluginProfile);
     expect(svc.data().systemPrompt).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
-    await change.fireAsync({}, new AbortController().signal);
+    await converge.fireAsync({}, new AbortController().signal);
 
     expect(svc.data().systemPrompt).toContain('V2');
-    change.dispose();
+    converge.dispose();
+  });
+
+  it('dispatches no config record when a plugin-driven refresh changes nothing', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { profile: svc } = buildContext(
+      { persistence },
+      appService(IPluginService, pluginStub(sections)),
+      pluginConvergenceService(converge),
+    );
+    await svc.applyProfile(pluginProfile);
+    const recordsAfterBind = persistence.records.length;
+
+    await converge.fireAsync({}, new AbortController().signal);
+
+    expect(persistence.records.length).toBe(recordsAfterBind);
+    expect(svc.data().systemPrompt).toContain('V1');
+    converge.dispose();
+  });
+
+  it('skips plugin sections beyond the aggregate byte budget and warns', async () => {
+    const large = 'x'.repeat(48 * 1024);
+    const sections = {
+      value: [
+        { pluginId: 'first', content: large },
+        { pluginId: 'second', content: large },
+      ] as readonly EnabledPluginSystemPrompt[],
+    };
+    const { ctx: context, profile: svc } = buildContext(
+      appService(IPluginService, pluginStub(sections)),
+    );
+
+    await svc.applyProfile(pluginProfile);
+
+    expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
+    expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
+    const events = context.newEvents() as readonly {
+      event: string;
+      args?: { code?: string };
+    }[];
+    expect(
+      events.some(
+        (entry) => entry.event === 'warning' && entry.args?.code === 'plugin-sections-oversized',
+      ),
+    ).toBe(true);
+  });
+
+  it('rebinds the full profile slice when a restored agent refreshes', async () => {
+    const rebound: ResolvedAgentProfile = {
+      name: 'plugin-profile',
+      systemPrompt: (context) =>
+        `v2:${typeof context['pluginSections'] === 'string' ? context['pluginSections'] : ''}`,
+      tools: ['Read'],
+      disallowedTools: ['Bash'],
+    };
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { profile: svc } = buildContext(
+      appService(IPluginService, pluginStub({ value: [{ pluginId: 'demo', content: 'P' }] })),
+      pluginConvergenceService(converge),
+      agentProfileCatalogService([rebound]),
+    );
+    svc.update({ profileName: 'plugin-profile', systemPrompt: 'old prompt', disallowedTools: [] });
+    svc.update({ activeToolNames: ['OldTool'] });
+
+    await converge.fireAsync({}, new AbortController().signal);
+
+    expect(svc.data().systemPrompt).toBe('v2:<!-- From: plugin demo -->\nP');
+    expect(svc.data().disallowedTools).toEqual(['Bash']);
+    expect(svc.getActiveToolNames()).toEqual(['Read']);
+    converge.dispose();
+  });
+
+  it('keeps the persisted binding and warns when the bound profile no longer exists', async () => {
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { ctx: context, profile: svc } = buildContext(
+      pluginConvergenceService(converge),
+      agentProfileCatalogService([]),
+    );
+    svc.update({ profileName: 'ghost', systemPrompt: 'old prompt', disallowedTools: [] });
+
+    await converge.fireAsync({}, new AbortController().signal);
+
+    expect(svc.data().systemPrompt).toBe('old prompt');
+    const events = context.newEvents() as readonly {
+      event: string;
+      args?: { code?: string };
+    }[];
+    expect(
+      events.some(
+        (entry) =>
+          entry.event === 'warning' &&
+          entry.args?.code === 'system-prompt-refresh-profile-missing',
+      ),
+    ).toBe(true);
+    converge.dispose();
   });
 });
 
-function pluginStub(
-  sections: { value: readonly EnabledPluginSystemPrompt[] },
-  change: AsyncEmitter<PluginChangedEvent>,
-): IPluginService {
+function pluginConvergenceService(
+  converge: AsyncEmitter<SessionPluginContributionChangedEvent>,
+): TestAgentServiceOverride {
+  return sessionService(ISessionPluginContributionService, {
+    _serviceBrand: undefined,
+    onDidChange: converge.event,
+  });
+}
+
+function agentProfileCatalogService(
+  profiles: readonly ResolvedAgentProfile[],
+): TestAgentServiceOverride {
+  return sessionService(ISessionAgentProfileCatalog, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+    get: (name: string) => profiles.find((profile) => profile.name === name),
+    getDefault: () => profiles[0],
+    list: () => profiles,
+    load: async () => {},
+    reload: async () => {},
+  } as unknown as ISessionAgentProfileCatalog);
+}
+
+function pluginStub(sections: {
+  value: readonly EnabledPluginSystemPrompt[];
+}): IPluginService {
   return {
-    onDidChange: change.event,
+    onDidChange: Event.None as IPluginService['onDidChange'],
     onDidReload: Event.None as IPluginService['onDidReload'],
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],

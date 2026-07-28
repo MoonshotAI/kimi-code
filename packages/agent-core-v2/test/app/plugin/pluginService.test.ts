@@ -25,7 +25,7 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IPluginService } from '#/app/plugin/plugin';
+import { IPluginService, type PluginChangeKind } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -142,11 +142,14 @@ describe('PluginService (plugin boundary)', () => {
 
   async function expectAwaitsPluginChange(
     svc: IPluginService,
+    expectedKind: PluginChangeKind,
     operation: () => Promise<unknown>,
   ): Promise<void> {
     const observed = deferred<void>();
     const release = deferred<void>();
+    const kinds: PluginChangeKind[] = [];
     const subscription = svc.onDidChange((event) => {
+      kinds.push(event.kind);
       observed.resolve(undefined);
       event.waitUntil(release.promise);
     });
@@ -159,6 +162,7 @@ describe('PluginService (plugin boundary)', () => {
     expect(settled).toBe(false);
     release.resolve(undefined);
     await result;
+    expect(kinds).toEqual([expectedKind]);
     subscription.dispose();
   }
 
@@ -304,7 +308,7 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
 
-      await expectAwaitsPluginChange(svc, () => svc.installPlugin({ source: pluginRoot }));
+      await expectAwaitsPluginChange(svc, 'catalog', () => svc.installPlugin({ source: pluginRoot }));
     } finally {
       host.dispose();
     }
@@ -320,8 +324,28 @@ describe('PluginService (plugin boundary)', () => {
       const svc = host.app.accessor.get(IPluginService);
       await svc.listPlugins();
 
-      await expectAwaitsPluginChange(svc, () =>
+      await expectAwaitsPluginChange(svc, 'catalog', () =>
         svc.setPluginEnabled({ id: 'enable-change', enabled: false }),
+      );
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('announces MCP server toggles with the mcp change kind', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('mcp-change', {
+      mcpServers: { docs: { url: 'https://example.com/mcp' } },
+    });
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('mcp-change', pluginRoot)));
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.listPlugins();
+
+      await expectAwaitsPluginChange(svc, 'mcp', () =>
+        svc.setPluginMcpServerEnabled({ id: 'mcp-change', server: 'docs', enabled: false }),
       );
     } finally {
       host.dispose();
@@ -370,7 +394,7 @@ describe('PluginService (plugin boundary)', () => {
       const svc = host.app.accessor.get(IPluginService);
       await svc.listPlugins();
 
-      await expectAwaitsPluginChange(svc, () => svc.removePlugin({ id: 'remove-change' }));
+      await expectAwaitsPluginChange(svc, 'catalog', () => svc.removePlugin({ id: 'remove-change' }));
     } finally {
       host.dispose();
     }
@@ -383,7 +407,7 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
 
-      await expectAwaitsPluginChange(svc, () => svc.reloadPlugins());
+      await expectAwaitsPluginChange(svc, 'catalog', () => svc.reloadPlugins());
     } finally {
       host.dispose();
     }
