@@ -36,6 +36,7 @@ import {
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { sessionEventMessageSchema } from '../src/protocol/ws-control';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
@@ -861,6 +862,36 @@ describe('SessionEventBroadcaster', () => {
     // Fanned out to the non-subscriber under the same real session id.
     expect(s2View.envelopes[0]!.session_id).toBe('s1');
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
+  });
+
+  it('normalizes and globally broadcasts event.config.changed', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.config.changed',
+      payload: {
+        changedFields: ['disabled_skills'],
+        config: { providers: {}, disabled_skills: ['review-helper'] },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(globalView.envelopes).toHaveLength(1);
+    });
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.config.changed',
+      session_id: '__global__',
+      payload: {
+        type: 'event.config.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changed_fields: ['disabled_skills'],
+        config: { providers: {}, disabled_skills: ['review-helper'] },
+      },
+    });
+    expect(globalView.envelopes[0]!.volatile).toBeUndefined();
+    expect(sessionEventMessageSchema.safeParse(globalView.envelopes[0]).success).toBe(true);
   });
 
   it('broadcasts event.session.created under the real session id and fans out to every connection', async () => {

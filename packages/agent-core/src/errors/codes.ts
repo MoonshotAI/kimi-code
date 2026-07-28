@@ -57,6 +57,7 @@ export const ErrorCodes = {
   SKILL_NOT_FOUND: 'skill.not_found',
   SKILL_TYPE_UNSUPPORTED: 'skill.type_unsupported',
   SKILL_NAME_EMPTY: 'skill.name_empty',
+  SKILL_DISABLED: 'skill.disabled',
 
   RECORDS_WRITE_FAILED: 'records.write_failed',
   COMPACTION_FAILED: 'compaction.failed',
@@ -352,6 +353,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Provide a non-empty skill name.',
+  },
+  'skill.disabled': {
+    title: 'Skill disabled',
+    retryable: false,
+    public: true,
+    action: 'Remove the skill from disabled_skills in config.toml, then reload.',
   },
 
   'records.write_failed': {

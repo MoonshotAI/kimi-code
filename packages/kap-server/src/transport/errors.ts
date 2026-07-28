@@ -47,6 +47,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.GOAL_OBJECTIVE_EMPTY]: ErrorCode.GOAL_OBJECTIVE_EMPTY,
   [ErrorCodes.GOAL_OBJECTIVE_TOO_LONG]: ErrorCode.GOAL_OBJECTIVE_TOO_LONG,
   [ErrorCodes.GOAL_UNSUPPORTED_AGENT]: ErrorCode.GOAL_UNSUPPORTED_AGENT,
+  [ErrorCodes.SKILL_DISABLED]: ErrorCode.SKILL_NOT_ACTIVATABLE,
   // hostFs / storage codes → closest v1 wire equivalent (ENOTDIR collapses
   // into path-not-found); codes without an equivalent fall back to 50001.
   [ErrorCodes.OS_FS_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,

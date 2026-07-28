@@ -1,9 +1,10 @@
 /**
  * `skillCatalog` domain (L3) — skill config sections.
  *
- * Registers the v1-compatible top-level config domains `extraSkillDirs` and
- * `mergeAllAvailableSkills`. Values stay camelCase in memory; TOML uses the
- * snake_case keys `extra_skill_dirs` and `merge_all_available_skills`.
+ * Registers the v1-compatible top-level config domains `extraSkillDirs`,
+ * `mergeAllAvailableSkills`, and `disabledSkills`. Values stay camelCase in
+ * memory; TOML uses the snake_case keys `extra_skill_dirs`,
+ * `merge_all_available_skills`, and `disabled_skills`.
  */
 
 import { z } from 'zod';
@@ -24,4 +25,12 @@ export type MergeAllAvailableSkillsConfig = z.infer<typeof MergeAllAvailableSkil
 
 registerConfigSection(MERGE_ALL_AVAILABLE_SKILLS_SECTION, MergeAllAvailableSkillsConfigSchema, {
   defaultValue: true,
+});
+
+export const DISABLED_SKILLS_SECTION = 'disabledSkills';
+export const DisabledSkillsConfigSchema = z.array(z.string()).optional();
+export type DisabledSkillsConfig = z.infer<typeof DisabledSkillsConfigSchema>;
+
+registerConfigSection(DISABLED_SKILLS_SECTION, DisabledSkillsConfigSchema, {
+  defaultValue: [],
 });

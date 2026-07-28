@@ -1275,6 +1275,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       services: 'services',
       mergeAllAvailableSkills: 'merge_all_available_skills',
       extraSkillDirs: 'extra_skill_dirs',
+      disabledSkills: 'disabled_skills',
       loopControl: 'loop_control',
       background: 'background',
       experimental: 'experimental',

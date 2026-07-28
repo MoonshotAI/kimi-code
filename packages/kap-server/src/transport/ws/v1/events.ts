@@ -92,7 +92,7 @@ export interface SessionStatusChangedEvent {
 
 export interface ConfigChangedEvent {
   readonly type: 'event.config.changed';
-  readonly changedFields: string[];
+  readonly changed_fields: string[];
   readonly config: ConfigResponse;
 }
 

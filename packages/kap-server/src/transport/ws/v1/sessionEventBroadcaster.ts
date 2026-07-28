@@ -73,7 +73,12 @@ import {
   ISessionLifecycleService,
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
-import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
+import type {
+  ConfigChangedEvent,
+  Event,
+  SessionCreatedEvent,
+  SessionMetaUpdatedEvent,
+} from './events';
 import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
@@ -832,6 +837,19 @@ export class SessionEventBroadcaster {
   }
 
   private onCoreEvent(event: GlobalEvent): void {
+    if (event.type === 'event.config.changed') {
+      const payload = configChangedPayload(event.payload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.config.changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) => {
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.changed', error);
+      });
+      return;
+    }
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(event.payload);
       if (payload === undefined) return;
@@ -1521,6 +1539,23 @@ function interactionResolvedEvent(
     default:
       return undefined;
   }
+}
+
+function configChangedPayload(
+  payload: unknown,
+): Pick<ConfigChangedEvent, 'changed_fields' | 'config'> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { changedFields?: unknown; config?: unknown };
+  if (!Array.isArray(candidate.changedFields) || !candidate.changedFields.every((field) => typeof field === 'string')) {
+    return undefined;
+  }
+  if (typeof candidate.config !== 'object' || candidate.config === null || Array.isArray(candidate.config)) {
+    return undefined;
+  }
+  return {
+    changed_fields: candidate.changedFields,
+    config: candidate.config as ConfigChangedEvent['config'],
+  };
 }
 
 /**

@@ -19,6 +19,13 @@ export interface ISessionSkillCatalog {
   readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
+  /**
+   * Wait until the catalog has finished its initial load and every in-flight
+   * source reload (including ones started while awaiting) has merged. Route
+   * handlers that list skills must call this instead of only `ready`, so a
+   * config-driven source refresh cannot race the response with a stale view.
+   */
+  awaitPendingReloads(): Promise<void>;
 }
 
 export interface ISkillCatalogSink {

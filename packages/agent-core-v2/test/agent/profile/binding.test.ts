@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -668,6 +668,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        awaitPendingReloads: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -692,6 +693,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        awaitPendingReloads: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -712,6 +714,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        awaitPendingReloads: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -724,6 +727,48 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
     await vi.waitFor(() => expect(profile.getSystemPrompt()).not.toContain(skillMarker));
+  });
+
+  it('refreshes again when a delayed skill source reload completes after disabled_skills changes', async () => {
+    const staleMarker = 'stale-disabled-skill-marker';
+    const freshMarker = 'fresh-disabled-skill-marker';
+    const sinkChange = new Emitter<string>();
+    let listing = staleMarker;
+    let listingReads = 0;
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionSkillCatalog, {
+        _serviceBrand: undefined,
+        get catalog() {
+          return {
+            getModelSkillListing: () => {
+              listingReads += 1;
+              return listing;
+            },
+          } as never;
+        },
+        ready: Promise.resolve(),
+        onDidChange: sinkChange.event,
+        load: async () => {},
+        reload: async () => {},
+        awaitPendingReloads: async () => {},
+      }),
+    );
+    const { profile } = profileServices(ctx);
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(profile.getSystemPrompt()).toContain(staleMarker);
+    const initialReads = listingReads;
+
+    sinkChange.fire('disabledSkills');
+    await vi.waitFor(() => expect(listingReads).toBeGreaterThan(initialReads));
+    expect(profile.getSystemPrompt()).toContain(staleMarker);
+
+    listing = freshMarker;
+    sinkChange.fire('extra');
+
+    await vi.waitFor(() => expect(profile.getSystemPrompt()).toContain(freshMarker));
+    expect(profile.getSystemPrompt()).not.toContain(staleMarker);
+    sinkChange.dispose();
   });
 });
 

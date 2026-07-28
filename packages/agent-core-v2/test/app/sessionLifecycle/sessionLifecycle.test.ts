@@ -147,11 +147,13 @@ function skillCatalogStub(): ISessionSkillCatalog {
       getSkillRoots: () => [],
       getSkippedByPolicy: () => [],
       getModelSkillListing: () => '',
+      isSkillDisabled: () => false,
     },
     ready: Promise.resolve(),
     onDidChange: () => ({ dispose: () => {} }),
     load: () => Promise.resolve(),
     reload: () => Promise.resolve(),
+    awaitPendingReloads: () => Promise.resolve(),
   };
 }
 

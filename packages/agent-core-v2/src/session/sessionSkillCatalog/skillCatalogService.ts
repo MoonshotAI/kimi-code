@@ -13,7 +13,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
+import { IConfigService } from '#/app/config/config';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import {
+  DISABLED_SKILLS_SECTION,
+  type DisabledSkillsConfig,
+} from '#/app/skillCatalog/configSection';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
@@ -54,6 +59,7 @@ export class SessionSkillCatalogService
     @IExtraFileSkillSource extra: IExtraFileSkillSource,
     @IWorkspaceFileSkillSource workspace: IWorkspaceFileSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.states.register(skillCatalogContributionsKey);
@@ -62,6 +68,14 @@ export class SessionSkillCatalogService
     for (const s of this.sources) {
       if (s.onDidChange) this._register(s.onDidChange(() => { void this.reloadSource(s.id); }));
     }
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (event.domain === DISABLED_SKILLS_SECTION) {
+          this.remerge();
+          this.onDidChangeEmitter.fire(DISABLED_SKILLS_SECTION);
+        }
+      }),
+    );
     this.ready = this.loadAll();
   }
 
@@ -91,6 +105,15 @@ export class SessionSkillCatalogService
   async reload(): Promise<void> {
     await this.loadAll();
     this.onDidChangeEmitter.fire('catalog');
+  }
+
+  async awaitPendingReloads(): Promise<void> {
+    await this.ready;
+    // Drain in a loop so a reload enqueued while we await an earlier tail is
+    // not observed as already-settled by a single snapshot of the map.
+    while (this.sourceLoadTails.size > 0) {
+      await Promise.all([...this.sourceLoadTails.values()]);
+    }
   }
 
   set(id: string, c: SkillContribution, { priority }: { readonly priority: number }): void {
@@ -139,7 +162,9 @@ export class SessionSkillCatalogService
   }
 
   private remerge(): void {
-    const m = new InMemorySkillCatalog();
+    const disabledSkills =
+      this.config.get<DisabledSkillsConfig>(DISABLED_SKILLS_SECTION) ?? [];
+    const m = new InMemorySkillCatalog({ disabledSkills });
     const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
     for (const { c } of ordered) {
       for (const skill of c.skills) m.register(skill, { replace: true });

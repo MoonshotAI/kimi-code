@@ -29,6 +29,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {
+  DISABLED_SKILLS_SECTION,
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
@@ -45,7 +46,7 @@ import { IWorkspaceFileSkillSource, WorkspaceFileSkillSource } from '#/session/s
 import { IPluginSkillSource, PluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
-import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import { ISkillDiscovery, type SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
@@ -55,10 +56,12 @@ import { stubProviderService } from '../../app/provider/stubs';
 const bootstrapStub = stubBootstrap('/home');
 
 function configStub(): IConfigService & {
+  setDisabledSkills(names: readonly string[]): void;
   setExtraSkillDirs(dirs: readonly string[]): void;
   setMergeAllAvailableSkills(value: boolean): void;
   fireSectionChange(domain: string): void;
 } {
+  let disabledSkills: readonly string[] = [];
   let extraSkillDirs: readonly string[] = [];
   let mergeAllAvailableSkills = true;
   const sectionChangeListeners: Array<(event: unknown) => void> = [];
@@ -71,6 +74,7 @@ function configStub(): IConfigService & {
       return { dispose: () => {} };
     },
     get: (domain: string) => {
+      if (domain === DISABLED_SKILLS_SECTION) return [...disabledSkills];
       if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
       if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
       return undefined;
@@ -81,6 +85,9 @@ function configStub(): IConfigService & {
     replace: async () => {},
     reload: async () => {},
     diagnostics: () => [],
+    setDisabledSkills: (names: readonly string[]) => {
+      disabledSkills = [...names];
+    },
     setExtraSkillDirs: (dirs: readonly string[]) => {
       extraSkillDirs = [...dirs];
     },
@@ -93,6 +100,7 @@ function configStub(): IConfigService & {
       }
     },
   } as unknown as IConfigService & {
+    setDisabledSkills(names: readonly string[]): void;
     setExtraSkillDirs(dirs: readonly string[]): void;
     setMergeAllAvailableSkills(value: boolean): void;
     fireSectionChange(domain: string): void;
@@ -415,6 +423,144 @@ describe('SessionSkillCatalogService', () => {
 
     expect(store.calls).toBe(afterLoad + 2);
     host.dispose();
+  });
+
+  it('awaitPendingReloads waits for deferred extra source merge after config change', async () => {
+    const reload = deferred<SkillDiscoveryResult>();
+    const reloadStarted = deferred<void>();
+    let extraDiscoverCalls = 0;
+    class DeferredExtraDiscovery implements ISkillDiscovery {
+      declare readonly _serviceBrand: undefined;
+      async discover(roots: readonly SkillRoot[]) {
+        if (roots.some((root) => root.source === 'extra')) {
+          extraDiscoverCalls += 1;
+          reloadStarted.resolve();
+          return reload.promise;
+        }
+        return { skills: [], skipped: [], scannedRoots: [] };
+      }
+    }
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session, config } = makeHost(new DeferredExtraDiscovery(), ws);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('fresh-extra')).toBeUndefined();
+
+      config.setExtraSkillDirs(['/']);
+      config.fireSectionChange(EXTRA_SKILL_DIRS_SECTION);
+      await reloadStarted.promise;
+
+      // Initial ready is already resolved, so listing stays stale until the
+      // in-flight source reload merges.
+      await catalog.ready;
+      expect(catalog.catalog.getSkill('fresh-extra')).toBeUndefined();
+
+      let settled = false;
+      const pending = catalog.awaitPendingReloads().then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      reload.resolve({
+        skills: [stubSkill('fresh-extra', { source: 'extra' })],
+        skipped: [],
+        scannedRoots: [],
+      });
+      await pending;
+      expect(settled).toBe(true);
+      expect(catalog.catalog.getSkill('fresh-extra')).toBeDefined();
+      expect(extraDiscoverCalls).toBe(1);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('awaitPendingReloads drains concurrent user and workspace reloads after mergeAll changes', async () => {
+    let gate = false;
+    const inFlight: Array<ReturnType<typeof deferred<void>>> = [];
+    class GatedDiscovery implements ISkillDiscovery {
+      declare readonly _serviceBrand: undefined;
+      async discover() {
+        if (!gate) return { skills: [], skipped: [], scannedRoots: [] };
+        const hold = deferred<void>();
+        inFlight.push(hold);
+        await hold.promise;
+        return { skills: [], skipped: [], scannedRoots: [] };
+      }
+    }
+    const store = new GatedDiscovery();
+    const config = configStub();
+    const runtimeOptions = {
+      _serviceBrand: undefined,
+    } as unknown as ISkillCatalogRuntimeOptions;
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, store),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, config),
+      stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
+      stubPair(IPluginService, pluginStub()),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+
+      gate = true;
+      config.fireSectionChange(MERGE_ALL_AVAILABLE_SKILLS_SECTION);
+      // user + workspace both fire; root resolution is async before discover.
+      const startedAt = Date.now();
+      while (inFlight.length < 2) {
+        if (Date.now() - startedAt > 1000) {
+          throw new Error(`expected 2 in-flight discovers, got ${inFlight.length}`);
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(inFlight.length).toBe(2);
+
+      let settled = false;
+      const pending = catalog.awaitPendingReloads().then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      for (const hold of inFlight) hold.resolve();
+      await pending;
+      expect(settled).toBe(true);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('remerges and fires onDidChange when disabledSkills changes', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('enabled'), stubSkill('disabled')]);
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session, config } = makeHost(store, ws);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.listSkills().map((skill) => skill.name)).toContain('disabled');
+
+      const changes: string[] = [];
+      const subscription = catalog.onDidChange((sourceId) => changes.push(sourceId));
+      config.setDisabledSkills(['disabled']);
+      config.fireSectionChange(DISABLED_SKILLS_SECTION);
+
+      expect(changes).toEqual([DISABLED_SKILLS_SECTION]);
+      const names = catalog.catalog.listSkills().map((skill) => skill.name);
+      expect(names).toContain('enabled');
+      expect(names).not.toContain('disabled');
+      subscription.dispose();
+    } finally {
+      host.dispose();
+    }
   });
 
   it('reload replaces project skills when the workDir changes', async () => {

@@ -171,6 +171,7 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
       getSkillRoots: () => ['/skills/review'],
       getSkippedByPolicy: () => [],
       getModelSkillListing: () => '- review: desc for review',
+      isSkillDisabled: () => false,
     };
     ctx = createTestAgent(skillServices(skills));
     profile = ctx.get(IAgentProfileService);

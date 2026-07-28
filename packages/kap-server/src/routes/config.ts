@@ -20,11 +20,10 @@
  *     `IConfigService.set(domain, value)` calls (snake_case → camelCase);
  *   - republishes the change as a v2 `DomainEvent` on `IEventService`.
  *
- * **Event shape**: v2's `DomainEvent` is `{ type, payload }`, and the Core
- * `events` WS stream forwards it as-is. The config-changed notification is
- * therefore emitted as `{ type: 'event.config.changed', payload: { changedFields,
- * config } }` rather than v1's flat `{ type, changedFields, config }`. The HTTP
- * response (the schema contract) is unaffected.
+ * **Event shape**: v2 publishes `{ type, payload }` internally. The WS edge
+ * unwraps that payload into the flat v1 event and normalizes `changedFields` to
+ * the public `changed_fields` wire key before fan-out. The HTTP response is
+ * unaffected.
  */
 
 import {

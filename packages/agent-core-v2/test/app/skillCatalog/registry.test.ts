@@ -104,6 +104,26 @@ describe('InMemorySkillCatalog skill listing', () => {
   });
 });
 
+describe('InMemorySkillCatalog disabled_skills filter', () => {
+  it('hides disabled skill names from public lists while keeping getSkill', () => {
+    const registry = new InMemorySkillCatalog({
+      disabledSkills: ['Review-Helper', ' legacy-helper '],
+    });
+    registry.register(makeSkill('review-helper', 'user', 'Review helper'));
+    registry.register(makeSkill('legacy-helper', 'user', 'Legacy helper'));
+    registry.register(makeSkill('keep-me', 'user', 'Still available'));
+
+    expect(registry.isSkillDisabled('review-helper')).toBe(true);
+    expect(registry.isSkillDisabled('LEGACY-HELPER')).toBe(true);
+    expect(registry.listSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.listInvocableSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.getModelSkillListing()).toContain('keep-me');
+    expect(registry.getModelSkillListing()).not.toContain('review-helper');
+    expect(registry.getModelSkillListing()).not.toContain('legacy-helper');
+    expect(registry.getSkill('review-helper')?.name).toBe('review-helper');
+  });
+});
+
 describe('InMemorySkillCatalog model skill listing', () => {
   it('lists only model-invocable inline skills', () => {
     const registry = makeRegistry([

@@ -73,6 +73,25 @@ describe('ws-control — generic envelopes', () => {
     expect(parsed.epoch).toBe('ep_01ABC');
   });
 
+  it('sessionEventMessageSchema accepts a config-changed frame', () => {
+    const parsed = sessionEventMessageSchema.parse({
+      type: 'event.config.changed',
+      seq: 7,
+      epoch: 'ep_01ABC',
+      session_id: '__global__',
+      timestamp: TS,
+      payload: {
+        type: 'event.config.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changed_fields: ['disabled_skills'],
+        config: { providers: {}, disabled_skills: ['review-helper'] },
+      },
+    });
+
+    expect(parsed.payload.type).toBe('event.config.changed');
+  });
+
   it('wsControlEnvelopeSchema accepts an id-less message', () => {
     const schema = wsControlEnvelopeSchema(z.object({}));
     expect(schema.safeParse({ type: 'pong', payload: {} }).success).toBe(true);

@@ -33,7 +33,7 @@
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher fires it voided (an unhandled
+ * because config and skill-catalog watchers fire it voided (an unhandled
  * rejection would crash kap-server) and the Session tool-policy fan-out
  * awaits it across agents. Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
@@ -217,6 +217,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
           this.publishToolPatternWarnings();
           void this.refreshSystemPrompt();
         }
+      }),
+    );
+    this._register(
+      this.skillCatalog.onDidChange(() => {
+        void this.refreshSystemPrompt();
       }),
     );
   }
