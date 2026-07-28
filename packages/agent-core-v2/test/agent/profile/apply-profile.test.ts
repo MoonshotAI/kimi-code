@@ -203,7 +203,7 @@ describe('AgentProfileService.applyProfile', () => {
     converge.dispose();
   });
 
-  it('skips plugin sections beyond the aggregate byte budget and warns', async () => {
+  it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
     const large = 'x'.repeat(48 * 1024);
     const sections = {
       value: [
@@ -211,11 +211,14 @@ describe('AgentProfileService.applyProfile', () => {
         { pluginId: 'second', content: large },
       ] as readonly EnabledPluginSystemPrompt[],
     };
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
     const { ctx: context, profile: svc } = buildContext(
       appService(IPluginService, pluginStub(sections)),
+      pluginConvergenceService(converge),
     );
 
     await svc.applyProfile(pluginProfile);
+    await converge.fireAsync({}, new AbortController().signal);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
@@ -223,11 +226,11 @@ describe('AgentProfileService.applyProfile', () => {
       event: string;
       args?: { code?: string };
     }[];
-    expect(
-      events.some(
-        (entry) => entry.event === 'warning' && entry.args?.code === 'plugin-sections-oversized',
-      ),
-    ).toBe(true);
+    const warnings = events.filter(
+      (entry) => entry.event === 'warning' && entry.args?.code === 'plugin-sections-oversized',
+    );
+    expect(warnings).toHaveLength(1);
+    converge.dispose();
   });
 
   it('rebinds the full profile slice when a restored agent refreshes', async () => {

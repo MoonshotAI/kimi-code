@@ -40,8 +40,10 @@
  * the whole slice (prompt / `disallowedTools` / active tools, but not the
  * bind-time `subagents`, which `config.update` cannot carry) is rebound
  * atomically, with a warning and no change when the name is gone. Renders
- * reuse the Agent's first-render `now`, and no `config.update` is dispatched
- * when nothing changed, so convergence alone never churns the wire.
+ * reuse the Agent's first-render `now` of the current process — a restored
+ * Agent re-anchors once on its first live refresh — and no `config.update`
+ * is dispatched when nothing changed, so steady-state convergence never
+ * churns the wire.
  * `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled rejection
@@ -55,7 +57,7 @@
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
  * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
- * / the three emitted-warning dedupe sets / the first-render `now`) is
+ * / the four emitted-warning dedupe sets / the first-render `now`) is
  * registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
  * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
@@ -196,6 +198,10 @@ export const profileEmittedMissingProfileWarningsKey = defineState<Set<string>>(
   'profile.emittedMissingProfileWarnings',
   () => new Set(),
 );
+export const profileEmittedPluginBudgetWarningsKey = defineState<Set<string>>(
+  'profile.emittedPluginBudgetWarnings',
+  () => new Set(),
+);
 export const profileRenderedNowKey = defineState<string | undefined>(
   'profile.renderedNow',
   () => undefined as string | undefined,
@@ -245,6 +251,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.states.register(profileEmittedThinkingEffortWarningsKey);
     this.states.register(profileEmittedToolPatternWarningsKey);
     this.states.register(profileEmittedMissingProfileWarningsKey);
+    this.states.register(profileEmittedPluginBudgetWarningsKey);
     this.states.register(profileRenderedNowKey);
     this.configure({});
     this._register(
@@ -293,6 +300,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private get emittedMissingProfileWarnings(): Set<string> {
     return this.states.get(profileEmittedMissingProfileWarningsKey);
+  }
+
+  private get emittedPluginBudgetWarnings(): Set<string> {
+    return this.states.get(profileEmittedPluginBudgetWarningsKey);
   }
 
   private get renderedNow(): string {
@@ -975,22 +986,24 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private async resolvePluginSections(): Promise<string> {
-    try {
-      const sections = await this.plugins.enabledSystemPrompts();
-      const parts: string[] = [];
-      const skipped: string[] = [];
-      let totalBytes = 0;
-      for (const section of sections) {
-        const block = `<!-- From: plugin ${section.pluginId} -->\n${section.content}`;
-        const bytes = Buffer.byteLength(block, 'utf8');
-        if (totalBytes + bytes > PLUGIN_SECTIONS_MAX_BYTES) {
-          skipped.push(section.pluginId);
-          continue;
-        }
-        totalBytes += bytes;
-        parts.push(block);
+    const sections = await this.plugins.enabledSystemPrompts();
+    const parts: string[] = [];
+    const skipped: string[] = [];
+    let totalBytes = 0;
+    for (const section of sections) {
+      const block = `<!-- From: plugin ${section.pluginId} -->\n${section.content}`;
+      const bytes = Buffer.byteLength(block, 'utf8');
+      if (totalBytes + bytes > PLUGIN_SECTIONS_MAX_BYTES) {
+        skipped.push(section.pluginId);
+        continue;
       }
-      if (skipped.length > 0) {
+      totalBytes += bytes;
+      parts.push(block);
+    }
+    if (skipped.length > 0) {
+      const signature = skipped.join('');
+      if (!this.emittedPluginBudgetWarnings.has(signature)) {
+        this.emittedPluginBudgetWarnings.add(signature);
         this.eventBus.publish({
           type: 'warning',
           message:
@@ -999,10 +1012,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
           code: 'plugin-sections-oversized',
         });
       }
-      return parts.join('\n\n');
-    } catch {
-      return '';
     }
+    return parts.join('\n\n');
   }
 
   private readConfiguredCwd(): string | undefined {

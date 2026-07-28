@@ -10,7 +10,7 @@
  * test/session/sessionPluginContribution/sessionPluginContribution.test.ts`.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import {
@@ -279,6 +279,39 @@ describe('SessionPluginContributionService', () => {
     } finally {
       host.dispose();
       change.dispose();
+    }
+  });
+
+  it('cuts off a hung participant after the convergence timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const change = new AsyncEmitter<PluginChangedEvent>();
+      const { host, session } = makeHost({ change, skillRoots: [] });
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        const coordinator = session.accessor.get(ISessionPluginContributionService);
+        await catalog.load();
+
+        coordinator.onDidChange((event) => {
+          event.waitUntil(new Promise(() => {}));
+        });
+        let settled = false;
+        const fired = change
+          .fireAsync({ kind: 'catalog' }, new AbortController().signal)
+          .then(() => {
+            settled = true;
+          });
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        await fired;
+
+        expect(settled).toBe(true);
+      } finally {
+        host.dispose();
+        change.dispose();
+      }
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
