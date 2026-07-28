@@ -133,6 +133,18 @@ describe('TerminalTitleSpinnerController', () => {
     controller.dispose();
   });
 
+  it('drops a multi-code-point grapheme whole instead of splitting it', () => {
+    // 27 ASCII chars plus a flag emoji (two regional indicators, 4 UTF-16
+    // units); with the `| ` prefix the composed title is 33 units, so the
+    // flag straddles the 32-unit cap and must be dropped as one grapheme.
+    const longTitle = `${'a'.repeat(27)}\u{1F1E8}\u{1F1F3}`;
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    expect(titles[0]).toBe(`| ${'a'.repeat(27)}`);
+    controller.dispose();
+  });
+
   it('keeps the phase title within the terminal-title cap', () => {
     const longTitle = 'y'.repeat(MAX_TERMINAL_TITLE_LENGTH + 8);
     const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });

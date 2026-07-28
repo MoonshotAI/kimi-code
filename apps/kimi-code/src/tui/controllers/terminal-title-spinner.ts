@@ -9,6 +9,8 @@ import {
   type TitleSpinnerStyle,
 } from '#/tui/constant/title-spinners';
 
+const TITLE_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 export interface TerminalTitleSpinnerHost {
   /** Write the terminal title (OSC 0). */
   setTitle(label: string): void;
@@ -94,11 +96,13 @@ export class TerminalTitleSpinnerController {
   /** Keep the composed title within the terminal-title cap. */
   private fitTitle(title: string): string {
     if (title.length <= MAX_TERMINAL_TITLE_LENGTH) return title;
-    let end = MAX_TERMINAL_TITLE_LENGTH;
-    // Never cut a surrogate pair (e.g. emoji) in half: a code point above
-    // U+FFFF starting before the cap straddles it, so back up one unit.
-    const codePoint = title.codePointAt(end - 1);
-    if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
-    return title.slice(0, end);
+    // Truncate on grapheme boundaries so multi-code-point characters (emoji,
+    // flags, ZWJ sequences) are dropped whole rather than split mid-cluster.
+    let fitted = '';
+    for (const { segment } of TITLE_SEGMENTER.segment(title)) {
+      if (fitted.length + segment.length > MAX_TERMINAL_TITLE_LENGTH) break;
+      fitted += segment;
+    }
+    return fitted;
   }
 }
