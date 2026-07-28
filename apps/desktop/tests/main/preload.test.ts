@@ -23,7 +23,6 @@ const WHITELIST = [
   'checkForUpdates',
   'downloadUpdate',
   'getPathForFile',
-  'getServerToken',
   'getUpdateAutoDownload',
   'getUpdateStatus',
   'getVibrancy',
@@ -237,9 +236,6 @@ describe('kimiDesktop preload bridge', () => {
 
     await exposed.openInApp('ghostty', '/work/dir');
     expect(invoke).toHaveBeenCalledWith('kimi:open-in', 'ghostty', '/work/dir');
-
-    await exposed.getServerToken();
-    expect(invoke).toHaveBeenCalledWith('kimi:get-server-token');
 
     await exposed.isFullscreen();
     expect(invoke).toHaveBeenCalledWith('kimi:is-fullscreen');

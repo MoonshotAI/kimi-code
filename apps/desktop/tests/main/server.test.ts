@@ -20,7 +20,6 @@ const {
 vi.mock('@moonshot-ai/kap-server', () => ({
   startServer: startServerMock,
   createServerLogger: vi.fn(),
-  serverTokenPath: () => '/tmp/kimi-test/server.token',
 }));
 vi.mock('@moonshot-ai/agent-core-v2', () => ({
   hostRequestHeadersSeed: hostRequestHeadersSeedMock,
@@ -63,6 +62,8 @@ describe('startDesktopServer', () => {
     expect(args.port).toBe(0);
     expect(args.webAssetsDir).toBe('/app/web-dist');
     expect(args.corsOrigins).toEqual(['app://renderer']);
+    // Embedded server skips the persistent bearer token entirely.
+    expect(args.disableAuth).toBe(true);
     // server_version comes from the tsdown/vitest-injected __KIMI_CORE_VERSION__
     // (the kimi-code CLI version), never from the bundled package.json lookup.
     expect(typeof args.version).toBe('string');

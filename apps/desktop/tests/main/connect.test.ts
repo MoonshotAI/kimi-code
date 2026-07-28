@@ -63,7 +63,6 @@ function fakeHandle(origin = 'http://127.0.0.1:54321'): DesktopServerHandle {
   return {
     origin,
     port: Number(origin.split(':').at(-1)),
-    token: 'tok',
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -95,7 +94,7 @@ describe('connect', () => {
       identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
     });
-    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', 'tok', undefined, false, true);
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', undefined, undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
@@ -129,7 +128,7 @@ describe('connect', () => {
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(handle.close).not.toHaveBeenCalled();
     expect(mocks.rendererUrl).toHaveBeenCalledTimes(2);
-    expect(mocks.rendererUrl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:54321', 'tok', undefined, false, true);
+    expect(mocks.rendererUrl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:54321', undefined, undefined, false, true);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
@@ -185,7 +184,7 @@ describe('connect', () => {
     // instead of tripping over a half-closed one.
     await connect(win2 as unknown as BrowserWindow);
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(2);
-    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:5555', 'tok', undefined, false, true);
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:5555', undefined, undefined, false, true);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
   });
 

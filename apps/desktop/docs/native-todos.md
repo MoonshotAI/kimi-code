@@ -73,9 +73,9 @@
   - 测试：`tests/main/jump-list.test.ts`（parseLaunchArgs 各形态/引号/空值、payload 校验与截断、分类模板双语）；`tests/renderer/useJumpList.test.ts`（去重、门控、截断、路由、无桥）；`tests/main/preload.test.ts` 白名单 + 两通道校验。
   - 验证注意：Jump List 只对打包版的 exe 路径生效（dev 下 `process.execPath` 是 electron 二进制），dev 可用命令行 `--workspace=...` 验证 argv 路由。
 
-- [ ] **server token 改走 IPC**
-  - 现状：`renderer/lib/serverAuth.ts` 从 URL `#token=` hash 读 token 再镜像 localStorage（7 天 TTL）。
-  - 做法：`kimi:get-server-token` IPC 已存在未用，desktop 可直接问主进程要，省掉 hash 注入与 localStorage 持久化。
+- [x] **server token：内嵌 server 免鉴权**（2026-07 完成，取代原"改走 IPC"方案）
+  - 做法：`startDesktopServer` 传 `disableAuth: true`——内嵌 server 是 loopback + 临时端口 + origin 白名单（`app://renderer`），唯一客户端就是自家 renderer，persistent bearer token 是 `kimi web` 浏览器场景的设计；`disableAuth` 会让 `/api/v1/meta` 带 `dangerous_bypass_auth`，renderer 据此跳过 ServerAuthDialog，两端共享文件零改动。主进程不再为内嵌路径读 `<home>/server.token`、不再拼 `#token=` hash；未使用的 `kimi:get-server-token` IPC 桥同步删除。
+  - **外部 server 模式保留**：`KIMI_SERVER_URL` 指向 CLI server 时仍读 token 文件并经 URL fragment 注入（`connect.ts` `readServerToken` + `protocol.ts` `rendererUrl`）。
 
 - [x] **onboarded 标记主进程持久化**（已完成，desktop 专属）
   - 实现：新增 `src/main/ui-state.ts`——`<userData>/ui-state.json` 存 `{onboarded:true}`（照 window-state 模式，函数带可选路径参数便于测试）。读路径走 URL 注入：`connect.ts` 建窗时 `rendererUrl(..., isOnboarded())` 拼 `?kimi_onboarded=1`（protocol.ts 第 4 参）；写路径走 IPC `kimi:set-onboarded`（ipc-channels/ipc/preload 已接，preload 白名单测试同步）。renderer 侧 `useKimiWebClient.ts` 启动时 `注入值 || localStorage值` OR 合并读（标记只会 false→true），完成/跳过向导时 localStorage + IPC 双写；**无桥降级**——探测不到 `window.kimiDesktop`（web、老桥）时只用 localStorage，两端文件零分叉。

@@ -12,13 +12,15 @@ Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls O
 启动时主进程：
 
 1. 在同一进程里 `startDesktopServer(...)`（直接 import `kimi-code` 的 server 代码，不再 fork
-   SEA）。server 监听 loopback 随机端口，返回 `{ origin, token }`。
+   SEA）。server 监听 loopback 随机端口，返回 `{ origin }`。
 2. 起 server 时经 `corsOrigins: ['app://renderer']` 选项放行该 origin，让 renderer（`app://renderer`
    origin）能跨域调用 loopback HTTP API；server 端只对 allowlist 内的 origin echo CORS 头。
 3. 注册 `app://renderer/<path>` → `desktop-dist/<path>` 的协议映射（带 `..` 越界防护），然后
-   `loadURL(rendererUrl(origin, token))`：URL 形如
-   `app://renderer/index.html?kimi_desktop=1&kimi_origin=<enc>#token=<enc>`，token 经 hash 注入，
-   renderer 启动后用它带 Bearer 调 `/api/v1/*`。
+   `loadURL(rendererUrl(origin))`：URL 形如
+   `app://renderer/index.html?kimi_desktop=1&kimi_origin=<enc>`。内嵌 server 经 `disableAuth`
+   关闭 bearer 校验（唯一客户端就是自家 renderer），`/api/v1/meta` 带 `dangerous_bypass_auth`，
+   renderer 据此跳过 ServerAuthDialog、不带凭据直调 `/api/v1/*`；外部 server 模式
+   （`KIMI_SERVER_URL`）仍读 `<home>/server.token` 并经 `#token=` hash 注入。
 
 渲染进程：`src/renderer/` 是 `apps/web/src` 的**完整副本**，由 `vite.renderer.config.ts`
 构建到 `desktop-dist/`（root = `src/renderer`，outDir = `desktop-dist`，`iconsDir` 指向副本内
@@ -39,8 +41,8 @@ Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls O
   退化为纯 console），`debug/trace.ts` 的 window error/unhandledrejection 也走它落盘。session
   导出时 renderer 带 `desktop: true` 标记，server 自行把该日志文件打进 zip（`logs/kimi-desktop.log`）。
 - `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；内嵌 server 启动前
-  await shell env 探测结果补全 `process.env`；`rendererDistRoot()`、token 读取、server
-  日志路径也在这里。
+  await shell env 探测结果补全 `process.env`；`rendererDistRoot()`、外部 server 模式的 token
+  读取、server 日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
 - `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。
 - `src/main/tray.ts` — 系统托盘（macOS 菜单栏 / Windows 通知区）：图标、上下文菜单、待处理
