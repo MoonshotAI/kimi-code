@@ -219,18 +219,18 @@ describe('runShell', () => {
     });
   }
 
-  it('builds the v2 harness when KIMI_CODE_TUI_V2 is set', async () => {
+  it('builds the v2 harness when the master experimental flag is set', async () => {
     stubTuiStartup();
-    await withEnv({ KIMI_CODE_TUI_V2: '1', KIMI_CODE_EXPERIMENTAL_FLAG: undefined }, async () => {
+    await withEnv({ KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, async () => {
       await runShell(minimalCliOptions, '1.2.3-test');
     });
     expect(mocks.kimiHarnessV2Constructor).toHaveBeenCalledTimes(1);
     expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
   });
 
-  it('keeps the v1 harness when only the master experimental flag is set', async () => {
+  it('keeps the v1 harness when the master experimental flag is unset', async () => {
     stubTuiStartup();
-    await withEnv({ KIMI_CODE_TUI_V2: undefined, KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, async () => {
+    await withEnv({ KIMI_CODE_EXPERIMENTAL_FLAG: undefined }, async () => {
       await runShell(minimalCliOptions, '1.2.3-test');
     });
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
