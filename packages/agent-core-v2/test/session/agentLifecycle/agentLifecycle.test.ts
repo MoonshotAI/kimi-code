@@ -43,6 +43,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -80,6 +81,7 @@ const noopLog = {
 
 const pluginServiceStub = {
   _serviceBrand: undefined,
+  onDidChange: Event.None,
   onDidReload: () => ({ dispose: () => {} }),
   listPlugins: async () => [],
   installPlugin: async () => ({ id: '' }) as never,
@@ -94,6 +96,7 @@ const pluginServiceStub = {
   checkUpdates: async () => [],
   pluginSkillRoots: async () => [],
   enabledSessionStarts: async () => [],
+  enabledSystemPrompts: async () => [],
   enabledMcpServers: async () => ({}),
   enabledHooks: async () => [],
 } as unknown as IPluginService;
@@ -176,6 +179,8 @@ describe('AgentLifecycleService', () => {
       workspaceId: 'ws_test',
       sessionDir: '/tmp/kimi-agentLifecycle-test',
       metaScope: 'test',
+      cwd: '/tmp/kimi-agentLifecycle-work',
+      scope: (subKey?: string) => subKey === undefined ? 'test' : `test/${subKey}`,
     });
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
@@ -568,6 +573,71 @@ describe('AgentLifecycleService', () => {
     await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
 
     expect(permissionModeSetMode).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds a restored system prompt from the current plugin snapshot before create returns', async () => {
+    const resumedProfile = {
+      name: 'plugin-profile',
+      tools: [],
+      systemPrompt: (context: { readonly pluginSections?: string }) =>
+        context.pluginSections ?? '',
+    };
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'plugin-profile',
+        thinkingEffort: 'off',
+        systemPrompt: 'stale plugin instructions',
+        activeToolNames: [],
+        disallowedTools: [],
+      },
+    ]).store);
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => name === 'plugin-profile' ? resumedProfile : undefined,
+      getDefault: () => resumedProfile,
+      list: () => [resumedProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(IPluginService, {
+      ...pluginServiceStub,
+      enabledSystemPrompts: async () => [
+        { pluginId: 'current', content: 'current plugin instructions' },
+      ],
+    } as unknown as IPluginService);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+      '<!-- From: plugin current -->\ncurrent plugin instructions',
+    );
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {

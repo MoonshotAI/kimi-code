@@ -2,13 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Emitter } from '#/_base/event';
+import { AsyncEmitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IPluginService } from '#/app/plugin/plugin';
-import type { EnabledPluginSystemPrompt, ReloadSummary } from '#/app/plugin/types';
+import { IPluginService, type PluginChangedEvent } from '#/app/plugin/plugin';
+import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 
 import { appService, createTestAgent, execEnvServices, hostEnvironmentServices, type TestAgentContext, type TestAgentServiceOverride } from '../../harness';
 
@@ -139,42 +139,41 @@ describe('AgentProfileService.applyProfile', () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'Always cite sources.' }] as readonly EnabledPluginSystemPrompt[],
     };
-    const reload = new Emitter<ReloadSummary>();
-    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, reload)));
+    const change = new AsyncEmitter<PluginChangedEvent>();
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, change)));
 
     await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(
       '<!-- From: plugin demo -->\nAlways cite sources.',
     );
-    reload.dispose();
+    change.dispose();
   });
 
-  it('refreshes the system prompt when plugins reload', async () => {
+  it('refreshes the system prompt before a plugin change completes', async () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
     };
-    const reload = new Emitter<ReloadSummary>();
-    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, reload)));
+    const change = new AsyncEmitter<PluginChangedEvent>();
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, change)));
     await svc.applyProfile(pluginProfile);
     expect(svc.data().systemPrompt).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
-    reload.fire({ added: ['demo'], removed: [], errors: [] });
+    await change.fireAsync({}, new AbortController().signal);
 
-    await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toContain('V2');
-    });
-    reload.dispose();
+    expect(svc.data().systemPrompt).toContain('V2');
+    change.dispose();
   });
 });
 
 function pluginStub(
   sections: { value: readonly EnabledPluginSystemPrompt[] },
-  reload: Emitter<ReloadSummary>,
+  change: AsyncEmitter<PluginChangedEvent>,
 ): IPluginService {
   return {
-    onDidReload: reload.event,
+    onDidChange: change.event,
+    onDidReload: Event.None as IPluginService['onDidReload'],
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => sections.value,

@@ -33,9 +33,9 @@
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher and the plugin reload listener fire it
- * voided (an unhandled rejection would crash kap-server) and the Session
- * tool-policy fan-out awaits it across agents. Tool-policy entries that can never activate
+ * because the `[tools]` config watcher fires it voided (an unhandled rejection
+ * would crash kap-server), while plugin changes and the Session tool-policy
+ * fan-out await it across agents. Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
  * `mcp__` literals) surface as `warning` events instead of silently shrinking
  * the tool set; the known-name vocabulary is the live registry plus
@@ -222,8 +222,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }),
     );
     this._register(
-      this.plugins.onDidReload(() => {
-        void this.refreshSystemPrompt();
+      this.plugins.onDidChange((event) => {
+        event.waitUntil(this.refreshSystemPrompt());
       }),
     );
   }
@@ -435,27 +435,30 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async refreshSystemPrompt(): Promise<void> {
-    const profile = this.resolveActiveProfile();
-    if (profile === undefined) return;
-
-    let context: SystemPromptContext;
     try {
-      context = await this.buildSystemPromptContext(profile, this.cwd);
+      let profile = this.activeProfile;
+      if (profile === undefined) {
+        const profileName = this.profileName;
+        if (profileName === undefined) return;
+        await this.catalog.ready;
+        profile = this.catalog.get(profileName);
+      }
+      if (profile === undefined) return;
+      const context = await this.buildSystemPromptContext(profile, this.cwd);
+      this.activeProfile = profile;
+      this.update({
+        profileName: profile.name,
+        systemPrompt: profile.systemPrompt(context),
+      });
+      this.cacheAgentsMdWarning(context);
+      this.publishAgentsMdWarning();
     } catch (error) {
       this.eventBus.publish({
         type: 'warning',
         message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
         code: 'system-prompt-refresh-failed',
       });
-      return;
     }
-    this.activeProfile = profile;
-    this.update({
-      profileName: profile.name,
-      systemPrompt: profile.systemPrompt(context),
-    });
-    this.cacheAgentsMdWarning(context);
-    this.publishAgentsMdWarning();
   }
 
   getAgentsMdWarning(): string | undefined {
@@ -762,13 +765,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         { current, requested },
       );
     }
-  }
-
-  private resolveActiveProfile(): ResolvedAgentProfile | undefined {
-    if (this.activeProfile !== undefined) return this.activeProfile;
-    const profileName = this.profileName;
-    if (profileName === undefined) return undefined;
-    return this.catalog.get(profileName);
   }
 
   private cacheAgentsMdWarning(context: Pick<SystemPromptContext, 'agentsMdWarning'>): void {

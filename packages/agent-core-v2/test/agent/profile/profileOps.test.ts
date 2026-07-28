@@ -215,6 +215,7 @@ function buildHost(key: string): {
   host.stub(IHostIdentity, stubUnused());
   host.stub(IPluginService, {
     _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
     onDidReload: () => ({ dispose: () => {} }),
   });
   host.stub(IBootstrapService, stubUnused());

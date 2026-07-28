@@ -7,10 +7,12 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
  * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Fans session-level
- * permission-mode switches out to every live agent. Bound at Session scope.
+ * envelope while non-empty unversioned logs are rejected. Restored profile
+ * prompts are rebuilt from current runtime inputs before the handle admits
+ * turns. Removal awaits the agent task manager's graceful exit policy before
+ * draining turns and full compaction, then disposing the child scope. Fans
+ * session-level permission-mode switches out to every live agent. Bound at
+ * Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -213,8 +215,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
   ): Promise<void> {
+    const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
-      await handle.accessor.get(IAgentProfileService).bind(opts.binding);
+      await profile.bind(opts.binding);
+    } else {
+      await profile.refreshSystemPrompt();
     }
     // Apply the configured default only when restore found no persisted mode.
     // A resumed Agent's journal owns its permission posture; callers that need
