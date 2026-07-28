@@ -491,8 +491,9 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity)
-  if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity). toLowerCase so
+  // CapsLock (key: 'S') doesn't defeat the match, same as the sidebar's Ctrl+K.
+  if (e.key.toLowerCase() === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
     if (props.running) {
       e.preventDefault();
       handleSteer();

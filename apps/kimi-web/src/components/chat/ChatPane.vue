@@ -15,6 +15,7 @@ import AttachmentChip from './AttachmentChip.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
+import Button from '../ui/Button.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
@@ -213,6 +214,11 @@ const emit = defineEmits<{
   unqueue: [index: number];
   /** Load a queued message back into the composer for editing (and dequeue it). */
   editQueued: [index: number];
+  /** Steer the whole queue into the running turn now (like Ctrl+S, but the
+   *  live composer draft stays behind). */
+  steerQueue: [];
+  /** Steer one queued message (by index) into the running turn now. */
+  steerQueued: [index: number];
   /** Drag-to-reorder a queued message within the active session's queue. */
   reorderQueue: [payload: { from: number; to: number }];
 }>();
@@ -689,6 +695,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           {{ t('composer.queueLabel') }} · <b>{{ queued.length }}</b>
         </span>
         <span class="q-hint">{{ t('composer.queueAutoDrain') }}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          :title="t('composer.queueSteerTitle')"
+          :aria-label="t('composer.queueSteerTitle')"
+          @click.stop="emit('steerQueue')"
+        >
+          <Icon name="bolt" size="sm" />
+          {{ t('composer.queueSteerNow') }}
+        </Button>
       </div>
       <div
         v-for="(item, qi) in queued"
@@ -743,6 +759,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            :title="t('composer.queueSteerOneTitle')"
+            :aria-label="t('composer.queueSteerOneTitle')"
+            @click.stop="emit('steerQueued', qi)"
+          >
+            <Icon name="bolt" size="sm" />
+            {{ t('composer.queueSteerNow') }}
+          </Button>
           <button
             type="button"
             class="q-rm"

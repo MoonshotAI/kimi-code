@@ -837,6 +837,7 @@ function openPr(url: string): void {
       @interrupt="client.abortCurrentPrompt()"
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
+      @steer-queued="client.steerQueuedPrompt($event)"
       @reorder-queue="handleReorderQueue"
       @set-permission="client.setPermission($event)"
       @set-thinking="client.setThinking($event)"

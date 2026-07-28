@@ -3,7 +3,8 @@
  *
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
- * steers, settles lifecycle handles, and keeps system input outside the prompt
+ * steers (reporting each through `telemetry`'s `input_steer` event), settles
+ * lifecycle handles, and keeps system input outside the prompt
  * resource model. The pure-data `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
@@ -30,6 +31,7 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
@@ -81,6 +83,7 @@ export class AgentPromptService implements IAgentPromptService {
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
@@ -146,6 +149,7 @@ export class AgentPromptService implements IAgentPromptService {
     }, () => {});
     const turn = (await this.loop.enqueue(request).assigned).turn;
     if (turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    this.telemetry.track2('input_steer', { parts: message.content.length });
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
     this.eventBus.publish({ type: 'prompt.steered', activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() });

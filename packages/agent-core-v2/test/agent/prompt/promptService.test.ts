@@ -22,6 +22,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IWireService } from '#/wire/wire';
@@ -29,6 +30,7 @@ import { IWireService } from '#/wire/wire';
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerStateServices } from '../../state/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -46,6 +48,7 @@ function harness() {
     hooks: createHooks(['onWillCompact']),
     onDidFinishCompaction: Event.None,
   } as unknown as IAgentFullCompactionService;
+  const telemetryRecords: TelemetryRecord[] = [];
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
@@ -54,12 +57,13 @@ function harness() {
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
+      reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryRecords));
       reg.define(IEventBus, EventBusService);
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.define(IAgentPromptService, AgentPromptService);
     }
   });
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, telemetryRecords };
 }
 
 describe('AgentPromptService', () => {
@@ -96,6 +100,18 @@ describe('AgentPromptService', () => {
     const handles = await prompt.steer([two.id, one.id]);
     expect(handles.map((item) => item.id)).toEqual([one.id, two.id]);
     loop.drainNextBatch(context);
+  });
+
+  it('emits input_steer telemetry when pending prompts are steered', async () => {
+    const { prompt, telemetryRecords } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({ message: message('one') });
+    const two = await prompt.enqueue({ message: message('two') });
+    await prompt.steer([two.id, one.id]);
+    expect(telemetryRecords.filter((record) => record.event === 'input_steer')).toEqual([
+      { event: 'input_steer', properties: { parts: 2 } },
+    ]);
   });
 
   it('aborts pending prompts and settles completion', async () => {

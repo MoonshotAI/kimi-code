@@ -108,6 +108,7 @@ const emit = defineEmits<{
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
+  steerQueued: [index: number];
   reorderQueue: [payload: { from: number; to: number }];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -1436,6 +1437,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @unqueue="emit('unqueue', $event)"
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
+              @steer-queue="emit('steer', { text: '', attachments: [] })"
+              @steer-queued="emit('steerQueued', $event)"
             />
           </template>
         </div>

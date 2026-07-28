@@ -115,7 +115,7 @@ const startingFirstPromptWorkspaces = reactive(new Set<string>());
  */
 const promptGenerationBySession = new Map<string, number>();
 const pendingLocalTurnStarts = new Map<string, Set<number>>();
-const afterLocalTurnsSettled = new Map<string, () => void>();
+const afterLocalTurnsSettled = new Map<string, Set<() => void>>();
 let nextLocalTurnToken = 0;
 
 /**
@@ -132,6 +132,124 @@ let queueEntryCounter = 0;
 function nextQueueEntryId(): string {
   queueEntryCounter += 1;
   return `${Date.now().toString(36)}-${queueEntryCounter}`;
+}
+
+/**
+ * Per-session serialized operation queue for every queue-mutating prompt
+ * submission: per-entry steers, whole-queue steers, and automatic queue
+ * drains. Running them through one chain guarantees at most one submission
+ * per session is in flight at a time, so removals, restores, and drains
+ * always interleave in the order the operations were issued and the queue's
+ * FIFO order survives any interleaving of the three.
+ */
+const sessionOpQueue = new Map<string, Promise<void>>();
+
+interface SessionArchiveBarrier {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+/**
+ * Archive starts before the daemon has confirmed whether the session was
+ * forgotten. Queue-mutating work must pause in that window: success invalidates
+ * its incarnation, while failure releases it against the still-live session.
+ */
+const sessionArchiveBarriers = new Map<string, SessionArchiveBarrier>();
+
+interface SessionOperation {
+  sid: string;
+  incarnation: number;
+}
+
+/**
+ * A queue drain is reserved synchronously, before its serialized operation can
+ * start on the promise microtask queue. This closes the window where another
+ * send or turn-end callback could observe an idle session and schedule a second
+ * drain before submitPromptInternal marks the first prompt in flight.
+ *
+ * Store the owning operation, rather than a boolean, so a late completion from
+ * an archived incarnation cannot clear a reservation created after restore.
+ */
+const sessionQueueDrainReservations = new Map<string, SessionOperation>();
+
+/**
+ * Monotonic session incarnation retained across teardown. A session id can be
+ * restored after archive, so presence alone cannot distinguish late work from
+ * the old instance. Never delete these markers: resetting to the default would
+ * let an old incarnation compare equal again after an archive/restore ABA.
+ */
+const sessionIncarnation = new Map<string, number>();
+let nextSessionIncarnation = 0;
+
+function captureSessionOperation(sid: string): SessionOperation {
+  return { sid, incarnation: sessionIncarnation.get(sid) ?? 0 };
+}
+
+function hasCurrentIncarnation(operation: SessionOperation): boolean {
+  return operation.incarnation === (sessionIncarnation.get(operation.sid) ?? 0);
+}
+
+function invalidateSessionOperations(sid: string): void {
+  nextSessionIncarnation += 1;
+  sessionIncarnation.set(sid, nextSessionIncarnation);
+}
+
+function reserveSessionQueueDrain(operation: SessionOperation): boolean {
+  if (!hasCurrentIncarnation(operation) || sessionQueueDrainReservations.has(operation.sid)) {
+    return false;
+  }
+  sessionQueueDrainReservations.set(operation.sid, operation);
+  return true;
+}
+
+function releaseSessionQueueDrain(operation: SessionOperation): void {
+  if (sessionQueueDrainReservations.get(operation.sid) === operation) {
+    sessionQueueDrainReservations.delete(operation.sid);
+  }
+}
+
+function beginSessionArchive(sid: string): SessionArchiveBarrier | undefined {
+  if (sessionArchiveBarriers.has(sid)) return undefined;
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  const barrier = { promise, resolve };
+  sessionArchiveBarriers.set(sid, barrier);
+  return barrier;
+}
+
+function sessionArchiveBarrierPromise(sid: string): Promise<void> | undefined {
+  return sessionArchiveBarriers.get(sid)?.promise;
+}
+
+function endSessionArchive(sid: string, barrier: SessionArchiveBarrier): void {
+  if (sessionArchiveBarriers.get(sid) === barrier) {
+    sessionArchiveBarriers.delete(sid);
+  }
+  barrier.resolve();
+}
+
+/** Serialize `op` behind every previously queued operation for the session.
+ *  Rejections are absorbed for SEQUENCING only — the chain keeps later ops
+ *  running — while the caller still receives the op's original error. */
+function enqueueSessionOp(
+  operation: SessionOperation,
+  op: () => Promise<void>,
+): Promise<void> {
+  const { sid } = operation;
+  const chain = sessionOpQueue.get(sid) ?? Promise.resolve();
+  const run = chain.then(async () => {
+    await sessionArchiveBarrierPromise(sid);
+    if (!hasCurrentIncarnation(operation)) return;
+    await op();
+  });
+  const tail = run.catch(() => undefined);
+  sessionOpQueue.set(sid, tail);
+  void tail.finally(() => {
+    if (sessionOpQueue.get(sid) === tail) sessionOpQueue.delete(sid);
+  });
+  return run;
 }
 
 export interface LocalTurnStartState {
@@ -167,17 +285,33 @@ export function settleLocalTurn(sid: string, token: number): void {
   pending.delete(token);
   if (pending.size > 0) return;
   pendingLocalTurnStarts.delete(sid);
-  const callback = afterLocalTurnsSettled.get(sid);
+  const callbacks = afterLocalTurnsSettled.get(sid);
   afterLocalTurnsSettled.delete(sid);
-  callback?.();
+  if (callbacks !== undefined) {
+    // Isolate each callback so one throwing registrant can't skip the rest
+    // (e.g. a deferred drain behind a snapshot retry).
+    for (const callback of callbacks) {
+      try {
+        callback();
+      } catch {
+        // Registrants are fire-and-forget; a failure must not block the others.
+      }
+    }
+  }
 }
 
 /** Drop lifecycle state with the rest of a forgotten session. */
 export function forgetLocalTurnState(sid: string): void {
+  invalidateSessionOperations(sid);
   promptGenerationBySession.delete(sid);
   pendingLocalTurnStarts.delete(sid);
   afterLocalTurnsSettled.delete(sid);
   queueFlushFailures.delete(sid);
+  sessionQueueDrainReservations.delete(sid);
+  // Safe to drop the chain itself: queued ops are no-ops under the bumped
+  // incarnation, and a fresh incarnation must never queue behind an op that
+  // may never settle (e.g. a wedged request from the archived instance).
+  sessionOpQueue.delete(sid);
 }
 
 /** Whether a snapshot request can still be applied without overwriting a
@@ -186,13 +320,18 @@ export function isLocalTurnSnapshotCurrent(sid: string, atRequest: LocalTurnStar
   return !atRequest.pending && atRequest.generation === (promptGenerationBySession.get(sid) ?? 0);
 }
 
-/** Coalesce a skipped snapshot into one retry after local turn-start requests settle. */
+/** Run `callback` once every in-flight local turn-start for the session has
+ *  settled (immediately when none are pending). Multiple registrants — e.g. a
+ *  deferred queue drain and a stale-snapshot retry landing in the same
+ *  window — are all preserved and run in registration order. */
 export function afterLocalTurnStartsSettle(sid: string, callback: () => void): void {
   if ((pendingLocalTurnStarts.get(sid)?.size ?? 0) === 0) {
     callback();
     return;
   }
-  afterLocalTurnsSettled.set(sid, callback);
+  const callbacks = afterLocalTurnsSettled.get(sid) ?? new Set<() => void>();
+  callbacks.add(callback);
+  afterLocalTurnsSettled.set(sid, callbacks);
 }
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
@@ -314,6 +453,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLoading,
   } = deps;
   let exportInFlight = false;
+
+  function isSessionOperationCurrent(operation: SessionOperation): boolean {
+    return (
+      hasCurrentIncarnation(operation) &&
+      rawState.sessions.some((session) => session.id === operation.sid)
+    );
+  }
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -1456,14 +1602,26 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sid: string,
     text: string,
     attachments?: PromptAttachment[],
-  ): Promise<'ok' | 'rejected' | 'uncertain'> {
-    // Mark this session as having a prompt in flight BEFORE any await, so a racing
-    // sendPrompt sees it and enqueues. Cleared when the main turn ends (or the
-    // prompt dies without one). beginLocalTurn also bumps the snapshot generation
-    // and marks the submit pending, so a racing terminal snapshot can't clear
-    // this prompt (see handleSessionSnapshot).
+    operation: SessionOperation = captureSessionOperation(sid),
+  ): Promise<'ok' | 'rejected' | 'uncertain' | 'cancelled'> {
+    // Mark this session as having a prompt in flight BEFORE any await —
+    // including the archive-barrier wait, so two sends racing an in-flight
+    // archive cannot both proceed as concurrent submissions when the archive
+    // fails. Cleared when the main turn ends (or the prompt dies without
+    // one). beginLocalTurn also bumps the snapshot generation and marks the
+    // submit pending, so a racing terminal snapshot can't clear this prompt
+    // (see handleSessionSnapshot).
     const localTurnToken = beginLocalTurn(sid);
     rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
+    const archiveBarrier = sessionArchiveBarrierPromise(sid);
+    if (archiveBarrier !== undefined) await archiveBarrier;
+    if (!hasCurrentIncarnation(operation)) {
+      // An archive completed while we waited and forgot the session — release
+      // our own marks and cancel (the session's state is already discarded).
+      rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+      settleLocalTurn(sid, localTurnToken);
+      return 'cancelled';
+    }
     const tempId = nextOptimisticMsgId();
     try {
       const api = getKimiWebApi();
@@ -1518,7 +1676,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (goalMode && text) {
         try {
           await api.updateSession(sid, { goalObjective: text.trim() });
+          if (!hasCurrentIncarnation(operation)) return 'cancelled';
         } catch (err) {
+          if (!hasCurrentIncarnation(operation)) return 'cancelled';
           pushOperationFailure('createGoal', err, { sessionId: sid });
           rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
           updateSessionMessages(sid, (msgs) =>
@@ -1527,6 +1687,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           return 'rejected';
         }
       }
+
+      const thinking =
+        (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+      await sessionArchiveBarrierPromise(sid);
+      if (!hasCurrentIncarnation(operation)) return 'cancelled';
 
       const result = await api.submitPrompt(sid, {
         content,
@@ -1537,11 +1702,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // tracks whatever session the user is looking at now: a queue drain for
         // a background session would otherwise submit the level of the session
         // the user switched to since enqueueing.
-        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
+        thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
       });
+      if (!hasCurrentIncarnation(operation)) return 'cancelled';
 
       // Goal mode is a one-shot flag: consumed by this send, then cleared.
       if (goalMode) {
@@ -1579,6 +1745,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // daemon's auto-title, so we let the daemon own it.
       return 'ok';
     } catch (err) {
+      if (!hasCurrentIncarnation(operation)) return 'cancelled';
       // Submit failed — clear the in-flight flag so the next prompt isn't stuck
       // queued forever (turn.ended will never arrive), and roll back the
       // optimistic user message so the transcript doesn't show a delivered-
@@ -1605,8 +1772,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // If the session is not idle OR a prompt is already in flight (submitted but
     // the WS turn.started hasn't arrived yet), enqueue instead of submitting
     // directly. The in-flight flag closes the window where two rapid prompts
-    // would both submit and race.
-    if (activity.value !== 'idle' || rawState.inFlightBySession[sid]) {
+    // would both submit and race. A reserved queue drain (scheduled but not yet
+    // submitting, e.g. parked behind a pending steer) counts as busy too.
+    if (
+      activity.value !== 'idle' ||
+      rawState.inFlightBySession[sid] ||
+      sessionQueueDrainReservations.has(sid)
+    ) {
       enqueue(text, attachments);
       return;
     }
@@ -1617,8 +1789,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // enqueue this prompt behind them and flush the head now — the flush
     // re-arms the in-flight flag, and each later turn end drains the next
     // entry. Submitting directly here would jump the queue AND leave the
-    // stuck entries without a flush driver.
-    if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+    // stuck entries without a flush driver. A pending local turn-start (e.g.
+    // a steer submit) takes the same path: the serialized drain submits
+    // behind it instead of racing a second concurrent POST, which could start
+    // its turn first and pull the older steered text into the wrong turn.
+    if (
+      (rawState.queuedBySession[sid]?.length ?? 0) > 0 ||
+      localTurnStartState(sid).pending
+    ) {
       enqueue(text, attachments);
       flushQueueHead(sid);
       return;
@@ -1637,40 +1815,129 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function steerPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
-
-    // Merge queued texts (oldest first) + the live text, like the TUI does.
-    const queue = rawState.queuedBySession[sid] ?? [];
-    const parts: string[] = [];
-    const mergedAttachments: PromptAttachment[] = [];
-    for (const q of queue) {
-      const trimmed = q.text.trim();
-      if (trimmed) parts.push(trimmed);
-      if (q.attachments?.length) mergedAttachments.push(...q.attachments);
-    }
+    const operation = captureSessionOperation(sid);
     const live = text.trim();
-    if (live) parts.push(live);
-    if (attachments?.length) mergedAttachments.push(...attachments);
-    if (parts.length === 0 && mergedAttachments.length === 0) return;
-    if (queue.length > 0) {
-      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [] };
-    }
-    const merged = parts.join('\n\n');
 
-    // Put back every entry that was merged into this steer when its submit
-    // fails, so the queued prompts aren't silently lost. Entries enqueued
-    // while the submit was in flight stay behind them.
-    const restoreQueue = (): void => {
-      if (queue.length === 0) return;
+    // The merge runs inside the session's op queue (serialized with per-entry
+    // steers and drains), so the queue is read and cleared at execution time.
+    await enqueueSessionOp(operation, async () => {
+      if (!isSessionOperationCurrent(operation)) return;
+      // Merge queued texts (oldest first) + the live text, like the TUI does.
+      const queue = rawState.queuedBySession[sid] ?? [];
+      const parts: string[] = [];
+      const mergedAttachments: PromptAttachment[] = [];
+      for (const q of queue) {
+        const trimmed = q.text.trim();
+        if (trimmed) parts.push(trimmed);
+        if (q.attachments?.length) mergedAttachments.push(...q.attachments);
+      }
+      if (live) parts.push(live);
+      if (attachments?.length) mergedAttachments.push(...attachments);
+      if (parts.length === 0 && mergedAttachments.length === 0) return;
+      if (queue.length > 0) {
+        rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [] };
+      }
+      const merged = parts.join('\n\n');
+
+      // Put back every entry that was merged into this steer when its submit
+      // fails, so the queued prompts aren't silently lost. Entries enqueued
+      // while the submit was in flight stay behind them.
+      const restoreQueue = (): void => {
+        if (queue.length === 0) return;
+        const current = rawState.queuedBySession[sid] ?? [];
+        rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [...queue, ...current] };
+      };
+
+      await steerContentInternal(sid, merged, mergedAttachments, restoreQueue, operation);
+    }).catch((err: unknown) => {
+      // steerContentInternal handles its own failures; surface an unexpected
+      // op-queue error instead of an unhandled rejection.
+      pushOperationFailure('steer', err, { sessionId: sid });
+    });
+  }
+
+  /**
+   * steerQueuedPrompt() — steer a SINGLE queued entry into the running turn,
+   * leaving the rest of the queue untouched. Same submit+steer flow (and the
+   * same restore-on-rejection rule) as steerPrompt, scoped to one entry.
+   * Serialized with every other queue-mutating operation (see sessionOpQueue);
+   * the removal re-resolves the clicked entry by identity at execution time
+   * because reorders and restores may have moved it since the click.
+   */
+  async function steerQueuedPrompt(index: number): Promise<void> {
+    const sid = rawState.activeSessionId;
+    if (!sid) return;
+    const operation = captureSessionOperation(sid);
+    const entry = (rawState.queuedBySession[sid] ?? [])[index];
+    if (!entry) return;
+    const text = entry.text.trim();
+    const entryAttachments = entry.attachments ?? [];
+    if (!text && entryAttachments.length === 0) return;
+
+    await enqueueSessionOp(operation, async () => {
+      if (!isSessionOperationCurrent(operation)) return;
       const current = rawState.queuedBySession[sid] ?? [];
-      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [...queue, ...current] };
-    };
+      const currentIndex = current.indexOf(entry);
+      // Edited, unqueued, or drained while an earlier op was in flight.
+      if (currentIndex === -1) return;
+      rawState.queuedBySession = {
+        ...rawState.queuedBySession,
+        [sid]: current.filter((_, i) => i !== currentIndex),
+      };
 
+      // Operations are serialized, so the removal slot is stable with respect
+      // to other steers. If the user reorders the visible queue while the
+      // request is pending, put the rejected entry back into that same slot in
+      // the latest order instead of anchoring it ahead of a moved successor.
+      const restoreQueue = (): void => {
+        const latest = rawState.queuedBySession[sid] ?? [];
+        if (latest.includes(entry)) return;
+        const next = [...latest];
+        next.splice(Math.min(currentIndex, next.length), 0, entry);
+        rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: next };
+      };
+
+      await steerContentInternal(sid, text, entryAttachments, restoreQueue, operation);
+    }).catch((err: unknown) => {
+      // steerContentInternal handles its own failures; surface an unexpected
+      // op-queue error instead of an unhandled rejection.
+      pushOperationFailure('steer', err, { sessionId: sid });
+    });
+  }
+
+  /**
+   * Shared steer tail: idle fallback, optimistic echo, submit (parks behind the
+   * active prompt) then POST /prompts:steer. `restoreQueue` undoes the caller's
+   * queue removal on a definitive daemon rejection.
+   */
+  async function steerContentInternal(
+    sid: string,
+    merged: string,
+    mergedAttachments: PromptAttachment[],
+    restoreQueue: () => void,
+    operation: SessionOperation,
+  ): Promise<void> {
+    if (!isSessionOperationCurrent(operation)) return;
+    // Same guard as the queue drain: if the session was forgotten (e.g.
+    // archived) while the submit was pending, its queue was already discarded
+    // — restoring would resurrect a stale message that could drain later.
+    const restoreIfSessionKnown = (): void => {
+      if (rawState.sessions.some((s) => s.id === sid)) restoreQueue();
+    };
+    // Liveness of THIS session's main conversation — not the active view's
+    // `activity`, which follows whichever session the user has selected (a
+    // serialized per-entry steer can fire after a session switch).
+    const turnRunning =
+      (rawState.turnActiveBySession[sid] ?? false) ||
+      rawState.inFlightBySession[sid] === true ||
+      (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false);
     // Idle and nothing in flight — there is no turn to steer into; normal send.
-    if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
-      const outcome = await submitPromptInternal(sid, merged, mergedAttachments);
+    if (!turnRunning) {
+      const outcome = await submitPromptInternal(sid, merged, mergedAttachments, operation);
+      if (!isSessionOperationCurrent(operation)) return;
       // Same never-duplicate rule as the running-path catch below: restore
       // the merged entries only on a definitive rejection.
-      if (outcome === 'rejected') restoreQueue();
+      if (outcome === 'rejected') restoreIfSessionKnown();
       return;
     }
 
@@ -1708,21 +1975,28 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
+      const thinking =
+        (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+      await sessionArchiveBarrierPromise(sid);
+      if (!isSessionOperationCurrent(operation)) return;
+
       const result = await api.submitPrompt(sid, {
         content,
         model,
         // Resolved against this prompt's own session + model, same as a normal
         // send (see submitPromptInternal).
-        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
+        thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
+      await sessionArchiveBarrierPromise(sid);
+      if (!isSessionOperationCurrent(operation)) return;
 
-      // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
-      // a steered prompt IS echoed back by the daemon as a messageCreated user
-      // event; matching that echo by prompt_id (instead of content) is what keeps
-      // an image steer from rendering two user bubbles.
+      // Stamp the real prompt_id onto the optimistic echo. kap-server emits
+      // no messageCreated event for a steered prompt, but the stamp lets any
+      // later snapshot or resync match the persisted message by id instead of
+      // falling back to looser content heuristics.
       updateSessionMessages(sid, (msgs) => {
         const idx = msgs.findIndex((m) => m.id === tempId);
         if (idx === -1) return msgs;
@@ -1746,6 +2020,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // the parked prompt as its own turn. Nothing to roll back.
       }
     } catch (err) {
+      if (!isSessionOperationCurrent(operation)) return;
       // Submit failed: drop the optimistic echo so the transcript doesn't show
       // a delivered-looking message the daemon never received.
       updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
@@ -1755,7 +2030,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // already be queued server-side; re-queueing the originals would
       // duplicate it (the exact ghost-send behavior this change exists to
       // prevent). The failure toast below tells the user what happened.
-      if (isDaemonApiError(err)) restoreQueue();
+      if (isDaemonApiError(err)) restoreIfSessionKnown();
       pushOperationFailure('steer', err, { sessionId: sid });
     } finally {
       settleLocalTurn(sid, localTurnToken);
@@ -1801,54 +2076,93 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * queue. The budget is tracked PER ENTRY (by id), so removing or
    * reordering the head resets it for the next entry. Every failure is
    * already surfaced via pushOperationFailure.
+   *
+   * The submission runs inside the session's op queue (see sessionOpQueue),
+   * serialized with steers and other drains, so a drain can never submit
+   * concurrently with a steer that is still in flight.
    */
   function flushQueueHead(sid: string): void {
+    const operation = captureSessionOperation(sid);
+    flushQueueHeadForOperation(operation);
+  }
+
+  function flushQueueHeadForOperation(operation: SessionOperation): void {
+    if ((rawState.queuedBySession[operation.sid]?.length ?? 0) === 0) return;
+    if (!reserveSessionQueueDrain(operation)) return;
+
+    const enqueueReservedDrain = () => {
+      // submitPromptInternal reports its own failures; this catch is the
+      // last-resort surface for an unexpected error inside the drain itself,
+      // now that op-queue rejections propagate to the caller.
+      void enqueueSessionOp(operation, () => flushQueueHeadNow(operation))
+        .catch((err: unknown) => {
+          if (!isSessionOperationCurrent(operation)) return;
+          pushOperationFailure('queueFlush', err, { sessionId: operation.sid });
+        })
+        .finally(() => {
+          releaseSessionQueueDrain(operation);
+        });
+    };
+
+    // Reserve before deferring behind a local turn start. Otherwise a same-tick
+    // send can schedule another drain while this one is waiting to enter the op
+    // queue.
+    if (localTurnStartState(operation.sid).pending) {
+      afterLocalTurnStartsSettle(operation.sid, enqueueReservedDrain);
+    } else {
+      enqueueReservedDrain();
+    }
+  }
+
+  async function flushQueueHeadNow(operation: SessionOperation): Promise<void> {
+    if (!isSessionOperationCurrent(operation)) return;
+    const { sid } = operation;
     const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
     if (next === undefined) return;
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
-    void submitPromptInternal(sid, next.text, next.attachments).then((outcome) => {
-      if (outcome === 'ok') {
-        queueFlushFailures.delete(sid);
-        return;
+    const outcome = await submitPromptInternal(sid, next.text, next.attachments, operation);
+    if (!isSessionOperationCurrent(operation) || outcome === 'cancelled') return;
+    if (outcome === 'ok') {
+      queueFlushFailures.delete(sid);
+      return;
+    }
+    // Ambiguous failure: the daemon may have accepted the prompt and lost
+    // the response — the entry is dropped (the failure was already toasted)
+    // rather than re-queued and possibly submitted twice.
+    if (outcome === 'uncertain') {
+      queueFlushFailures.delete(sid);
+      return;
+    }
+    // Definitively rejected below this point. If the session was forgotten
+    // (e.g. archived) while the submit was pending, its queue was already
+    // discarded — don't resurrect it.
+    if (!rawState.sessions.some((s) => s.id === sid)) {
+      queueFlushFailures.delete(sid);
+      return;
+    }
+    // Per-entry budget: a different head (removed/reordered since) starts
+    // fresh instead of inheriting the previous entry's failures.
+    const key = next.id ?? next.text;
+    const previous = queueFlushFailures.get(sid);
+    const count = previous !== undefined && previous.key === key ? previous.count + 1 : 1;
+    if (count >= MAX_QUEUE_FLUSH_FAILURES) {
+      queueFlushFailures.delete(sid);
+      // Advance the queue instead of stranding the entries behind the
+      // dropped head: the failed submit produced no turn, so nothing else
+      // will drive the next entry until the user sends again. The new head
+      // carries its own budget, so a poisoned successor just goes through
+      // the same retry cycle.
+      if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+        await flushQueueHeadNow(operation);
       }
-      // Ambiguous failure: the daemon may have accepted the prompt and lost
-      // the response — the entry is dropped (the failure was already toasted)
-      // rather than re-queued and possibly submitted twice.
-      if (outcome === 'uncertain') {
-        queueFlushFailures.delete(sid);
-        return;
-      }
-      // Definitively rejected below this point. If the session was forgotten
-      // (e.g. archived) while the submit was pending, its queue was already
-      // discarded — don't resurrect it.
-      if (!rawState.sessions.some((s) => s.id === sid)) {
-        queueFlushFailures.delete(sid);
-        return;
-      }
-      // Per-entry budget: a different head (removed/reordered since) starts
-      // fresh instead of inheriting the previous entry's failures.
-      const key = next.id ?? next.text;
-      const previous = queueFlushFailures.get(sid);
-      const count = previous !== undefined && previous.key === key ? previous.count + 1 : 1;
-      if (count >= MAX_QUEUE_FLUSH_FAILURES) {
-        queueFlushFailures.delete(sid);
-        // Advance the queue instead of stranding the entries behind the
-        // dropped head: the failed submit produced no turn, so nothing else
-        // will drive the next entry until the user sends again. The new head
-        // carries its own budget, so a poisoned successor just goes through
-        // the same retry cycle.
-        if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
-          flushQueueHead(sid);
-        }
-        return;
-      }
-      queueFlushFailures.set(sid, { key, count });
-      const current = rawState.queuedBySession[sid] ?? [];
-      rawState.queuedBySession = {
-        ...rawState.queuedBySession,
-        [sid]: [next, ...current],
-      };
-    });
+      return;
+    }
+    queueFlushFailures.set(sid, { key, count });
+    const current = rawState.queuedBySession[sid] ?? [];
+    rawState.queuedBySession = {
+      ...rawState.queuedBySession,
+      [sid]: [next, ...current],
+    };
   }
 
   /**
@@ -1888,7 +2202,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const mayDrain =
       wasInFlight || opts?.turnWasActive === true || (rawState.turnActiveBySession[sid] ?? false);
     if (mayDrain) {
-      flushQueueHead(sid);
+      const operation = captureSessionOperation(sid);
+      flushQueueHeadForOperation(operation);
     }
 
     return wasInFlight;
@@ -2369,6 +2684,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /** Archive a session — calls API, persists the archive flag, removes locally, picks another active session or none */
   async function archiveSession(id: string): Promise<void> {
+    // Another archive for this session is already in flight: wait for it,
+    // then run our own attempt — a second click is a retry intent, not a
+    // dedupe, when the first attempt failed.
+    const existing = sessionArchiveBarrierPromise(id);
+    if (existing !== undefined) await existing;
+    // The first attempt may already have archived (and forgotten) the
+    // session — retrying would re-POST against an archived session.
+    if (!rawState.sessions.some((s) => s.id === id)) return;
+    const barrier = beginSessionArchive(id);
+    if (barrier === undefined) return; // a concurrent caller beat us to it
     try {
       const api = getKimiWebApi();
       await api.archiveSession(id);
@@ -2391,6 +2716,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } catch (err) {
       pushOperationFailure('archiveSession', err, { sessionId: id });
+    } finally {
+      endSessionArchive(id, barrier);
     }
   }
 
@@ -2786,6 +3113,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     handleSessionSnapshot,
     sendPrompt,
     steerPrompt,
+    steerQueuedPrompt,
     uploadImage,
     enqueue,
     unqueue,

@@ -108,7 +108,6 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   async steer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
-    this.telemetry.track2('input_steer', { parts: payload.input.length });
     const queued = await this.promptService.enqueue({ message: {
       role: 'user',
       content: [...payload.input],
