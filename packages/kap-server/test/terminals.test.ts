@@ -235,6 +235,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
       cwd: '../outside',
     });
     expect(escaping.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    expect(escaping.msg).toBe('Path outside workspace');
 
     const noSession = await get<unknown>(`/api/v1/sessions/sess_missing/terminals`);
     expect(noSession.code).toBe(ErrorCode.SESSION_NOT_FOUND);
