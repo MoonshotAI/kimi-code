@@ -126,7 +126,10 @@ export function getTuiConfigPath(): string {
   return join(getDataDir(), 'tui.toml');
 }
 
-export async function loadTuiConfig(filePath: string = getTuiConfigPath()): Promise<TuiConfig> {
+export async function loadTuiConfig(
+  filePath: string = getTuiConfigPath(),
+  warn?: (message: string) => void,
+): Promise<TuiConfig> {
   if (!existsSync(filePath)) {
     await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
     return DEFAULT_TUI_CONFIG;
@@ -134,19 +137,22 @@ export async function loadTuiConfig(filePath: string = getTuiConfigPath()): Prom
 
   try {
     const text = await readFile(filePath, 'utf-8');
-    return parseTuiConfig(text);
+    return parseTuiConfig(text, warn);
   } catch {
     throw new TuiConfigParseError(DEFAULT_TUI_CONFIG);
   }
 }
 
-export function parseTuiConfig(tomlText: string): TuiConfig {
+export function parseTuiConfig(
+  tomlText: string,
+  warn?: (message: string) => void,
+): TuiConfig {
   if (tomlText.trim().length === 0) {
     return DEFAULT_TUI_CONFIG;
   }
   const raw = parseToml(tomlText) as Record<string, unknown>;
   const parsed = TuiConfigFileSchema.parse(raw);
-  return normalizeTuiConfig(parsed);
+  return normalizeTuiConfig(parsed, warn);
 }
 
 export async function saveTuiConfig(
@@ -157,7 +163,13 @@ export async function saveTuiConfig(
   await writeFile(filePath, renderTuiConfig(config), 'utf-8');
 }
 
-export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
+export function normalizeTuiConfig(
+  config: TuiConfigFileShape,
+  warn: (message: string) => void = (message) => {
+    // oxlint-disable-next-line no-console
+    console.warn(message);
+  },
+): TuiConfig {
   const command = config.editor?.command?.trim();
   const statusLineCommand = config.status_line?.command?.trim();
   const knownItems = new Set<string>(STATUS_LINE_ITEMS);
@@ -166,8 +178,7 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
       ?.filter((item) => {
         const known = knownItems.has(item);
         if (!known) {
-          // oxlint-disable-next-line no-console
-          console.warn(`[tui.toml] ignoring unknown status_line item: ${item}`);
+          warn(`[tui.toml] ignoring unknown status_line item: ${item}`);
         }
         return known;
       })

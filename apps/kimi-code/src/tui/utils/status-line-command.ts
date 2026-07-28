@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
+export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
 
 export interface StatusLinePayload {
   model: string;
@@ -80,7 +81,17 @@ export function runStatusLineCommand(
     let stdout = '';
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => {
+      if (stdout.includes('\n')) return; // first line is complete
       stdout += chunk;
+      // Only the first line is ever used; stop accumulating past it (and cap
+      // a missing-newline stream) so a chatty command can't grow memory
+      // unboundedly before the timeout lands.
+      const cut = stdout.indexOf('\n');
+      if (cut >= 0) {
+        stdout = stdout.slice(0, cut + 1);
+      } else if (stdout.length > STATUS_LINE_MAX_CAPTURE_BYTES) {
+        stdout = stdout.slice(0, STATUS_LINE_MAX_CAPTURE_BYTES);
+      }
     });
     child.on('error', () => {
       clearTimeout(timer);
@@ -113,9 +124,11 @@ export class StatusLineCommandRunner {
   private lastRunAt = 0;
   private cached: string | null = null;
   private inFlight = false;
+  private pendingPayload: StatusLinePayload | null = null;
+  private trailingTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    private readonly command: string,
+    readonly command: string,
     private readonly onUpdate: () => void,
   ) {}
 
@@ -126,8 +139,36 @@ export class StatusLineCommandRunner {
   maybeRefresh(payload: StatusLinePayload): void {
     const now = Date.now();
     if (this.inFlight || now - this.lastRunAt < STATUS_LINE_RERUN_INTERVAL_MS) {
+      // Don't drop the update: land it as soon as the current gap expires,
+      // so a final state change is never lost to throttling.
+      this.pendingPayload = payload;
+      this.scheduleTrailing(now);
       return;
     }
+    this.startRun(payload, now);
+  }
+
+  dispose(): void {
+    if (this.trailingTimer !== null) {
+      clearTimeout(this.trailingTimer);
+      this.trailingTimer = null;
+    }
+    this.pendingPayload = null;
+  }
+
+  private scheduleTrailing(now: number): void {
+    if (this.trailingTimer !== null) return;
+    const waitMs = Math.max(0, STATUS_LINE_RERUN_INTERVAL_MS - (now - this.lastRunAt));
+    this.trailingTimer = setTimeout(() => {
+      this.trailingTimer = null;
+      const pending = this.pendingPayload;
+      this.pendingPayload = null;
+      if (pending !== null) this.maybeRefresh(pending);
+    }, waitMs);
+    this.trailingTimer.unref?.();
+  }
+
+  private startRun(payload: StatusLinePayload, now: number): void {
     this.inFlight = true;
     this.lastRunAt = now;
     void runStatusLineCommand(this.command, payload).then((line) => {
@@ -136,6 +177,9 @@ export class StatusLineCommandRunner {
         this.cached = line;
         this.onUpdate();
       }
+      const pending = this.pendingPayload;
+      this.pendingPayload = null;
+      if (pending !== null) this.maybeRefresh(pending);
     });
   }
 }

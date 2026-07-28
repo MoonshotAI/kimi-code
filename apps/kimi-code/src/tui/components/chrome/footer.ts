@@ -232,10 +232,14 @@ export class FooterComponent implements Component {
   private syncStatusLineRunner(state: AppState): void {
     const command = state.statusLine?.command ?? null;
     if (command === null) {
+      this.statusLineRunner?.dispose();
       this.statusLineRunner = null;
       return;
     }
-    if (this.statusLineRunner === null) {
+    if (this.statusLineRunner?.command !== command) {
+      // A reload can swap one command for another; the old runner would
+      // otherwise keep executing the previous script until restart.
+      this.statusLineRunner?.dispose();
       this.statusLineRunner = new StatusLineCommandRunner(command, this.onRefresh);
     }
   }
@@ -294,10 +298,12 @@ export class FooterComponent implements Component {
       const leftLine = left.join('  ');
       const leftWidth = visibleWidth(leftLine);
 
-      // Rotating hint tips stay on the right unless the user dropped 'tips'
-      // from items (or a command took the line, handled above).
+      // Rotating hint tips stay on the right unless they were given an
+      // inline slot in items (rendered above at their configured position)
+      // or the user dropped 'tips' from items.
       let tipText = '';
-      const showTips = configured === null || configured.includes('tips');
+      const tipsInline = order.includes('tips');
+      const showTips = !tipsInline && (configured === null || configured.includes('tips'));
       if (showTips) {
         const { primary, pair } = tipsForIndex(currentTipIndex());
         const gap = 2;
@@ -360,7 +366,14 @@ export class FooterComponent implements Component {
       tasks: [],
       cwd: [],
       git: [],
+      tips: [],
     };
+
+    {
+      const { primary, pair } = tipsForIndex(currentTipIndex());
+      const tip = pair ?? primary;
+      if (tip) slots['tips'] = [chalk.hex(colors.textMuted)(tip)];
+    }
 
     const modes: string[] = [];
     if (state.permissionMode === 'auto') modes.push(chalk.hex(colors.warning).bold('auto'));

@@ -1,8 +1,13 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import {
   runStatusLineCommand,
+  STATUS_LINE_MAX_CAPTURE_BYTES,
   StatusLineCommandRunner,
   type StatusLinePayload,
 } from '#/tui/utils/status-line-command';
@@ -90,6 +95,33 @@ describe('FooterComponent status_line items', () => {
     expect(withoutTips.trimEnd()).toMatch(/kimi-k2 {2}\/tmp\/project$/);
   });
 
+  it('honors the configured position of the tips slot', () => {
+    // The tip content itself rotates; locate it via a tips-only render.
+    const tipsOnly = plain(
+      new FooterComponent({
+        ...baseState,
+        statusLine: { items: ['tips'], command: null },
+      }).render(200)[0]!,
+    ).trim();
+
+    const tipsFirst = plain(
+      new FooterComponent({
+        ...baseState,
+        statusLine: { items: ['tips', 'model'], command: null },
+      }).render(200)[0]!,
+    );
+    const tipsLast = plain(
+      new FooterComponent({
+        ...baseState,
+        statusLine: { items: ['model', 'tips'], command: null },
+      }).render(200)[0]!,
+    );
+
+    expect(tipsOnly.length).toBeGreaterThan(0);
+    expect(tipsFirst.indexOf(tipsOnly)).toBeLessThan(tipsFirst.indexOf('kimi-k2'));
+    expect(tipsLast.indexOf('kimi-k2')).toBeLessThan(tipsLast.indexOf(tipsOnly));
+  });
+
   it('renders nothing on line 1 for an empty items list', () => {
     const state: AppState = {
       ...baseState,
@@ -128,6 +160,17 @@ describe('runStatusLineCommand', () => {
     const line = await runStatusLineCommand('printf "first\\nsecond\\n"', payload);
 
     expect(line).toBe('first');
+  });
+
+  it('caps the captured output instead of accumulating an unending stream', async () => {
+    // 200 KB on a single line, then exit: only the capped prefix is kept.
+    const line = await runStatusLineCommand(
+      'head -c 200000 /dev/zero | tr "\\0" "a"',
+      payload,
+    );
+
+    expect(line).not.toBeNull();
+    expect(line!.length).toBeLessThanOrEqual(STATUS_LINE_MAX_CAPTURE_BYTES);
   });
 });
 
@@ -169,5 +212,51 @@ describe('StatusLineCommandRunner', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(runner.current()).toBe('x');
+  });
+
+  it('runs a deferred refresh after the throttle interval instead of dropping it', async () => {
+    const dir = join(tmpdir(), `sl-trailing-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      const counterFile = join(dir, 'count');
+      const scriptFile = join(dir, 'count.sh');
+      writeFileSync(counterFile, '0');
+      writeFileSync(
+        scriptFile,
+        '#!/bin/sh\nn=$(cat "$1")\necho $((n+1)) > "$1"\nprintf "run-%s" "$n"\n',
+      );
+      const runner = new StatusLineCommandRunner(`sh ${scriptFile} ${counterFile}`, () => {});
+
+      runner.maybeRefresh(payload);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      runner.maybeRefresh(payload); // throttled: must defer, not drop
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(readFileSync(counterFile, 'utf-8').trim()).toBe('1');
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      expect(readFileSync(counterFile, 'utf-8').trim()).toBe('2');
+      runner.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recreates the runner when the command changes', async () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: null, command: 'printf "aaa"' },
+    };
+    const footer = new FooterComponent(state);
+    footer.render(120); // kicks the first run
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    expect(plain(footer.render(120)[0]!)).toContain('aaa');
+
+    footer.setState({ ...state, statusLine: { items: null, command: 'printf "bbb"' } });
+    footer.render(120); // kicks the replacement run
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    const line1 = plain(footer.render(120)[0]!);
+    expect(line1).toContain('bbb');
+    expect(line1).not.toContain('aaa');
   });
 });

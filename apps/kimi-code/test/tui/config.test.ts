@@ -183,6 +183,20 @@ items = ["model", "wat", "git"]
     expect(config.statusLine?.items).toEqual(['model', 'git']);
   });
 
+  it('routes unknown-item warnings through the provided callback instead of stderr', () => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(
+      `
+[status_line]
+items = ["model", "wat", "git"]
+`,
+      (message) => warnings.push(message),
+    );
+
+    expect(config.statusLine?.items).toEqual(['model', 'git']);
+    expect(warnings).toEqual(['[tui.toml] ignoring unknown status_line item: wat']);
+  });
+
   it('normalizes an empty command to null', () => {
     const config = parseTuiConfig(`
 [status_line]
