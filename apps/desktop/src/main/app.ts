@@ -60,36 +60,22 @@ export function main(): void {
 
   registerIpcHandlers();
 
-  let quitPrepared = false;
-  let resumeQuitScheduled = false;
-  let prepareQuitOnce: Promise<void> | null = null;
-  const prepareQuit = (): Promise<void> =>
-    (prepareQuitOnce ??= (async () => {
-      log.info('[kimi-desktop] quitting');
+  app.on('before-quit', () => {
+    log.info('[kimi-desktop] quitting');
+    for (const cleanup of [
+      stopShellEnvProbe,
+      destroyTray,
+      unregisterGlobalShortcuts,
+      closeServerHandle,
+    ]) {
       try {
-        for (const cleanup of [
-          stopShellEnvProbe,
-          destroyTray,
-          unregisterGlobalShortcuts,
-          closeServerHandle,
-        ]) {
-          try {
-            await Promise.resolve(cleanup());
-          } catch (error) {
-            log.error('[kimi-desktop] shutdown step failed', error);
-          }
-        }
-      } finally {
-        quitPrepared = true;
+        void Promise.resolve(cleanup()).catch((error: unknown) => {
+          log.error('[kimi-desktop] shutdown step failed', error);
+        });
+      } catch (error) {
+        log.error('[kimi-desktop] shutdown step failed', error);
       }
-    })());
-
-  app.on('before-quit', (event) => {
-    if (quitPrepared) return;
-    event.preventDefault();
-    if (resumeQuitScheduled) return;
-    resumeQuitScheduled = true;
-    void prepareQuit().then(() => app.quit());
+    }
   });
 
   app.on('window-all-closed', () => {
@@ -123,7 +109,7 @@ export function main(): void {
     });
     // After the window exists: update statuses push to the renderer. No-op in
     // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
-    initAutoUpdater(prepareQuit);
+    initAutoUpdater();
     // Launch flags from the very first invocation (Jump List item click).
     forwardLaunchArgs(process.argv);
     const hadPendingSecondInstance = pendingSecondInstanceArgv.length > 0;

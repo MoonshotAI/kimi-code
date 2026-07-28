@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   let resolveReady = (): void => {};
-  let resolveClose = (): void => {};
   const app = {
     isPackaged: true,
     getVersion: vi.fn(() => '0.0.0-test'),
@@ -27,13 +26,7 @@ const mocks = vi.hoisted(() => {
     createWindow: vi.fn(),
     showMainWindow: vi.fn(),
     sendLaunchAction: vi.fn(),
-    closeServerHandle: vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveClose = resolve;
-        }),
-    ),
-    closeDone: () => resolveClose(),
+    closeServerHandle: vi.fn(() => new Promise<void>(() => {})),
     stopShellEnvProbe: vi.fn(),
     destroyTray: vi.fn(),
     unregisterGlobalShortcuts: vi.fn(),
@@ -100,39 +93,32 @@ describe('app second-instance routing', () => {
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
   });
 
-  it('waits for the embedded server to close before resuming quit', async () => {
+  it('does not block quit while closing the embedded server', () => {
     main();
 
     const onBeforeQuit = mocks.listeners.get('before-quit');
     const event = { preventDefault: vi.fn() };
     onBeforeQuit?.(event);
 
-    expect(event.preventDefault).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(mocks.closeServerHandle).toHaveBeenCalledOnce());
-    expect(mocks.app.quit).not.toHaveBeenCalled();
-
-    mocks.closeDone();
-    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
-
-    const resumedEvent = { preventDefault: vi.fn() };
-    onBeforeQuit?.(resumedEvent);
-    expect(resumedEvent.preventDefault).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
+    expect(mocks.stopShellEnvProbe).toHaveBeenCalledOnce();
+    expect(mocks.destroyTray).toHaveBeenCalledOnce();
+    expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
   });
 
-  it('still closes the server and resumes quit when another cleanup step fails', async () => {
+  it('still starts every cleanup step when another cleanup step fails', () => {
     mocks.destroyTray.mockImplementationOnce(() => {
       throw new Error('tray cleanup failed');
     });
     main();
 
     const onBeforeQuit = mocks.listeners.get('before-quit');
-    onBeforeQuit?.({ preventDefault: vi.fn() });
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
 
-    await vi.waitFor(() => expect(mocks.closeServerHandle).toHaveBeenCalledOnce());
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
     expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
-    expect(mocks.app.quit).not.toHaveBeenCalled();
-
-    mocks.closeDone();
-    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
   });
 });

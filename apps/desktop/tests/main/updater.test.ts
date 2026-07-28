@@ -36,7 +36,7 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn();
 }
 
-function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDownload?: boolean; fetchNotes?: (version: string) => Promise<ReleaseNotes>; prepareQuit?: () => Promise<void> } = {}) {
+function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDownload?: boolean; fetchNotes?: (version: string) => Promise<ReleaseNotes> } = {}) {
   const updater = new FakeUpdater();
   const sent: UpdateStatus[] = [];
   const controller = startAutoUpdater({
@@ -191,30 +191,6 @@ describe('startAutoUpdater', () => {
     expect(markQuittingMock.mock.invocationCallOrder[0]).toBeLessThan(
       updater.quitAndInstall.mock.invocationCallOrder[0]!,
     );
-  });
-
-  it('waits for host shutdown before an explicit update install exits', async () => {
-    let finishPreparation!: () => void;
-    const prepareQuit = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishPreparation = resolve;
-        }),
-    );
-    const { updater, controller } = setup({ prepareQuit });
-    updater.emit('update-available', { version: '1.2.3' });
-    updater.emit('update-downloaded', { version: '1.2.3' });
-
-    controller.install();
-
-    expect(prepareQuit).toHaveBeenCalledOnce();
-    expect(markQuittingMock).not.toHaveBeenCalled();
-    expect(updater.quitAndInstall).not.toHaveBeenCalled();
-
-    finishPreparation();
-    await flush();
-    expect(markQuittingMock).toHaveBeenCalledOnce();
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
   });
 
   it('surfaces an error only when the user-initiated download fails', () => {
