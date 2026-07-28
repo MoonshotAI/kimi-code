@@ -11,10 +11,10 @@ import {
   setMermaidWorker,
   clearMermaidWorker,
 } from 'markstream-vue';
-import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '@moonshot-ai/web-core';
 import type { ResolveImage } from '@moonshot-ai/web-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
+import { configureInlineMath } from './lib/inlineMath';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyTextToClipboard } from './lib/clipboard';
 import {
@@ -75,15 +75,6 @@ clearMermaidWorker();
 
 setKaTeXWorker(new katexWorkerModule.default());
 setMermaidWorker(new mermaidWorkerModule.default());
-
-// Only `$$…$$` display math is rendered; single `$` inline math is disabled so
-// prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
-// without any escaping or code-detection gymnastics. `math_block` (the $$ rule)
-// is left enabled.
-function disableInlineMath(md: MarkdownIt): MarkdownIt {
-  md.inline.ruler.disable('math');
-  return md;
-}
 
 const { t } = useKimiI18n();
 
@@ -484,7 +475,7 @@ function copyDiff(code: string, idx: number) {
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
-        :custom-markdown-it="disableInlineMath"
+        :custom-markdown-it="configureInlineMath"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"
@@ -862,6 +853,10 @@ function copyDiff(code: string, idx: number) {
      formula (e.g. integral/sum subscripts) */
   padding: 2px 0 6px;
   margin: 0.6em 0;
+}
+
+.md :deep(.math-inline) {
+  vertical-align: baseline;
 }
 
 /* Blockquote — "After" spec: a 2px bar with a 2px vertical inset (a border
