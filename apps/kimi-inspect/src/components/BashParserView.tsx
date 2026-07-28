@@ -39,10 +39,19 @@ const PARSE_DEBOUNCE_MS = 300;
 /**
  * Quick-fill examples, adapted from the parser's own differential fixtures
  * (`packages/tree-sitter-bash/test/fixtures/differential/*.txt`) — each one
- * exercises a distinct area of the grammar (or, for the last two, the
- * error-recovery paths that set `hasError`).
+ * exercises a distinct area of the grammar. The last three probe the
+ * non-happy paths: deep nesting (a left-associative arithmetic chain, the
+ * case that once overflowed the DTO conversion) and the error-recovery
+ * paths that set `hasError`.
  */
 const EXAMPLES: readonly { readonly name: string; readonly source: string }[] = [
+  {
+    name: 'deep arithmetic (1000 operands)',
+    // A thousand left-nested binary_expression levels. Deeper chains parse
+    // fine in-process, but past ~2500 levels the JSON RPC transport itself
+    // cannot serialize the tree (V8 call-stack limit in JSON.stringify).
+    source: `echo $((${'1+'.repeat(1000)}1))`,
+  },
   {
     name: 'pipeline & redirects',
     source: `git log --oneline | head -20 | tee /tmp/log.txt
