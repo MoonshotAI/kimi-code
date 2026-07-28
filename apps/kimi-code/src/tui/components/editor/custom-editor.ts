@@ -525,11 +525,13 @@ export class CustomEditor extends Editor {
 
     // Enter bash mode when `!...` is pasted into an empty prompt. Check
     // getExpandedText() so folded large pastes still match on the leading `!`.
-    const expanded = this.getExpandedText();
-    if (emptyPromptBeforeInput && this.inputMode === 'prompt' && expanded.startsWith('!')) {
-      this.inputMode = 'bash';
-      this.onInputModeChange?.('bash');
-      this.setText(expanded.slice(1));
+    if (emptyPromptBeforeInput && this.inputMode === 'prompt') {
+      const expanded = this.getExpandedText();
+      if (expanded.startsWith('!')) {
+        this.inputMode = 'bash';
+        this.onInputModeChange?.('bash');
+        this.setText(expanded.slice(1));
+      }
     }
 
     this.reopenAutocompleteAfterInput();
