@@ -123,6 +123,22 @@ function extractNativeLlm(config: RustEngineConfig): NativeLlmDef | undefined {
   return resolveNativeLlm(config, derived, /* announce */ false, alias.model);
 }
 
+/**
+ * Load just the native-LLM transport definition from the config on disk.
+ * Used by the session-engine pilot (`KIMI_SESSION_ENGINE=1`), where the
+ * engine talks to the provider directly and no turn override is created.
+ */
+export function loadNativeLlmDef(
+  homeDir?: string,
+  configPath?: string,
+): NativeLlmDef | undefined {
+  const resolvedHome = resolveKimiHome(homeDir);
+  const resolvedConfig = resolveConfigPath({ homeDir: resolvedHome, configPath });
+  const loaded = loadRuntimeConfigSafe(resolvedConfig);
+  if (loaded.fileError !== undefined) return undefined;
+  return extractNativeLlm(loaded.config);
+}
+
 function resolveNativeLlm(
   config: RustEngineConfig,
   name: string,

@@ -8,6 +8,7 @@ export default defineConfig({
       'napi-cancel.test.ts',
       'napi-gated-write.test.ts',
       'session-client.test.ts',
+      'session-native-llm.test.ts',
     ],
   },
 });

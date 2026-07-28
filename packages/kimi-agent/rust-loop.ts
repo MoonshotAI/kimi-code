@@ -2085,6 +2085,17 @@ export interface SessionClientOptions {
   tools?: SessionToolDef[];
   /** Lifecycle + streaming events (`session.*`, `llm.*`). */
   onEvent?: (event: EngineEvent) => void;
+  /**
+   * Tool-lifecycle handlers (the approval gate) for engine-native
+   * write-class tools. Without them such tools fall back to full host
+   * execution or fail closed — provide at least `authorizeTool` when the
+   * engine runs native Write/Edit/Bash.
+   */
+  lifecycle?: {
+    prepareTool?: (req: PrepareToolRequest) => Promise<PrepareToolResponse | null>;
+    authorizeTool?: (req: AuthorizeToolRequest) => Promise<AuthorizeToolResponse | null>;
+    finalizeTool?: (req: FinalizeToolRequest) => Promise<FinalizeToolResponse>;
+  };
 }
 
 /**
@@ -2158,6 +2169,9 @@ export async function createSessionClient(
       }
     },
     onEvent: options.onEvent,
+    prepareTool: options.lifecycle?.prepareTool,
+    authorizeTool: options.lifecycle?.authorizeTool,
+    finalizeTool: options.lifecycle?.finalizeTool,
   });
 
   return {

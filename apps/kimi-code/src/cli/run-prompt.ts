@@ -118,6 +118,21 @@ export async function runPrompt(
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
+
+  // Phase-D thin-client pilot: `KIMI_SESSION_ENGINE=1` routes the prompt
+  // through the engine's session-owned surface (engine owns loop, context,
+  // goal, persistence; this process only renders). Falls through to the
+  // normal harness when the pilot is off or not applicable.
+  if (opts.prompt !== undefined && opts.prompt.length > 0) {
+    const { tryRunSessionEnginePrompt } = await import('./session-engine');
+    const handled = await tryRunSessionEnginePrompt({
+      prompt: opts.prompt,
+      workDir: process.cwd(),
+      stdout,
+      stderr,
+    });
+    if (handled) return;
+  }
   const outputFormat = resolveOutputFormat(opts);
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
