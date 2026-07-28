@@ -1306,6 +1306,11 @@ describe('KimiTUI startup', () => {
       expect(removeInputListener).toHaveBeenCalledOnce();
       expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_MOUSE_REPORTING);
 
+      driver.state.ui.clear();
+      driver.refreshTerminalMouseTracking();
+      expect(addInputListener).toHaveBeenCalledOnce();
+
+      driver.state.ui.addChild(driver.state.editorContainer);
       driver.state.editorContainer.clear();
       driver.refreshTerminalMouseTracking();
       expect(addInputListener).toHaveBeenCalledOnce();

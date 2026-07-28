@@ -2982,7 +2982,9 @@ export class KimiTUI {
 
   refreshTerminalMouseTracking(): void {
     this.suspendTerminalMouseTracking();
+    if (this.isShuttingDown) return;
     if (!isExperimentalFlagEnabled('terminal_mouse_input')) return;
+    if (!this.state.ui.children.includes(this.state.editorContainer)) return;
     if (!this.state.editorContainer.children.includes(this.state.editor)) return;
     this.terminalMouseTrackingDispose = installEditorMouseTracking(this.state);
   }

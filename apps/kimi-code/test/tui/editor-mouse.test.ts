@@ -133,6 +133,7 @@ describe('terminal mouse input', () => {
     const editorContainer = { children: [editor] };
     const ui = {
       ...state.ui,
+      children: [editorContainer],
       getRenderedChildLayout: vi.fn(() => ({
         startRow: 1,
         endRow: 4,
@@ -222,6 +223,7 @@ describe('terminal mouse input', () => {
     editorContainer.children.push(editor);
     const ui = {
       ...state.ui,
+      children: [editorContainer],
       getRenderedViewportTop: vi.fn(() => 2),
       getRenderedChildLayout: vi.fn(() => ({
         startRow: 2,

@@ -180,6 +180,7 @@ export function resolveEditorMouseTarget(
   event: Pick<TerminalMouseEvent, 'col' | 'row'>,
   clamp: boolean,
 ): EditorMouseTarget | undefined {
+  if (!state.ui.children.includes(state.editorContainer)) return undefined;
   if (!state.editorContainer.children.includes(state.editor)) return undefined;
 
   const { columns: terminalWidth, rows: terminalRows } = state.terminal;
