@@ -12,9 +12,13 @@
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata, SessionPlan } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 import { detectShellDanger } from '../lib/shellDanger';
-import { parseTaskNotifications } from '../lib/notificationXml';
+import {
+  parseTaskNotifications,
+  taskNotificationFromMetadata,
+} from '../lib/notificationXml';
 import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffViewLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
+import { normalizeToolName } from '../lib/toolMeta';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -214,7 +218,7 @@ function normalizeToolMedia(toolName: string, output: unknown): ToolMedia | unde
  * become lines, image/media parts become a `[image]`-style placeholder — instead
  * of dumping raw `[{"type":"text",...}]` JSON into the UI.
  */
-function normalizeToolOutput(output: unknown): string[] | undefined {
+export function normalizeToolOutput(output: unknown): string[] | undefined {
   if (output === null || output === undefined) return undefined;
   if (typeof output === 'string') return output.split('\n');
   if (Array.isArray(output)) {
@@ -236,9 +240,18 @@ function normalizeToolOutput(output: unknown): string[] | undefined {
   return [JSON.stringify(output)];
 }
 
+function agentIdFromOutput(toolName: string, output: readonly string[] | undefined): string | undefined {
+  if (normalizeToolName(toolName) !== 'task') return undefined;
+  for (const line of output ?? []) {
+    const match = /^agent_id:\s*(\S+)\s*$/.exec(line);
+    if (match?.[1]) return match[1];
+  }
+  return undefined;
+}
+
 export function toAgentMember(task: AppTask): AgentMember {
   return {
-    id: task.id,
+    id: task.agentId ?? task.id,
     toolCallId: task.parentToolCallId,
     name: task.description,
     subagentType: task.subagentType,
@@ -704,6 +717,11 @@ export function messagesToTurns(
           id: c.toolCallId,
           name: c.toolName,
           arg: typeof c.input === 'string' ? c.input : JSON.stringify(c.input),
+          agentId:
+            normalizeToolName(c.toolName) === 'task'
+              ? c.agentRefs?.find((ref) => ref.role !== 'member')?.agentId ??
+                c.agentRefs?.[0]?.agentId
+              : undefined,
           // 'running' until the toolResult is absorbed (resolves to ok/error);
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
@@ -726,11 +744,13 @@ export function messagesToTurns(
         const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
         if (idx !== -1) {
           const tool = g.tools[idx]!;
+          const output = normalizeToolOutput(c.output);
           const updated: ToolCall = {
             ...tool,
             status: c.isError ? 'error' : 'ok',
-            output: normalizeToolOutput(c.output),
+            output,
             media: c.isError ? undefined : normalizeToolMedia(tool.name, c.output),
+            agentId: tool.agentId ?? agentIdFromOutput(tool.name, output),
           };
           // ExitPlanMode: if the plan path wasn't captured from the (ephemeral)
           // approval display, recover it from the result output so the file link
@@ -826,7 +846,11 @@ export function messagesToTurns(
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join('\n');
-        const notifications = parseTaskNotifications(text);
+        const structuredNotification = taskNotificationFromMetadata(msg.metadata);
+        const notifications =
+          structuredNotification !== undefined
+            ? [structuredNotification]
+            : parseTaskNotifications(text);
         if (notifications.length > 0) {
           pendingGroup ??= {
             id: msg.id,

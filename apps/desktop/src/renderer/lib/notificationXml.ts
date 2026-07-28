@@ -7,6 +7,8 @@
 // hidden, exactly as before.
 import type { TaskNotification } from '../types';
 
+export const TASK_NOTIFICATION_METADATA_KEY = 'kimiWeb.taskNotification';
+
 const NOTIFICATION_RE = /<notification\b([^>]*)>([\s\S]*?)<\/notification>/g;
 const ATTR_RE = /([\w-]+)="([^"]*)"/g;
 const OUTPUT_FILE_RE = /<output-file\b([^>]*)>[\s\S]*?<\/output-file>/;
@@ -82,6 +84,28 @@ export function parseTaskNotifications(text: string): TaskNotification[] {
     out.push(parseBlock(m[1], m[2], m[0]));
   }
   return out;
+}
+
+export function taskNotificationFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): TaskNotification | undefined {
+  const value = metadata?.[TASK_NOTIFICATION_METADATA_KEY];
+  if (typeof value !== 'object' || value === null) return undefined;
+  const candidate = value as Record<string, unknown>;
+  for (const key of [
+    'id',
+    'category',
+    'type',
+    'sourceKind',
+    'sourceId',
+    'title',
+    'severity',
+    'body',
+    'raw',
+  ]) {
+    if (typeof candidate[key] !== 'string') return undefined;
+  }
+  return value as TaskNotification;
 }
 
 /** Display status derived from the raw type/severity — drives the card's

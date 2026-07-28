@@ -241,7 +241,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         [parent]: { agentId },
       };
       connectEventsIfNeeded();
-      getEventConn()?.markSideChannelAgent(agentId);
+      getEventConn()?.markSideChannelAgent(parent, agentId);
     }
     if (initialPrompt && initialPrompt.trim()) {
       await sendSideChatPromptOn(parent, initialPrompt.trim());

@@ -497,8 +497,8 @@ describe('fetchReleaseNotes (production fetch)', () => {
     );
 
     const notes = await fetchReleaseNotes('1.2.3');
-    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/1.2.3/changelog.zh.md');
-    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/1.2.3/changelog.en.md');
+    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/binaries/1.2.3/changelog.zh.md');
+    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/binaries/1.2.3/changelog.en.md');
     // The 404 language is simply absent; the healthy one comes through.
     expect(notes).toEqual({ zh: '- 中文' });
   });

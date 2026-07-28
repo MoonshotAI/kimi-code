@@ -9,7 +9,7 @@ import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/sla
 import { formatTokens } from '../../lib/formatTokens';
 import type { IconName } from '../../lib/icons';
 import type { FileItem } from './MentionMenu.vue';
-import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
+import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
 import {
   commitLevel,
@@ -29,6 +29,8 @@ import { resolvedBinding } from '../../composables/useShortcuts';
 import { openFileAttachment } from '../../lib/openFileAttachment';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
+import MediaLightbox from './MediaLightbox.vue';
+import MediaThumb from './MediaThumb.vue';
 import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 
 // ---------------------------------------------------------------------------
@@ -267,11 +269,71 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
+  clearAttachments,
   loadAttachments,
 } = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
+
+// The strip mirrors the sent bubble's two rows: media drafts as thumbnails,
+// everything else as file chips.
+type MediaDraft = Attachment & { kind: 'image' | 'video' };
+const isMediaDraft = (att: Attachment): att is MediaDraft => att.kind === 'image' || att.kind === 'video';
+const mediaDrafts = computed(() => attachments.value.filter(isMediaDraft));
+const fileDrafts = computed(() => attachments.value.filter((att) => !isMediaDraft(att)));
+
+// Overflow handling for the capped strip: a count badge while the rows
+// scroll, and new attachments auto-scroll into view (removals keep position).
+const attScrollRef = ref<HTMLElement | null>(null);
+const attScrollContentRef = ref<HTMLElement | null>(null);
+const attOverflowing = ref(false);
+
+// Measure the CONTENT wrapper, not the scroll container: the is-overflowing
+// bottom padding feeds back into scrollHeight and would latch the badge on.
+function updateAttOverflow(): void {
+  const el = attScrollRef.value;
+  const content = attScrollContentRef.value;
+  attOverflowing.value = el !== null && content !== null && content.scrollHeight > el.clientHeight + 1;
+}
+
+let attOverflowObserver: ResizeObserver | null = null;
+watch(
+  attScrollRef,
+  (el) => {
+    attOverflowObserver?.disconnect();
+    attOverflowObserver = null;
+    if (el) {
+      const observer = new ResizeObserver(updateAttOverflow);
+      observer.observe(el);
+      attOverflowObserver = observer;
+    }
+    updateAttOverflow();
+  },
+  { immediate: true },
+);
+watch(attachments, () => void nextTick(updateAttOverflow), { deep: true });
+onUnmounted(() => attOverflowObserver?.disconnect());
+
+// Reveal the NEWEST attachment on add: media thumbs group above file chips,
+// so scroll to the end of whichever group grew — a media add would stay
+// hidden above a long file row if we only ever scrolled to the bottom.
+const attMediaRowRef = ref<HTMLElement | null>(null);
+watch(
+  () => [mediaDrafts.value.length, fileDrafts.value.length] as const,
+  ([media, files], [prevMedia, prevFiles]) => {
+    if (media <= prevMedia && files <= prevFiles) return;
+    void nextTick(() => {
+      const el = attScrollRef.value;
+      if (!el) return;
+      if (media > prevMedia && attMediaRowRef.value) {
+        el.scrollTop = attMediaRowRef.value.offsetHeight - el.clientHeight;
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+  },
+);
 
 onMounted(() => {
   // Fit the box to a restored draft on first render, and reflect its grown
@@ -312,14 +374,32 @@ function toPromptAttachment(a: Attachment): PromptAttachment {
 
 // Chip primary action: media opens the lightbox preview; a generic file opens
 // in a new tab (browser-renderable types) or downloads, once its upload has
-// completed and produced a daemon file id.
-function onAttachmentActivate(att: Attachment): void {
+// completed and produced a daemon file id. MediaThumb passes its <img> along
+// as the image preview's zoom origin.
+const previewThumbImg = ref<HTMLImageElement | null>(null);
+
+function onAttachmentActivate(att: Attachment, img?: HTMLImageElement | null): void {
   if (att.kind === 'file') {
     if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
     return;
   }
+  previewThumbImg.value = img ?? null;
   openAttachmentPreview(att);
 }
+
+// The pending-attachment preview maps onto the shared MediaLightbox — the
+// same modal the sent-message chips open. Local object URLs play directly;
+// anything else (edit/queue reloads) needs fileId for the authed fetch.
+const previewMedia = computed<ToolMedia | null>(() => {
+  const att = previewAttachment.value;
+  if (!att || !att.previewUrl) return null;
+  return {
+    kind: att.kind === 'video' ? 'video' : 'image',
+    url: att.previewUrl,
+    path: att.name,
+    fileId: att.previewUrl.startsWith('blob:') ? undefined : att.fileId,
+  };
+});
 
 /** True when a submit would do something — mirrors handleSubmit's guard so
  *  the button can show a real disabled state. */
@@ -376,6 +456,7 @@ function handleSubmit(): void {
 
   // Revoke object URLs and drop the submitted attachments.
   previewAttachment.value = null;
+  previewThumbImg.value = null;
   clearAfterSubmit();
 
   text.value = '';
@@ -996,45 +1077,70 @@ function selectModel(modelId: string): void {
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <!-- Attachment chips (above the input row) -->
-    <div v-if="attachments.length > 0" class="att-strip">
-      <AttachmentChip
-        v-for="att in attachments"
-        :key="att.localId"
-        :kind="att.kind"
-        :name="att.name"
-        :url="att.previewUrl"
-        :file-id="att.fileId"
-        :media-type="att.mediaType"
-        :size="att.size"
-        :uploading="att.uploading"
-        :error="att.error"
-        removable
-        :remove-label="t('composer.removeNamed', { name: att.name })"
-        @activate="onAttachmentActivate(att)"
-        @remove="removeAttachment(att.localId)"
-      />
-    </div>
-
-    <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
-      <div class="att-lightbox-card">
-        <Tooltip :text="t('model.close')">
-          <button type="button" class="att-lightbox-close" @click="closeAttachmentPreview">✕</button>
-        </Tooltip>
-        <video
-          v-if="previewAttachment.kind === 'video'"
-          class="att-lightbox-media"
-          :src="previewAttachment.previewUrl"
-          controls
-          playsinline
-        />
-        <img v-else class="att-lightbox-media" :src="previewAttachment.previewUrl" :alt="previewAttachment.name" />
-        <div class="att-lightbox-name">{{ previewAttachment.name }}</div>
-      </div>
-    </div>
+    <!-- Pending-attachment preview: the same MediaLightbox the sent-message
+         chips open. -->
+    <MediaLightbox
+      v-if="previewMedia"
+      :media="previewMedia"
+      :origin-img="previewThumbImg"
+      @close="
+        previewThumbImg = null;
+        closeAttachmentPreview();
+      "
+    />
 
     <!-- Main composer card -->
     <div class="composer-card">
+      <!-- Attachment previews (inside the card, above the input row): media
+           renders as MediaThumb thumbnails, files as AttachmentChip pills —
+           the same two rows the sent bubble uses. The strip caps at two
+           thumbnail rows and scrolls beyond that; clear-all stays pinned to
+           the top corner so it never scrolls away. -->
+      <div v-if="attachments.length > 0" class="att-strip">
+        <div ref="attScrollRef" class="att-scroll" :class="{ 'is-overflowing': attOverflowing }">
+          <div ref="attScrollContentRef" class="att-scroll-content">
+            <div v-if="mediaDrafts.length > 0" ref="attMediaRowRef" class="att-row att-row-media">
+              <MediaThumb
+                v-for="att in mediaDrafts"
+                :key="att.localId"
+                :kind="att.kind"
+                :name="att.name"
+                :url="att.previewUrl"
+                :file-id="att.fileId"
+                :uploading="att.uploading"
+                :error="att.error"
+                removable
+                :remove-label="t('composer.removeNamed', { name: att.name })"
+                @activate="onAttachmentActivate(att, $event)"
+                @remove="removeAttachment(att.localId)"
+              />
+            </div>
+            <div v-if="fileDrafts.length > 0" class="att-row">
+              <AttachmentChip
+                v-for="att in fileDrafts"
+                :key="att.localId"
+                kind="file"
+                :name="att.name"
+                :media-type="att.mediaType"
+                :size="att.size"
+                :uploading="att.uploading"
+                :error="att.error"
+                removable
+                :remove-label="t('composer.removeNamed', { name: att.name })"
+                @activate="onAttachmentActivate(att)"
+                @remove="removeAttachment(att.localId)"
+              />
+            </div>
+          </div>
+        </div>
+        <span v-if="attOverflowing" class="att-more">{{ t('composer.attachmentCount', { n: attachments.length }) }}</span>
+        <Tooltip v-if="attachments.length >= 2" :text="t('composer.clearAll')">
+          <IconButton class="att-clear" size="sm" :label="t('composer.clearAll')" @click="clearAttachments">
+            <Icon name="trash" />
+          </IconButton>
+        </Tooltip>
+      </div>
+
       <!-- Input row with popup menus -->
       <div class="cin-wrap">
         <!-- Slash menu (above textarea) -->
@@ -1488,62 +1594,63 @@ function selectModel(modelId: string): void {
 
 
 
-/* Attachment strip — the chip itself is the shared AttachmentChip; this is
-   only the row layout above the input. */
+/* Attachment strip — media thumbs are shared MediaThumb, file chips the
+   shared AttachmentChip; this is only the layout inside the card. Capped at
+   two thumbnail rows: beyond that the strip scrolls instead of pushing the
+   input down. The right margin shifts the scrollbar off the corner, so the
+   pinned clear-all button never overlaps it. */
 .att-strip {
+  position: relative;
+  padding: var(--space-3) var(--space-4) 0;
+}
+.att-scroll {
+  max-height: calc(128px + var(--space-2));
+  overflow-y: auto;
+  margin-right: calc(var(--icon-button-sm) + var(--space-1));
+}
+.att-scroll-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-right: var(--space-1);
+}
+/* Overflowing: room at the bottom so the last row can scroll above the
+   count badge. */
+.att-scroll.is-overflowing {
+  padding-bottom: var(--space-6);
+}
+/* Overflow count badge — pinned to the strip's bottom-left, inert. */
+.att-more {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-1);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 var(--space-2);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+.att-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 4px 0 6px;
 }
-
-.att-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(20, 23, 28, 0.62);
+.att-row-media {
+  gap: var(--space-2);
 }
-.att-lightbox-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  max-width: min(960px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-}
-.att-lightbox-media {
-  max-width: 100%;
-  max-height: calc(100vh - 96px);
-  border-radius: 6px;
-  background: var(--bg);
-  box-shadow: var(--shadow-xl);
-  object-fit: contain;
-}
-.att-lightbox-name {
-  max-width: 100%;
-  color: var(--color-text-on-accent);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 2px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.att-lightbox-close {
+/* Clear-all: the shared IconButton, pinned to the strip's top corner. */
+.att-clear {
   position: absolute;
-  top: -14px;
-  right: -14px;
-  width: 28px;
-  height: 28px;
-  border: 0.5px solid rgba(255,255,255,0.45);
-  border-radius: 50%;
-  background: rgba(20,23,28,0.82);
-  color: var(--color-text-on-accent);
-  cursor: pointer;
+  top: var(--space-3);
+  right: var(--space-4);
+  z-index: 1;
 }
 
 /* Hidden file input */

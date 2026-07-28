@@ -11,6 +11,9 @@ vi.mock('vue', async (importOriginal) => {
   return { ...actual, onMounted: vi.fn(), onUnmounted: vi.fn() };
 });
 
+const apiMock = vi.hoisted(() => ({ getFileBlob: vi.fn() }));
+vi.mock('../src/api', () => ({ getKimiWebApi: () => apiMock }));
+
 type UploadImage = (
   file: Blob,
   name?: string,
@@ -37,6 +40,7 @@ describe('useAttachmentUpload', () => {
     revokeObjectURL = vi.fn();
     (globalThis.URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
     (globalThis.URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeObjectURL;
+    apiMock.getFileBlob.mockClear();
   });
 
   afterEach(() => {
@@ -153,6 +157,45 @@ describe('useAttachmentUpload', () => {
     att.clearAfterSubmit();
     expect(att.attachments.value).toHaveLength(0);
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearAttachments empties the list, revokes URLs, and closes the preview', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([imageFile('a.png'), imageFile('b.png')]));
+    att.openAttachmentPreview(att.attachments.value[0]);
+    expect(att.previewAttachment.value).not.toBeNull();
+
+    att.clearAttachments();
+    expect(att.attachments.value).toHaveLength(0);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(att.previewAttachment.value).toBeNull();
+  });
+
+  it('loadAttachments fetches an authed thumbnail for a reloaded image with a protected URL', async () => {
+    apiMock.getFileBlob.mockResolvedValue(new Blob(['x']));
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_img', kind: 'image', url: 'https://example.test/api/v1/files/f_img', name: 'a.png' },
+    ]);
+
+    expect(apiMock.getFileBlob).toHaveBeenCalledWith('f_img');
+    await vi.waitFor(() => {
+      expect(att.attachments.value[0].previewUrl).toBe('blob:mock-url');
+    });
+  });
+
+  it('loadAttachments keeps a reloaded video on its protected URL without fetching the blob', async () => {
+    apiMock.getFileBlob.mockResolvedValue(new Blob(['x']));
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_vid', kind: 'video', url: 'https://example.test/api/v1/files/f_vid', name: 'a.mp4' },
+    ]);
+
+    expect(att.attachments.value[0]).toMatchObject({ fileId: 'f_vid', kind: 'video' });
+    await Promise.resolve();
+    expect(att.attachments.value[0].previewUrl).toBe('https://example.test/api/v1/files/f_vid');
+    expect(apiMock.getFileBlob).not.toHaveBeenCalled();
   });
 
   it('loadAttachments refills an already-uploaded attachment without re-uploading', () => {

@@ -8,6 +8,21 @@
      clipping, and positioned with flip + viewport clamping. Short text stays on one
      line; long text wraps within `maxWidth` and is clamped to `maxLines` lines with
      an ellipsis so the bubble never grows too tall. -->
+<script lang="ts">
+// Nested triggers (a badge tooltip inside a row tooltip): the inner one wins —
+// showing hides any instance whose target contains ours, and leaving re-arms
+// the ancestor while the pointer is still inside it.
+interface TipInstance {
+  getTarget: () => HTMLElement | null;
+  hide: () => void;
+  show: () => void;
+}
+const tipInstances = new Set<TipInstance>();
+// focusin bubbles, so a nested trigger's focusin also fires on the ancestors it
+// just suppressed; the deepest instance claims the event and they stand down.
+let claimedEvent: Event | undefined;
+</script>
+
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
@@ -41,6 +56,10 @@ const bubbleStyle = ref<Record<string, string>>({ maxWidth: `${props.maxWidth}px
 let showTimer: ReturnType<typeof setTimeout> | undefined;
 let target: HTMLElement | null = null;
 let observer: MutationObserver | undefined;
+
+// The target is read lazily — the observer can re-point it at a replaced
+// slotted element.
+const self: TipInstance = { getTarget: () => target, hide, show };
 
 function position(): void {
   const bub = bubble.value;
@@ -83,8 +102,16 @@ function position(): void {
   };
 }
 
-function show(): void {
+function show(event?: Event): void {
   if (!props.text) return;
+  if (event !== undefined) {
+    if (event === claimedEvent) return;
+    claimedEvent = event;
+  }
+  for (const tip of tipInstances) {
+    const t = tip.getTarget();
+    if (tip !== self && target && t && t !== target && t.contains(target)) tip.hide();
+  }
   window.clearTimeout(showTimer);
   showTimer = window.setTimeout(() => {
     open.value = true;
@@ -102,6 +129,22 @@ function hide(): void {
   positioned.value = false;
 }
 
+// An ancestor we suppressed gets no new mouseenter while the pointer stays
+// inside its trigger — re-arm it ourselves.
+function rearmAncestors(): void {
+  for (const tip of tipInstances) {
+    const t = tip.getTarget();
+    if (tip !== self && target && t && t !== target && t.contains(target) && t.matches(':hover, :focus-within')) {
+      tip.show();
+    }
+  }
+}
+
+function onLeave(): void {
+  hide();
+  rearmAncestors();
+}
+
 function onScrollOrResize(): void {
   if (open.value) hide();
 }
@@ -110,20 +153,21 @@ function setTarget(el: HTMLElement | null): void {
   if (el === target) return;
   if (target) {
     target.removeEventListener('mouseenter', show);
-    target.removeEventListener('mouseleave', hide);
+    target.removeEventListener('mouseleave', onLeave);
     target.removeEventListener('focusin', show);
-    target.removeEventListener('focusout', hide);
+    target.removeEventListener('focusout', onLeave);
   }
   target = el;
   if (target) {
     target.addEventListener('mouseenter', show);
-    target.addEventListener('mouseleave', hide);
+    target.addEventListener('mouseleave', onLeave);
     target.addEventListener('focusin', show);
-    target.addEventListener('focusout', hide);
+    target.addEventListener('focusout', onLeave);
   }
 }
 
 onMounted(() => {
+  tipInstances.add(self);
   const root = trigger.value ?? null;
   setTarget((root?.firstElementChild as HTMLElement | null) ?? root);
   // Keep `target` in sync with the live slotted element: if it's removed or
@@ -135,6 +179,7 @@ onMounted(() => {
       if (next !== target) {
         hide();
         setTarget(next ?? root);
+        rearmAncestors();
       }
     });
     observer.observe(root, { childList: true });
@@ -144,6 +189,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // DOM is still mounted here — re-arm ancestors while our target still proves containment.
+  rearmAncestors();
+  tipInstances.delete(self);
   window.clearTimeout(showTimer);
   observer?.disconnect();
   setTarget(null);

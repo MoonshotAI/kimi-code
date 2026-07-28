@@ -91,6 +91,7 @@ import KimiTask from '~icons/kimi/task';
 import KimiTerminal from '~icons/kimi/terminal';
 import KimiThinking from '~icons/kimi/thinking';
 import KimiTodo from '~icons/kimi/todo';
+import KimiTrash from '~icons/kimi/trash';
 import KimiUndo from '~icons/kimi/undo';
 import KimiUser from '~icons/kimi/user';
 import KimiWarning from '~icons/kimi/warning';
@@ -179,6 +180,7 @@ import RawKimiTask from '~icons/kimi/task?raw';
 import RawKimiTerminal from '~icons/kimi/terminal?raw';
 import RawKimiThinking from '~icons/kimi/thinking?raw';
 import RawKimiTodo from '~icons/kimi/todo?raw';
+import RawKimiTrash from '~icons/kimi/trash?raw';
 import RawKimiUndo from '~icons/kimi/undo?raw';
 import RawKimiUser from '~icons/kimi/user?raw';
 import RawKimiWarning from '~icons/kimi/warning?raw';
@@ -271,6 +273,7 @@ export type IconName =
   | 'globe'
   | 'check-list'
   | 'bolt'
+  | 'trash'
   | 'git-fork'
   | 'git-pull-request'
   | 'message'
@@ -371,6 +374,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   globe: entry(KimiGlobe, RawKimiGlobe),
   'check-list': entry(KimiTodo, RawKimiTodo),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
+  trash: entry(KimiTrash, RawKimiTrash),
   'git-fork': entry(RiGitForkLine, RawGitForkLine),
   'git-pull-request': entry(RiGitPullRequestLine, RawGitPullRequestLine),
   message: entry(KimiComment, RawKimiComment),
@@ -491,6 +495,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'calendar-schedule',
       'calendar-todo',
       'calendar-close',
+      'trash',
       'microscope',
     ],
   ],

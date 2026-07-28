@@ -22,7 +22,7 @@
 // wiring. Everything is a no-op in unpackaged (dev) runs.
 //
 // Release notes: once a version is known, the matching
-// `<version>/changelog.{zh,en}.md` (published next to the artifacts — see the
+// `binaries/<version>/changelog.{zh,en}.md` (published next to the artifacts — see the
 // release-notes skill and publish-desktop-cdn.sh) is fetched from the same
 // CDN root and merged into the pushed status. Older versions simply 404;
 // notes are best-effort and never block the update.
@@ -334,7 +334,7 @@ export async function fetchReleaseNotes(version: string): Promise<ReleaseNotes> 
   await Promise.all(
     (['zh', 'en'] as const).map(async (lang) => {
       try {
-        const response = await net.fetch(`${RELEASE_NOTES_BASE}${version}/changelog.${lang}.md`);
+        const response = await net.fetch(`${RELEASE_NOTES_BASE}binaries/${version}/changelog.${lang}.md`);
         if (response.ok) {
           notes[lang] = await response.text();
         }

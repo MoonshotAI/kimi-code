@@ -2,6 +2,13 @@
 // App-facing camelCase model + KimiWebApi interface.
 // No daemon wire details here — Vue components consume only these types.
 
+import type {
+  AgentDescriptor,
+  AgentRef,
+  AgentTranscriptSnapshot,
+  TranscriptOperation,
+} from '@moonshot-ai/transcript';
+
 // ---------------------------------------------------------------------------
 // Pagination
 // ---------------------------------------------------------------------------
@@ -153,7 +160,14 @@ export type AppMessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type AppMessageContent =
   | { type: 'text'; text: string }
-  | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown; outputLines?: string[] }
+  | {
+      type: 'toolUse';
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      outputLines?: string[];
+      agentRefs?: readonly AgentRef[];
+    }
   | { type: 'toolResult'; toolCallId: string; output: unknown; isError?: boolean }
   | { type: 'image'; source: ImageSource }
   | { type: 'video'; source: ImageSource }
@@ -326,6 +340,9 @@ export type AppSubagentPhase = 'queued' | 'working' | 'suspended' | 'completed' 
 
 export interface AppTask {
   id: string;
+  /** Stable child-agent id for Transcript reads/subscriptions. Background-task
+   *  REST rows omit this because their `id` belongs to the task store. */
+  agentId?: string;
   sessionId: string;
   kind: 'subagent' | 'bash' | 'tool';
   description: string;
@@ -600,6 +617,20 @@ export interface AppSessionSnapshot {
   pendingQuestions: AppQuestionRequest[];
 }
 
+export interface SessionTranscriptPage extends AgentTranscriptSnapshot {
+  agentId: string;
+  agents: AgentDescriptor[];
+  pendingInteractions: string[];
+  seq?: number;
+}
+
+export interface SessionTranscriptQuery {
+  agentId: string;
+  beforeTurn?: string;
+  afterTurn?: string;
+  pageSize?: number;
+}
+
 export interface KimiEventHandlers {
   onEvent(event: AppEvent, meta: KimiEventMeta): void;
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
@@ -607,6 +638,18 @@ export interface KimiEventHandlers {
   onConnectionChange(connected: boolean): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
+  onTranscriptReset?(
+    sessionId: string,
+    agentId: string,
+    snapshot: AgentTranscriptSnapshot,
+    seq?: number,
+  ): void;
+  onTranscriptOps?(
+    sessionId: string,
+    agentId: string,
+    ops: readonly TranscriptOperation[],
+    seq?: number,
+  ): boolean;
 }
 
 /** Raw stream coordinates are present only for kap-server assistant/thinking
@@ -624,6 +667,10 @@ export interface KimiEventMeta {
 export interface KimiEventConnection {
   subscribe(sessionId: string, cursor?: AppSessionCursor): void;
   unsubscribe(sessionId: string): void;
+  /** Replace this session's Transcript subscription with one agent. */
+  subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void;
+  /** Remove selected agents, or the whole Transcript stream when omitted. */
+  unsubscribeTranscript(sessionId: string, agentIds?: string[]): void;
   /**
    * Bind the real daemon prompt_id to the next turn for a session, so the
    * client-side projector stops synthesizing a random promptId on turn.started.
@@ -646,9 +693,10 @@ export interface KimiEventConnection {
   /**
    * Mark an agent as a side-channel (e.g. BTW side chat). The client-side
    * projector will then emit its text/thinking deltas as agent-scoped events
-   * instead of dropping them like background subagents.
+   * instead of dropping them like background subagents, and main-only raw
+   * subscriptions will keep that agent in the parent session's filter.
    */
-  markSideChannelAgent(agentId: string): void;
+  markSideChannelAgent(sessionId: string, agentId: string): void;
   /**
    * Report the underlying socket's health. Used to detect a silent-half-open
    * connection after the tab was frozen in the background: the browser still
@@ -919,6 +967,10 @@ export interface KimiWebApi {
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
   getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
+  getSessionTranscript(
+    sessionId: string,
+    input: SessionTranscriptQuery,
+  ): Promise<SessionTranscriptPage>;
   /** Export the session archive, optionally including the bounded Web JSONL
    *  log. `options.desktop` asks the server to bundle the on-disk desktop app
    *  log (desktop hosts only; older servers are retried without the flag). */

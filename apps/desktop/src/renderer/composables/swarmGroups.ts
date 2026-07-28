@@ -2,6 +2,7 @@ import type { AppSubagentPhase, AppTask } from '../api/types';
 
 export interface SwarmMember {
   id: string;
+  agentId?: string;
   name: string;
   subagentType?: string;
   phase: AppSubagentPhase;
@@ -51,6 +52,7 @@ export function buildSwarmGroups(tasks: AppTask[]): SwarmGroup[] {
     const list = buckets.get(key) ?? [];
     list.push({
       id: task.id,
+      agentId: task.agentId,
       name: task.description,
       subagentType: task.subagentType,
       phase: phaseForTask(task),
@@ -106,6 +108,7 @@ export function swarmMembersByToolCall(tasks: AppTask[]): Map<string, SwarmMembe
     const list = buckets.get(task.parentToolCallId) ?? [];
     list.push({
       id: task.id,
+      agentId: task.agentId,
       name: task.description,
       subagentType: task.subagentType,
       phase: phaseForTask(task),

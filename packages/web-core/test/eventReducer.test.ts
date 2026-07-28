@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppMessage, AppQuestionRequest } from '../src/api';
+import type { AppApprovalRequest, AppMessage, AppQuestionRequest, AppTask } from '../src/api';
 import { createInitialState, reduceAppEvent, type EventMeta, type KimiClientState } from '../src/api/daemon/eventReducer';
 
 const SID = 's_1';
@@ -187,5 +187,48 @@ describe('reduceAppEvent optimistic echo reconciliation', () => {
     const echo: AppMessage = { ...syntheticUser('srv_1', { kind: 'user' }), userMessageId: 'u_opt' };
     state = reduceAppEvent(state, { type: 'messageCreated', message: echo }, meta());
     expect(state.messagesBySession[SID]!.map((m) => m.id)).toEqual(['u_opt']);
+  });
+});
+
+describe('reduceAppEvent taskCreated replacement', () => {
+  function subagentTask(id: string, agentId?: string): AppTask {
+    return {
+      id,
+      ...(agentId !== undefined ? { agentId } : {}),
+      sessionId: SID,
+      kind: 'subagent',
+      description: 'Explore repo',
+      status: 'running',
+      createdAt: '2026-07-28T00:00:00.000Z',
+    };
+  }
+
+  it('keeps the roster-seeded agent id when a skeleton re-projection omits it', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1') },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]!.agentId).toBe('agent-1');
+  });
+
+  it('lets an explicit agent id replace a previously missing one', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.agentId).toBe('agent-1');
   });
 });

@@ -115,7 +115,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
    ./publish-desktop-cdn.sh 0.0.3 --artifacts-only   # 只传产物，先验证再切流量
    ```
 
-   产物落在 `code.kimi.com/kimi-code/desktop/`：版本目录 `<version>/`（immutable，含安装包与双语更新说明 `changelog.{zh,en}.md`）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
+   产物双推两条 CDN 链路——国内 `code.kimi.com/kimi-code/desktop/`（TOS `kimi-code`）与海外 `code.kimi.ai/kimi-code/desktop/`（TOS `kimi-code-oversea`），内容一致：版本目录 `binaries/<version>/`（immutable，含安装包与双语更新说明 `changelog.{zh,en}.md`；过渡期 changelog 会同时往旧布局 `<version>/` 传一份副本供未升级客户端拉取，两个版本后停）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
 
 ## 目录
 

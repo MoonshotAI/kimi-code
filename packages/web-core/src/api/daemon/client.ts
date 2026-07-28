@@ -45,6 +45,8 @@ import type {
   QuestionResponse,
   SessionPlan,
   SessionPlanQuery,
+  SessionTranscriptPage,
+  SessionTranscriptQuery,
   UpdateProviderInput,
   UpdateProviderResult,
 } from '../types';
@@ -118,6 +120,7 @@ import type {
   WireUsageRow,
 } from './wire';
 import { DaemonEventSocket } from './ws';
+import { getSessionTranscript } from './transcript';
 
 function safeExportFileName(contentDisposition: string | undefined, fallback: string): string {
   if (contentDisposition === undefined) return fallback;
@@ -336,6 +339,8 @@ export interface DaemonKimiWebApiOptions {
    *  implementation carries i18n / tool-labeling that the api client must not
    *  depend on). */
   projectorFactory: () => AgentProjector;
+  /** Desktop can keep legacy raw events main-only while auxiliary views use Transcript. */
+  mainAgentOnly?: boolean;
 }
 
 export class DaemonKimiWebApi implements KimiWebApi {
@@ -644,7 +649,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
         pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
         pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
         // Older servers omit the roster entirely; treat as an empty roster.
-        subagents: (data.subagents ?? []).map(toAppTask),
+        subagents: (data.subagents ?? []).map((task) => toAppTask(task, task.id)),
       };
       this.tracer.traceKeyEvent?.('session:snapshot:accepted', {
         sessionId,
@@ -663,6 +668,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
       });
       throw error;
     }
+  }
+
+  async getSessionTranscript(
+    sessionId: string,
+    input: SessionTranscriptQuery,
+  ): Promise<SessionTranscriptPage> {
+    return getSessionTranscript(this.http, sessionId, input);
   }
 
   async exportSession(
@@ -896,7 +908,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       `/sessions/${encodeURIComponent(sessionId)}/tasks`,
       query,
     );
-    return data.items.map(toAppTask);
+    return data.items.map((task) => toAppTask(task));
   }
 
   async getTask(
@@ -1640,6 +1652,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       clientId: this.opts.identity.clientId,
       tracer: this.tracer,
       credentialStore: this.opts.credentialStore,
+      mainAgentOnly: this.opts.mainAgentOnly,
       handlers: {
       // -----------------------------------------------------------------------
       // Projected "event.*" frames — existing path (kept working for stub / spec)
@@ -1714,6 +1727,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
       onTerminalExit: (sessionId, terminalId, exitCode) => {
         handlers.onTerminalExit?.(sessionId, terminalId, exitCode);
       },
+
+      onTranscriptReset: (sessionId, agentId, snapshot, seq) => {
+        handlers.onTranscriptReset?.(sessionId, agentId, snapshot, seq);
+      },
+
+      onTranscriptOps: (sessionId, agentId, ops, seq) => {
+        return handlers.onTranscriptOps?.(sessionId, agentId, ops, seq) ?? true;
+      },
     }
     });
 
@@ -1730,6 +1751,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       unsubscribe(sessionId: string): void {
         socket.unsubscribe(sessionId);
+      },
+      subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void {
+        socket.subscribeTranscript(sessionId, agentId, sinceSeq);
+      },
+      unsubscribeTranscript(sessionId: string, agentIds?: string[]): void {
+        socket.unsubscribeTranscript(sessionId, agentIds);
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
         // Rebuild the projector's mid-turn state from the snapshot. The
@@ -1773,7 +1800,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
       terminalClose(sessionId: string, terminalId: string): void {
         socket.terminalClose(sessionId, terminalId);
       },
-      markSideChannelAgent(agentId: string): void {
+      markSideChannelAgent(sessionId: string, agentId: string): void {
+        socket.markSideChannelAgent(sessionId, agentId);
         projector.markSideChannelAgent(agentId);
       },
       health(): { connected: boolean; open: boolean; stale: boolean } {

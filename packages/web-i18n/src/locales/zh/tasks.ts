@@ -27,4 +27,5 @@ export default {
   openDetail: '查看',
   collapse: '折叠',
   expand: '展开',
+  transcriptLoadError: '无法加载这个子 Agent 的对话。',
 } as const;

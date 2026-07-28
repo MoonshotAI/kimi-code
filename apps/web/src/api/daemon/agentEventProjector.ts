@@ -210,6 +210,7 @@ function patchSubagent(
   if (typeof subagentId !== 'string' || subagentId.length === 0) return null;
   const prev = state.subagentMeta.get(subagentId) ?? {
     id: subagentId,
+    agentId: subagentId,
     sessionId,
     kind: 'subagent',
     description: i18n.global.t('tasks.dockSubagent'),
@@ -1118,6 +1119,7 @@ export function createAgentProjector(): AgentProjector {
         const taskId = typeof p?.subagentId === 'string' && p.subagentId.length > 0 ? p.subagentId : ulid('task_');
         const task: AppTask = {
           id: taskId,
+          agentId: taskId,
           sessionId,
           kind: 'subagent',
           description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? i18n.global.t('tasks.dockSubagent'),

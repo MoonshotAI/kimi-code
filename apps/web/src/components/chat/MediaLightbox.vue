@@ -1,25 +1,37 @@
 <!-- apps/web/src/components/chat/MediaLightbox.vue
-     Floating preview overlay for media in SENT messages (user-bubble image/
-     video thumbnails). A canonical modal, not a local floating div: it
-     teleports to <body> (the chat scroll container can neither clip it nor
-     scroll behind it) and registers with the shared dialog stack
-     (openDialogCount) — App's side-panel Esc handler and the conversation's
-     Esc-interrupt both defer to open overlays, so a plain window-level Esc
-     handler owns the key while the preview is up (same pattern as the web-ui
-     Dialog primitive). Visuals follow the composer's pending-attachment
-     lightbox (att-lightbox); bytes come through AuthMedia so file-store media
-     loads with auth. -->
+     Preview entry for media attachments — the sent-message thumbnails and the
+     composer's pending-attachment strip both open here. Two implementations
+     behind one component:
+       - image: PhotoSwipe (lib/mediaPreview.ts) — the preview zooms out of
+         the clicked thumbnail (which also donates its already-loaded bytes
+         and natural dimensions) and shrinks back on close. This component is
+         then just a lifecycle host: it mounts, launches, and renders nothing.
+       - video: the custom modal below — teleports to <body> (no ancestor's
+         overflow or container-type can clip it or capture its fixed geometry)
+         and registers with the shared dialog stack (openDialogCount) — App's
+         side-panel Esc handler and the conversation's Esc-interrupt both defer
+         to open overlays, so a plain window-level Esc handler owns the key
+         while the preview is up (same pattern as the web-ui Dialog primitive).
+     Bytes come through AuthMedia so file-store media loads with auth; local
+     object URLs (composer drafts) pass through. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthMedia from './AuthMedia.vue';
 import { Icon, Tooltip, openDialogCount } from '@moonshot-ai/web-ui';
+import { openImagePreview } from '../../lib/mediaPreview';
 import type { ToolMedia } from '../../types';
 
-const props = defineProps<{ media: ToolMedia }>();
+const props = defineProps<{
+  media: ToolMedia;
+  /** The clicked thumbnail <img> — the image preview's zoom origin. */
+  originImg?: HTMLImageElement | null;
+}>();
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
+
+const isImage = computed(() => props.media.kind === 'image');
 
 /** Caption under the media — only a real file name; unnamed pasted media
     (no path) shows no caption rather than a generic "Image"/"Video" label. */
@@ -34,6 +46,7 @@ const dialogLabel = computed(
 const overlayRef = ref<HTMLElement | null>(null);
 const closeRef = ref<HTMLButtonElement | null>(null);
 let previouslyFocused: HTMLElement | null = null;
+let cancelImagePreview: (() => void) | null = null;
 
 const FOCUSABLE = 'button:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])';
 
@@ -65,6 +78,15 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  if (isImage.value) {
+    cancelImagePreview = openImagePreview({
+      media: props.media,
+      thumbImg: props.originImg ?? null,
+      labels: { close: t('model.close'), zoom: t('composer.previewZoom') },
+      onClose: () => emit('close'),
+    });
+    return;
+  }
   openDialogCount.value += 1;
   previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   window.addEventListener('keydown', onKeydown);
@@ -72,6 +94,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (cancelImagePreview) {
+    cancelImagePreview();
+    cancelImagePreview = null;
+    return;
+  }
   openDialogCount.value = Math.max(0, openDialogCount.value - 1);
   window.removeEventListener('keydown', onKeydown);
   previouslyFocused?.focus();
@@ -79,7 +106,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <!-- Image previews live entirely inside PhotoSwipe's own root. -->
+  <Teleport v-if="!isImage" to="body">
     <div
       ref="overlayRef"
       class="media-lightbox"

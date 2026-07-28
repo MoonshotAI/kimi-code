@@ -1,10 +1,10 @@
 <!-- apps/web/src/components/chat/tool-calls/SwarmTool.vue -->
 <!-- A single AgentSwarm tool call, rendered as one inline "operation card".
      Expanded by default while the swarm runs, collapsed once settled; when
-     opened the body shows a phase overview and a phase overview and a
-     per-member accordion — each subagent is a collapsible row (state dot +
-     name + one-line activity + phase) that expands on its own to reveal the
-     full output. While the swarm runs the rows come from the AppTask store
+     opened the body shows a phase overview and one row per member. Rows with a
+     stable agent id open a resumable transcript; legacy result-only rows keep
+     their saved output inline. While the swarm runs the rows come from the
+     AppTask store
      (`resolveSwarmMembers`); after the tool result lands — and after a refresh
      drops the live tasks — the same rows come from the parsed
      `<agent_swarm_result>` payload. See §04 tool-calls. -->
@@ -23,10 +23,10 @@ const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 
-defineEmits<{
+const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
-  openAgent: [toolCallId: string];
+  openAgent: [agentId: string];
 }>();
 
 interface SwarmInput {
@@ -128,16 +128,34 @@ const fallbackOutput = computed(() => {
   return (props.tool.output ?? []).join('\n').trim();
 });
 
-// Per-row accordion: each member expands on its own, leaving the rest folded.
 const openRows = ref<Set<string>>(new Set());
-function toggleRow(id: string): void {
+
+function isRowOpen(id: string): boolean {
+  return openRows.value.has(id);
+}
+
+function toggleRowBody(id: string): void {
   const next = new Set(openRows.value);
   if (next.has(id)) next.delete(id);
   else next.add(id);
   openRows.value = next;
 }
-function isRowOpen(id: string): boolean {
-  return openRows.value.has(id);
+
+function openMember(row: SwarmCardRow): void {
+  if (row.agentId) {
+    emit('openAgent', row.agentId);
+    return;
+  }
+  if (!row.body) return;
+  toggleRowBody(row.id);
+}
+
+function hasSavedBody(row: SwarmCardRow): boolean {
+  return (
+    row.agentId !== undefined &&
+    row.body.length > 0 &&
+    (row.phase === 'completed' || row.phase === 'failed')
+  );
 }
 
 function phaseLabel(phase: AppSubagentPhase): string {
@@ -191,13 +209,15 @@ function phaseLabel(phase: AppSubagentPhase): string {
           v-for="row in rows"
           :key="row.id"
           class="member"
-          :class="[`phase-${row.phase}`, { open: isRowOpen(row.id) }]"
+          :class="[`phase-${row.phase}`, { open: !row.agentId && isRowOpen(row.id) }]"
         >
           <button
             class="member-head"
             type="button"
-            :aria-expanded="isRowOpen(row.id)"
-            @click="toggleRow(row.id)"
+            :disabled="!row.agentId && !row.body"
+            :aria-label="row.agentId ? t('tasks.openDetail') : undefined"
+            :aria-expanded="!row.agentId && row.body ? isRowOpen(row.id) : undefined"
+            @click="openMember(row)"
           >
             <StatusDot class="row-dot" :status="row.phase" />
             <Tooltip :text="row.name">
@@ -207,9 +227,32 @@ function phaseLabel(phase: AppSubagentPhase): string {
               <span class="mact">{{ row.activity }}</span>
             </Tooltip>
             <span class="mphase">{{ phaseLabel(row.phase) }}</span>
-            <Icon class="mcar" name="chevron-right" size="sm" />
+            <Icon v-if="row.agentId" class="mcar" name="arrow-right" size="sm" />
+            <Icon v-else-if="row.body" class="mcar" name="chevron-right" size="sm" />
           </button>
-          <div v-show="isRowOpen(row.id)" class="member-body">{{ row.body }}</div>
+          <button
+            v-if="hasSavedBody(row)"
+            class="member-saved"
+            type="button"
+            :aria-expanded="isRowOpen(row.id)"
+            @click="toggleRowBody(row.id)"
+          >
+            <Icon
+              class="member-saved-car"
+              :class="{ open: isRowOpen(row.id) }"
+              name="chevron-right"
+              size="sm"
+              aria-hidden="true"
+            />
+            <span>{{ t('tools.output.saved') }}</span>
+          </button>
+          <div
+            v-if="row.body && (!row.agentId || hasSavedBody(row))"
+            v-show="isRowOpen(row.id)"
+            class="member-body"
+          >
+            {{ row.body }}
+          </div>
         </div>
       </template>
 
@@ -380,7 +423,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
   border-radius: var(--radius-full);
 }
 
-/* Per-member accordion. */
+/* Per-member detail links and legacy result fallback. */
 .member {
   border-bottom: 0.5px solid var(--color-line);
 }
@@ -403,12 +446,15 @@ function phaseLabel(phase: AppSubagentPhase): string {
   cursor: pointer;
   user-select: none;
 }
-.member-head:hover {
+.member-head:not(:disabled):hover {
   background: var(--color-hover);
 }
 .member-head:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--color-accent-soft);
+}
+.member-head:disabled {
+  cursor: default;
 }
 .row-dot {
   flex: none;
@@ -450,6 +496,34 @@ function phaseLabel(phase: AppSubagentPhase): string {
   transition: transform var(--duration-base) var(--ease-out);
 }
 .member.open .mcar {
+  transform: rotate(90deg);
+}
+.member-saved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-top: 0.5px solid var(--color-line);
+  background: transparent;
+  color: var(--color-text-faint);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.member-saved:hover {
+  color: var(--color-text-muted);
+}
+.member-saved:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.member-saved-car {
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.member-saved-car.open {
   transform: rotate(90deg);
 }
 .member-body {

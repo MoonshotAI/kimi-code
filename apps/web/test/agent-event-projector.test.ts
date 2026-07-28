@@ -524,6 +524,7 @@ describe('background subagent task registration', () => {
         sessionId: 's1',
         task: expect.objectContaining({
           id: 'agent-1',
+          agentId: 'agent-1',
           kind: 'subagent',
           description: 'Explore repo',
           runInBackground: true,
@@ -556,6 +557,7 @@ describe('background subagent task registration', () => {
         sessionId: 's1',
         task: expect.objectContaining({
           id: 'agent-1',
+          agentId: 'agent-1',
           kind: 'subagent',
           description: 'Explore repo',
           runInBackground: true,
@@ -576,11 +578,11 @@ describe('background subagent task registration', () => {
     const created = progress.filter((e) => e.type === 'taskCreated');
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
-      task: { id: 'agent-1', backgroundTaskId: 'task-9' },
+      task: { id: 'agent-1', agentId: 'agent-1', backgroundTaskId: 'task-9' },
     });
   });
 
-  it('falls back to the task id when the registration carries no agent id', () => {
+  it('does not invent an agent id when the registration carries only a task id', () => {
     const projector = createAgentProjector();
     const events = projector.project(
       'task.started',
@@ -596,8 +598,8 @@ describe('background subagent task registration', () => {
       's1',
     );
 
-    expect(events).toEqual([
-      {
+    expect(events).toContainEqual(
+      expect.objectContaining({
         type: 'taskCreated',
         sessionId: 's1',
         task: expect.objectContaining({
@@ -606,8 +608,9 @@ describe('background subagent task registration', () => {
           description: 'Explore repo',
           runInBackground: true,
         }),
-      },
-    ]);
+      }),
+    );
+    expect(events[0]?.task).not.toHaveProperty('agentId');
   });
 
   it('keeps projecting process tasks as bash rows', () => {

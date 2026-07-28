@@ -365,9 +365,10 @@ export function toWireQuestionResponse(input: QuestionResponse): WireQuestionRes
 // Task mapper
 // ---------------------------------------------------------------------------
 
-export function toAppTask(wire: WireTask): AppTask {
+export function toAppTask(wire: WireTask, knownAgentId?: string): AppTask {
   return {
     id: wire.id,
+    agentId: wire.agent_id ?? knownAgentId,
     sessionId: wire.session_id,
     kind: wire.kind,
     description: wire.description,

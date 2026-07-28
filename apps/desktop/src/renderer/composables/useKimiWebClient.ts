@@ -59,6 +59,7 @@ import { useNotification, shouldNotifyCompletion } from './client/useNotificatio
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
+import { createAuxiliaryTranscriptPool } from './client/useAuxiliaryTranscripts';
 import {
   forgetLocalTurnState,
   SESSIONS_INITIAL_PAGE_SIZE,
@@ -673,6 +674,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  auxiliaryTranscripts.forgetSession(sessionId);
   dropWsSubscription(sessionId);
   // Drop this session's queued render AND control events. Flushing them here is
   // unsafe: a delayed idle event can drain a queued prompt into the session
@@ -891,6 +893,11 @@ function setOnboarded(done: boolean): void {
 
 // Singleton WS connection
 let eventConn: KimiEventConnection | null = null;
+const auxiliaryTranscripts = createAuxiliaryTranscriptPool({
+  api: getKimiWebApi(),
+  connectEventsIfNeeded,
+  getEventConnection: () => eventConn,
+});
 
 // Monotonic counter for optimistic user-message ids. Date.now() alone collides
 // when two prompts are submitted in the same millisecond (e.g. a queued send
@@ -1282,6 +1289,14 @@ function connectEventsIfNeeded(): void {
         // serverVersion / backend never go stale.
         void workspaceState.refreshServerMeta();
       }
+    },
+
+    onTranscriptReset(sessionId, agentId, snapshot, seq) {
+      auxiliaryTranscripts.receiveReset(sessionId, agentId, snapshot, seq);
+    },
+
+    onTranscriptOps(sessionId, agentId, ops, seq) {
+      return auxiliaryTranscripts.applyOps(sessionId, agentId, ops, seq);
     },
   });
 }
@@ -2068,6 +2083,7 @@ function toUiTask(task: AppTask): TaskItem {
 
   return {
     id: task.id,
+    agentId: task.agentId,
     name: task.description,
     kind: task.kind,
     state,
@@ -3097,6 +3113,8 @@ export function useKimiWebClient() {
     /** Live `AppTask[]` for the active session — the subagent detail panel
      *  sources a subagent's streaming `outputLines` from here. */
     activeAppTasks,
+    auxiliaryTranscripts,
+    getFileUrl: getFileUrlById,
     todos,
     goal,
     swarms,

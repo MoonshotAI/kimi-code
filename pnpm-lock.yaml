@@ -131,6 +131,9 @@ importers:
       mermaid:
         specifier: ^11.15.0
         version: 11.16.0
+      photoswipe:
+        specifier: ^5.4.4
+        version: 5.4.4
       shiki:
         specifier: ^4.3.0
         version: 4.3.1
@@ -203,6 +206,9 @@ importers:
       mermaid:
         specifier: ^11.15.0
         version: 11.16.0
+      photoswipe:
+        specifier: ^5.4.4
+        version: 5.4.4
       shiki:
         specifier: ^4.3.0
         version: 4.3.1
@@ -776,6 +782,10 @@ importers:
         version: 4.1.4(@types/node@24.13.3)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/web-core:
+    dependencies:
+      '@moonshot-ai/transcript':
+        specifier: workspace:^
+        version: link:../../kimi-code/packages/transcript
     devDependencies:
       typescript:
         specifier: 6.0.2
@@ -4873,6 +4883,10 @@ packages:
 
   pend@1.2.0:
     resolution: {integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==}
+
+  photoswipe@5.4.4:
+    resolution: {integrity: sha512-WNFHoKrkZNnvFFhbHL93WDkW3ifwVOXSW3w1UuZZelSmgXpIGiZSNlZJq37rR8YejqME2rHs9EhH9ZvlvFH2NA==}
+    engines: {node: '>= 0.12.0'}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -10380,6 +10394,8 @@ snapshots:
   pe-library@0.4.1: {}
 
   pend@1.2.0: {}
+
+  photoswipe@5.4.4: {}
 
   picocolors@1.1.1: {}
 
