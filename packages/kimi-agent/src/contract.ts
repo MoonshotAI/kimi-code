@@ -224,3 +224,29 @@ export type SessionLifecycleEvent =
       /** Debug spelling of `GoalStatus`, or `"none"` after a clear. */
       readonly status: string;
     };
+
+/**
+ * Streaming events on the same channel, emitted only in native-LLM mode
+ * (the engine talks to the provider directly and forwards deltas; in
+ * host-proxy mode the host executes `host/llm_chat` itself and already
+ * owns the token stream). `session_id` is stamped on by the session-owned
+ * agent so multi-session clients can route the stream; it is absent on the
+ * host-driven `agent/run_turn` path.
+ */
+export type SessionStreamEvent =
+  | {
+      readonly type: 'llm.step.begin';
+      readonly model: string;
+      readonly session_id?: string | null;
+    }
+  | {
+      readonly type: 'llm.delta';
+      readonly part: { readonly type: 'text' | 'think'; readonly text?: string; readonly think?: string };
+      readonly session_id?: string | null;
+    }
+  | {
+      readonly type: 'llm.step.end';
+      readonly content: string;
+      readonly session_id?: string | null;
+      readonly usage?: { readonly input_tokens?: number; readonly output_tokens?: number };
+    };

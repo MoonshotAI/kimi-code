@@ -305,7 +305,21 @@ impl Agent {
         // `AgentLlm` stub errored on every chat, so the built-in loop could
         // never reach a model without an override.)
         let llm: Box<dyn loop_types::LLM> = if let Some(ref cfg) = self.native_llm {
-            Box::new(crate::llm::http::NativeHttpLlm::new(cfg.clone(), self.config.system_prompt.clone()))
+            // Streaming sink: in native-LLM mode Rust talks to the provider
+            // directly, so `llm.step.begin` / `llm.delta` / `llm.step.end`
+            // must be forwarded over `host/event` or the host renders
+            // nothing. The session id is stamped on so multi-session thin
+            // clients can route the stream. (Host-proxy mode needs no sink:
+            // the host executes `host/llm_chat` itself and already owns the
+            // token stream.)
+            let sink_callbacks = self.callbacks.clone();
+            let sink_session = self.session_id.clone();
+            Box::new(
+                crate::llm::http::NativeHttpLlm::new(cfg.clone(), self.config.system_prompt.clone())
+                    .with_sink(std::sync::Arc::new(move |event: serde_json::Value| {
+                        sink_callbacks.emit_event(stamp_session_id(event, &sink_session));
+                    })),
+            )
         } else {
             Box::new(
                 crate::llm::proxy::HostLlmProxy::new(
@@ -660,6 +674,21 @@ impl Agent {
     }
 }
 
+/// Stamp the owning session id onto a streaming event so multi-session thin
+/// clients can route the stream. Non-object events pass through unchanged.
+fn stamp_session_id(
+    mut event: serde_json::Value,
+    session_id: &Option<String>,
+) -> serde_json::Value {
+    if let Some(object) = event.as_object_mut() {
+        object.insert(
+            "session_id".to_string(),
+            serde_json::to_value(session_id).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    event
+}
+
 /// Project context messages onto the loop wire. Text parts concatenate into
 /// `content`; image parts become blocks (text blocks ride along so mixed
 /// messages keep their reading order); think parts are model-internal and
@@ -969,6 +998,21 @@ mod tests {
         assert_eq!(turns_run(&driver), 1, "no continuation past the budget");
         let snapshot = agent.goal.as_ref().unwrap().get_goal().goal.expect("record kept");
         assert!(matches!(snapshot.status, GoalStatus::BudgetLimited));
+    }
+
+    #[test]
+    fn streaming_events_are_stamped_with_the_session_id() {
+        let stamped = stamp_session_id(
+            serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hi" } }),
+            &Some("sess-9".to_string()),
+        );
+        assert_eq!(stamped["session_id"], "sess-9");
+        assert_eq!(stamped["part"]["text"], "hi");
+        // No session id → explicit null, and non-objects pass through.
+        let anonymous = stamp_session_id(serde_json::json!({ "type": "llm.step.begin" }), &None);
+        assert!(anonymous["session_id"].is_null());
+        let scalar = stamp_session_id(serde_json::json!("raw"), &Some("s".into()));
+        assert_eq!(scalar, serde_json::json!("raw"));
     }
 
     #[tokio::test]
