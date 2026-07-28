@@ -5,18 +5,20 @@
  * `/usages` endpoint that returns a payload of the shape:
  *
  *   {
- *     "usage":  { "name": "Weekly limit", "used": 40, "limit": 1000, "resetAt": "..." },
+ *     "usage":  { "used": "40", "limit": "1000", "resetTime": "2026-08-03T05:20:51Z" },
  *     "limits": [
- *       { "detail": {"used":1, "limit":100, "name":"5h limit"}, "window": {"duration":5, "timeUnit":"HOUR"} },
+ *       {
+ *         "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+ *         "detail": { "used": "1", "limit": "100", "resetTime": "..." }
+ *       },
  *       ...
- *     ]
+ *     ],
+ *     "boosterWallet": { ... }
  *   }
  *
- * The parser is intentionally loose because field spelling / casing
- * drifted across versions (`used` vs `remaining`, `resetAt` vs
- * `reset_at`, `duration+timeUnit` window shapes, etc.). It normalizes the
- * payload into a structured, camelCase domain model; presentation
- * (labels, reset hints) is left to the consumer.
+ * Numbers arrive as decimal strings; `timeUnit` is a proto-style enum. The
+ * parser normalizes the payload into a structured, camelCase domain model;
+ * presentation (labels, reset hints) is left to the consumer.
  */
 
 import { readApiErrorMessage } from './api-error';
@@ -68,16 +70,13 @@ function parseNormalizedUrl(value: string): string | undefined {
 }
 
 export interface UsageWindow {
-  /** Raw window length as reported by the backend, e.g. 5. */
   readonly duration: number;
-  /** Normalized from the backend `timeUnit` (casing / plural drift tolerated). */
   readonly unit: 'minute' | 'hour' | 'day' | 'week';
 }
 
 export interface UsageRow {
-  /** Raw backend name/title/scope, passed through for custom labels. */
+  /** Backend `name`, passed through for custom labels. */
   readonly name?: string;
-  /** Rate-limit window, when it can be derived from the payload. */
   readonly window?: UsageWindow;
   readonly used: number;
   readonly limit: number;
@@ -160,16 +159,9 @@ export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
   }
   const rec = payload as Record<string, unknown>;
   let summary = toUsageRow(rec['usage']);
-  // The summary row is the plan's weekly limit; the backend does not always
-  // spell that out, so synthesize the window when none was given and the row
-  // is unnamed or already says "weekly" (clients display window before name,
-  // so a "Weekly limit" name keeps its label; any other custom name means the
-  // row is not the weekly limit and is left untouched).
-  if (
-    summary !== null &&
-    summary.window === undefined &&
-    (summary.name === undefined || /weekly/i.test(summary.name))
-  ) {
+  // The summary is the plan's weekly limit; the backend omits the window,
+  // so synthesize it here instead of making every client special-case it.
+  if (summary !== null && summary.window === undefined) {
     summary = { ...summary, window: { duration: 1, unit: 'week' } };
   }
   return {
@@ -185,11 +177,9 @@ function parseLimitRows(rec: Record<string, unknown>): UsageRow[] {
   if (!Array.isArray(rawLimits)) return limits;
   for (const rawItem of rawLimits) {
     if (!isRecord(rawItem)) continue;
-    const detailRaw = rawItem['detail'];
-    const detail = isRecord(detailRaw) ? detailRaw : rawItem;
-    const row = toUsageRow(detail, {
+    const row = toUsageRow(rawItem['detail'], {
       name: nameFrom(rawItem),
-      window: windowFrom(rawItem),
+      window: windowFrom(rawItem['window']),
     });
     if (row !== null) limits.push(row);
   }
@@ -201,78 +191,55 @@ function toUsageRow(
   extra: { readonly name?: string; readonly window?: UsageWindow } = {},
 ): UsageRow | null {
   if (!isRecord(raw)) return null;
+  const used = toInt(raw['used']);
   const limit = toInt(raw['limit']);
-  let used = toInt(raw['used']);
-  if (used === null) {
-    const remaining = toInt(raw['remaining']);
-    if (remaining !== null && limit !== null) {
-      used = limit - remaining;
-    }
-  }
   if (used === null && limit === null) return null;
   return {
     name: extra.name ?? nameFrom(raw),
-    window: extra.window ?? windowFrom(raw),
+    window: extra.window,
     used: used ?? 0,
     limit: limit ?? 0,
     resetAt: resetAtFrom(raw),
   };
 }
 
-function nameFrom(...sources: readonly Record<string, unknown>[]): string | undefined {
-  for (const src of sources) {
-    for (const key of ['name', 'title', 'scope']) {
-      const v = src[key];
-      if (typeof v === 'string' && v.length > 0) return v;
-    }
-  }
-  return undefined;
+function nameFrom(raw: Record<string, unknown>): string | undefined {
+  const v = raw['name'];
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
 function normalizeTimeUnit(raw: unknown): UsageWindow['unit'] | null {
-  if (typeof raw !== 'string') return null;
-  const unit = raw.toUpperCase();
-  if (unit.includes('MINUTE')) return 'minute';
-  if (unit.includes('HOUR')) return 'hour';
-  if (unit.includes('DAY')) return 'day';
-  if (unit.includes('WEEK')) return 'week';
-  return null;
+  switch (raw) {
+    case 'TIME_UNIT_MINUTE':
+      return 'minute';
+    case 'TIME_UNIT_HOUR':
+      return 'hour';
+    case 'TIME_UNIT_DAY':
+      return 'day';
+    case 'TIME_UNIT_WEEK':
+      return 'week';
+    default:
+      return null;
+  }
 }
 
-function windowFrom(...sources: readonly Record<string, unknown>[]): UsageWindow | undefined {
-  for (const src of sources) {
-    const nested = src['window'];
-    const candidates = isRecord(nested) ? [nested, src] : [src];
-    for (const candidate of candidates) {
-      const duration = toInt(candidate['duration']);
-      const unit = normalizeTimeUnit(candidate['timeUnit']);
-      if (duration === null || unit === null) continue;
-      // The platform expresses sub-day windows in minutes (e.g. the 5-hour
-      // limit arrives as 300 MINUTE); fold whole hours so clients render
-      // "5h limit" rather than "300m limit".
-      if (unit === 'minute' && duration >= 60 && duration % 60 === 0) {
-        return { duration: duration / 60, unit: 'hour' };
-      }
-      return { duration, unit };
-    }
+function windowFrom(raw: unknown): UsageWindow | undefined {
+  if (!isRecord(raw)) return undefined;
+  const duration = toInt(raw['duration']);
+  const unit = normalizeTimeUnit(raw['timeUnit']);
+  if (duration === null || unit === null) return undefined;
+  // The platform expresses sub-day windows in minutes (the 5-hour limit
+  // arrives as 300 TIME_UNIT_MINUTE); fold whole hours so clients render
+  // "5h limit" rather than "300m limit".
+  if (unit === 'minute' && duration >= 60 && duration % 60 === 0) {
+    return { duration: duration / 60, unit: 'hour' };
   }
-  return undefined;
+  return { duration, unit };
 }
 
 function resetAtFrom(raw: Record<string, unknown>): string | undefined {
-  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
-    const v = raw[key];
-    if (typeof v === 'string' && v.length > 0) {
-      return v;
-    }
-  }
-  for (const key of ['reset_in', 'resetIn', 'ttl']) {
-    const seconds = toInt(raw[key]);
-    if (seconds !== null && seconds > 0) {
-      return new Date(Date.now() + seconds * 1000).toISOString();
-    }
-  }
-  return undefined;
+  const v = raw['resetTime'];
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
 export function formatDuration(totalSeconds: number): string {
