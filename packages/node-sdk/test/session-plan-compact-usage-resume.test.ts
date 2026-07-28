@@ -157,7 +157,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it.todo('marks resumed plan mode active when the restored plan has no plan data', async () => {
+  it('marks resumed plan mode active when the restored plan has no plan data', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-work-');
     await writeTestConfig(homeDir);
@@ -189,7 +189,10 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       await expect(resumed.getStatus()).resolves.toMatchObject({
         planMode: true,
       });
-      await expect(resumed.getPlan()).resolves.toBeNull();
+      await expect(resumed.getPlan()).resolves.toMatchObject({
+        content: '',
+        path: expect.stringContaining('/plans/'),
+      });
     } finally {
       await resumedHarness.close();
     }
