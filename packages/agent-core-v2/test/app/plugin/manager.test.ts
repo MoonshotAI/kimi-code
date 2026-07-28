@@ -84,6 +84,18 @@ describe('PluginManager', () => {
     ]);
   });
 
+  it('fails the load with the offending index when installed.json holds a bad record', async () => {
+    // `load()` dereferences `entry.id` and `entry.root` for every record, so a
+    // malformed one has to be rejected at the store instead of crashing here.
+    await writeFile(
+      join(home, 'plugins', 'installed.json'),
+      JSON.stringify({ version: 1, plugins: [null] }),
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await expect(manager.load()).rejects.toThrow(/plugins\[0\]/);
+  });
+
   it('installs a local-path plugin into the managed root', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'plugin-install-source-'));
     try {

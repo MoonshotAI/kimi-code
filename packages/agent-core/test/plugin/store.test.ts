@@ -117,4 +117,69 @@ describe('plugin store', () => {
     expect(record?.source).toBe('zip-url');
     expect((record as { github?: unknown } | undefined)?.github).toBeUndefined();
   });
+
+  async function writeRaw(home: string, file: unknown): Promise<void> {
+    await writeInstalled(home, { version: 1, plugins: [] });
+    await writeFile(
+      path.join(home, 'plugins', 'installed.json'),
+      JSON.stringify(file),
+      'utf8',
+    );
+  }
+
+  const VALID_RECORD = {
+    id: 'demo',
+    root: '/tmp/demo',
+    source: 'local-path',
+    enabled: true,
+    installedAt: '2026-05-25T09:00:00Z',
+  };
+
+  it.each([
+    ['a null entry', null],
+    ['a non-object entry', 'demo'],
+    ['a record with no id', { ...VALID_RECORD, id: undefined }],
+    ['a record with a non-string root', { ...VALID_RECORD, root: 42 }],
+    ['a record with an unknown source', { ...VALID_RECORD, source: 'ftp' }],
+    ['a record with a non-boolean enabled', { ...VALID_RECORD, enabled: 'yes' }],
+    ['a record with a non-string installedAt', { ...VALID_RECORD, installedAt: 5 }],
+    [
+      'a github record with no ref',
+      { ...VALID_RECORD, source: 'github', github: { owner: 'a', repo: 'b' } },
+    ],
+    [
+      'a github record with an unknown ref kind',
+      {
+        ...VALID_RECORD,
+        source: 'github',
+        github: { owner: 'a', repo: 'b', ref: { kind: 'commit', value: 'abc' } },
+      },
+    ],
+  ])('rejects %s instead of returning it as an InstalledRecord', async (_label, entry) => {
+    const home = await makeKimiHome();
+    await writeRaw(home, { version: 1, plugins: [entry] });
+    await expect(readInstalled(home)).rejects.toThrow(/plugins\[0\]/);
+  });
+
+  it('names the offending index so the user can find the bad record', async () => {
+    const home = await makeKimiHome();
+    await writeRaw(home, {
+      version: 1,
+      plugins: [VALID_RECORD, { ...VALID_RECORD, id: 'other', enabled: 'yes' }],
+    });
+    await expect(readInstalled(home)).rejects.toThrow(/plugins\[1\]/);
+  });
+
+  it('keeps unknown keys so a record from a newer version round-trips', async () => {
+    const home = await makeKimiHome();
+    await writeRaw(home, {
+      version: 1,
+      plugins: [{ ...VALID_RECORD, futureField: { nested: true } }],
+    });
+    const result = await readInstalled(home);
+    expect(result.plugins).toHaveLength(1);
+    expect((result.plugins[0] as { futureField?: unknown }).futureField).toEqual({
+      nested: true,
+    });
+  });
 });
