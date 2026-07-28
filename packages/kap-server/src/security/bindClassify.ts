@@ -88,10 +88,11 @@ function isLinkLocalV6(host: string): boolean {
  * resolve to a public address.
  */
 export function classify(host: string, opts?: ClassifyOptions): BindClass {
-  if (host === '' || host === '0.0.0.0' || host === '::') {
+  const normalizedHost = host.toLowerCase();
+  if (host === '' || normalizedHost === '0.0.0.0' || normalizedHost === '::') {
     return opts?.bindClass ?? 'public';
   }
-  if (host === 'localhost') {
+  if (normalizedHost === 'localhost') {
     return 'loopback';
   }
   const family = net.isIP(host);
