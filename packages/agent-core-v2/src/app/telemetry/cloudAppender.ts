@@ -105,10 +105,11 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
+    const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: this.deviceId,
-      session_id: this.sessionId,
+      session_id: typeof eventSessionId === 'string' ? eventSessionId : this.sessionId,
       event,
       timestamp: Date.now() / 1000,
       properties: cleanTelemetryProperties(sanitizeProperties(properties)),

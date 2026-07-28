@@ -126,6 +126,25 @@ describe('CloudAppender', () => {
     expect(event?.['context_model']).toBe('switched-model');
   });
 
+  it('uses the event sessionId for top-level session_id when it differs from appender context', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        sessionId: 'default-session',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('evt', { sessionId: 'event-session' });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['session_id']).toBe('event-session');
+  });
+
   it('sends Authorization header when a token is provided', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
