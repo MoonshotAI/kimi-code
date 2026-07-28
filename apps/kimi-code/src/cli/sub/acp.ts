@@ -50,9 +50,14 @@ export function registerAcpCommand(parent: Command): void {
       }
       const { ACP_BUILTIN_SLASH_COMMANDS, runAcpServer } = await import('@moonshot-ai/acp-adapter');
       const identity = createKimiCodeHostIdentity();
+      // ACP sessions run real turns, so they get the same engine selection as
+      // the TUI and print paths: Rust by default, JS on opt-out or load failure.
+      const { maybeLoadRustEngine } = await import('#/cli/rust-engine');
+      const runTurnOverride = await maybeLoadRustEngine();
       const harness = createKimiHarness({
         identity,
         uiMode: 'acp',
+        runTurnOverride,
       });
       // Forward `KIMI_CODE_HOME` (if set) into `authMethods[0].env` so the
       // `kimi login` subprocess clients spawn for terminal-auth writes its
@@ -118,8 +123,8 @@ export function registerAcpCommand(parent: Command): void {
             : {}),
         });
         process.exit(0);
-      } catch (err) {
-        process.stderr.write(t('tui.statusMessages.acpFatalError', { error: String(err) }) + '\n');
+      } catch (error) {
+        process.stderr.write(t('tui.statusMessages.acpFatalError', { error: String(error) }) + '\n');
         process.exit(1);
       }
     });

@@ -19,7 +19,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { getLocale, setLocale, t } from '#/i18n';
+import { setLocale, t } from '#/i18n';
 import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
@@ -31,6 +31,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
+import { maybeLoadRustEngine } from './rust-engine';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -62,11 +63,16 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
+  // Wire the Rust agent engine for interactive sessions, mirroring the print
+  // path (run-prompt.ts). Resolves to undefined — the JS loop — when the
+  // config opts out (`agent.engine = "js"`) or the engine fails to load.
+  const runTurnOverride = await maybeLoadRustEngine(telemetryBootstrap.homeDir);
   const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
     telemetry: telemetryClient,
+    runTurnOverride,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
         track('oauth_refresh', { outcome: 'success' });
@@ -82,6 +88,7 @@ export async function runShell(
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,
+    engine: runTurnOverride !== undefined ? 'rust' : 'js',
     nodeVersion: process.version,
     platform: `${process.platform}/${process.arch}`,
     workDir,

@@ -202,8 +202,10 @@ export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 export const AgentConfigSchema = z.object({
   /**
    * Which agent engine to use.
-   * - `"js"` (default): the existing TypeScript agent engine
-   * - `"rust"`: the Rust agent engine (kimi-agent binary via stdio JSON-RPC)
+   * - `"rust"` (default): the Rust agent engine (napi addon, or the
+   *   kimi-agent binary via stdio JSON-RPC), falling back to the JS engine
+   *   when unavailable
+   * - `"js"`: the TypeScript agent engine
    */
   engine: z.enum(['js', 'rust']).default('rust'),
   /**

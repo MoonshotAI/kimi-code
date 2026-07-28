@@ -1,9 +1,10 @@
 /**
  * Rust agent engine integration.
  *
- * Reads the config and wires the Rust agent engine (kimi-agent) when
- * `agent.engine = "rust"` is configured. Falls back to the JS engine
- * if the Rust binary is not found or fails to start.
+ * Reads the config and wires the Rust agent engine (kimi-agent) unless
+ * `agent.engine = "js"` opts out — the engine defaults to Rust even when
+ * the `[agent]` section is absent. Falls back to the JS engine (with a
+ * diagnostic log) if the Rust addon/binary is not found or fails to start.
  *
  * MultiLLM support: when `agent.multiLlm` lists provider names, those
  * providers are extracted from the config and passed to the Rust engine
@@ -11,6 +12,7 @@
  */
 import {
   loadRuntimeConfigSafe,
+  log,
   resolveConfigPath,
   resolveKimiHome,
   type RunTurnOverride,
@@ -113,7 +115,7 @@ function extractNativeLlm(config: RustEngineConfig): NativeLlmDef | undefined {
   const alias =
     config.defaultModel !== undefined ? config.models?.[config.defaultModel] : undefined;
   const derived = alias?.provider;
-  if (derived === undefined) return undefined;
+  if (alias === undefined || derived === undefined) return undefined;
   // A provider carrying an `env` block (proxies, runtime environment) relies
   // on host-side request semantics the native transport does not replicate;
   // auto-derivation skips it. Naming it explicitly still opts in.
@@ -200,7 +202,11 @@ export async function maybeLoadRustEngine(
   }
 
   const agentConfig = loaded.config.agent;
-  if (agentConfig?.engine !== 'rust') {
+  // The schema defaults `engine` to "rust", but the whole `[agent]` section is
+  // optional — a config without it must resolve to the same default, so the
+  // fallback lives here rather than only in the schema.
+  const engine = agentConfig?.engine ?? 'rust';
+  if (engine !== 'rust') {
     // Warn if multiLlm is set but engine isn't rust — it's a no-op in this case.
     if (agentConfig?.multiLlm && agentConfig.multiLlm.length > 0) {
       console.warn(
@@ -216,12 +222,15 @@ export async function maybeLoadRustEngine(
   // Default-on for the Rust engine: in-process Read/Grep/Glob are sandboxed to
   // the workspace root and fall back to the JS host for anything outside it,
   // so opting out (`nativeTools = false`) is the exception, not the rule.
-  const nativeTools = agentConfig.nativeTools !== false;
+  const nativeTools = agentConfig?.nativeTools !== false;
 
   // Dynamic import of the Rust adapter via the workspace package.
   try {
-    const { createRunTurnOverride } = await import('@moonshot-ai/kimi-agent/rust-loop');
+    const { createRunTurnOverride, getRustEngineMode } = await import(
+      '@moonshot-ai/kimi-agent/rust-loop'
+    );
     if (typeof createRunTurnOverride !== 'function') {
+      log.warn('rust agent engine adapter has no createRunTurnOverride — using the JS loop');
       return undefined;
     }
     // The workspace root anchors the Read-prediction fast-path and the
@@ -232,10 +241,22 @@ export async function maybeLoadRustEngine(
     });
     if (override !== undefined) {
       rustRunTurnOverride = override;
+      // Engine selection is otherwise invisible; record it so a session can
+      // always be attributed to napi/stdio Rust or the JS fallback.
+      log.info('rust agent engine active', {
+        mode: getRustEngineMode(),
+        nativeTools,
+        nativeLlm: nativeLlm !== undefined,
+        multiLlm: providers !== undefined,
+      });
+    } else {
+      log.warn('rust agent engine unavailable (no napi addon or binary) — using the JS loop');
     }
     return rustRunTurnOverride;
-  } catch {
-    // Rust adapter not available — fall back to JS engine
+  } catch (error) {
+    // Rust adapter not available — fall back to JS engine, but say so: a
+    // silent fallback here previously made the active engine unknowable.
+    log.warn('rust agent engine failed to load — using the JS loop', { error: String(error) });
     return undefined;
   }
 }
