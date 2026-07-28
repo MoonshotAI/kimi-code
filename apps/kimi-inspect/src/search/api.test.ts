@@ -73,7 +73,7 @@ describe('fetchSearchPage', () => {
       'content-type': 'application/json',
       authorization: 'Bearer tok',
     });
-    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+    expect(JSON.parse(calls[0]!.init?.body as string)).toEqual({
       query: '苹果',
       role: 'assistant',
       sort: 'time_desc',
@@ -118,7 +118,7 @@ describe('fetchSearchPage', () => {
       fetchImpl,
     });
 
-    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+    expect(JSON.parse(calls[0]!.init?.body as string)).toEqual({
       query: 'C++',
       mode: 'literal',
     });
@@ -149,7 +149,7 @@ describe('fetchSearchPage', () => {
       container: { sessionId: 's1' },
       fetchImpl,
     });
-    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+    expect(JSON.parse(calls[0]!.init?.body as string)).toEqual({
       query: '苹果',
       container: { session_id: 's1' },
     });
@@ -161,7 +161,7 @@ describe('fetchSearchPage', () => {
       container: { sessionId: 's1', agentId: 'main' },
       fetchImpl: fetchImpl2,
     });
-    expect(JSON.parse(String(calls2[0]!.init?.body))).toEqual({
+    expect(JSON.parse(calls2[0]!.init?.body as string)).toEqual({
       query: '苹果',
       container: { session_id: 's1', agent_id: 'main' },
     });
