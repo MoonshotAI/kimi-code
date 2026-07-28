@@ -174,12 +174,17 @@ export type ManagedUsageFetcher = () => Promise<ManagedUsageFetchResult | undefi
  * from the API verbatim; bar and percent share the severity color; the
  * reset hint is muted in parentheses.
  */
-function formatPlanUsageRow(row: ManagedUsageRow, colors: ColorPalette): string {
+function formatPlanUsageRow(
+  row: ManagedUsageRow,
+  colors: ColorPalette,
+  opts: { resetHints: boolean },
+): string {
   const ratio = safeUsageRatio(row.limit > 0 ? row.used / row.limit : 0);
   const severity = severityColor(ratioSeverity(ratio));
   const bar = currentTheme.fg(severity, renderProgressBar(ratio, PLAN_USAGE_BAR_WIDTH));
   const pct = currentTheme.fg(severity, `${String(usagePercent(row.used, row.limit))}%`);
-  const reset = row.resetHint ? chalk.hex(colors.textMuted)(` (${row.resetHint})`) : '';
+  const reset =
+    opts.resetHints && row.resetHint ? chalk.hex(colors.textMuted)(` (${row.resetHint})`) : '';
   return `${chalk.hex(colors.textDim)(row.label)} ${bar} ${pct}${reset}`;
 }
 
@@ -570,16 +575,25 @@ export class FooterComponent implements Component {
     if (rows.length === 0) return null;
 
     const separator = chalk.hex(colors.textDim)(' · ');
-    const parts = rows.map((row) => formatPlanUsageRow(row, colors));
-    let keep = parts.length;
-    let segment = parts.slice(0, keep).join(separator);
-    while (keep > 1 && visibleWidth(segment) > maxWidth) {
-      keep -= 1;
-      segment = parts.slice(0, keep).join(separator);
+    // Try richest-first: full rows with reset hints, then compact rows without
+    // them, then drop trailing limits (never the weekly summary). This keeps
+    // the 5h window visible on as many terminals as possible.
+    const layouts = [
+      rows.map((row) => formatPlanUsageRow(row, colors, { resetHints: true })),
+      rows.map((row) => formatPlanUsageRow(row, colors, { resetHints: false })),
+    ];
+    for (const parts of layouts) {
+      const segment = parts.join(separator);
+      if (visibleWidth(segment) <= maxWidth) return segment;
     }
-    return visibleWidth(segment) <= maxWidth
-      ? segment
-      : truncateToWidth(segment, maxWidth, '…');
+    const compact = layouts[1]!;
+    let keep = compact.length;
+    while (keep > 1) {
+      const candidate = compact.slice(0, keep).join(separator);
+      if (visibleWidth(candidate) <= maxWidth) return candidate;
+      keep -= 1;
+    }
+    return truncateToWidth(compact.slice(0, keep).join(separator), maxWidth, '…');
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {
