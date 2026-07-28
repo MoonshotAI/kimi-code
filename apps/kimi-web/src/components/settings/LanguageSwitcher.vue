@@ -15,5 +15,5 @@ function choose(code: string): void {
 </script>
 
 <template>
-  <SegmentedControl :model-value="locale" :options="options" @update:model-value="choose" />
+  <SegmentedControl :model-value="locale" :options="options" variant="tinted" @update:model-value="choose" />
 </template>

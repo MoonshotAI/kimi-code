@@ -352,6 +352,7 @@ function archiveTime(iso: string): string {
                   { value: 'dark', label: t('theme.dark') },
                   { value: 'system', label: t('theme.system') },
                 ]"
+                variant="tinted"
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"
               />
             </div>
@@ -363,6 +364,7 @@ function archiveTime(iso: string): string {
                   { value: 'blue', label: t('theme.accentBlue') },
                   { value: 'mono', label: t('theme.accentBlack') },
                 ]"
+                variant="tinted"
                 @update:model-value="emit('setAccent', $event as Accent)"
               />
             </div>
@@ -506,6 +508,7 @@ function archiveTime(iso: string): string {
                 <SegmentedControl
                   :model-value="defaultPermissionMode"
                   :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
+                  variant="tinted"
                   @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
                 />
               </div>

@@ -5,13 +5,15 @@ defineProps<{
   modelValue: string;
   options: { value: string; label: string }[];
   size?: 'sm' | 'md';
+  /** `tinted` highlights the selected item with the accent color (settings option pickers). */
+  variant?: 'default' | 'tinted';
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </script>
 
 <template>
-  <div class="ui-seg" :class="`ui-seg--${size ?? 'md'}`" role="tablist">
+  <div class="ui-seg" :class="[`ui-seg--${size ?? 'md'}`, { 'ui-seg--tinted': variant === 'tinted' }]" role="tablist">
     <button
       v-for="opt in options"
       :key="opt.value"
@@ -53,5 +55,6 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 .ui-seg--sm .ui-seg__item { height: 24px; padding: 0 var(--space-2); font-size: var(--text-sm); }
 .ui-seg__item:hover:not(.is-on) { color: var(--color-text); }
 .ui-seg__item.is-on { background: var(--color-surface-raised); color: var(--color-text); box-shadow: var(--shadow-xs); }
+.ui-seg--tinted .ui-seg__item.is-on { background: var(--color-accent-soft); color: var(--color-accent); box-shadow: none; }
 .ui-seg__item:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 </style>
