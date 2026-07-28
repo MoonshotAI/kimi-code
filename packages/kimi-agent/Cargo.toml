@@ -29,6 +29,7 @@ futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "gzip", "json"] }
 eventsource-stream = "0.2"
 regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 globset = "0.4"
 hex = "0.4"
 ignore = "0.4"

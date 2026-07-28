@@ -10,6 +10,7 @@
 pub mod completion_verifier;
 pub mod injection;
 pub mod judge;
+pub mod steering;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -427,6 +428,44 @@ impl GoalMode {
     /// Park an active goal when its turn is aborted.
     pub fn pause_on_interrupt(&mut self, reason: Option<String>) -> Option<GoalSnapshot> {
         self.pause_active_goal(reason, GoalActor::User)
+    }
+
+    // ── Persistence ──
+
+    /// The durable form of the current goal for session persistence, or
+    /// `None` when no goal exists.
+    pub fn persisted_state(&self) -> Option<serde_json::Value> {
+        self.state.as_ref().and_then(|state| serde_json::to_value(state).ok())
+    }
+
+    /// Restore a goal saved by `persisted_state`.
+    ///
+    /// GOAL.md restart rule: a goal that was `active` when the process died
+    /// comes back `paused` — the old process's active turn cannot still be
+    /// alive, and auto-continuing after a restart would silently burn
+    /// resources. Paused / blocked / budgetLimited / usageLimited restore
+    /// as-is; `complete` is transient and never restored. The wall-clock
+    /// interval is closed: restored goals are not actively pursuing.
+    pub fn restore_persisted(&mut self, value: &serde_json::Value) -> Option<GoalSnapshot> {
+        let mut state: GoalState = serde_json::from_value(value.clone()).ok()?;
+        if matches!(state.status, GoalStatus::Complete) {
+            return None;
+        }
+        state.wall_clock_resumed_at = None;
+        if matches!(state.status, GoalStatus::Active) {
+            state.status = GoalStatus::Paused;
+            state.terminal_reason = Some(
+                "Paused after restart (the previous session's active turn cannot resume)"
+                    .to_string(),
+            );
+        }
+        state.updated_at = now_ms();
+        let snapshot = make_snapshot(&state);
+        self.state = Some(state);
+        if let Some(ref delegate) = self.delegate {
+            delegate.on_goal_updated(&snapshot);
+        }
+        Some(snapshot)
     }
 
     // ── Accounting & reporting ────────────────────────────────────────────
@@ -923,6 +962,39 @@ mod tests {
         let snapshot = gm.get_goal().goal.unwrap();
         assert!(snapshot.budget.token_budget_reached);
         assert!(snapshot.budget.over_budget);
+    }
+
+    #[test]
+    fn restore_downgrades_active_to_paused() {
+        let mut gm = make_goal_mode();
+        let _ = gm.create_goal(make_input("survive restarts"), GoalActor::User).unwrap();
+        let persisted = gm.persisted_state().expect("active goal persists");
+
+        let mut restored = GoalMode::new();
+        let snapshot = restored.restore_persisted(&persisted).expect("restores");
+        assert!(matches!(snapshot.status, GoalStatus::Paused), "active must downgrade");
+        assert!(snapshot.terminal_reason.unwrap_or_default().contains("restart"));
+        // Downgraded, not lost: the user can resume it.
+        assert!(restored.resume_goal(None, GoalActor::User).is_ok());
+    }
+
+    #[test]
+    fn restore_keeps_blocked_and_never_restores_complete() {
+        let mut gm = make_goal_mode();
+        let _ = gm.create_goal(make_input("test"), GoalActor::User).unwrap();
+        let _ = gm.mark_blocked(Some("stuck".into()), GoalActor::Model).unwrap();
+        let blocked = gm.persisted_state().expect("blocked goal persists");
+        let mut restored = GoalMode::new();
+        let snapshot = restored.restore_persisted(&blocked).expect("restores");
+        assert!(matches!(snapshot.status, GoalStatus::Blocked), "blocked restores as-is");
+
+        // Complete is transient: a (hypothetical) persisted complete record
+        // must not come back.
+        let mut complete = blocked.clone();
+        complete["status"] = serde_json::to_value(GoalStatus::Complete).unwrap();
+        let mut skipped = GoalMode::new();
+        assert!(skipped.restore_persisted(&complete).is_none());
+        assert!(skipped.get_goal().goal.is_none());
     }
 
     #[test]

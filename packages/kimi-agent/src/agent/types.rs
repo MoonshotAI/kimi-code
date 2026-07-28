@@ -23,6 +23,7 @@ pub struct AgentConfig {
 
 /// Options for creating a new Agent.
 pub struct AgentOptions {
+    pub session_id: Option<String>,
     pub homedir: Option<String>,
     pub config: Option<AgentConfig>,
     /// Optional override for the turn loop runner.
@@ -30,6 +31,10 @@ pub struct AgentOptions {
     pub run_turn_override: Option<Arc<dyn AgentTurnOverride + Send + Sync>>,
     /// Whether to enable goal mode.
     pub goal_enabled: bool,
+    /// Whether to enable plan mode.
+    pub plan_enabled: bool,
+    /// Native HTTP LLM config for direct provider calls.
+    pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
     /// Maximum steps per turn.
     pub max_steps_per_turn: u32,
     /// Maximum retries per step.
@@ -39,10 +44,13 @@ pub struct AgentOptions {
 impl Default for AgentOptions {
     fn default() -> Self {
         Self {
+            session_id: None,
             homedir: None,
             config: None,
             run_turn_override: None,
             goal_enabled: false,
+            plan_enabled: false,
+            native_llm: None,
             max_steps_per_turn: 50,
             max_retries_per_step: 3,
         }

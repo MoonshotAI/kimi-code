@@ -44,6 +44,29 @@ struct Cli {
     /// Run a self-test and exit
     #[arg(long)]
     test: bool,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(clap::Subcommand)]
+enum CliCommand {
+    /// Manage persisted sessions (`$KIMI_AGENT_HOME/sessions.db`).
+    #[command(subcommand)]
+    Session(kimi_agent::session::commands::SessionCommand),
+}
+
+/// Open the session store: `$KIMI_AGENT_HOME/sessions.db` when set, else an
+/// in-memory store. Shared by the RPC server and the `session` subcommands
+/// so both faces see the same records.
+fn open_session_store() -> anyhow::Result<kimi_agent::persistence::SqliteStore> {
+    match std::env::var("KIMI_AGENT_HOME") {
+        Ok(dir) if !dir.trim().is_empty() => {
+            let path = std::path::Path::new(dir.trim()).join("sessions.db");
+            kimi_agent::persistence::SqliteStore::open(&path)
+        }
+        _ => kimi_agent::persistence::SqliteStore::in_memory(),
+    }
 }
 
 #[tokio::main]
@@ -61,6 +84,16 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.test {
         return run_self_test().await;
+    }
+
+    // `session` subcommands run against the shared store and exit — no RPC
+    // server is started for offline session management.
+    if let Some(CliCommand::Session(command)) = cli.command {
+        let mut manager = kimi_agent::session::manager::SessionManager::new(
+            kimi_agent::persistence::SessionStore::new(open_session_store()?),
+        );
+        println!("{}", command.execute(&mut manager)?);
+        return Ok(());
     }
 
     // Build the RPC server and register handlers
@@ -233,6 +266,168 @@ async fn main() -> anyhow::Result<()> {
 
             let result = serde_json::json!({ "cancelled": cancelled });
             Ok(result)
+        })
+    });
+
+    // ── Session-owned agent surface (phase D: the thin-client protocol) ──
+    // The engine owns sessions, agents, goal driving, and persistence; the
+    // host only renders and answers `host/*` callbacks. Storage goes to
+    // `$KIMI_AGENT_HOME/sessions.db` when set, else stays in memory.
+    let session_store = open_session_store()?;
+    let session_manager = Arc::new(tokio::sync::Mutex::new(
+        kimi_agent::session::manager::SessionManager::new(
+            kimi_agent::persistence::SessionStore::new(session_store),
+        ),
+    ));
+    // Per-session cancellation flags, reachable while `session/prompt` holds
+    // the manager lock — a cancel must never need that lock.
+    let session_cancel: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    let mgr = session_manager.clone();
+    let srv = server.clone();
+    let sc = session_cancel.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_CREATE, move |params| {
+        let mgr = mgr.clone();
+        let srv = srv.clone();
+        let sc = sc.clone();
+        Box::pin(async move {
+            let input: types::SessionCreateParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let id = input.session_id.unwrap_or_else(|| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                format!("sess-{now}")
+            });
+            let mut manager = mgr.lock().await;
+            manager.create_session(
+                &id,
+                kimi_agent::session::types::ModelConfig {
+                    provider: input.provider.unwrap_or_default(),
+                    model: input.model.clone().unwrap_or_default(),
+                    max_tokens: None,
+                },
+            );
+            let callbacks: Arc<dyn HostCallbacks> =
+                Arc::new(RpcHostCallbacks { server: srv.clone() });
+            let agent = manager
+                .create_agent(
+                    &id,
+                    callbacks,
+                    kimi_agent::agent::types::AgentOptions {
+                        session_id: Some(id.clone()),
+                        homedir: input.homedir.clone(),
+                        config: Some(kimi_agent::agent::types::AgentConfig {
+                            cwd: input.homedir.unwrap_or_default(),
+                            model_alias: input.model,
+                            system_prompt: input.system_prompt.unwrap_or_default(),
+                            has_provider: true,
+                            has_model: true,
+                        }),
+                        goal_enabled: input.goal_enabled.unwrap_or(true),
+                        native_llm: input.native_llm,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            sc.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id.clone(), agent.cancellation.clone());
+            Ok(serde_json::json!({ "session_id": id }))
+        })
+    });
+
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_PROMPT, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionPromptParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let parts: Vec<kimi_agent::context::types::ContentPart> =
+                serde_json::from_value(input.input).map_err(|e| {
+                    types::JsonRpcError::internal_error(format!("Invalid input parts: {e}"))
+                })?;
+            let mut manager = mgr.lock().await;
+            let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                types::JsonRpcError::internal_error(format!(
+                    "no agent for session: {}",
+                    input.session_id
+                ))
+            })?;
+            // Goal-aware driving: `run_prompt` runs continuation turns while
+            // a goal stays active, exactly like the in-process driver.
+            let result = agent.run_prompt(parts).await.map_err(|e| {
+                types::JsonRpcError::internal_error(format!("run_prompt failed: {e}"))
+            })?;
+            Ok(serde_json::json!({
+                "stop_reason": format!("{:?}", result.stop_reason),
+                "steps": result.steps,
+                "usage": result.usage,
+            }))
+        })
+    });
+
+    let sc = session_cancel.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_CANCEL, move |params| {
+        let sc = sc.clone();
+        Box::pin(async move {
+            let input: types::SessionIdParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let cancelled = {
+                let map = sc.lock().unwrap_or_else(|e| e.into_inner());
+                match map.get(&input.session_id) {
+                    Some(flag) => {
+                        flag.store(true, Ordering::Relaxed);
+                        true
+                    }
+                    None => false,
+                }
+            };
+            Ok(serde_json::json!({ "cancelled": cancelled }))
+        })
+    });
+
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_SAVE, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionIdParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            manager
+                .save_agent_session(&input.session_id)
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            Ok(serde_json::json!({ "ok": true }))
+        })
+    });
+
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_LOAD, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionIdParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let found = manager
+                .load_agent_session(&input.session_id)
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            Ok(serde_json::json!({ "found": found }))
+        })
+    });
+
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_LIST, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionListParams =
+                serde_json::from_value(params).unwrap_or_default();
+            let manager = mgr.lock().await;
+            let sessions = manager
+                .list_persisted(input.limit.unwrap_or(50), input.offset.unwrap_or(0))
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            Ok(serde_json::json!({ "sessions": sessions }))
         })
     });
 

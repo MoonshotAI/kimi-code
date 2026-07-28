@@ -7,6 +7,7 @@
 //! caller fall back to the host path — the host then applies its full
 //! permission system. Write-capable tools are never handled here.
 
+pub mod bash;
 pub mod manager;
 
 use std::path::{Path, PathBuf};
@@ -135,8 +136,14 @@ fn is_sensitive_file(path: &Path) -> bool {
 }
 
 /// Sandboxed native executor for read-only tools.
+#[derive(Debug, Clone)]
 pub struct NativeToolset {
     root: PathBuf,
+    /// Native Bash execution (foreground only, gated by the host approval
+    /// hooks). Off by default: on host-driven paths the JS Bash owns the
+    /// tool (background tasks, detach, timeout-to-background live there).
+    /// The standalone Rust agent path opts in via `with_shell`.
+    shell: Option<bash::BashRunner>,
 }
 
 impl NativeToolset {
@@ -148,7 +155,54 @@ impl NativeToolset {
         if !root.is_dir() {
             return None;
         }
-        Some(Self { root })
+        Some(Self { root, shell: None })
+    }
+
+    /// Enable native Bash execution (standalone agent path). A toolset
+    /// without a detectable shell keeps Bash with the host.
+    pub fn with_shell(mut self) -> Self {
+        self.shell = bash::BashRunner::detect();
+        self
+    }
+
+    /// The detected shell runner, when native Bash is enabled.
+    pub fn shell(&self) -> Option<&bash::BashRunner> {
+        self.shell.as_ref()
+    }
+
+    /// The sandbox root this toolset executes inside.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Return tool definitions for every tool this toolset provides.
+    pub fn tool_definitions(&self) -> Vec<crate::context::types::ToolDefinition> {
+        vec![
+            crate::context::types::ToolDefinition {
+                name: "Read".into(), description: "Read a file".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"file_path":{"type":"string"}},"required":["file_path"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "Write".into(), description: "Write a file".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}},"required":["file_path","content"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "Edit".into(), description: "Edit a file".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["file_path","old_string","new_string"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "Grep".into(), description: "Search files".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "Glob".into(), description: "List files matching a pattern".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "Bash".into(), description: "Execute a shell command".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"}},"required":["command","description"]})),
+            },
+        ]
     }
 
     /// Execute `tool_name` natively when supported and inside the sandbox.
@@ -158,17 +212,99 @@ impl NativeToolset {
             "read" => self.read(args),
             "grep" => self.grep(args),
             "glob" => self.glob(args),
-            // Write-class tools execute natively too. The approval flow is
-            // untouched: `execute_tool` only fires after the host's
-            // prepare/authorize hooks have allowed the call, so the UI still
-            // gates every write — only the execution site moves in-process.
-            // Bash stays with the host by design: its semantics (background
-            // task registration, detach, timeout-to-background) belong to the
+            // Write-class tools execute natively too, but only through the
+            // callback layer's gated path (`NativeToolCallbacks`): the host's
+            // prepare/authorize hooks run first — driven from Rust — so the
+            // permission UI still gates every write. `claims_write` is the
+            // side-effect-free admission check for that path. Bash stays with
+            // the host by design: its semantics (background task
+            // registration, detach, timeout-to-background) belong to the
             // host's process-lifecycle domain, like approval itself.
             "write" => self.write(args),
             "edit" => self.edit(args),
             _ => None,
         }
+    }
+
+    /// Whether a tool name is write-class (mutates the filesystem) and must
+    /// therefore pass the host's approval hooks before native execution.
+    pub fn is_write_class(tool_name: &str) -> bool {
+        matches!(tool_name.to_ascii_lowercase().as_str(), "write" | "edit")
+    }
+
+    /// Side-effect-free admission check for write-class calls: would
+    /// `execute` handle this call natively? Mirrors the argument-shape and
+    /// sandbox gates of `write`/`edit` WITHOUT touching the filesystem (no
+    /// parent-dir creation, no file reads beyond metadata).
+    ///
+    /// The callback layer runs the host approval hooks exactly once for a
+    /// claimed call and never falls back to the host afterwards — a fallback
+    /// would re-run the host lifecycle (prepare/dedupe) for the same
+    /// tool_call_id and corrupt its bookkeeping. That contract only works if
+    /// this predicate is conservative: claim only what `execute` will
+    /// definitely handle.
+    pub fn claims_write(&self, tool_name: &str, args: &Value) -> bool {
+        match tool_name.to_ascii_lowercase().as_str() {
+            "write" => {
+                let Some(path) = args.get("path").and_then(Value::as_str) else {
+                    return false;
+                };
+                if args.get("content").and_then(Value::as_str).is_none() {
+                    return false;
+                }
+                let mode = args.get("mode").and_then(Value::as_str).unwrap_or("overwrite");
+                if mode != "overwrite" && mode != "append" {
+                    return false;
+                }
+                self.lexically_contained_and_not_sensitive(path)
+            }
+            "edit" => {
+                let Some(path) = args.get("path").and_then(Value::as_str) else {
+                    return false;
+                };
+                let Some(old_string) = args.get("old_string").and_then(Value::as_str) else {
+                    return false;
+                };
+                if args.get("new_string").and_then(Value::as_str).is_none() {
+                    return false;
+                }
+                if old_string.is_empty() {
+                    return false;
+                }
+                // `edit` additionally requires an existing readable file.
+                if !self.lexically_contained_and_not_sensitive(path) {
+                    return false;
+                }
+                self.resolve(path).is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// Lexical containment + sensitivity gate used by `claims_write`. Joins
+    /// relative paths onto the sandbox root and normalizes `.`/`..` without
+    /// hitting the filesystem, so it is safe to call before approval. The
+    /// effectful resolvers (`resolve` / `resolve_for_write`) re-check with
+    /// canonicalization at execution time; symlink escapes are caught there.
+    fn lexically_contained_and_not_sensitive(&self, path: &str) -> bool {
+        let candidate = if Path::new(path).is_absolute() {
+            PathBuf::from(path)
+        } else {
+            self.root.join(path)
+        };
+        let mut normalized = PathBuf::new();
+        for component in candidate.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if !normalized.pop() {
+                        return false;
+                    }
+                }
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        normalized.starts_with(&self.root) && !is_sensitive_file(&normalized)
     }
 
     /// Resolve a path argument inside the workspace. `None` when the path
@@ -636,6 +772,28 @@ mod tests {
     fn write_to_a_sensitive_file_falls_back_to_the_host() {
         let (_dir, ts) = setup();
         assert!(ts.execute("Write", &json!({ "path": ".env", "content": "SECRET=1" })).is_none());
+    }
+
+    #[test]
+    fn claims_write_admits_only_what_execute_would_handle() {
+        let (dir, ts) = setup();
+        // Valid in-sandbox write — claimed, and without side effects: the
+        // parent directory must NOT be created by the admission check.
+        assert!(ts.claims_write("Write", &json!({ "path": "new/deep/f.txt", "content": "x" })));
+        assert!(!dir.path().join("new").exists(), "claims_write must not create directories");
+        // Sandbox escape / sensitive file / bad mode / missing args — not claimed.
+        assert!(!ts.claims_write("Write", &json!({ "path": "../escape.txt", "content": "x" })));
+        assert!(!ts.claims_write("Write", &json!({ "path": "/tmp/escape.txt", "content": "x" })));
+        assert!(!ts.claims_write("Write", &json!({ "path": ".env", "content": "x" })));
+        assert!(!ts.claims_write("Write", &json!({ "path": "a.txt", "content": "x", "mode": "patch" })));
+        assert!(!ts.claims_write("Write", &json!({ "path": "a.txt" })));
+        // Edit: requires an existing file and non-empty old_string.
+        std::fs::write(dir.path().join("e.txt"), "alpha").unwrap();
+        assert!(ts.claims_write("Edit", &json!({ "path": "e.txt", "old_string": "alpha", "new_string": "beta" })));
+        assert!(!ts.claims_write("Edit", &json!({ "path": "missing.txt", "old_string": "a", "new_string": "b" })));
+        assert!(!ts.claims_write("Edit", &json!({ "path": "e.txt", "old_string": "", "new_string": "b" })));
+        // Non-write-class names are never claimed.
+        assert!(!ts.claims_write("Read", &json!({ "path": "e.txt" })));
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub mod cron;
 pub mod discussion;
 pub mod fault_injection;
 pub mod permission;
+pub mod persistence;
 pub mod plan;
 pub mod profile;
 pub mod prompt;
@@ -32,6 +33,7 @@ pub mod media;
 #[cfg(feature = "napi")]
 pub mod napi_bindings;
 pub mod rpc;
+pub mod session;
 pub mod shell_command;
 pub mod skill;
 pub mod tool_select;

@@ -62,6 +62,31 @@ static PAYLOAD_REGISTRY: LazyLock<Mutex<HashMap<u32, String>>> =
 /// space is large enough that collisions are impossible in practice.
 static NEXT_CALLBACK_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Per-turn cancellation flags, keyed by turn id, so `cancelTurnRust` can
+/// stop a running turn before its next step — the napi twin of the stdio
+/// server's `agent/cancel_turn` map (see `main.rs`).
+static CANCEL_REGISTRY: LazyLock<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Cancel a running turn: sets the per-turn cancellation flag that the loop
+/// checks before every step (`RunTurnInput.cancellation`). Returns true when
+/// a running turn matched the id, false when no such turn is active.
+#[napi]
+pub fn cancel_turn_rust(turn_id: String) -> napi::Result<bool> {
+    let flag = CANCEL_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&turn_id)
+        .cloned();
+    match flag {
+        Some(f) => {
+            f.store(true, Ordering::Relaxed);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 /// Called by JS to fetch the payload for a given callback ID.
 /// Returns the JSON-serialized request payload, or null if not found.
 #[napi]
@@ -109,9 +134,22 @@ struct NapiHostCallbacks {
     /// Optional fire-and-forget event channel. The JS side fetches the
     /// payload via `getCallbackPayload(id)` but must NOT resolve it.
     emit_event_fn: Option<Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>>,
+    /// Optional tool-lifecycle channels (prepare / authorize / finalize).
+    /// When all three are wired, `supports_tool_lifecycle` reports true and
+    /// write-class native execution can run behind the host approval gate;
+    /// otherwise write-class calls fall back to full host execution.
+    prepare_tool_fn: Option<Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>>,
+    authorize_tool_fn: Option<Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>>,
+    finalize_tool_fn: Option<Arc<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>>,
 }
 
 impl HostCallbacks for NapiHostCallbacks {
+    fn supports_tool_lifecycle(&self) -> bool {
+        self.prepare_tool_fn.is_some()
+            && self.authorize_tool_fn.is_some()
+            && self.finalize_tool_fn.is_some()
+    }
+
     fn llm_chat(
         &self,
         request: LlmChatRequest,
@@ -144,6 +182,54 @@ impl HostCallbacks for NapiHostCallbacks {
         if status != napi::Status::Ok {
             PAYLOAD_REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         }
+    }
+
+    fn prepare_tool_execution(
+        &self,
+        request: crate::rpc::types::PrepareToolRequest,
+    ) -> crate::rpc::types::BoxFuture<'static, std::result::Result<Option<crate::rpc::types::PrepareToolResponse>, std::string::String>> {
+        let Some(ref tsfn) = self.prepare_tool_fn else {
+            return Box::pin(async { Ok(None) });
+        };
+        let tsfn = tsfn.clone();
+        let input = serde_json::to_string(&request)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialize: {}"}}"#, e));
+        Box::pin(async move {
+            let output = invoke_via_registry(&tsfn, input, "prepare_tool").await?;
+            serde_json::from_str(&output).map_err(|e| format!("prepare_tool parse: {e}"))
+        })
+    }
+
+    fn authorize_tool_execution(
+        &self,
+        request: crate::rpc::types::AuthorizeToolRequest,
+    ) -> crate::rpc::types::BoxFuture<'static, std::result::Result<Option<crate::rpc::types::AuthorizeToolResponse>, std::string::String>> {
+        let Some(ref tsfn) = self.authorize_tool_fn else {
+            return Box::pin(async { Ok(None) });
+        };
+        let tsfn = tsfn.clone();
+        let input = serde_json::to_string(&request)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialize: {}"}}"#, e));
+        Box::pin(async move {
+            let output = invoke_via_registry(&tsfn, input, "authorize_tool").await?;
+            serde_json::from_str(&output).map_err(|e| format!("authorize_tool parse: {e}"))
+        })
+    }
+
+    fn finalize_tool_result(
+        &self,
+        request: crate::rpc::types::FinalizeToolRequest,
+    ) -> crate::rpc::types::BoxFuture<'static, std::result::Result<crate::rpc::types::FinalizeToolResponse, std::string::String>> {
+        let Some(ref tsfn) = self.finalize_tool_fn else {
+            return Box::pin(async { Ok(None) });
+        };
+        let tsfn = tsfn.clone();
+        let input = serde_json::to_string(&request)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialize: {}"}}"#, e));
+        Box::pin(async move {
+            let output = invoke_via_registry(&tsfn, input, "finalize_tool").await?;
+            serde_json::from_str(&output).map_err(|e| format!("finalize_tool parse: {e}"))
+        })
     }
 }
 
@@ -312,45 +398,45 @@ pub fn run_turn_rust(
     #[napi(ts_arg_type = "(callbackId: number) => void")] llm_chat_cb: JsFunction,
     #[napi(ts_arg_type = "(callbackId: number) => void")] execute_tool_cb: JsFunction,
     #[napi(ts_arg_type = "(callbackId: number) => void")] emit_event_cb: Option<JsFunction>,
+    #[napi(ts_arg_type = "(callbackId: number) => void")] prepare_tool_cb: Option<JsFunction>,
+    #[napi(ts_arg_type = "(callbackId: number) => void")] authorize_tool_cb: Option<JsFunction>,
+    #[napi(ts_arg_type = "(callbackId: number) => void")] finalize_tool_cb: Option<JsFunction>,
 ) -> napi::Result<JsObject> {
     // ── Convert JsFunction → ThreadsafeFunction synchronously ──────────
     // The TSFN passes only the callback ID (u32). The JS side fetches
     // the payload via getCallbackPayload(id) and resolves via resolveCallback.
     // ErrorStrategy::Fatal: no error-first null prepended, JS receives the id directly.
-    let llm_chat_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal> =
-        llm_chat_cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<u32>| {
-            let id = ctx.value;
-            eprintln!("[RUST] TSFN closure: llm_chat, id={id}");
-            let js_num = ctx.env.create_uint32(id)?;
+    fn to_id_tsfn(
+        cb: JsFunction,
+    ) -> napi::Result<ThreadsafeFunction<u32, ErrorStrategy::Fatal>> {
+        cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<u32>| {
+            let js_num = ctx.env.create_uint32(ctx.value)?;
             let args: Vec<napi::JsUnknown> = vec![js_num.into_unknown()];
             Ok(args)
-        })?;
-
-    let execute_tool_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal> =
-        execute_tool_cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<u32>| {
-            let id = ctx.value;
-            eprintln!("[RUST] TSFN closure: execute_tool, id={id}");
-            let js_num = ctx.env.create_uint32(id)?;
-            let args: Vec<napi::JsUnknown> = vec![js_num.into_unknown()];
-            Ok(args)
-        })?;
-
-    let emit_event_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>> = match emit_event_cb {
-        Some(cb) => Some(cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<u32>| {
-            let id = ctx.value;
-            let js_num = ctx.env.create_uint32(id)?;
-            let args: Vec<napi::JsUnknown> = vec![js_num.into_unknown()];
-            Ok(args)
-        })?),
-        None => None,
-    };
+        })
+    }
+    let llm_chat_tsfn = to_id_tsfn(llm_chat_cb)?;
+    let execute_tool_tsfn = to_id_tsfn(execute_tool_cb)?;
+    let emit_event_tsfn = emit_event_cb.map(to_id_tsfn).transpose()?;
+    let prepare_tool_tsfn = prepare_tool_cb.map(to_id_tsfn).transpose()?;
+    let authorize_tool_tsfn = authorize_tool_cb.map(to_id_tsfn).transpose()?;
+    let finalize_tool_tsfn = finalize_tool_cb.map(to_id_tsfn).transpose()?;
 
     // ── Dispatch async work via execute_tokio_future ───────────────────
     // The future is Send because JsFunction has been converted to TSFN
     // and dropped from scope before the async block.
     env.execute_tokio_future(
         async move {
-            run_turn_rust_impl(params, llm_chat_tsfn, execute_tool_tsfn, emit_event_tsfn).await
+            run_turn_rust_impl(
+                params,
+                llm_chat_tsfn,
+                execute_tool_tsfn,
+                emit_event_tsfn,
+                prepare_tool_tsfn,
+                authorize_tool_tsfn,
+                finalize_tool_tsfn,
+            )
+            .await
         },
         |env: &mut Env, val: JsRunTurnResult| {
             let mut obj = env.create_object()?;
@@ -370,11 +456,17 @@ async fn run_turn_rust_impl(
     llm_chat_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal>,
     execute_tool_tsfn: ThreadsafeFunction<u32, ErrorStrategy::Fatal>,
     emit_event_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
+    prepare_tool_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
+    authorize_tool_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
+    finalize_tool_tsfn: Option<ThreadsafeFunction<u32, ErrorStrategy::Fatal>>,
 ) -> napi::Result<JsRunTurnResult> {
     let base_callbacks: Arc<dyn HostCallbacks> = Arc::new(NapiHostCallbacks {
         llm_chat_fn: Arc::new(llm_chat_tsfn),
         execute_tool_fn: Arc::new(execute_tool_tsfn),
         emit_event_fn: emit_event_tsfn.map(Arc::new),
+        prepare_tool_fn: prepare_tool_tsfn.map(Arc::new),
+        authorize_tool_fn: authorize_tool_tsfn.map(Arc::new),
+        finalize_tool_fn: finalize_tool_tsfn.map(Arc::new),
     });
 
     // Native tool execution: wrap the callbacks so Read/Grep/Glob run
@@ -466,6 +558,16 @@ async fn run_turn_rust_impl(
         turns_used: g.turns_used,
     });
 
+    // Register the per-turn cancellation flag so `cancelTurnRust` can stop
+    // this turn at its next step boundary. Removed again below — also on the
+    // error path — so the registry never leaks finished turns.
+    let turn_id_key = params.turn_id.clone();
+    let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    CANCEL_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(turn_id_key.clone(), cancel_flag.clone());
+
     let input = RunTurnInput {
         turn_id: params.turn_id,
         llm: &*llm,
@@ -475,12 +577,15 @@ async fn run_turn_rust_impl(
         hooks: None,
         max_steps: params.max_steps.unwrap_or(10),
         goal,
-        cancellation: None,
+        cancellation: Some(cancel_flag),
     };
 
-    let result = run_turn(input, &callbacks)
-        .await
-        .map_err(|e| napi::Error::from_reason(format!("run_turn failed: {e}")))?;
+    let result = run_turn(input, &callbacks).await;
+    CANCEL_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&turn_id_key);
+    let result = result.map_err(|e| napi::Error::from_reason(format!("run_turn failed: {e}")))?;
 
     Ok(JsRunTurnResult {
         stop_reason: format!("{:?}", result.stop_reason),

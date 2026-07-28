@@ -85,6 +85,16 @@ pub mod methods {
     /// Cancel a running turn.
     pub const CANCEL_TURN: &str = "agent/cancel_turn";
 
+    /// Session-owned agent surface (the phase-D thin-client protocol): the
+    /// engine owns sessions, agents, goal driving, and persistence; the
+    /// host only renders and answers `host/*` callbacks.
+    pub const SESSION_CREATE: &str = "session/create";
+    pub const SESSION_PROMPT: &str = "session/prompt";
+    pub const SESSION_CANCEL: &str = "session/cancel";
+    pub const SESSION_SAVE: &str = "session/save";
+    pub const SESSION_LOAD: &str = "session/load";
+    pub const SESSION_LIST: &str = "session/list";
+
     /// Health check.
     pub const HEALTH: &str = "agent/health";
 
@@ -237,6 +247,50 @@ pub struct CancelTurnParams {
     pub turn_id: String,
 }
 
+// ── Session surface params ──
+
+/// Input for session/create.
+#[derive(Debug, Deserialize)]
+pub struct SessionCreateParams {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub homedir: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub goal_enabled: Option<bool>,
+    #[serde(default)]
+    pub native_llm: Option<NativeLlmConfig>,
+}
+
+/// Input for session/prompt.
+#[derive(Debug, Deserialize)]
+pub struct SessionPromptParams {
+    pub session_id: String,
+    /// Content parts on the context wire shape: `[{"type":"text","text":…}]`.
+    pub input: serde_json::Value,
+}
+
+/// Input for session/cancel · session/save · session/load.
+#[derive(Debug, Deserialize)]
+pub struct SessionIdParams {
+    pub session_id: String,
+}
+
+/// Input for session/list.
+#[derive(Debug, Default, Deserialize)]
+pub struct SessionListParams {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+}
+
 /// A message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -338,6 +392,9 @@ pub struct ToolExecuteResponse {
     /// immediately and spawn background precise execution to replace it later.
     #[serde(default)]
     pub is_prediction: bool,
+    /// When true, executing this tool should stop the turn immediately.
+    #[serde(default)]
+    pub stop_turn: bool,
 }
 
 /// Token usage tracking.
@@ -847,6 +904,7 @@ mod tests {
             content: "file content here".to_string(),
             is_error: false,
             is_prediction: false,
+            stop_turn: false,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["content"], "file content here");
@@ -863,6 +921,7 @@ mod tests {
             content: "File not found".to_string(),
             is_error: true,
             is_prediction: false,
+            stop_turn: false,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json["is_error"].as_bool().unwrap());

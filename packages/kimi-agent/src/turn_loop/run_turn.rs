@@ -648,6 +648,7 @@ mod tests {
             content: "prediction content".into(),
             is_error: false,
             is_prediction: true,
+            stop_turn: false,
         }
     }
 
@@ -656,6 +657,7 @@ mod tests {
             content: "precise content".into(),
             is_error: false,
             is_prediction: false,
+            stop_turn: false,
         }
     }
 
@@ -1032,6 +1034,7 @@ mod tests {
                         content: "file content here".into(),
                         is_error: false,
                         is_prediction: false,
+                        stop_turn: false,
                     };
                     serde_json::to_value(&resp)
                         .map_err(|e| JsonRpcError::internal_error(e.to_string()))
@@ -1381,12 +1384,14 @@ mod tests {
                             content: "PREDICTION".into(),
                             is_error: false,
                             is_prediction: true,
+                            stop_turn: false,
                         }
                     } else {
                         ToolExecuteResponse {
                             content: "PRECISE_RESULT".into(),
                             is_error: false,
                             is_prediction: false,
+                            stop_turn: false,
                         }
                     };
                     serde_json::to_value(&resp)
@@ -1642,6 +1647,7 @@ mod tests {
                         content: "ok".into(),
                         is_error: false,
                         is_prediction: false,
+                        stop_turn: false,
                     };
                     serde_json::to_value(&resp)
                         .map_err(|e| JsonRpcError::internal_error(e.to_string()))
@@ -1747,12 +1753,14 @@ mod tests {
                             content: "PREDICTION".into(),
                             is_error: false,
                             is_prediction: true,
+                            stop_turn: false,
                         }
                     } else {
                         ToolExecuteResponse {
                             content: "PRECISE".into(),
                             is_error: false,
                             is_prediction: false,
+                            stop_turn: false,
                         }
                     };
                     serde_json::to_value(&resp)
@@ -1854,12 +1862,14 @@ mod tests {
                             content: "PRED".into(),
                             is_error: false,
                             is_prediction: true,
+                            stop_turn: false,
                         }
                     } else {
                         ToolExecuteResponse {
                             content: "PRECISE".into(),
                             is_error: false,
                             is_prediction: false,
+                            stop_turn: false,
                         }
                     };
                     serde_json::to_value(&resp)
@@ -1956,12 +1966,14 @@ mod tests {
                             content: format!("PRED_{n}"),
                             is_error: false,
                             is_prediction: true,
+                            stop_turn: false,
                         }
                     } else {
                         ToolExecuteResponse {
                             content: format!("PRECISE_{n}"),
                             is_error: false,
                             is_prediction: false,
+                            stop_turn: false,
                         }
                     };
                     serde_json::to_value(&resp)
@@ -2136,6 +2148,7 @@ mod tests {
                 content: format!("Content of {}", req.tool_name),
                 is_error: false,
                 is_prediction: false,
+                stop_turn: false,
             };
             async move { Ok(result) }
         })
@@ -2230,7 +2243,7 @@ mod tests {
         }
 
         let callbacks = TestHostCallbacks::new(|req: ToolExecuteRequest| async move {
-            Ok(ToolExecuteResponse { content: format!("exec {}", req.tool_name), is_error: false, is_prediction: false })
+            Ok(ToolExecuteResponse { content: format!("exec {}", req.tool_name), is_error: false, is_prediction: false, stop_turn: false })
         })
         .with_prepare(|_req: PrepareToolRequest| async move {
             Ok(Some(PrepareToolResponse {
@@ -2294,7 +2307,7 @@ mod tests {
         }
 
         let callbacks = TestHostCallbacks::new(|req: ToolExecuteRequest| async move {
-            Ok(ToolExecuteResponse { content: "sensitive data".into(), is_error: false, is_prediction: false })
+            Ok(ToolExecuteResponse { content: "sensitive data".into(), is_error: false, is_prediction: false, stop_turn: false })
         })
         .with_finalize(|req: FinalizeToolRequest| async move {
             // Redact the output

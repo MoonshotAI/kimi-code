@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/kimi-agent",
+    "packages/kimi-build",
+    "packages/kimi-native-tools",
+    "packages/kosong/native",
+    "scripts/prompt-optimizer/knowledge-rs",
+]
+
+[workspace.dependencies]
+# ── Shared by 2+ crates (superset of versions & features) ──
+serde          = { version = "1",    features = ["derive"] }
+serde_json     = "1"
+tokio          = { version = "1",    features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "io-std", "process", "time"] }
+reqwest        = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "gzip", "json"] }
+rusqlite       = { version = "0.32", features = ["bundled"] }
+napi           = { version = "2",    features = ["async", "tokio_rt", "napi8", "serde"] }
+napi-derive    = { version = "2" }
+image          = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+clap           = { version = "4",    features = ["derive"] }
+regex          = "1"
+futures-util   = "0.3"
+eventsource-stream = "0.2"
+globset        = "0.4"
+ignore         = "0.4"
+sha2           = "0.10"
+ulid           = "1"
+chrono         = { version = "0.4",  features = ["serde"] }
+napi-build     = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
