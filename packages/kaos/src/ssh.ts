@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, resolve } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
@@ -391,11 +392,33 @@ function sftpReadFile(sftp: SFTPWrapper, path: string): Promise<Buffer> {
   });
 }
 
-function sftpWriteFile(sftp: SFTPWrapper, path: string, data: string | Buffer): Promise<void> {
+function sftpWriteFile(
+  sftp: SFTPWrapper,
+  path: string,
+  data: string | Buffer,
+  mode?: number,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    sftp.writeFile(path, data, (err) => {
+    const callback = (err: Error | null | undefined) => {
       if (err) {
         reject(mapSftpError('writeFile', err));
+      } else {
+        resolve();
+      }
+    };
+    if (mode === undefined) {
+      sftp.writeFile(path, data, callback);
+    } else {
+      sftp.writeFile(path, data, { mode }, callback);
+    }
+  });
+}
+
+function sftpChmod(sftp: SFTPWrapper, path: string, mode: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    sftp.chmod(path, mode, (err) => {
+      if (err) {
+        reject(mapSftpError('chmod', err));
       } else {
         resolve();
       }
@@ -413,6 +436,55 @@ function sftpAppendFile(sftp: SFTPWrapper, path: string, data: string | Buffer):
       }
     });
   });
+}
+
+function sftpUnlink(sftp: SFTPWrapper, path: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    sftp.unlink(path, (err) => {
+      if (err) {
+        reject(mapSftpError('unlink', err));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+function sftpRename(sftp: SFTPWrapper, source: string, target: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    sftp.rename(source, target, (err) => {
+      if (err) {
+        reject(mapSftpError('rename', err));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+function sftpPosixRename(sftp: SFTPWrapper, source: string, target: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    try {
+      sftp.ext_openssh_rename(source, target, (err) => {
+        if (err) {
+          reject(mapSftpError('posix-rename@openssh.com', err));
+        } else {
+          resolve();
+        }
+      });
+    } catch (error) {
+      reject(mapSftpError('posix-rename@openssh.com', error));
+    }
+  });
+}
+
+function isUnsupportedSftpExtension(error: unknown): boolean {
+  if (!(error instanceof KaosSSHError)) return false;
+  const statusCode = getSftpStatusCode();
+  return (
+    error.code === statusCode.OP_UNSUPPORTED ||
+    error.message.endsWith('Server does not support this extended request')
+  );
 }
 
 function clientExec(client: Client, command: string): Promise<ClientChannel> {
@@ -764,6 +836,60 @@ export class SSHKaos implements Kaos {
       await sftpWriteFile(this._sftp, resolved, buf);
     }
     return data.length;
+  }
+
+  /**
+   * Atomically replace a remote text file.
+   *
+   * Existing targets prefer the OpenSSH POSIX rename extension. Servers
+   * without it fall back to the remote POSIX `mv` command, which uses the
+   * same-filesystem rename operation for this same-directory temporary file.
+   */
+  async writeTextAtomic(
+    path: string,
+    data: string,
+    options?: { encoding?: BufferEncoding },
+  ): Promise<number> {
+    const resolved = this._resolvePath(path);
+    const encoding = options?.encoding ?? 'utf-8';
+    const suffix = randomBytes(4).toString('hex');
+    const tempPath = `${resolved}.tmp.${process.pid}.${suffix}`;
+    const targetExists = await sftpExists(this._sftp, resolved);
+    const mode = targetExists ? (await sftpStat(this._sftp, resolved)).mode & 0o777 : 0o600;
+    let replaced = false;
+    try {
+      const content = Buffer.from(data, encoding);
+      await sftpWriteFile(this._sftp, tempPath, content, 0o600);
+      await sftpChmod(this._sftp, tempPath, mode);
+      if (targetExists) {
+        try {
+          await sftpPosixRename(this._sftp, tempPath, resolved);
+        } catch (error) {
+          if (!isUnsupportedSftpExtension(error)) throw error;
+          await this._replaceViaRemoteMove(tempPath, resolved);
+        }
+      } else {
+        await sftpRename(this._sftp, tempPath, resolved);
+      }
+      replaced = true;
+      return data.length;
+    } finally {
+      if (!replaced) {
+        await sftpUnlink(this._sftp, tempPath).catch(() => {});
+      }
+    }
+  }
+
+  private async _replaceViaRemoteMove(source: string, target: string): Promise<void> {
+    const process = await this.exec('mv', '-f', source, target);
+    try {
+      const exitCode = await process.wait();
+      if (exitCode !== 0) {
+        throw new KaosSSHError(`mv failed with exit code ${exitCode}`);
+      }
+    } finally {
+      await process.dispose();
+    }
   }
 
   async mkdir(path: string, options?: { parents?: boolean; existOk?: boolean }): Promise<void> {

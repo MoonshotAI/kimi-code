@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,6 +180,33 @@ describe('LocalKaos', () => {
       }
       expect(lines.join('')).toBe('line1\nline2');
     });
+
+    it('writeTextAtomic replaces an existing file with complete text', async () => {
+      const filePath = join(tempDir, 'state.json');
+      await kaos.writeText(filePath, '{"title":"before"}');
+
+      await kaos.writeTextAtomic(filePath, '{"title":"after"}');
+
+      await expect(kaos.readText(filePath)).resolves.toBe('{"title":"after"}');
+    });
+
+    it.skipIf(process.platform === 'win32')(
+      'writeTextAtomic restores file permissions masked by umask',
+      async () => {
+        const filePath = join(tempDir, 'private-state.json');
+        await kaos.writeText(filePath, '{}');
+        await chmod(filePath, 0o640);
+        const previousUmask = process.umask(0o077);
+
+        try {
+          await kaos.writeTextAtomic(filePath, '{"title":"private"}');
+        } finally {
+          process.umask(previousUmask);
+        }
+
+        expect((await stat(filePath)).mode & 0o777).toBe(0o640);
+      },
+    );
   });
 
   describe('readLines streaming', () => {

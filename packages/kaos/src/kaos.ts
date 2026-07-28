@@ -85,6 +85,17 @@ export interface Kaos {
     data: string,
     options?: { mode?: 'w' | 'a'; encoding?: BufferEncoding },
   ): Promise<number>;
+  /**
+   * Replace a text file without exposing partially written content.
+   *
+   * Implementations write to a temporary file in the target directory and
+   * atomically replace `path` when the backing filesystem supports it.
+   */
+  writeTextAtomic?(
+    path: string,
+    data: string,
+    options?: { encoding?: BufferEncoding },
+  ): Promise<number>;
   /** Create a directory at `path`. */
   mkdir(path: string, options?: { parents?: boolean; existOk?: boolean }): Promise<void>;
 

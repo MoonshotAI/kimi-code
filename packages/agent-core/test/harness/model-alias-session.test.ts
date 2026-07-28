@@ -529,7 +529,19 @@ max_context_size = 1000000
     expect(records).toContainEqual({
       event: 'session_load_failed',
       sessionId: created.id,
-      properties: { reason: 'SyntaxError' },
+      properties: { reason: 'session.state_invalid' },
+    });
+  });
+
+  it('resumeSession returns session.state_invalid when state.json contains malformed JSON', async () => {
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+    await writeFile(join(created.sessionDir, 'state.json'), '{bad json', 'utf-8');
+
+    const freshRpc = await createTestRpc();
+
+    await expect(freshRpc.resumeSession({ sessionId: created.id })).rejects.toMatchObject({
+      code: 'session.state_invalid',
     });
   });
 

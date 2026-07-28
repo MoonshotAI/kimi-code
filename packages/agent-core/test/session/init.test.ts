@@ -39,6 +39,44 @@ afterEach(async () => {
 });
 
 describe('Session.init', () => {
+  it('writeMetadata uses atomic persistence when direct replacement is unavailable', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const local = testKaos.withCwd(workDir);
+    const persistenceKaos = new Proxy(local, {
+      get(target, property, receiver) {
+        if (property === 'writeText') {
+          return async () => {
+            throw new Error('direct replacement is unavailable');
+          };
+        }
+        if (property === 'writeTextAtomic') {
+          return async (path: string, data: string) => {
+            await writeFile(path, data, 'utf-8');
+            return data.length;
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const session = new Session({
+      id: 'test-atomic-session-metadata',
+      kaos: local,
+      persistenceKaos,
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+
+    try {
+      await session.writeMetadata();
+      await expect(access(join(sessionDir, 'state.json'))).resolves.toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
   it('runs an isolated system-trigger turn and records the latest AGENTS as a system reminder', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();

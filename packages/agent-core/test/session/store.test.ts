@@ -4,7 +4,7 @@
  * Wiring: real temporary session storage; no stubbed collaborators.
  * Run: pnpm exec vitest run test/session/store.test.ts
  */
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,6 +60,30 @@ describe('SessionStore', () => {
     tempRoots.push(wd);
     return wd;
   }
+
+  it.skipIf(process.platform === 'win32')(
+    'rename restores state.json permissions masked by umask',
+    async () => {
+      const workDir = await trackWorkDir('rename-mode');
+      const sessionDir = await seedSessionDir(homeDir, workDir, 'sess_rename_mode');
+      await appendSessionIndexEntry(homeDir, {
+        sessionId: 'sess_rename_mode',
+        sessionDir,
+        workDir,
+      });
+      const statePath = join(sessionDir, 'state.json');
+      await chmod(statePath, 0o640);
+      const previousUmask = process.umask(0o077);
+
+      try {
+        await store.rename('sess_rename_mode', 'Private session');
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect((await stat(statePath)).mode & 0o777).toBe(0o640);
+    },
+  );
 
   describe('create', () => {
     it('creates a session when an earlier index entry points to a missing directory', async () => {
