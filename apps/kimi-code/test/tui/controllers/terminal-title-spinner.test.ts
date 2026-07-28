@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MAX_TERMINAL_TITLE_LENGTH } from '#/tui/constant/terminal';
 import { TITLE_SPINNER_STYLES } from '#/tui/constant/title-spinners';
 import {
   TerminalTitleSpinnerController,
@@ -108,5 +109,31 @@ describe('TerminalTitleSpinnerController', () => {
     controller.sync();
     expect(titles[0]).toBe(`${firstFrame} T`);
     controller.dispose();
+  });
+
+  it('keeps the composed title within the terminal-title cap', () => {
+    const longTitle = 'x'.repeat(MAX_TERMINAL_TITLE_LENGTH + 8);
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    expect(titles[0]).toHaveLength(MAX_TERMINAL_TITLE_LENGTH);
+    expect(titles[0]).toBe(`| ${'x'.repeat(MAX_TERMINAL_TITLE_LENGTH - 2)}`);
+    controller.dispose();
+  });
+
+  it('keeps the phase title within the terminal-title cap', () => {
+    const longTitle = 'y'.repeat(MAX_TERMINAL_TITLE_LENGTH + 8);
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });
+    const controller = new TerminalTitleSpinnerController(host, 'phase');
+    controller.sync();
+    expect(titles[0]).toHaveLength(MAX_TERMINAL_TITLE_LENGTH);
+    expect(titles[0]).toBe(`✦ ${'y'.repeat(MAX_TERMINAL_TITLE_LENGTH - 2)}`);
+  });
+
+  it('ignores inherited phase keys instead of stringifying them', () => {
+    const { host, titles } = createHost({ busy: true, phase: 'constructor', staticTitle: 'S' });
+    const controller = new TerminalTitleSpinnerController(host, 'phase');
+    controller.sync();
+    expect(titles[0]).toBe('S');
   });
 });

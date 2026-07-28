@@ -1,3 +1,4 @@
+import { MAX_TERMINAL_TITLE_LENGTH } from '#/tui/constant/terminal';
 import {
   OFF_TITLE_SPINNER_ID,
   PHASE_TITLE_GLYPHS,
@@ -78,12 +79,22 @@ export class TerminalTitleSpinnerController {
 
   private frameTitle(style: TitleSpinnerStyle): string {
     const frame = style.frames[this.frame % style.frames.length] ?? '';
-    return `${frame} ${this.host.staticTitle()}`;
+    return this.fitTitle(`${frame} ${this.host.staticTitle()}`);
   }
 
   private phaseTitle(): string {
-    const glyph = PHASE_TITLE_GLYPHS[this.host.streamingPhase()];
+    const phase = this.host.streamingPhase();
     const base = this.host.staticTitle();
-    return glyph === undefined ? base : `${glyph} ${base}`;
+    // Own-property check only: an inherited key such as `constructor` must
+    // not be stringified into the title.
+    const glyph = Object.hasOwn(PHASE_TITLE_GLYPHS, phase) ? PHASE_TITLE_GLYPHS[phase] : undefined;
+    return glyph === undefined ? base : this.fitTitle(`${glyph} ${base}`);
+  }
+
+  /** Keep the composed title within the terminal-title cap. */
+  private fitTitle(title: string): string {
+    return title.length > MAX_TERMINAL_TITLE_LENGTH
+      ? title.slice(0, MAX_TERMINAL_TITLE_LENGTH)
+      : title;
   }
 }
