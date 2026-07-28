@@ -374,12 +374,16 @@ function toPromptAttachment(a: Attachment): PromptAttachment {
 
 // Chip primary action: media opens the lightbox preview; a generic file opens
 // in a new tab (browser-renderable types) or downloads, once its upload has
-// completed and produced a daemon file id.
-function onAttachmentActivate(att: Attachment): void {
+// completed and produced a daemon file id. MediaThumb passes its <img> along
+// as the image preview's zoom origin.
+const previewThumbImg = ref<HTMLImageElement | null>(null);
+
+function onAttachmentActivate(att: Attachment, img?: HTMLImageElement | null): void {
   if (att.kind === 'file') {
     if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
     return;
   }
+  previewThumbImg.value = img ?? null;
   openAttachmentPreview(att);
 }
 
@@ -452,6 +456,7 @@ function handleSubmit(): void {
 
   // Revoke object URLs and drop the submitted attachments.
   previewAttachment.value = null;
+  previewThumbImg.value = null;
   clearAfterSubmit();
 
   text.value = '';
@@ -1074,7 +1079,15 @@ function selectModel(modelId: string): void {
   >
     <!-- Pending-attachment preview: the same MediaLightbox the sent-message
          chips open. -->
-    <MediaLightbox v-if="previewMedia" :media="previewMedia" @close="closeAttachmentPreview" />
+    <MediaLightbox
+      v-if="previewMedia"
+      :media="previewMedia"
+      :origin-img="previewThumbImg"
+      @close="
+        previewThumbImg = null;
+        closeAttachmentPreview();
+      "
+    />
 
     <!-- Main composer card -->
     <div class="composer-card">
@@ -1098,7 +1111,7 @@ function selectModel(modelId: string): void {
                 :error="att.error"
                 removable
                 :remove-label="t('composer.removeNamed', { name: att.name })"
-                @activate="onAttachmentActivate(att)"
+                @activate="onAttachmentActivate(att, $event)"
                 @remove="removeAttachment(att.localId)"
               />
             </div>

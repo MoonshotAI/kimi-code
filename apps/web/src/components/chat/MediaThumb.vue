@@ -33,10 +33,16 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  /** Primary action (opens the preview lightbox) — the parent decides. */
-  activate: [];
+  /** Primary action (opens the preview) — the parent decides. Carries the
+      thumbnail <img> so an image preview can zoom from its position and reuse
+      its already-loaded bytes; null for the static video tile. */
+  activate: [img: HTMLImageElement | null];
   remove: [];
 }>();
+
+function onActivate(e: MouseEvent): void {
+  emit('activate', (e.currentTarget as HTMLElement).querySelector('img'));
+}
 
 const { t } = useI18n();
 
@@ -62,7 +68,7 @@ const staticTile = computed(
       class="media-thumb-btn"
       :title="label"
       :aria-label="label"
-      @click="emit('activate')"
+      @click="onActivate"
     >
       <AuthMedia
         v-if="!staticTile"

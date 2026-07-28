@@ -641,9 +641,12 @@ let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
 // working preview at all (openMediaPreview ignores non-images, so chip clicks
 // on videos used to be dead).
 const mediaLightbox = ref<ToolMedia | null>(null);
+/** The clicked thumbnail <img> — the image preview's zoom origin (PhotoSwipe). */
+const mediaLightboxImg = ref<HTMLImageElement | null>(null);
 
-function onAttachmentClick(att: TurnAttachment): void {
+function onAttachmentClick(att: TurnAttachment, img?: HTMLImageElement | null): void {
   if (att.kind === 'image' || att.kind === 'video') {
+    mediaLightboxImg.value = img ?? null;
     mediaLightbox.value = userAttachmentMedia(att);
     return;
   }
@@ -762,7 +765,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 :name="att.name"
                 :url="att.url"
                 :file-id="att.fileId"
-                @activate="onAttachmentClick(att)"
+                @activate="onAttachmentClick(att, $event)"
               />
             </div>
             <!-- File attachments keep the chip row -->
@@ -1060,7 +1063,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   </div>
 
   <!-- Floating preview for user-bubble media thumbnails (image/video). -->
-  <MediaLightbox v-if="mediaLightbox" :media="mediaLightbox" @close="mediaLightbox = null" />
+  <MediaLightbox
+    v-if="mediaLightbox"
+    :media="mediaLightbox"
+    :origin-img="mediaLightboxImg"
+    @close="
+      mediaLightbox = null;
+      mediaLightboxImg = null;
+    "
+  />
 </template>
 
 <style scoped>

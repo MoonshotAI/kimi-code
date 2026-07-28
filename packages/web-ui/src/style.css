@@ -222,8 +222,10 @@ html[data-color-scheme="dark"] {
   --color-subtle: rgba(0, 0, 0, 0.05);      /* fills.f2 */
   --color-line-strong: rgba(0, 0, 0, 0.15); /* fills.f3 */
   /* Modal scrim — the dark veil behind dialogs/lightboxes (mask.base). The
-     on-scrim text colour is likewise constant. */
+     on-scrim text colour is likewise constant. The strong variant backs
+     full-screen media previews (mask.strong). */
   --color-scrim: rgba(0, 0, 0, 0.4);
+  --color-scrim-strong: rgba(0, 0, 0, 0.6);
   --color-text-on-scrim: #ffffff;
   /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
      accent-tinted, so selection reads as "where I am", not as an action. */
@@ -504,6 +506,7 @@ html[data-color-scheme="dark"] {
   --color-subtle: rgba(255, 255, 255, 0.05);      /* fills.f1 */
   --color-line-strong: rgba(255, 255, 255, 0.18); /* fills.f3 */
   --color-scrim: rgba(0, 0, 0, 0.6);          /* mask.base (dark) */
+  --color-scrim-strong: rgba(0, 0, 0, 0.75);  /* mask.strong (dark) */
   --color-selected: rgba(255, 255, 255, 0.1);     /* fills.f2 */
   --color-hover: rgba(255, 255, 255, 0.05);       /* fills.f1 */
   --color-sidebar-bg: #0d0d0d;
@@ -580,6 +583,7 @@ html[data-color-scheme="dark"] {
     --color-subtle: rgba(255, 255, 255, 0.05);
     --color-line-strong: rgba(255, 255, 255, 0.18);
     --color-scrim: rgba(0, 0, 0, 0.6);
+    --color-scrim-strong: rgba(0, 0, 0, 0.75);
     --color-selected: rgba(255, 255, 255, 0.1);
     --color-hover: rgba(255, 255, 255, 0.05);
     --color-sidebar-bg: #0d0d0d;
