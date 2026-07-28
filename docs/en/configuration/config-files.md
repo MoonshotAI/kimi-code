@@ -388,7 +388,14 @@ decision = "deny" # "ask" has the same effect — both outrank `allow`
 pattern = "Bash"
 ```
 
-A catch-all is also rarely necessary: a tool call that matches no rule already falls through to a confirmation prompt unless the tool is approved by default (read-only tools such as `Read` and `Grep` are). Write only the narrow rules — `allow` for the calls you want approved silently, `deny` for the ones you never want to run — and let the rest reach the prompt.
+Under the default `default_permission_mode = "manual"`, a catch-all is also rarely necessary: a tool call that matches no rule already falls through to a confirmation prompt unless the tool is approved by default (read-only tools such as `Read` and `Grep` are). Write only the narrow rules — `allow` for the calls you want approved silently, `deny` for the ones you never want to run — and let the rest reach the prompt.
+
+That fallback prompt does not exist in the autonomous modes, so relying on it there is unsafe:
+
+- `yolo` auto-approves anything that reaches the end of the chain, but your `deny` and `ask` rules still apply.
+- `auto` auto-approves *before* `ask` and `allow` are consulted, so only `deny` rules have any effect.
+
+In both modes, every call you want stopped needs an explicit `deny` rule.
 :::
 
 ::: tip
