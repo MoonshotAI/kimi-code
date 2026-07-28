@@ -59,8 +59,16 @@ vi.mock('../../src/main/track', () => ({
 // through defineProperty).
 Object.defineProperty(process, 'resourcesPath', { value: '/resources' });
 
-function fakeWindow(): { isDestroyed: () => boolean; loadURL: ReturnType<typeof vi.fn> } {
-  return { isDestroyed: () => false, loadURL: vi.fn().mockResolvedValue(undefined) };
+function fakeWindow(opts: { visible?: boolean } = {}): {
+  isDestroyed: () => boolean;
+  isVisible: () => boolean;
+  loadURL: ReturnType<typeof vi.fn>;
+} {
+  return {
+    isDestroyed: () => false,
+    isVisible: () => opts.visible ?? true,
+    loadURL: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 function fakeHandle(origin = 'http://127.0.0.1:54321'): DesktopServerHandle {
@@ -265,6 +273,31 @@ describe('connect', () => {
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
       'embedded_renderer_load_result',
       expect.objectContaining({ ok: true }),
+    );
+  });
+
+  it('seeds window_lifecycle shown on the first embedded start, not on reuse', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+    const lifecycleCalls = () =>
+      mocks.trackDesktopEvent.mock.calls.filter(([event]) => event === 'window_lifecycle');
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    expect(lifecycleCalls()).toEqual([['window_lifecycle', { action: 'shown' }]]);
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    expect(lifecycleCalls()).toHaveLength(1);
+  });
+
+  it('does not seed the window lifecycle when the window is hidden at start', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+
+    await connect(fakeWindow({ visible: false }) as unknown as BrowserWindow);
+
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith(
+      'window_lifecycle',
+      expect.anything(),
     );
   });
 
