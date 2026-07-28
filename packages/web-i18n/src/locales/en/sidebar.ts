@@ -68,7 +68,7 @@ export default {
   updateAvailable: 'v{version} available',
   updateDownloading: 'Downloading… {percent}%',
   updateReady: 'v{version} ready',
-  updateDone: 'Downloaded',
+  updateDone: 'Restart',
   updateFailed: 'Download failed',
   updateRetry: 'Retry',
   updateDownloadNow: 'Download & Update',

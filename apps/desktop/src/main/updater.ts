@@ -13,8 +13,9 @@
 // clicked, and its failure) produce visible states beyond `available`.
 // Background check failures are logged and swallowed — a laptop on a flaky
 // network must not grow an error banner. Background-download failures land in
-// `error` too (the download was in flight either way); the renderer hides
-// them in auto-download mode and the next scheduled check retries.
+// `error` too (the download was in flight either way) and surfaces like any
+// other failure — the renderer shows it with a retry path; the next
+// scheduled check retries on its own.
 //
 // The electron-updater instance is injected (`UpdaterLike`) so tests can
 // drive the state machine with a fake; `initAutoUpdater()` is the production
@@ -91,8 +92,8 @@ export interface UpdateController {
   check(): Promise<UpdateCheckResult>;
   download(): void;
   install(): void;
-  /** Flip the background-download preference. Enabling starts the download
-      immediately when an update is already waiting (available / failed);
+  /** Flip the background-download preference. Applies to future checks
+      only — a waiting update still downloads on the user's click, and
       disabling never cancels an in-flight download. */
   setAutoDownload(enabled: boolean): void;
   stop(): void;
@@ -288,13 +289,13 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       updater.quitAndInstall(true, true);
     },
     setAutoDownload: (enabled) => {
+      // A pure preference: only FUTURE checks auto-start their downloads
+      // (electron-updater's flag applies on the next checkForUpdates). A
+      // currently waiting update still requires the user's click, so the
+      // dialog checkbox / settings toggle never close the dialog or hide
+      // the pill as a side effect; disabling never cancels an in-flight
+      // download either — it finishes and surfaces as usual.
       updater.autoDownload = enabled;
-      // Enabling with a waiting update starts it right away (download()
-      // no-ops in every other state); disabling never cancels an in-flight
-      // download — it finishes and surfaces as usual.
-      if (enabled) {
-        download();
-      }
     },
     stop: () => {
       clearTimeout(initialTimer);

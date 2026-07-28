@@ -8,13 +8,13 @@
 // tests) the status stays `idle` and nothing renders — the no-bridge
 // fallback, per native-todos.md.
 //
-// `visible` rules: in auto-download mode (opt-in via settings → advanced)
-// only a downloaded update surfaces ("重启更新") — background downloading and
-// its failures stay silent, and a failed download retries on the next
-// scheduled check. In manual (click-to-download) mode every non-idle state
-// shows, except an `available` version the user chose to skip ("本次跳过" in
-// the dialog): the choice is persisted in localStorage and lifts as soon as a
-// different version shows up.
+// `visible` rules: every non-idle state shows — including a background
+// download's live progress, so the user can watch an auto-downloaded update
+// land. The only exception is an `available` version the user chose to skip
+// ("本次跳过" in the dialog): the choice is persisted in localStorage and
+// lifts as soon as a different version shows up. The auto-download
+// preference never affects visibility: it only decides whether FUTURE
+// checks start downloading on their own (main-side electron-updater flag).
 //
 // Consumers: the sidebar UpdateIndicator, and settings → advanced (the manual
 // "check for updates" row uses `canCheck` / `check`; the auto-download toggle
@@ -63,8 +63,9 @@ export interface UpdateTracker {
   /** Whether a manual update check is wired up (false in plain web and on
       desktop builds whose bridge predates `checkForUpdates` — hide the row). */
   canCheck: boolean;
-  /** Background-download preference (persisted main-side). Drives both the
-      settings toggle and the `visible` rules above. */
+  /** Background-download preference (persisted main-side). Drives the
+      settings toggle and the dialog checkbox — a pure preference, it never
+      affects `visible` nor starts the currently waiting download. */
   autoDownload: Ref<boolean>;
   /** Whether the auto-download toggle is wired up (bridge feature-detect —
       hide the settings row in plain web / older bridges). */
@@ -127,12 +128,6 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     const s = status.value;
     if (s.state === 'idle') {
       return false;
-    }
-    // Auto-download mode: background phases stay silent — only a downloaded
-    // update surfaces. A failed background download retries on the next
-    // scheduled check, so it must not grow an error pill either.
-    if (autoDownload.value) {
-      return s.state === 'downloaded';
     }
     // A skipped version stays hidden while it remains the available one; any
     // other state (already downloading/downloaded, or a newer version) shows.

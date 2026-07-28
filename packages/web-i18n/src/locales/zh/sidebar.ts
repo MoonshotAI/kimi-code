@@ -68,7 +68,7 @@ export default {
   updateAvailable: '发现新版本 v{version}',
   updateDownloading: '下载中… {percent}%',
   updateReady: 'v{version} 已就绪',
-  updateDone: '下载完成',
+  updateDone: '重启并更新',
   updateFailed: '下载失败',
   updateRetry: '重试',
   updateDownloadNow: '下载并更新',
