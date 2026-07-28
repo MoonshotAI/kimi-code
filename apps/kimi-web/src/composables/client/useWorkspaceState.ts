@@ -2732,16 +2732,27 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  function resolveActiveWorkspaceId(): string | null {
+    const raw = rawState.activeWorkspaceId;
+    if (raw && workspacesView.value.some((w) => w.id === raw)) return raw;
+    return workspacesView.value[0]?.id ?? null;
+  }
+
   /**
-   * Search files in the active session using the daemon searchFiles endpoint.
-   * Returns {path, name}[] — defensive, returns [] on error or no active session.
+   * Search files in the active session, or in the active workspace while the
+   * composer is still drafting the first prompt.
    */
   async function searchFiles(query: string): Promise<Array<{ path: string; name: string }>> {
     const sid = rawState.activeSessionId;
-    if (!sid) return [];
     try {
       const api = getKimiWebApi();
-      const result = await api.searchFiles(sid, { query, limit: 20 });
+      if (sid !== undefined) {
+        const result = await api.searchFiles(sid, { query, limit: 20 });
+        return result.items.map((item) => ({ path: item.path, name: item.name }));
+      }
+      const workspaceId = resolveActiveWorkspaceId();
+      if (workspaceId === null) return [];
+      const result = await api.searchWorkspaceFiles(workspaceId, { query, limit: 20 });
       return result.items.map((item) => ({ path: item.path, name: item.name }));
     } catch {
       return [];

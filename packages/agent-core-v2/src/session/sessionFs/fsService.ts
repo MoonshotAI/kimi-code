@@ -37,7 +37,6 @@ import {
   type FsMkdirResponse,
   type FsReadRequest,
   type FsReadResponse,
-  type FsSearchHit,
   type FsSearchRequest,
   type FsSearchResponse,
   type FsStatManyRequest,
@@ -85,16 +84,14 @@ import { readStream, runCommand } from './fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
 import {
   compileGrepPattern,
-  computeFuzzyScore,
-  computeMatchPositions,
   matchesAnyGlob,
   type RgJsonRecord,
   rgPath,
   rgText,
   stripTrailingNewline,
 } from './fsSearch';
+import { searchWorkspaceFiles } from './workspaceSearch';
 
-const SEARCH_HARD_CAP = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const WALK_MAX_DEPTH = 64;
 
@@ -432,36 +429,9 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
-    const matcher = req.follow_gitignore ? await this.matcher() : undefined;
-    const candidates: FsSearchHit[] = [];
-    const queryLower = req.query.toLowerCase();
-
-    await this.walk('', matcher, async (relPath, name, kind) => {
-      const score = computeFuzzyScore(name, queryLower);
-      if (score <= 0) return;
-      if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
-        return;
-      }
-      if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
-        return;
-      }
-      candidates.push({
-        path: relPath,
-        name,
-        kind,
-        score,
-        match_positions: computeMatchPositions(relPath, queryLower),
-      });
+    return searchWorkspaceFiles(this.hostFs, this.workspace.workDir, req, {
+      gitignoreCache: this.gitignoreCache,
     });
-
-    candidates.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.path.localeCompare(b.path);
-    });
-
-    const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
-    const truncated = candidates.length > effectiveCap;
-    return { items: candidates.slice(0, effectiveCap), truncated };
   }
 
   async grep(req: FsGrepRequest): Promise<FsGrepResponse> {

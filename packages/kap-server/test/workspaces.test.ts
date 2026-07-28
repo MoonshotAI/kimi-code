@@ -30,6 +30,11 @@ interface ListWire {
   items: WorkspaceWire[];
 }
 
+interface SearchWire {
+  items: Array<{ path: string; name: string }>;
+  truncated: boolean;
+}
+
 describe('server-v2 /api/v1/workspaces', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -148,6 +153,31 @@ describe('server-v2 /api/v1/workspaces', () => {
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     expect(body.code).toBe(0);
     expect(body.data.items.some((w) => w.id === created.body.data.id)).toBe(true);
+  });
+
+  it('searches workspace files before a session exists', async () => {
+    const root = home as string;
+    await writeFile(join(root, 'alpha.ts'), '');
+    await writeFile(join(root, 'beta.ts'), '');
+    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+
+    const { status, body } = await postJson<SearchWire>(
+      `/api/v1/workspaces/${created.body.data.id}/fs:search`,
+      { query: 'alpha' },
+    );
+
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
+    expect(body.data.truncated).toBe(false);
+  });
+
+  it('maps workspace file search for an unknown workspace to WORKSPACE_NOT_FOUND', async () => {
+    const { body } = await postJson<null>(
+      '/api/v1/workspaces/wd_missing_000000000000/fs:search',
+      { query: 'alpha' },
+    );
+    expect(body.code).toBe(40410);
   });
 
   it('renames a workspace via PATCH', async () => {

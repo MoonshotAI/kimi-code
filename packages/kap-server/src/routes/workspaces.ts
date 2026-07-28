@@ -10,6 +10,8 @@
  *   POST   /workspaces                    register (idempotent on root)
  *   PATCH  /workspaces/{workspace_id}     rename (display name only)
  *   DELETE /workspaces/{workspace_id}     unregister
+ *   POST   /workspaces/{workspace_id}/fs:search
+ *                                          search workspace files without a session
  *
  * **Wire fidelity**: the v1 `workspaceSchema` carries more fields than v2's
  * `Workspace` (`{ id, root, name, createdAt, lastOpenedAt }`). The handler
@@ -29,6 +31,11 @@ import {
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  fsSearchRequestSchema,
+  fsSearchResponseSchema,
+} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+import { searchWorkspaceFiles } from '@moonshot-ai/agent-core-v2/session/sessionFs/workspaceSearch';
 import { isAbsolute } from 'node:path';
 
 import { z } from 'zod';
@@ -147,6 +154,70 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     createRoute.path,
     createRoute.options,
     createRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
+  );
+
+  const searchRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspaces/{workspace_id}/fs::search',
+      params: workspaceIdParamSchema,
+      body: fsSearchRequestSchema,
+      success: { data: fsSearchResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+      },
+      description: 'Search files in a workspace before a session exists',
+      tags: ['workspaces'],
+      operationId: 'workspaceFsSearch',
+    },
+    async (req, reply) => {
+      const { workspace_id } = req.params;
+      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
+      if (ws === undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.WORKSPACE_NOT_FOUND,
+            `workspace ${workspace_id} does not exist`,
+            req.id,
+          ),
+        );
+        return;
+      }
+
+      const hostFs = core.accessor.get(IHostFileSystem);
+      try {
+        const stat = await hostFs.stat(ws.root);
+        if (!stat.isDirectory) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.FS_PATH_NOT_FOUND,
+              `workspace root ${ws.root} is not a directory`,
+              req.id,
+            ),
+          );
+          return;
+        }
+      } catch {
+        reply.send(
+          errEnvelope(
+            ErrorCode.FS_PATH_NOT_FOUND,
+            `workspace root ${ws.root} does not exist`,
+            req.id,
+          ),
+        );
+        return;
+      }
+
+      const data = await searchWorkspaceFiles(hostFs, ws.root, req.body);
+      reply.send(okEnvelope(data, req.id));
+    },
+  );
+  app.post(
+    searchRoute.path,
+    searchRoute.options,
+    searchRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
   );
 
   const updateRoute = defineRoute(
