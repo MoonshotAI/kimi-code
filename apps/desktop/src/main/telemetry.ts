@@ -57,12 +57,12 @@ function readDaysSinceInstall(): number | undefined {
 // Super properties merged into every desktop event. Undefined values are
 // dropped; event-own fields always win the merge.
 function withSuperProperties(
-  startedAt: number,
   daysSinceInstall: number | undefined,
   properties: TelemetryProperties | undefined,
 ): TelemetryProperties {
   const injected: Record<string, string | number> = {
-    app_uptime_ms: Date.now() - startedAt,
+    // Same epoch as the app_crashed/app_launched events' own uptime field.
+    app_uptime_ms: Math.round(process.uptime() * 1000),
     theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
   };
   const serverMode = getServerMode();
@@ -123,7 +123,7 @@ export async function wireDesktopTelemetry(
     telemetry.setAppender(appender);
     const daysSinceInstall = readDaysSinceInstall();
     setDesktopTrackImpl((event, properties) => {
-      telemetry.track(event, withSuperProperties(startedAt, daysSinceInstall, properties));
+      telemetry.track(event, withSuperProperties(daysSinceInstall, properties));
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});

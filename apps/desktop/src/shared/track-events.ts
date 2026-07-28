@@ -42,10 +42,13 @@ const settingsChangedPropertiesSchema = z.discriminatedUnion('key', [
 
 export const rendererTrackEventSchema = z.discriminatedUnion('event', [
   z.object({
+    // Menu-synced actions (openSettings/newSession/openFolder) register native
+    // menu accelerators, so their keyboard presses arrive as menu clicks and
+    // are attributed to 'menu' — 'shortcut' only covers non-synced actions.
     event: z.literal('action_invoked'),
     properties: z.object({
       action: z.enum(ACTION_INVOKED_IDS),
-      source: z.enum(['shortcut', 'menu', 'button', 'tray']),
+      source: z.enum(['shortcut', 'menu', 'button']),
     }),
   }),
   z.object({
@@ -145,6 +148,7 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       via: z.enum(['drop', 'click', 'paste']),
       kind: z.enum(['image', 'video', 'file']).optional().catch(undefined),
       size_bucket: z.enum(['<1mb', '1-10mb', '10-50mb', '50mb+']),
+      // Batch size, repeated on every event of the batch — NOT summable.
       count: z.number().int().min(1).max(100),
     }),
   }),

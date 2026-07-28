@@ -97,7 +97,7 @@ describe('asRendererTrackEvent', () => {
   });
 
   it('accepts every whitelisted source', () => {
-    for (const source of ['shortcut', 'menu', 'button', 'tray'] as const) {
+    for (const source of ['shortcut', 'menu', 'button'] as const) {
       expect(
         asRendererTrackEvent('action_invoked', { action: 'openSettings', source }),
       ).toEqual({ event: 'action_invoked', properties: { action: 'openSettings', source } });
