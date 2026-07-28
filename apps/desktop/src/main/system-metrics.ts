@@ -23,51 +23,76 @@ const JS_HEAP_EXPRESSION =
   'performance.memory ? { used: performance.memory.usedJSHeapSize, total: performance.memory.totalJSHeapSize, limit: performance.memory.jsHeapSizeLimit } : null';
 
 export interface ChromiumProcessMetrics {
-  renderer_working_set_bytes: number;
   renderer_process_count: number;
-  gpu_working_set_bytes: number;
-  other_working_set_bytes: number;
+  renderer_working_set_bytes?: number;
+  gpu_working_set_bytes?: number;
+  other_working_set_bytes?: number;
   renderer_cpu_seconds?: number;
   gpu_cpu_seconds?: number;
   other_cpu_seconds?: number;
 }
 
+type RuntimeProcessMetric = Omit<ProcessMetric, 'memory'> & {
+  readonly memory?: ProcessMetric['memory'];
+};
+
+interface ProcessMetricGroup {
+  count: number;
+  workingSetBytes: number;
+  memoryComplete: boolean;
+  cpuSeconds?: number;
+}
+
+function createProcessMetricGroup(): ProcessMetricGroup {
+  return { count: 0, workingSetBytes: 0, memoryComplete: true };
+}
+
+function addProcessMetric(group: ProcessMetricGroup, metric: RuntimeProcessMetric): void {
+  group.count += 1;
+  const workingSetKb = metric.memory?.workingSetSize;
+  if (typeof workingSetKb === 'number' && Number.isFinite(workingSetKb) && workingSetKb >= 0) {
+    group.workingSetBytes += workingSetKb * 1024;
+  } else {
+    group.memoryComplete = false;
+  }
+  const cpuSeconds = metric.cpu.cumulativeCPUUsage;
+  if (typeof cpuSeconds === 'number' && Number.isFinite(cpuSeconds) && cpuSeconds >= 0) {
+    group.cpuSeconds = (group.cpuSeconds ?? 0) + cpuSeconds;
+  }
+}
+
 export function aggregateProcessMetrics(
-  metrics: readonly ProcessMetric[],
+  metrics: readonly RuntimeProcessMetric[],
 ): ChromiumProcessMetrics {
-  let rendererWorkingSetBytes = 0;
-  let rendererCount = 0;
-  let gpuWorkingSetBytes = 0;
-  let otherWorkingSetBytes = 0;
-  let rendererCpuSeconds: number | undefined;
-  let gpuCpuSeconds: number | undefined;
-  let otherCpuSeconds: number | undefined;
+  const renderer = createProcessMetricGroup();
+  const gpu = createProcessMetricGroup();
+  const other = createProcessMetricGroup();
   for (const metric of metrics) {
-    // getAppMetrics reports working set in KB.
-    const workingSetBytes = metric.memory.workingSetSize * 1024;
-    const cpuSeconds = metric.cpu.cumulativeCPUUsage;
-    if (metric.type === 'Tab') {
-      rendererWorkingSetBytes += workingSetBytes;
-      rendererCount += 1;
-      if (cpuSeconds !== undefined) rendererCpuSeconds = (rendererCpuSeconds ?? 0) + cpuSeconds;
+    if (metric.type === 'Browser') {
+      continue;
+    } else if (metric.type === 'Tab') {
+      addProcessMetric(renderer, metric);
     } else if (metric.type === 'GPU') {
-      gpuWorkingSetBytes += workingSetBytes;
-      if (cpuSeconds !== undefined) gpuCpuSeconds = (gpuCpuSeconds ?? 0) + cpuSeconds;
-    } else if (metric.type !== 'Browser') {
-      // 'Browser' is the main process itself, already sampled natively.
-      otherWorkingSetBytes += workingSetBytes;
-      if (cpuSeconds !== undefined) otherCpuSeconds = (otherCpuSeconds ?? 0) + cpuSeconds;
+      addProcessMetric(gpu, metric);
+    } else {
+      addProcessMetric(other, metric);
     }
   }
   const result: ChromiumProcessMetrics = {
-    renderer_working_set_bytes: rendererWorkingSetBytes,
-    renderer_process_count: rendererCount,
-    gpu_working_set_bytes: gpuWorkingSetBytes,
-    other_working_set_bytes: otherWorkingSetBytes,
+    renderer_process_count: renderer.count,
   };
-  if (rendererCpuSeconds !== undefined) result.renderer_cpu_seconds = rendererCpuSeconds;
-  if (gpuCpuSeconds !== undefined) result.gpu_cpu_seconds = gpuCpuSeconds;
-  if (otherCpuSeconds !== undefined) result.other_cpu_seconds = otherCpuSeconds;
+  if (renderer.count === 0 || renderer.memoryComplete) {
+    result.renderer_working_set_bytes = renderer.workingSetBytes;
+  }
+  if (gpu.count === 0 || gpu.memoryComplete) {
+    result.gpu_working_set_bytes = gpu.workingSetBytes;
+  }
+  if (other.count === 0 || other.memoryComplete) {
+    result.other_working_set_bytes = other.workingSetBytes;
+  }
+  if (renderer.cpuSeconds !== undefined) result.renderer_cpu_seconds = renderer.cpuSeconds;
+  if (gpu.cpuSeconds !== undefined) result.gpu_cpu_seconds = gpu.cpuSeconds;
+  if (other.cpuSeconds !== undefined) result.other_cpu_seconds = other.cpuSeconds;
   return result;
 }
 
@@ -111,11 +136,8 @@ async function sampleSafely(): Promise<void> {
   try {
     await sample();
   } catch (error) {
-    // Sampling must never break the host; a persistent failure just ends the
-    // collection instead of throwing every interval.
-    stopDesktopSystemMetrics();
     log.error(
-      `[kimi-desktop] system metrics sampling failed; collector stopped: ${error instanceof Error ? error.message : String(error)}`,
+      `[kimi-desktop] system metrics sampling failed; will retry: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     sampleInFlight = false;

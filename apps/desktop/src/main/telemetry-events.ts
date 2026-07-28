@@ -79,9 +79,10 @@ export interface NativeIpcUsedEvent {
 // Main-process fields mirror the CLI v1 collector (kimi-code
 // packages/telemetry system_metrics) so CLI and desktop samples stay
 // comparable; the embedded server runs in-process, so its usage is folded
-// into the main numbers. Child-process CPU fields are cumulative seconds
-// since each process started (diff across samples), absent when the platform
-// reports none. Emitted by system-metrics.ts, entirely from the main process.
+// into the main numbers. Child-process working-set fields are absent when
+// Electron provides no per-process memory (Linux); CPU fields are cumulative
+// seconds since each process started, absent when the platform reports none.
+// Emitted by system-metrics.ts, entirely from the main process.
 export interface SystemMetricsEvent {
   process_started_at: number;
   process_uptime_ms: number;
@@ -98,10 +99,10 @@ export interface SystemMetricsEvent {
   total_mem_bytes: number;
   cpu_count: number;
   constrained_memory_bytes?: number;
-  renderer_working_set_bytes: number;
   renderer_process_count: number;
-  gpu_working_set_bytes: number;
-  other_working_set_bytes: number;
+  renderer_working_set_bytes?: number;
+  gpu_working_set_bytes?: number;
+  other_working_set_bytes?: number;
   renderer_cpu_seconds?: number;
   gpu_cpu_seconds?: number;
   other_cpu_seconds?: number;

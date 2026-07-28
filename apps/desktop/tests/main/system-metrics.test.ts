@@ -30,6 +30,13 @@ function makeMetric(
   } as never;
 }
 
+function makeMetricWithoutMemory(type: string, cumulativeCPUUsage?: number): never {
+  return {
+    type,
+    cpu: { percentCPUUsage: 0, cumulativeCPUUsage, idleWakeupsPerSecond: 0 },
+  } as never;
+}
+
 function makeMainWindow(executeJavaScript: () => Promise<unknown>): never {
   return {
     isDestroyed: () => false,
@@ -77,6 +84,32 @@ describe('aggregateProcessMetrics', () => {
       gpu_working_set_bytes: 0,
       other_working_set_bytes: 0,
     });
+  });
+
+  it('preserves process counts and CPU when Electron omits memory on Linux', () => {
+    expect(
+      aggregateProcessMetrics([
+        makeMetricWithoutMemory('Tab', 1.5),
+        makeMetricWithoutMemory('GPU', 2),
+        makeMetricWithoutMemory('Utility', 0.25),
+      ]),
+    ).toEqual({
+      renderer_process_count: 1,
+      renderer_cpu_seconds: 1.5,
+      gpu_cpu_seconds: 2,
+      other_cpu_seconds: 0.25,
+    });
+  });
+
+  it('omits a group memory total when any process in that group lacks memory', () => {
+    const result = aggregateProcessMetrics([
+      makeMetric('Tab', 100, 1),
+      makeMetricWithoutMemory('Tab', 0.5),
+    ]);
+
+    expect(result.renderer_process_count).toBe(2);
+    expect(result.renderer_working_set_bytes).toBeUndefined();
+    expect(result.renderer_cpu_seconds).toBe(1.5);
   });
 });
 
@@ -191,18 +224,16 @@ describe('desktop system metrics collector', () => {
     expect(lastSample()['renderer_js_heap_used_bytes']).toBeUndefined();
   });
 
-  it('stops the collector and logs when sampling itself fails', async () => {
-    startDesktopSystemMetrics();
-    await vi.advanceTimersByTimeAsync(1_500);
-    expect(trackMock.trackDesktopEvent).toHaveBeenCalledOnce();
-
-    appMock.getAppMetrics.mockImplementation(() => {
+  it('logs a transient sampling failure and retries on the next interval', async () => {
+    appMock.getAppMetrics.mockImplementationOnce(() => {
       throw new Error('metrics unavailable');
     });
-    await vi.advanceTimersByTimeAsync(300_000);
+    startDesktopSystemMetrics();
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(logMock.error).toHaveBeenCalledOnce();
+    expect(trackMock.trackDesktopEvent).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(600_000);
+    await vi.advanceTimersByTimeAsync(300_000);
     expect(trackMock.trackDesktopEvent).toHaveBeenCalledOnce();
   });
 });
