@@ -45,7 +45,10 @@ export function daysSince(birthtimeMs: number, nowMs: number): number {
 // it on first launch). Undefined when unreadable — the field is dropped.
 function readDaysSinceInstall(): number | undefined {
   try {
-    return daysSince(statSync(join(resolveKimiHome(), 'device_id')).birthtimeMs, Date.now());
+    const { birthtimeMs } = statSync(join(resolveKimiHome(), 'device_id'));
+    // Filesystems without btime (some Linux mounts) report 0.
+    if (birthtimeMs <= 0) return undefined;
+    return daysSince(birthtimeMs, Date.now());
   } catch {
     return undefined;
   }

@@ -370,11 +370,12 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 }
 
 function onSelectSession(sessionId: string): void {
+  setSessionIntent('sidebar');
   emit('select', sessionId);
 }
 
-// A pick from the search dialog is a search-sourced resume; the App-level
-// select handler would otherwise fall back to 'sidebar'.
+// A pick from the search dialog is a search-sourced resume; intent is set at
+// the leaf entry points, so this overrides the plain-click value above.
 function onSearchSelectSession(sessionId: string): void {
   setSessionIntent('search');
   emit('select', sessionId);

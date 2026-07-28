@@ -100,7 +100,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         via,
         kind,
         size_bucket: attachmentSizeBucket(file.size),
-        count: files.length,
+        // The contract caps count at 100 — an over-cap batch would fail
+        // validation and drop every event in it.
+        count: Math.min(files.length, 100),
       });
       const localId = nextLocalId();
       // Only media gets a thumbnail object URL; files render an icon chip.

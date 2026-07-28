@@ -1063,14 +1063,20 @@ function openSettingsFromButton(): void {
   if (!showSettings.value) runShortcutAction('openSettings', 'button');
 }
 
-function setColorSchemeFromSettings(scheme: ColorScheme): void {
+function setColorSchemeFromSettings(
+  scheme: ColorScheme,
+  sourcePanel: 'settings' | 'mobile_settings' = 'settings',
+): void {
   client.setColorScheme(scheme);
-  track('settings_changed', { key: 'theme', value: scheme, source_panel: 'settings' });
+  track('settings_changed', { key: 'theme', value: scheme, source_panel: sourcePanel });
 }
 
-function setFontScaleFromSettings(scale: FontScale): void {
+function setFontScaleFromSettings(
+  scale: FontScale,
+  sourcePanel: 'settings' | 'mobile_settings' = 'settings',
+): void {
   client.setFontScale(scale);
-  track('settings_changed', { key: 'font-size', value: scale, source_panel: 'settings' });
+  track('settings_changed', { key: 'font-size', value: scale, source_panel: sourcePanel });
 }
 
 // Primary "+ New": enter the draft state in the current workspace so the
@@ -1095,9 +1101,17 @@ function handleCreateSessionInWorkspace(workspaceId: string): void {
   focusComposerAfterDraft();
 }
 
-// Sidebar / mobile-switcher session clicks: both are sidebar-sourced resumes.
+// The draft composer's workspace picker only re-targets the pending draft —
+// the entry intent (shortcut/menu/…) belongs to whoever opened the draft.
+function handleDraftWorkspaceSelect(workspaceId: string): void {
+  client.openWorkspaceDraft(workspaceId);
+  focusComposerAfterDraft();
+}
+
+// Sidebar / mobile-switcher session clicks: intent is set at the leaf entry
+// points (Sidebar's onSelectSession / onSearchSelectSession); anything else
+// falls back to 'sidebar' at consume time.
 function handleSelectSession(sessionId: string): void {
-  setSessionIntent('sidebar');
   void client.selectSession(sessionId);
 }
 
@@ -1242,7 +1256,7 @@ function openPr(url: string): void {
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
-      @select-workspace="handleCreateSessionInWorkspace($event)"
+      @select-workspace="handleDraftWorkspaceSelect($event)"
       @add-workspace="runShortcutAction('openFolder', 'button')"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
@@ -1508,8 +1522,8 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
-      @set-color-scheme="setColorSchemeFromSettings($event)"
-      @set-font-scale="setFontScaleFromSettings($event)"
+      @set-color-scheme="setColorSchemeFromSettings($event, 'mobile_settings')"
+      @set-font-scale="setFontScaleFromSettings($event, 'mobile_settings')"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />

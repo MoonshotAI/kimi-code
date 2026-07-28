@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { DESKTOP_WINDOWS_APP_ID, DESKTOP_WINDOWS_DEV_APP_ID } from '../shared/identity';
 import { log } from './log';
 import { registerRendererProtocol } from './protocol';
-import { rendererDistRoot, closeServerHandle } from './connect';
+import { rendererDistRoot, closeServerHandle, shutdownServerTelemetry } from './connect';
 import { stopShellEnvProbe } from './shell-env';
 import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
@@ -62,7 +62,13 @@ export function main(): void {
 
   registerIpcHandlers();
 
-  app.on('before-quit', () => {
+  // Quit barrier: the fire-and-forget cleanup above lets the process die
+  // before the telemetry flush finishes, losing `exit` and the buffered tail
+  // (the disk fallback only engages after a *completed* flush attempt fails).
+  // Hold quit only for telemetry.shutdown — it caps itself at 3s, and the
+  // full server close is exactly the hang source this ordering avoids.
+  let telemetryFlushArmed = true;
+  app.on('before-quit', (event) => {
     log.info('[kimi-desktop] quitting');
     for (const cleanup of [
       finalizeWindowLifecycle,
@@ -77,6 +83,16 @@ export function main(): void {
         });
       } catch (error) {
         log.error('[kimi-desktop] shutdown step failed', error);
+      }
+    }
+    if (telemetryFlushArmed) {
+      const flush = shutdownServerTelemetry();
+      if (flush !== null) {
+        telemetryFlushArmed = false;
+        event.preventDefault();
+        void flush.finally(() => {
+          app.quit();
+        });
       }
     }
   });

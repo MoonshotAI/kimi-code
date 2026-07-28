@@ -21,6 +21,7 @@ import { wireDesktopTelemetry } from './telemetry';
 export interface DesktopServerHandle {
   readonly origin: string;
   readonly port: number;
+  readonly shutdownTelemetry: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 
@@ -123,6 +124,9 @@ export async function startDesktopServer(
   return {
     origin: `http://${handle.host}:${handle.port}`,
     port: handle.port,
+    // Bounded flush on quit (telemetry.shutdown caps itself at 3s); exposed
+    // separately because before-quit can await only this, never handle.close.
+    shutdownTelemetry: () => telemetry?.shutdown() ?? Promise.resolve(),
     close: async () => {
       await telemetry?.shutdown();
       await handle.close();

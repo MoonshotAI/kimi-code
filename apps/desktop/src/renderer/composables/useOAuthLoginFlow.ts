@@ -218,6 +218,15 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     stopTimers();
     if (step.value === 'device-code' && !flowCancelled) {
       flowCancelled = true;
+      // The user-initiated cancel is the flow's terminal state: our own timers
+      // are stopped, so the poller will never observe the daemon's 'cancelled'.
+      track('oauth_login_step', {
+        stage: 'expired',
+        ok: false,
+        method: 'oauth',
+        duration_ms: Date.now() - flowStartedAt,
+        error_class: 'cancelled',
+      });
       void options.onCancelOAuthLogin();
     }
   }

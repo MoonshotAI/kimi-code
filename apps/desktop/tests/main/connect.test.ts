@@ -73,6 +73,7 @@ function fakeHandle(origin = 'http://127.0.0.1:54321'): DesktopServerHandle {
   return {
     origin,
     port: Number(origin.split(':').at(-1)),
+    shutdownTelemetry: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }

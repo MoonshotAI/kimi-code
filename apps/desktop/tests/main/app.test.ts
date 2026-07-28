@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     showMainWindow: vi.fn(),
     sendLaunchAction: vi.fn(),
     closeServerHandle: vi.fn(() => new Promise<void>(() => {})),
+    shutdownServerTelemetry: vi.fn((): Promise<void> | null => null),
     stopShellEnvProbe: vi.fn(),
     destroyTray: vi.fn(),
     unregisterGlobalShortcuts: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../../src/main/protocol', () => ({
 vi.mock('../../src/main/connect', () => ({
   rendererDistRoot: '/renderer',
   closeServerHandle: mocks.closeServerHandle,
+  shutdownServerTelemetry: mocks.shutdownServerTelemetry,
 }));
 vi.mock('../../src/main/window', () => ({
   createWindow: mocks.createWindow,
@@ -70,10 +72,18 @@ vi.mock('../../src/main/window-lifecycle', () => ({
 import { main } from '../../src/main/app';
 
 describe('app second-instance routing', () => {
+  const realPlatform = process.platform;
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listeners.clear();
     mocks.app.isPackaged = true;
+    mocks.shutdownServerTelemetry.mockReturnValue(null);
+    Object.defineProperty(process, 'platform', { value: 'win32', enumerable: true, configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, enumerable: true, configurable: true });
   });
 
   it('isolates unpackaged Windows launches from the installed shell identity', () => {
@@ -131,6 +141,30 @@ describe('app second-instance routing', () => {
     expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
     expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
   });
+
+  it('holds quit only for the bounded telemetry flush, then quits without re-arming', async () => {
+    let release = (): void => {};
+    mocks.shutdownServerTelemetry.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(mocks.app.quit).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
+
+    // The re-entrant before-quit from app.quit() must not re-arm the barrier.
+    const second = { preventDefault: vi.fn() };
+    onBeforeQuit?.(second);
+    expect(second.preventDefault).not.toHaveBeenCalled();
+  });
 });
 
 describe('app startup telemetry', () => {
@@ -174,6 +208,10 @@ describe('app startup telemetry', () => {
     expect(onGone).toBeTypeOf('function');
 
     onGone?.({}, { type: 'Tab', reason: 'crashed', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('app_crashed', expect.anything());
+
+    // Chromium recycles the GPU process in normal operation — not a crash.
+    onGone?.({}, { type: 'GPU', reason: 'clean-exit', exitCode: 0 });
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('app_crashed', expect.anything());
 
     onGone?.({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });

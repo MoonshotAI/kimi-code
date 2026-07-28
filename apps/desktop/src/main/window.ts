@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 as win32path } from 'node:path';
 
 import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
 import type { AppDetailsOptions, BrowserWindowConstructorOptions } from 'electron';
@@ -347,8 +347,8 @@ export function windowsWindowOptions(
   if (platform !== 'win32') return {};
   return {
     icon: isPackaged
-      ? join(resourcesPath, 'build', 'icon.ico')
-      : join(bundleDir, '..', 'build', 'icon.ico'),
+      ? win32path.join(resourcesPath, 'build', 'icon.ico')
+      : win32path.join(bundleDir, '..', 'build', 'icon.ico'),
   };
 }
 
@@ -588,6 +588,8 @@ export function createWindow(): void {
     log.error(
       `[kimi-desktop] renderer process gone (reason=${details.reason} exitCode=${details.exitCode})`,
     );
+    // A normal teardown (window destroy, app quit) also reports clean-exit.
+    if (details.reason === 'clean-exit') return;
     trackDesktopEvent('renderer_crashed', {
       // The contract has no 'memory-eviction' (Chrome memory-pressure kill);
       // it folds into 'oom'.

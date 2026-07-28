@@ -1533,6 +1533,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const knownEmpty = !messagesLoaded && sessionsKnownEmpty.has(sessionId);
     // Single-use: after this select resolves the session is no longer "known empty".
     sessionsKnownEmpty.delete(sessionId);
+    // Re-selecting the already-active session is a no-op navigation, not a resume.
+    const isResumedNavigation = rawState.activeSessionId !== sessionId;
     try {
       // Write the URL synchronously (before any await) so rapid clicks lay down
       // history entries in click order.
@@ -1541,7 +1543,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       setActiveSessionId(sessionId);
       // createDraftSession selects its own fresh session internally and already
       // reported the 'new' event — skip the duplicate resume there.
-      if (!opts?.skipTrack) {
+      if (!opts?.skipTrack && isResumedNavigation) {
         track('session_created', { kind: 'resumed', source: consumeSessionIntent('sidebar') });
       }
       // Opening a session clears its unread dot.

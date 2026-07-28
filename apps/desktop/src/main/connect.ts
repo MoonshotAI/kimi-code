@@ -89,6 +89,13 @@ export function closeServerHandle(): Promise<void> {
   })());
 }
 
+// The quit barrier can only afford the telemetry flush (bounded at 3s by
+// telemetry.shutdown itself) — awaiting the full server close reintroduces
+// the quit hang that made the barrier fire-and-forget.
+export function shutdownServerTelemetry(): Promise<void> | null {
+  return serverHandle?.shutdownTelemetry() ?? null;
+}
+
 // --- connect flow -------------------------------------------------------------
 
 export function connect(win: BrowserWindow): Promise<void> {
