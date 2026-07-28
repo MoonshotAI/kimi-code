@@ -693,3 +693,48 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     }
   });
 });
+
+describe('ConfigState.provider memo (reasoning dialect survives turns)', () => {
+  function kimiAgentWithTwoModels() {
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+        'kimi-code-2': { provider: 'kimi', model: 'kimi-code-2', maxContextSize: 128_000 },
+      },
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+    });
+  }
+
+  it('shares the reasoning-dialect cell across repeated accesses with unchanged config', () => {
+    const ctx = kimiAgentWithTwoModels();
+    ctx.agent.config.update({ modelAlias: 'kimi-code' });
+
+    const first = ctx.agent.config.provider;
+    const second = ctx.agent.config.provider;
+
+    // Each access returns a fresh morph clone, but the clones share the
+    // dialect cell learned from inbound responses — without the memo, the
+    // dialect detected on one turn would be lost before the next request.
+    expect(first).not.toBe(second);
+    expect(Reflect.get(first as object, '_reasoningKeyDialect')).toBe(
+      Reflect.get(second as object, '_reasoningKeyDialect'),
+    );
+  });
+
+  it('rebuilds the base provider (fresh dialect cell) when the resolved config changes', () => {
+    const ctx = kimiAgentWithTwoModels();
+    ctx.agent.config.update({ modelAlias: 'kimi-code' });
+    const before = ctx.agent.config.provider;
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code-2' });
+    const after = ctx.agent.config.provider;
+
+    expect(Reflect.get(after as object, '_reasoningKeyDialect')).not.toBe(
+      Reflect.get(before as object, '_reasoningKeyDialect'),
+    );
+  });
+});

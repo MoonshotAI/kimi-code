@@ -1,13 +1,16 @@
 /**
  * `/api/v1/ws` connection — speaks the v1 WebSocket protocol
- * (`server_hello` / `client_hello` / `subscribe` / `unsubscribe` / `ack` /
- * `resync_required` / event envelopes).
+ * (`server_hello` / `client_hello` / `subscribe` / `subscribe_v2` /
+ * `unsubscribe` / `ack` / `resync_required` / event envelopes).
  *
  * Each connection is a {@link BroadcastTarget}: sequenced envelopes from the
- * {@link SessionEventBroadcaster} are forwarded to the socket. On
- * `client_hello` / `subscribe` it replays durable events since the client's
- * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
- * served incrementally.
+ * {@link SessionEventBroadcaster} are forwarded to the socket. Subscription
+ * semantics live in the `subscribe` frame: it replays durable events since
+ * the client's `{seq, epoch}` cursor, or sends `resync_required` when the
+ * gap cannot be served incrementally. `client_hello` is only the handshake —
+ * it still accepts inline subscriptions for legacy clients, but forwards
+ * them to the same shared attach path (`attachSession`). Transcript grade
+ * subscriptions are a separate concern carried ONLY by `subscribe_v2`.
  *
  * The server never initiates a disconnect: unlike v1's `WsConnection`
  * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
@@ -15,10 +18,14 @@
  * down.
  */
 
-import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
 import {
-  transcriptSinceSchema,
-  transcriptSubscriptionSchema,
+  unsubscribeV2PayloadSchema,
+  WS_PROTOCOL_VERSION,
+  type SessionCursor,
+} from '../../../protocol/ws-control';
+import {
+  detachGrades,
+  transcriptSubscribeV2PayloadSchema,
   type TranscriptGradeSpec,
 } from '@moonshot-ai/transcript';
 import { ulid } from 'ulid';
@@ -37,6 +44,7 @@ import {
 } from './protocol';
 import {
   type AgentFilter,
+  type BroadcastDelivery,
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
@@ -49,9 +57,10 @@ const DEFAULT_MAX_BUFFER_SIZE = 1000;
 /** Per-session subscription state held by the connection (see `TargetSubscription`). */
 type SessionSubscription = TargetSubscription;
 
-// Outbound send buffer — coalesces a burst of frames (notably high-frequency
-// volatile text deltas) into fewer `socket.send` calls and applies backpressure
-// when the peer is not draining fast enough. See `flush()` / `coalesceFrames`.
+// Subscription-event send buffer — coalesces a burst of frames (notably
+// high-frequency volatile text deltas) within one render-frame-sized window.
+// Public/control frames are immediate barriers: they enter the same FIFO and
+// flush any earlier subscription frames so cross-channel order stays intact.
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_MAX_BATCH_SIZE = 64;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20; // 1 MiB
@@ -81,9 +90,9 @@ export interface WsConnectionV1Options {
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
-  /** Delay before a buffered batch is flushed; coalesces frames within the window. */
+  /** Delay before buffered subscription events are flushed. */
   readonly flushIntervalMs?: number;
-  /** Flush immediately once this many frames are queued, even before the interval. */
+  /** Flush subscription events once this many frames are queued. */
   readonly maxBatchSize?: number;
   /** `socket.bufferedAmount` above which flushing is deferred (backpressure). */
   readonly highWaterMarkBytes?: number;
@@ -109,6 +118,14 @@ export class WsConnectionV1 implements BroadcastTarget {
   private gotClientHello = false;
   /** Per-session subscription state: legacy agent allowlist + opt-in transcript grades. */
   readonly subscriptions = new Map<string, SessionSubscription>();
+  /**
+   * Serializes control-frame handling in receive order. Frames arrive
+   * back-to-back (e.g. `client_hello` immediately followed by
+   * `subscribe_v2`), and a later handler reads subscription state the
+   * earlier one stores — without the queue, two async attaches could
+   * interleave and the stale one would overwrite the fresher state.
+   */
+  private controlQueue: Promise<void> = Promise.resolve();
 
   /** Outbound frames awaiting the next flush. */
   private outbound: unknown[] = [];
@@ -137,7 +154,11 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket.on('error', () => this.onClose());
 
     opts.connectionRegistry.add(this);
-    this.sendFrame(
+    // Global events (session/workspace/config facts) flow to every established
+    // connection without any subscription; session/agent events stay
+    // subscribe-gated via `broadcaster.subscribe`.
+    this.broadcaster.addGlobalTarget(this);
+    this.sendImmediateFrame(
       buildServerHello({
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
@@ -155,9 +176,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     return Array.from(this.subscriptions.keys()).sort();
   }
 
-  /** BroadcastTarget — forward a sequenced envelope to the socket. */
-  send(envelope: EventEnvelope): void {
-    this.sendFrame(envelope);
+  /** BroadcastTarget — buffer subscription traffic; public traffic is a FIFO barrier. */
+  send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
+    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
+    else this.sendSubscribedFrame(envelope);
   }
 
   private onMessage(data: RawData): void {
@@ -172,19 +194,25 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     switch (frame.type) {
       case 'client_hello':
-        void this.onClientHello(frame);
+        this.enqueueControl(() => this.onClientHello(frame));
         return;
       case 'subscribe':
-        void this.onSubscribe(frame);
+        this.enqueueControl(() => this.onSubscribe(frame));
+        return;
+      case 'subscribe_v2':
+        this.enqueueControl(() => this.onSubscribeV2(frame));
+        return;
+      case 'unsubscribe_v2':
+        this.enqueueControl(() => this.onUnsubscribeV2(frame));
         return;
       case 'unsubscribe':
-        void this.onUnsubscribe(frame);
+        this.enqueueControl(() => this.onUnsubscribe(frame));
         return;
       case 'watch_fs_add':
-        void this.onWatchFs(frame, true);
+        this.enqueueControl(() => this.onWatchFs(frame, true));
         return;
       case 'watch_fs_remove':
-        void this.onWatchFs(frame, false);
+        this.enqueueControl(() => this.onWatchFs(frame, false));
         return;
       default:
         // Unknown / not-yet-implemented control frame (e.g. terminal_*, abort)
@@ -193,16 +221,23 @@ export class WsConnectionV1 implements BroadcastTarget {
     }
   }
 
+  private enqueueControl(task: () => Promise<void>): void {
+    this.controlQueue = this.controlQueue.then(task).catch(() => {
+      // A failed control frame must not wedge the queue behind it.
+    });
+  }
+
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
 
+    // Handshake only. The inline subscription fields are legacy compatibility
+    // — they are forwarded to the same attach path `subscribe` uses; new
+    // clients send just `client_id` here and subscribe separately.
     const payload = frame.payload ?? {};
     const subscriptions = asStringArray(payload['subscriptions']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
-    const transcript = parseTranscriptSubscription(payload['transcript']);
-    const transcriptSince = parseTranscriptSince(payload['transcript_since']);
 
     const accepted: string[] = [];
     const resyncRequired: string[] = [];
@@ -213,15 +248,15 @@ export class WsConnectionV1 implements BroadcastTarget {
         sid,
         cursors?.[sid],
         agentFilter?.[sid],
-        transcript?.[sid],
-        transcriptSince?.[sid],
-        accepted,
-        resyncRequired,
-        serverCursors,
+        // Transcript grades are owned by `subscribe_v2`; a plain re-attach
+        // must not wipe grades this connection already holds.
+        this.subscriptions.get(sid)?.transcriptGrades,
+        undefined,
+        { accepted, resyncRequired, serverCursors },
       );
     }
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted_subscriptions: accepted,
         resync_required: resyncRequired,
@@ -235,8 +270,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     const sessionIds = asStringArray(payload['session_ids']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
-    const transcript = parseTranscriptSubscription(payload['transcript']);
-    const transcriptSince = parseTranscriptSince(payload['transcript_since']);
 
     const accepted: string[] = [];
     const notFound: string[] = [];
@@ -244,36 +277,100 @@ export class WsConnectionV1 implements BroadcastTarget {
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
-      const filter = agentFilter?.[sid];
-      const grades = transcript?.[sid];
-      const cursor = cursors?.[sid];
-      // With a cursor the transcript baseline defers until after the replay —
-      // its seq must follow the replayed backlog, never precede it.
-      const ok = await this.broadcaster.subscribe(sid, this, filter, grades, {
-        deferTranscriptReset: cursor !== undefined,
-        transcriptSince: transcriptSince?.[sid],
-      });
-      if (!ok) {
-        notFound.push(sid);
-        continue;
-      }
-      this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
-      accepted.push(sid);
-      if (cursor !== undefined) {
-        await this.replay(sid, cursor, filter, grades, resyncRequired, serverCursors);
-        await this.broadcaster.flushTranscriptSeed(sid, this);
-      } else {
-        const cur = await this.broadcaster.getCursor(sid);
-        serverCursors[sid] = cur;
-      }
+      await this.attachSession(
+        sid,
+        cursors?.[sid],
+        agentFilter?.[sid],
+        // Transcript grades are owned by `subscribe_v2`; preserve whatever
+        // this connection already holds (the replay below filters through it).
+        this.subscriptions.get(sid)?.transcriptGrades,
+        undefined,
+        { accepted, resyncRequired, serverCursors, notFound },
+      );
     }
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted,
         not_found: notFound,
         resync_required: resyncRequired,
         cursors: serverCursors,
+      }),
+    );
+  }
+
+  /**
+   * `subscribe_v2` — the ONLY transcript subscription channel: attach or
+   * update this connection's per-agent transcript grades for ONE session.
+   * Carries no durable cursor (transcript frames are volatile), so the
+   * baseline/catch-up decision lives entirely in the broadcaster's
+   * `subscribeTranscript` (`transcript_since` journal replay vs reset). A
+   * legacy agent allowlist already held for the session is preserved.
+   */
+  private async onSubscribeV2(frame: InboundFrame): Promise<void> {
+    const parsed = transcriptSubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
+    if (!parsed.success) {
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid subscribe_v2 payload', {}));
+      return;
+    }
+    const sid = parsed.data.session_id;
+
+    const accepted: string[] = [];
+    const notFound: string[] = [];
+    const resyncRequired: string[] = [];
+    const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
+
+    await this.attachSession(
+      sid,
+      undefined,
+      this.subscriptions.get(sid)?.agentFilter,
+      parsed.data.transcript,
+      parsed.data.transcript_since,
+      { accepted, resyncRequired, serverCursors, notFound },
+    );
+
+    this.sendImmediateFrame(
+      buildAck(frame.id ?? '', 0, 'success', {
+        accepted,
+        not_found: notFound,
+        resync_required: resyncRequired,
+        cursors: serverCursors,
+      }),
+    );
+  }
+
+  /**
+   * `unsubscribe_v2` — the agent-grained counterpart of `subscribe_v2`:
+   * detach the listed agents' transcript streams (`agent_ids` absent = the
+   * whole session's stream) while leaving the legacy event subscription and
+   * its agent allowlist untouched. Idempotent and never activates a session;
+   * a detached agent's legacy `session_event`s resume in full as the
+   * suppression lifts with its grade.
+   */
+  private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
+    const parsed = unsubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
+    if (!parsed.success) {
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid unsubscribe_v2 payload', {}));
+      return;
+    }
+    const sid = parsed.data.session_id;
+    const agentIds = parsed.data.agent_ids;
+
+    const existing = this.subscriptions.get(sid);
+    if (existing !== undefined) {
+      this.broadcaster.unsubscribeTranscript(sid, this, agentIds);
+      this.subscriptions.set(sid, {
+        agentFilter: existing.agentFilter,
+        transcriptGrades:
+          agentIds === undefined ? undefined : detachGrades(existing.transcriptGrades, agentIds),
+      });
+    }
+
+    this.sendImmediateFrame(
+      buildAck(frame.id ?? '', 0, 'success', {
+        accepted: [sid],
+        not_found: [],
+        resync_required: [],
       }),
     );
   }
@@ -285,7 +382,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.broadcaster.unsubscribe(sid, this);
       this.subscriptions.delete(sid);
     }
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted: [],
         not_found: [],
@@ -300,7 +397,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const paths = asStringArray(payload['paths']);
     const bridge = this.fsWatchBridge;
     if (bridge === undefined) {
-      this.sendFrame(buildAck(frame.id ?? '', 1, 'fs watch unavailable', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'fs watch unavailable', {}));
       return;
     }
     let result;
@@ -309,14 +406,14 @@ export class WsConnectionV1 implements BroadcastTarget {
         ? await bridge.addWatch(this, sessionId, paths)
         : await bridge.removeWatch(this, sessionId, paths);
     } catch (error) {
-      this.sendFrame(
+      this.sendImmediateFrame(
         buildAck(frame.id ?? '', 1, 'internal error', {
           message: error instanceof Error ? error.message : String(error),
         }),
       );
       return;
     }
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', result.code, result.msg, {
         watched_paths: result.watched_paths ?? [],
         current_count: result.current_count ?? 0,
@@ -324,23 +421,37 @@ export class WsConnectionV1 implements BroadcastTarget {
     );
   }
 
+  /**
+   * Shared attach path behind `client_hello` (legacy inline subscriptions)
+   * and `subscribe`. Subscribes the connection via the broadcaster, then
+   * either replays durable events since the client's cursor (with the
+   * transcript baseline deferred until after the replay — its seq must
+   * follow the replayed backlog, never precede it) or reports the server's
+   * current cursor. Unknown sessions land in `collectors.notFound` when the
+   * caller is `subscribe`, otherwise in `resyncRequired` (the hello ack has
+   * no `not_found` field).
+   */
   private async attachSession(
     sid: string,
     cursor: SessionCursor | undefined,
     filter: AgentFilter | undefined,
     transcriptGrades: TranscriptGradeSpec | undefined,
     transcriptSince: Record<string, number> | undefined,
-    accepted: string[],
-    resyncRequired: string[],
-    serverCursors: Record<string, { seq: number; epoch?: string }>,
+    collectors: {
+      accepted: string[];
+      resyncRequired: string[];
+      serverCursors: Record<string, { seq: number; epoch?: string }>;
+      notFound?: string[];
+    },
   ): Promise<void> {
-    // Same ordering rule as onSubscribe: baseline after the cursor replay.
+    const { accepted, resyncRequired, serverCursors, notFound } = collectors;
     const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
       deferTranscriptReset: cursor !== undefined,
       transcriptSince,
     });
     if (!ok) {
-      resyncRequired.push(sid);
+      if (notFound !== undefined) notFound.push(sid);
+      else resyncRequired.push(sid);
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
@@ -364,12 +475,12 @@ export class WsConnectionV1 implements BroadcastTarget {
   ): Promise<void> {
     const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
     if (result.resyncRequired !== false) {
-      this.sendFrame(
+      this.sendImmediateFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
       );
       resyncRequired.push(sid);
     } else {
-      for (const { envelope } of result.events) this.sendFrame(envelope);
+      for (const { envelope } of result.events) this.sendSubscribedFrame(envelope);
     }
     serverCursors[sid] = { seq: result.currentSeq, epoch: result.epoch };
   }
@@ -389,14 +500,15 @@ export class WsConnectionV1 implements BroadcastTarget {
       ok = false;
     }
     if (!ok) {
-      this.sendFrame(buildAck(frame.id ?? '', 40112, 'unauthorized', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 40112, 'unauthorized', {}));
       this.close();
       return false;
     }
     return true;
   }
 
-  private sendFrame(msg: unknown): void {
+  /** Queue an event delivered through `subscribe` / `subscribe_v2`. */
+  private sendSubscribedFrame(msg: unknown): void {
     if (this.closed) return;
     this.outbound.push(msg);
     if (this.outbound.length >= this.maxBatchSize) {
@@ -405,6 +517,16 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     this.scheduleFlush();
+  }
+
+  /**
+   * Public/control frames do not start a timer. They join the FIFO and flush it
+   * immediately, so no later frame can overtake earlier subscription traffic.
+   */
+  private sendImmediateFrame(msg: unknown): void {
+    if (this.closed) return;
+    this.outbound.push(msg);
+    this.flush();
   }
 
   private scheduleFlush(): void {
@@ -489,6 +611,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
+    this.broadcaster.removeGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.
@@ -518,39 +641,6 @@ function parseAgentFilter(value: unknown): Record<string, AgentFilter> | undefin
     out[sid] = set;
   }
   return out;
-}
-
-/**
- * Parse the opt-in wire `transcript` payload (`Record<session_id,
- * Record<agent_id|'*', grade>>`). Validated against the shared zod schema so
- * a malformed grade cannot widen into a subscription; a bad field degrades to
- * "no transcript" for the whole frame, matching how `agent_filter` drops bad
- * entries.
- *
- * A parsed spec does double duty: it seeds the transcript stream AND
- * suppresses, on this connection only, the `session_event`s the transcript
- * already projects for every grade ≠ 'off' agent (see
- * `TRANSCRIPT_PROJECTED_EVENT_TYPES` in `sessionEventBroadcaster.ts`).
- */
-function parseTranscriptSubscription(
-  value: unknown,
-): Record<string, TranscriptGradeSpec> | undefined {
-  if (value === undefined) return undefined;
-  const parsed = transcriptSubscriptionSchema.safeParse(value);
-  return parsed.success ? (parsed.data as Record<string, TranscriptGradeSpec>) : undefined;
-}
-
-/**
- * Parse the optional `transcript_since` sibling of `transcript`
- * (`Record<session_id, Record<agent_id|'*', seq>>`) — the caller's last
- * applied op-batch seq per agent. Same degradation rule as the grade spec: a
- * malformed field drops the cursors for the whole frame, so the seeding falls
- * back to baseline resets.
- */
-function parseTranscriptSince(value: unknown): Record<string, Record<string, number>> | undefined {
-  if (value === undefined) return undefined;
-  const parsed = transcriptSinceSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
 }
 
 function rawDataToString(data: RawData): string {

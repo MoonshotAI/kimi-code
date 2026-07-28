@@ -9,7 +9,7 @@
  */
 
 import { registerProtocolBase } from '#/kosong/protocol/protocolBase';
-import { traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
+import { traitConvertError, traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
 
 import { getOpenAIResponsesModelCapability, OpenAIResponsesChatProvider } from './openai-responses';
 import { compactObject, firstProcessEnv, traitEndpoint, traitProvides } from './openaiHooks';
@@ -34,6 +34,7 @@ registerProtocolBase({
         defaultHeaders: traitDefaultHeaders(traits),
         maxOutputTokens: config.providerOptions?.defaultMaxTokens,
         offEffort: config.providerOptions?.offEffort,
+        convertError: traitConvertError(traits),
       }),
     });
   },

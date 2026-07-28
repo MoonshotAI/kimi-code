@@ -25,8 +25,6 @@ export const fileMetaSchema = z.object({
 });
 export type FileMeta = z.infer<typeof fileMetaSchema>;
 
-export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
 export interface SaveOptions {
   readonly name?: string;
   readonly mimeType?: string;
@@ -57,7 +55,6 @@ export const IFileService: ServiceIdentifier<IFileService> = createDecorator<IFi
 export const FileErrors = {
   codes: {
     FILE_NOT_FOUND: 'file.not_found',
-    FILE_TOO_LARGE: 'file.too_large',
   },
   info: {
     'file.not_found': {
@@ -65,12 +62,6 @@ export const FileErrors = {
       retryable: false,
       public: true,
       action: 'Check the file_id or upload the file again.',
-    },
-    'file.too_large': {
-      title: 'Upload too large',
-      retryable: false,
-      public: true,
-      action: 'Upload a smaller file (limit is 50 MiB).',
     },
   },
 } as const satisfies ErrorDomain;
@@ -90,14 +81,6 @@ export class FileError extends Error2 {
 
 export function fileNotFoundError(fileId: string): FileError {
   return new FileError(FileErrors.codes.FILE_NOT_FOUND, `file not found: ${fileId}`, { fileId });
-}
-
-export function fileTooLargeError(seen: number, limit: number): FileError {
-  return new FileError(
-    FileErrors.codes.FILE_TOO_LARGE,
-    `upload size ${seen} bytes exceeds limit ${limit} bytes`,
-    { seen, limit },
-  );
 }
 
 export function isFileError(error: unknown, code: (typeof FileErrors.codes)[keyof typeof FileErrors.codes]): boolean {

@@ -1,9 +1,13 @@
+import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { APIProviderQuotaExhaustedError, isRetryableGenerateError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, ToolCall } from '#/message';
 import { extractUsageFromChunk, KimiChatProvider } from '#/providers/kimi';
+import { classifyKimiQuotaError } from '#/providers/kimi-errors';
 import { extractUsage } from '#/providers/openai-common';
 import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
+import { APIError as OpenAIAPIError } from 'openai';
 import { describe, it, expect, vi } from 'vitest';
 
 function makeChatCompletionResponse(model: string = 'test-model') {
@@ -1284,6 +1288,206 @@ describe('KimiChatProvider', () => {
         },
       ]);
     });
+
+    it('yields reasoning as ThinkPart (vLLM wire field)', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'The answer is 4.',
+                reasoning: 'Let me think about this...',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'Let me think about this...' },
+        { type: 'text', text: 'The answer is 4.' },
+      ]);
+    });
+
+    it('prefers reasoning_content when both fields are present', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: 'from reasoning_content',
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning_content' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+
+    it('falls back to reasoning when reasoning_content is null', async () => {
+      // Current vLLM emits a compatibility `reasoning_content: null` alongside
+      // the real `reasoning` string; the null must fall through.
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: null,
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+  });
+
+  describe('reasoning key dialect', () => {
+    const THINK_HISTORY: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'hmm' },
+          { type: 'text', text: 'ok' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    it('echoes thinking under reasoning after a non-stream response used that field', async () => {
+      const provider = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [
+              { message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } },
+            ],
+          });
+        });
+
+      // Detection happens while draining the first response.
+      const first = await provider.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('detects the dialect from streaming deltas and echoes it on the next request', async () => {
+      const provider = createProvider(true);
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          async function* chunks(): AsyncIterable<Record<string, unknown>> {
+            yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+            yield {
+              id: 'chatcmpl-s',
+              choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+            };
+          }
+          return mockCreateResult(chunks());
+        });
+
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('defaults to reasoning_content before any detection', async () => {
+      const provider = createProvider();
+      let captured: Record<string, unknown> | undefined;
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured = params as Record<string, unknown>;
+          return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
+        });
+
+      const stream = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of stream) void part;
+
+      const messages = captured?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning_content: 'hmm' });
+    });
+
+    it('dialect detected on a per-step clone steers the original provider', async () => {
+      const original = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (original as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [{ message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } }],
+          });
+        });
+
+      // The per-step clone shares `_client` (mocked above) and must also share
+      // the dialect cell: learning on the clone steers the original.
+      const clone = original.withMaxCompletionTokens(2048);
+      const first = await clone.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await original.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
   });
 
   describe('trace id capture', () => {
@@ -1966,5 +2170,65 @@ describe('extractUsage', () => {
     const undef: unknown = undefined;
     expect(extractUsage(null)).toBeNull();
     expect(extractUsage(undef)).toBeNull();
+  });
+});
+
+describe('classifyKimiQuotaError', () => {
+  const QUOTA_MESSAGE =
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
+  const TOKEN_QUOTA_MESSAGE =
+    'You exceeded your current token quota: <org-0123456789abcdef> 31275, please check your account balance';
+
+  function quota429(message: string, type?: string): OpenAIAPIError {
+    return new OpenAIAPIError(
+      429,
+      type === undefined ? undefined : { message, type },
+      `429 ${message}`,
+      new Headers(),
+    );
+  }
+
+  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
+    const error = classifyKimiQuotaError(
+      quota429('Too many requests', 'exceeded_current_quota_error'),
+    );
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it.each([QUOTA_MESSAGE, TOKEN_QUOTA_MESSAGE])(
+    'falls back to billing wording "%s" without a structured body',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeInstanceOf(
+        APIProviderQuotaExhaustedError,
+      );
+    },
+  );
+
+  it.each(['Too many requests', 'your token quota per minute was exceeded'])(
+    'answers undefined for transient 429 "%s"',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeUndefined();
+    },
+  );
+
+  it('answers undefined for non-429 and non-SDK shapes', () => {
+    expect(
+      classifyKimiQuotaError(new OpenAIAPIError(403, undefined, QUOTA_MESSAGE, new Headers())),
+    ).toBeUndefined();
+    expect(classifyKimiQuotaError(new Error(QUOTA_MESSAGE))).toBeUndefined();
+    expect(classifyKimiQuotaError(undefined)).toBeUndefined();
+  });
+
+  it('classifies the Anthropic SDK error shape (body nested under .error)', () => {
+    const source = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'exceeded_current_quota_error', message: 'quota gone' } },
+      'Too many requests',
+      new Headers(),
+    );
+    const error = classifyKimiQuotaError(source);
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 });

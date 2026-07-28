@@ -14,9 +14,9 @@
 
 import { createDecorator } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 
+import type { ServiceProxy } from './channel';
 import { DEBUG_RPC_BASE, type InspectClient } from './client';
 import { RPCError } from './errors';
-import type { ServiceProxy } from './channel';
 
 /** Wire scope kinds reported by the channels endpoint (`app` ≡ the core route). */
 export type ChannelScope = 'app' | 'session' | 'agent';

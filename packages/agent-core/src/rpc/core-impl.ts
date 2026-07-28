@@ -157,6 +157,10 @@ const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
+const WEB_SEARCH_BASE_URL_ENV = 'KIMI_WEB_SEARCH_BASE_URL';
+const WEB_SEARCH_API_KEY_ENV = 'KIMI_WEB_SEARCH_API_KEY';
+const WEB_FETCH_BASE_URL_ENV = 'KIMI_WEB_FETCH_BASE_URL';
+const WEB_FETCH_API_KEY_ENV = 'KIMI_WEB_FETCH_API_KEY';
 const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
@@ -1405,8 +1409,16 @@ async function createRuntimeConfig(input: {
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
 }): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
-  const searchService = input.config.services?.moonshotSearch;
-  const fetchService = input.config.services?.moonshotFetch;
+  const searchService = withServiceEnv(
+    input.config.services?.moonshotSearch,
+    WEB_SEARCH_BASE_URL_ENV,
+    WEB_SEARCH_API_KEY_ENV,
+  );
+  const fetchService = withServiceEnv(
+    input.config.services?.moonshotFetch,
+    WEB_FETCH_BASE_URL_ENV,
+    WEB_FETCH_API_KEY_ENV,
+  );
 
   return {
     urlFetcher:
@@ -1427,6 +1439,30 @@ async function createRuntimeConfig(input: {
             ...serviceCredentials(searchService, input.resolveOAuthTokenProvider),
           }),
   };
+}
+
+/**
+ * Resolve `KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*` without mixing credentials
+ * across service origins. An env base URL starts a fresh service entry so a
+ * persisted API key, OAuth token, or custom header cannot reach the env
+ * endpoint. An env API key without an env base URL keeps the configured
+ * endpoint and headers, but replaces both configured credential forms.
+ * Blank env values are treated as unset.
+ */
+function withServiceEnv(
+  service: MoonshotServiceConfig | undefined,
+  baseUrlEnv: string,
+  apiKeyEnv: string,
+): MoonshotServiceConfig | undefined {
+  const envBaseUrl = nonEmptyString(process.env[baseUrlEnv]);
+  const envApiKey = nonEmptyString(process.env[apiKeyEnv]);
+  if (envBaseUrl !== undefined) {
+    return { baseUrl: envBaseUrl, apiKey: envApiKey };
+  }
+  if (envApiKey === undefined) return service;
+  if (service === undefined) return { apiKey: envApiKey };
+  const { apiKey: _apiKey, oauth: _oauth, ...rest } = service;
+  return { ...rest, apiKey: envApiKey };
 }
 
 function serviceCredentials(

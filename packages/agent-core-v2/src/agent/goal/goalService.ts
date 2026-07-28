@@ -28,7 +28,15 @@
  * `goal_start` display outside `auto` mode defers to a cold `waitUntil`
  * factory that runs the goal-start review through `toolApproval` under the
  * origin `goal-start-review-ask` — including the permission-mode switch
- * picked on the approval surface. Bound at Agent scope.
+ * picked on the approval surface. The mutable turn-tracking and wall-clock
+ * state (`liveTurnId`, `goalDrivenTurns`, `countedGoalTurns`,
+ * `goalStarterTurns`, `goalOutcomeToolResultTurns`,
+ * `goalOutcomeContinuationTurns`, `budgetGraceTurns`,
+ * `pendingContinuationGoals`, `goalTurnTargets`, `exhaustedTurnBudgetGoals`,
+ * `liveWallClockStartedAt`, `resumeContinuation`) is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it; the
+ * `pendingContinuation` promise lock and the `wallClockDeadline` disposable
+ * slot stay plain fields. Bound at Agent scope.
  * Subagent instances reject every goal command and do not install goal
  * injection, accounting, budget, or continuation hooks.
  */
@@ -37,8 +45,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { TurnEndedEvent, TurnStartedEvent } from '#/agent/loop/turnEvents';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -51,9 +59,11 @@ import {
   type EnqueueReceipt,
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import { LoopErrors } from '#/agent/loop/errors';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -167,6 +177,13 @@ const GOAL_CONTINUATION_PROMPT = [
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
+const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
+  'The previous goal turn reached the per-turn step limit before finishing its work,',
+  'so a new turn was started for you. Pick up where that turn stopped and keep each',
+  'slice of work small enough to fit the limit.',
+  GOAL_CONTINUATION_PROMPT,
+].join(' ');
+
 interface GoalForkNoticeState {
   readonly goalPresent: boolean;
   readonly reminderPending: boolean;
@@ -176,6 +193,11 @@ interface PendingContinuation {
   readonly receipt: EnqueueReceipt;
   readonly goalId: string;
   turnId?: number;
+}
+
+interface ResumeContinuation {
+  readonly turnId: number;
+  readonly goalId: string;
 }
 
 const GoalForkNoticeModel = defineModel<GoalForkNoticeState>(
@@ -208,23 +230,60 @@ function isGoalContinuationOrigin(origin: TurnStartedEvent['origin']): boolean {
   return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
 }
 
+export const goalLiveTurnIdKey = defineState<number | undefined>(
+  'goal.liveTurnId',
+  () => undefined as number | undefined,
+);
+export const goalGoalDrivenTurnsKey = defineState<Map<number, string>>(
+  'goal.goalDrivenTurns',
+  () => new Map(),
+);
+export const goalCountedGoalTurnsKey = defineState<Set<number>>(
+  'goal.countedGoalTurns',
+  () => new Set(),
+);
+export const goalGoalStarterTurnsKey = defineState<Set<number>>(
+  'goal.goalStarterTurns',
+  () => new Set(),
+);
+export const goalGoalOutcomeToolResultTurnsKey = defineState<Map<number, string>>(
+  'goal.goalOutcomeToolResultTurns',
+  () => new Map(),
+);
+export const goalGoalOutcomeContinuationTurnsKey = defineState<Set<number>>(
+  'goal.goalOutcomeContinuationTurns',
+  () => new Set(),
+);
+export const goalBudgetGraceTurnsKey = defineState<Set<number>>(
+  'goal.budgetGraceTurns',
+  () => new Set(),
+);
+export const goalPendingContinuationGoalsKey = defineState<Map<number, string>>(
+  'goal.pendingContinuationGoals',
+  () => new Map(),
+);
+export const goalGoalTurnTargetsKey = defineState<Map<number, string>>(
+  'goal.goalTurnTargets',
+  () => new Map(),
+);
+export const goalExhaustedTurnBudgetGoalsKey = defineState<Map<number, string>>(
+  'goal.exhaustedTurnBudgetGoals',
+  () => new Map(),
+);
+export const goalLiveWallClockStartedAtKey = defineState<number | undefined>(
+  'goal.liveWallClockStartedAt',
+  () => undefined as number | undefined,
+);
+export const goalResumeContinuationKey = defineState<ResumeContinuation | undefined>(
+  'goal.resumeContinuation',
+  () => undefined as ResumeContinuation | undefined,
+);
+
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
-  private liveTurnId?: number;
-  private readonly goalDrivenTurns = new Map<number, string>();
-  private readonly countedGoalTurns = new Set<number>();
-  private readonly goalStarterTurns = new Set<number>();
-  private readonly goalOutcomeToolResultTurns = new Map<number, string>();
-  private readonly goalOutcomeContinuationTurns = new Set<number>();
-  private readonly budgetGraceTurns = new Set<number>();
-  private readonly pendingContinuationGoals = new Map<number, string>();
-  private readonly goalTurnTargets = new Map<number, string>();
-  private readonly exhaustedTurnBudgetGoals = new Map<number, string>();
   private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
-  private liveWallClockStartedAt?: number;
   private pendingContinuation?: PendingContinuation;
-  private resumeContinuation?: { readonly turnId: number; readonly goalId: string };
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -240,8 +299,21 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IConfigService private readonly config: IConfigService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(goalLiveTurnIdKey);
+    this.states.register(goalGoalDrivenTurnsKey);
+    this.states.register(goalCountedGoalTurnsKey);
+    this.states.register(goalGoalStarterTurnsKey);
+    this.states.register(goalGoalOutcomeToolResultTurnsKey);
+    this.states.register(goalGoalOutcomeContinuationTurnsKey);
+    this.states.register(goalBudgetGraceTurnsKey);
+    this.states.register(goalPendingContinuationGoalsKey);
+    this.states.register(goalGoalTurnTargetsKey);
+    this.states.register(goalExhaustedTurnBudgetGoalsKey);
+    this.states.register(goalLiveWallClockStartedAtKey);
+    this.states.register(goalResumeContinuationKey);
     if (!this.isSupportedAgent) return;
     this._register(
       new GoalInjection(
@@ -336,6 +408,66 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         );
       }),
     );
+  }
+
+  private get liveTurnId(): number | undefined {
+    return this.states.get(goalLiveTurnIdKey);
+  }
+
+  private set liveTurnId(value: number | undefined) {
+    this.states.set(goalLiveTurnIdKey, value);
+  }
+
+  private get goalDrivenTurns(): Map<number, string> {
+    return this.states.get(goalGoalDrivenTurnsKey);
+  }
+
+  private get countedGoalTurns(): Set<number> {
+    return this.states.get(goalCountedGoalTurnsKey);
+  }
+
+  private get goalStarterTurns(): Set<number> {
+    return this.states.get(goalGoalStarterTurnsKey);
+  }
+
+  private get goalOutcomeToolResultTurns(): Map<number, string> {
+    return this.states.get(goalGoalOutcomeToolResultTurnsKey);
+  }
+
+  private get goalOutcomeContinuationTurns(): Set<number> {
+    return this.states.get(goalGoalOutcomeContinuationTurnsKey);
+  }
+
+  private get budgetGraceTurns(): Set<number> {
+    return this.states.get(goalBudgetGraceTurnsKey);
+  }
+
+  private get pendingContinuationGoals(): Map<number, string> {
+    return this.states.get(goalPendingContinuationGoalsKey);
+  }
+
+  private get goalTurnTargets(): Map<number, string> {
+    return this.states.get(goalGoalTurnTargetsKey);
+  }
+
+  private get exhaustedTurnBudgetGoals(): Map<number, string> {
+    return this.states.get(goalExhaustedTurnBudgetGoalsKey);
+  }
+
+  private get liveWallClockStartedAt(): number | undefined {
+    return this.states.get(goalLiveWallClockStartedAtKey);
+  }
+
+  private set liveWallClockStartedAt(value: number | undefined) {
+    this.states.set(goalLiveWallClockStartedAtKey, value);
+  }
+
+  private get resumeContinuation(): ResumeContinuation | undefined {
+    return this.states.get(goalResumeContinuationKey);
+  }
+
+  private set resumeContinuation(value: ResumeContinuation | undefined) {
+    this.states.set(goalResumeContinuationKey, value);
   }
 
   private get isSupportedAgent(): boolean {
@@ -716,10 +848,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       return;
     }
     if (goalId === undefined || lifecycleGoalId === undefined) return;
+    const stepCapped = isMaxStepsTurnFailure(result);
     if (
-      result.reason === 'blocked' ||
-      result.reason === 'cancelled' ||
-      result.reason === 'failed'
+      !stepCapped &&
+      (result.reason === 'blocked' ||
+        result.reason === 'cancelled' ||
+        result.reason === 'failed')
     ) {
       await this.settleAbnormalTurn(result, lifecycleGoalId);
       return;
@@ -729,7 +863,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || state.goalId !== lifecycleGoalId) return;
     if (this.blockIfBudgetReached(state) !== null) return;
-    this.launchContinuationTurn(lifecycleGoalId);
+    this.launchContinuationTurn(lifecycleGoalId, stepCapped);
   }
 
   private clearTurnTracking(
@@ -789,12 +923,17 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     } catch {}
   }
 
-  private launchContinuationTurn(goalId: string): void {
+  private launchContinuationTurn(goalId: string, stepCapped = false): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
     const message: ContextMessage = {
       role: 'user',
-      content: [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+      content: [
+        {
+          type: 'text',
+          text: stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+        },
+      ],
       toolCalls: [],
       origin: GOAL_CONTINUATION_ORIGIN,
     };
@@ -1149,6 +1288,13 @@ function isTerminalUpdateGoalResult(
   return status === 'complete' || status === 'blocked';
 }
 
+function isMaxStepsTurnFailure(result: Pick<TurnEndedEvent, 'reason' | 'error'>): boolean {
+  return (
+    result.reason === 'failed' &&
+    normalizeGoalErrorPayload(result.error).code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED
+  );
+}
+
 function goalFailurePauseReason(error: unknown): string {
   const payload = normalizeGoalErrorPayload(error);
   switch (payload.code) {
@@ -1188,6 +1334,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentGoalService,
   AgentGoalService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'goal',
 );

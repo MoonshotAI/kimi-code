@@ -9,9 +9,8 @@
  * explicit deny layers still apply.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -102,6 +101,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolPolicyService,
   AgentToolPolicyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolPolicy',
 );

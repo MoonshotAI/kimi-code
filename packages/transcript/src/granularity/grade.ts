@@ -41,3 +41,25 @@ export function gradeFor(spec: TranscriptGradeSpec | undefined, agentId: string)
 export function needsResetOnTransition(prev: TranscriptGrade, next: TranscriptGrade): boolean {
   return GRADE_RANK[next] > GRADE_RANK[prev];
 }
+
+/**
+ * Apply an agent-grained detach to a grade spec: each listed agent drops to
+ * an explicit 'off' (deleting the key would fall back to a non-off `'*'`
+ * default and keep streaming); a listed `'*'` deletes the wildcard entry
+ * instead. A spec with no remaining non-'off' entry collapses to `undefined`
+ * — the pure-legacy state. `undefined` in, `undefined` out (idempotent).
+ */
+export function detachGrades(
+  spec: TranscriptGradeSpec | undefined,
+  agentIds: readonly string[],
+): TranscriptGradeSpec | undefined {
+  if (spec === undefined) return undefined;
+  const next: Record<string, TranscriptGrade | undefined> = { ...spec };
+  for (const agentId of agentIds) {
+    if (agentId === '*') delete next['*'];
+    else next[agentId] = 'off';
+  }
+  return Object.values(next).some((grade) => grade !== undefined && grade !== 'off')
+    ? next
+    : undefined;
+}

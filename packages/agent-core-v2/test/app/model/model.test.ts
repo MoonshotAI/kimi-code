@@ -256,6 +256,44 @@ describe('models TOML transforms', () => {
       },
     });
   });
+
+  it('deletes on-disk fields the new record carries with an explicit undefined', () => {
+    // A field absent from the new record stays (plain overlay), but a field
+    // present with an explicit undefined value must be dropped from the
+    // merged on-disk raw — spreading `{...raw, ...converted}` would resurrect
+    // it (setDefined deletes from `converted`, never from the merge).
+    expect(
+      modelsToToml(
+        {
+          kimi: {
+            provider: 'p',
+            model: 'm',
+            maxContextSize: 1000,
+            displayName: undefined,
+            capabilities: undefined,
+          },
+        },
+        {
+          kimi: {
+            provider: 'p',
+            model: 'm',
+            max_context_size: 128000,
+            display_name: 'Old Name',
+            capabilities: ['tool_use'],
+            beta_api: true,
+          },
+        },
+      ),
+    ).toEqual({
+      kimi: {
+        provider: 'p',
+        model: 'm',
+        max_context_size: 1000,
+        // Unknown/unmentioned fields keep their old on-disk value.
+        beta_api: true,
+      },
+    });
+  });
 });
 
 type EnvMap = Readonly<Record<string, string | undefined>>;

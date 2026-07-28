@@ -1,7 +1,7 @@
 /**
  * Scenario: v1-compatible session routes, including blocked-goal Web resume.
  * Responsibilities: verify HTTP envelopes, persisted reads, and session actions.
- * Wiring: real kap-server; goal-resume cases observe the agent event stream.
+ * Wiring: real kap-server; route errors stub the agent service contract.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessions.test.ts`.
  */
 import { randomBytes } from 'node:crypto';
@@ -10,11 +10,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  Error2,
+  ErrorCodes,
   IBootstrapService,
   type DomainEvent,
+  IAgentConversationUndoService,
   IAgentGoalService,
   IAgentLifecycleService,
   IEventBus,
@@ -149,9 +152,16 @@ describe('server-v2 /api/v1/sessions', () => {
       JSON.stringify({ event: 'prompt.submitted', time: 2 }),
     ].join('\n');
 
+    // `connection: close` keeps the streamed download on a short-lived socket
+    // so undici never pools a keep-alive connection that would hold
+    // `server.close()` open in afterEach (fastify's default keepAliveTimeout
+    // is 72s, far beyond the hook timeout).
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
       body: JSON.stringify({ web_log: webLog }),
     } as never);
     const archive = Buffer.from(await res.arrayBuffer());
@@ -198,7 +208,10 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
       body: '{}',
     } as never);
     const reader = res.body?.getReader();
@@ -222,6 +235,39 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(status).toBe(200);
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('web_log');
+  });
+
+  it('bundles the on-disk desktop app log when the desktop flag is set', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    await mkdir(join(home as string, 'logs'), { recursive: true });
+    await writeFile(
+      join(home as string, 'logs', 'kimi-code-desktop.log'),
+      '2026-07-27T00:00:00.000Z INFO  [renderer] hello\n',
+      'utf-8',
+    );
+
+    const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
+      body: JSON.stringify({ desktop: true }),
+    } as never);
+    const archive = Buffer.from(await res.arrayBuffer());
+
+    expect(res.status).toBe(200);
+    const entries = readZipEntries(archive);
+    const manifest = JSON.parse(entries.get('manifest.json')?.toString('utf8') ?? 'null') as {
+      desktopLogPath?: string;
+    };
+    expect(entries.get('logs/kimi-desktop.log')?.toString('utf8')).toBe(
+      '2026-07-27T00:00:00.000Z INFO  [renderer] hello\n',
+    );
+    expect(manifest.desktopLogPath).toBe('logs/kimi-desktop.log');
   });
 
   async function createStoppedGoalRig(status: 'paused' | 'blocked') {
@@ -614,8 +660,35 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(res.body.code).toBe(40911);
     expect(res.body.msg).toMatch(/nothing to undo/i);
     // The thrown Error2's stack is surfaced so operators can locate the
-    // source — the precheck/throw now lives in the native prompt service.
-    expect(res.body.stack).toEqual(expect.stringContaining('promptService'));
+    // source — the precheck/throw now lives in the undo service.
+    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+  });
+
+  it('returns 40901 when :undo reports a busy session', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const session = (server as RunningServer).core.accessor
+      .get(ISessionLifecycleService)
+      .get(created.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    const agent = await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const undo = vi
+      .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
+      .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
+
+    try {
+      const response = await postJson<null>(
+        `/api/v1/sessions/${created.body.data.id}:undo`,
+        { count: 1 },
+      );
+
+      expect(response.body.code).toBe(40901);
+    } finally {
+      undo.mockRestore();
+    }
   });
 
   it('rejects an unsupported action suffix (40001)', async () => {

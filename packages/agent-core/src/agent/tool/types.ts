@@ -1,6 +1,7 @@
 import type { ExecutableTool } from '../../loop';
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
+export type ToolDisclosure = 'inline' | 'deferred';
 
 export type BuiltinTool<Input = unknown> = ExecutableTool<Input>;
 
@@ -8,6 +9,7 @@ export interface UserToolRegistration {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+  readonly disclosure?: ToolDisclosure;
 }
 
 export interface ToolInfo {

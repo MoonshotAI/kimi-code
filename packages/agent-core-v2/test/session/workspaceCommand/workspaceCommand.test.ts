@@ -28,6 +28,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 
 import { stubContextMemory, type StubContextMemory } from '../../agent/contextMemory/stubs';
+import { registerStateServices } from '../../state/stubs';
 
 const WORK_DIR = '/repo/work';
 const EXTRA_DIR = `${WORK_DIR}/extra`;
@@ -248,6 +249,7 @@ describe('SessionWorkspaceCommandService', () => {
 
     ix = createServices(disposables, {
       additionalServices: (reg) => {
+        registerStateServices(reg);
         reg.defineInstance(ISessionContext, ctx);
         reg.define(ISessionWorkspaceContext, SessionWorkspaceContextService);
         reg.defineInstance(IBootstrapService, bootstrapStub());

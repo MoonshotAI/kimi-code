@@ -11,9 +11,8 @@
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2, PluginErrors } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -271,6 +270,6 @@ registerScopedService(
   LifecycleScope.App,
   IPluginService,
   PluginService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'plugin',
 );

@@ -9,8 +9,9 @@
  *  - `kimiOpenAITrait.convertMessage`: empty-content assistant tool messages
  *    drop `content`; `tool_calls[].extras` round-trips; message-level
  *    `tools` embed;
- *  - `kimiOpenAITrait.reasoningKey` / `preserveThinking`: reasoning field is
- *    `reasoning_content`; force-replay only `keep: 'all'` sessions with
+ *  - reasoning: the trait does NOT pin a `reasoningKey` — the base
+ *    auto-detects the endpoint's dialect, defaulting to `reasoning_content`;
+ *    `preserveThinking` force-replays only `keep: 'all'` sessions with
  *    thinking not disabled;
  *  - `kimiOpenAITrait.extractUsage`: usage at the top level or
  *    `choices[0].usage`;
@@ -19,14 +20,23 @@
  *    `extra_body.thinking` encoding, no 128k ceiling, `prompt_cache_key`,
  *    and the `strictThinkingValidation` marker;
  *  - `kimiAnthropicTrait` (the `(kimi, anthropic)` registration): thinking
- *    encoding and interleaved-thinking beta stripping.
+ *    encoding and interleaved-thinking beta stripping;
+ *  - `KimiFiles`: an upload failure classifies through
+ *    `classifyKimiQuotaError`, so a Moonshot quota 429 from the files API
+ *    fails fast instead of converting to a retryable rate limit.
  */
 
-import { describe, expect, it } from 'vitest';
+import { APIError as OpenAIAPIError } from 'openai';
+import { describe, expect, it, vi } from 'vitest';
 
+import {
+  APIProviderQuotaExhaustedError,
+  isRetryableGenerateError,
+} from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type { ProtocolTrait, TraitContext } from '#/kosong/protocol/protocolTrait';
+import { KimiFiles } from '#/kosong/provider/providers/kimi/kimi-files';
 import {
   convertKimiTool,
   kimiAnthropicTrait,
@@ -140,8 +150,11 @@ describe('kimiOpenAITrait.convertMessage', () => {
 });
 
 describe('kimiOpenAITrait reasoning hooks', () => {
-  it('declares reasoning_content as the reasoning field', () => {
-    expect(call(kimiOpenAITrait.reasoningKey, context)).toBe('reasoning_content');
+  it('does not pin a reasoning field — the base detects the endpoint dialect', () => {
+    // Detection defaults to `reasoning_content` (Kimi's native field) and
+    // adapts to peers that speak `reasoning` (newer vLLM); a trait pin would
+    // disable that adaptation. Operator config `reasoning_key` still pins.
+    expect(kimiOpenAITrait.reasoningKey).toBeUndefined();
   });
 
   it('force-replays reasoning only in keep:all sessions with thinking enabled', () => {
@@ -284,18 +297,18 @@ describe('trait objects are plain declarations', () => {
     expect(hookNames(kimiOpenAITrait).toSorted()).toEqual([
       'buildParams',
       'cacheKey',
+      'convertError',
       'convertMessage',
       'convertTool',
       'endpoint',
       'extractUsage',
       'preserveThinking',
-      'reasoningKey',
       'strictThinkingValidation',
       'uploadVideo',
       'withMaxCompletionTokens',
       'withThinking',
     ]);
-    expect(hookNames(kimiAnthropicTrait)).toEqual(['withThinking']);
+    expect(hookNames(kimiAnthropicTrait).toSorted()).toEqual(['convertError', 'withThinking']);
   });
 
   it('marks only the native-transport thinking trait as strict-validation (v1 parity)', () => {
@@ -303,5 +316,35 @@ describe('trait objects are plain declarations', () => {
     // transport the backend may accept them → lenient (warning + pass-through).
     expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
     expect(kimiAnthropicTrait.strictThinkingValidation).toBeUndefined();
+  });
+});
+
+describe('KimiFiles upload error conversion', () => {
+  it('fails fast on a Moonshot quota-exhausted 429 from the files API', async () => {
+    const quotaError = new OpenAIAPIError(
+      429,
+      {
+        message: 'Your account is suspended due to insufficient balance, please recharge',
+        type: 'exceeded_current_quota_error',
+      },
+      '429 quota exhausted',
+      new Headers(),
+    );
+    const files = new KimiFiles({
+      baseUrl: 'https://api.example/v1',
+      clientFactory: () => ({ files: { create: vi.fn().mockRejectedValue(quotaError) } }) as never,
+    });
+
+    const caught = await files
+      .uploadVideo(
+        { data: Buffer.from([1, 2, 3]), mimeType: 'video/mp4' },
+        { auth: { apiKey: 'request-token' } },
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(caught)).toBe(false);
   });
 });

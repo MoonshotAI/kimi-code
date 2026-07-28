@@ -15,13 +15,10 @@ import {
 import {
   dispose,
   isDisposable,
-  toDisposable,
   type DisposableStore,
   type IDisposable,
 } from './lifecycle';
 import { ServiceCollection } from './serviceCollection';
-import { GlobalIdleValue } from './util/idleValue';
-import { LinkedList } from './util/linkedList';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const enum TraceType {
@@ -113,7 +110,6 @@ export class InstantiationService implements IInstantiationService {
   declare readonly _serviceBrand: undefined;
 
   readonly _globalGraph?: Graph<string>;
-  private _globalGraphImplicitDependency?: string;
 
   protected readonly _parent?: InstantiationService;
 
@@ -285,9 +281,6 @@ export class InstantiationService implements IInstantiationService {
   }
 
   protected _getOrCreateServiceInstance<T>(id: ServiceIdentifier<T>, _trace: Trace): T {
-    if (this._globalGraph && this._globalGraphImplicitDependency) {
-      this._globalGraph.insertEdge(this._globalGraphImplicitDependency, String(id));
-    }
     const entry = this._getServiceInstanceOrDescriptor(id);
 
     if (entry instanceof SyncDescriptor) {
@@ -386,7 +379,6 @@ export class InstantiationService implements IInstantiationService {
             data.id,
             data.desc.ctor,
             data.desc.staticArguments,
-            data.desc.supportsDelayedInstantiation,
             data._trace,
           );
           this._setCreatedServiceInstance(data.id, instance);
@@ -402,7 +394,6 @@ export class InstantiationService implements IInstantiationService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctor: any,
     args: ReadonlyArray<unknown> = [],
-    supportsDelayedInstantiation: boolean,
     _trace: Trace,
   ): T {
     if (this._services.get(id) instanceof SyncDescriptor) {
@@ -410,7 +401,6 @@ export class InstantiationService implements IInstantiationService {
         id,
         ctor,
         args,
-        supportsDelayedInstantiation,
         _trace,
         this._servicesToMaybeDispose,
       );
@@ -420,7 +410,6 @@ export class InstantiationService implements IInstantiationService {
         id,
         ctor,
         args,
-        supportsDelayedInstantiation,
         _trace,
       );
     }
@@ -432,112 +421,23 @@ export class InstantiationService implements IInstantiationService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctor: any,
     args: ReadonlyArray<unknown> = [],
-    supportsDelayedInstantiation: boolean,
     _trace: Trace,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     disposeBucket: Set<any>,
   ): T {
-    if (!supportsDelayedInstantiation) {
-      const root = this._root();
-      root._inProgress.push(id);
-      try {
-        const result = this._createInstance<T>(ctor, args.slice(), _trace);
-        disposeBucket.add(result);
-        this._constructionOrder.push(result);
-        return result;
-      } finally {
-        const popIdx = root._inProgress.lastIndexOf(id);
-        if (popIdx >= 0) {
-          root._inProgress.splice(popIdx, 1);
-        }
-      }
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    type EventLike = (callback: (e: any) => void, thisArg?: unknown, disposables?: IDisposable[]) => IDisposable;
-    type EarlyListenerData = {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      listener: Parameters<EventLike>;
-      disposable?: IDisposable;
-    };
-    const earlyListeners = new Map<string, LinkedList<EarlyListenerData>>();
-    const child = new InstantiationService(undefined, this._strict, this, this._enableTracing);
-    child._globalGraphImplicitDependency = String(id);
-    const _ctor = ctor;
-    const _args = args.slice();
-    const idle = new GlobalIdleValue<T>(() => {
-      const result = child._createInstance<T>(_ctor, _args.slice(), _trace);
-      for (const [key, values] of earlyListeners) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const candidate = (result as any)[key] as EventLike | undefined;
-        if (typeof candidate === 'function') {
-          for (const value of values) {
-            value.disposable = candidate.apply(result, value.listener);
-          }
-        }
-      }
-      earlyListeners.clear();
+    const root = this._root();
+    root._inProgress.push(id);
+    try {
+      const result = this._createInstance<T>(ctor, args.slice(), _trace);
       disposeBucket.add(result);
       this._constructionOrder.push(result);
       return result;
-    });
-
-    return new Proxy(Object.create(null), {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      get(target: any, key: PropertyKey): unknown {
-        if (!idle.isInitialized) {
-          if (
-            typeof key === 'string' &&
-            (key.startsWith('onDid') || key.startsWith('onWill'))
-          ) {
-            let list = earlyListeners.get(key);
-            if (!list) {
-              list = new LinkedList<EarlyListenerData>();
-              earlyListeners.set(key, list);
-            }
-            const event: EventLike = (callback, thisArg, disposables) => {
-              if (idle.isInitialized) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                return (idle.value as any)[key](callback, thisArg, disposables);
-              }
-              const entry: EarlyListenerData = {
-                listener: [callback, thisArg, disposables],
-                disposable: undefined,
-              };
-              const rm = list.push(entry);
-              return toDisposable(() => {
-                rm();
-                entry.disposable?.dispose();
-              });
-            };
-            return event;
-          }
-        }
-
-        if (key in target) {
-          return target[key];
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const obj = idle.value as any;
-        let prop = obj[key];
-        if (typeof prop !== 'function') {
-          return prop;
-        }
-        prop = prop.bind(obj);
-        target[key] = prop;
-        return prop;
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      set(_target: T, p: PropertyKey, value: any): boolean {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (idle.value as any)[p] = value;
-        return true;
-      },
-      getPrototypeOf(_target: T): object {
-        return _ctor.prototype as object;
-      },
-    }) as T;
+    } finally {
+      const popIdx = root._inProgress.lastIndexOf(id);
+      if (popIdx >= 0) {
+        root._inProgress.splice(popIdx, 1);
+      }
+    }
   }
 
   private _setCreatedServiceInstance<T>(id: ServiceIdentifier<T>, instance: T): void {

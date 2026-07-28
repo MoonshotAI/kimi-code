@@ -188,6 +188,31 @@ display_name = "Kimi for Coding (custom)"
 
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
+## `secondary_model`
+
+次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
+
+该功能目前是实验功能，默认关闭。在 `kimi web` 下，通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用；在 `kimi -p` 下，选择 v2 引擎本就需要 `KIMI_CODE_EXPERIMENTAL_FLAG=1`，该 master flag 也会启用本功能。交互式 TUI 会忽略该配置。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | — | 已配置 `[models]` 中的模型 id（不限 kimi 模型，可用任意供应商） |
+| `default_effort` | `string` | — | 子代理绑定次主力模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对子代理生效的模型补丁 |
+
+`model` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），子代理实际绑定该派生条目；没有补丁字段时，子代理直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
+
+```toml
+[secondary_model]
+model = "kimi-code/kimi-k2.5"
+default_effort = "low"
+max_output_size = 8192
+```
+
+`model` / `default_effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
+
+实验功能启用后，会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子 Agent 时失败，派生错误中同样附带配置来源提示。
+
 ## `thinking`
 
 `thinking` 设置 Thinking 模式的全局默认行为。
@@ -217,6 +242,8 @@ display_name = "Kimi for Coding (custom)"
 
 `max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_retries_per_step` 可被 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 覆盖，优先级均高于配置文件。
 
+重试仅针对瞬时故障——连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+
 ## `background`
 
 `background` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数。
@@ -241,7 +268,6 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
-
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
 
 ## `mcp`
@@ -305,6 +331,8 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 | `oauth` | `table` | 否 | OAuth 凭据引用，结构同 `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | 否 | 请求时附加的自定义 HTTP 头 |
 
+`base_url` 和 `api_key` 也可由环境变量提供，环境变量优先于配置文件：`KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` 对应 `moonshot_search`，`KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` 对应 `moonshot_fetch`。`KIMI_WEB_SEARCH_BASE_URL` 和 `KIMI_WEB_FETCH_BASE_URL` 定义的是独立服务端点，因此文件中持久化的 API 密钥、OAuth 引用和自定义 header 都不会发送给它；该端点需要鉴权时，请同时设置对应的环境变量 API 密钥。只设置环境变量 API 密钥时，配置中的端点和自定义 header 保持不变，但两种配置凭据都会被替换。不写配置段、只通过环境变量设置 base URL 和 API 密钥，也可以启用对应服务。
+
 ```toml
 [services.moonshot_search]
 base_url = "https://api.moonshot.cn/v1/search"
@@ -362,6 +390,8 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行展示哪些内置槽位及其顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`。缺省保持默认布局；未知 id 跳过并告警 |
+| `[status_line].command` | `string` | `""` | 自定义状态栏命令。其 stdout 第一行替换状态栏第一行，stdin 会收到 JSON 快照（model、cwd、git 分支、permission 模式、plan 模式、上下文用量、session id、版本）。运行上限 300ms、每秒最多一次；失败时回退内置布局 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -377,6 +407,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+# [status_line]
+# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# command = "~/.kimi-code/statusline.sh"
 ```
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。

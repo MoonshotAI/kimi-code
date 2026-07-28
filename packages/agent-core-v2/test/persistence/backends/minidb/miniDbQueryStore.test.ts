@@ -4,8 +4,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -28,7 +27,7 @@ describe('MiniDbQueryStore', () => {
       LifecycleScope.App,
       IQueryStore,
       MiniDbQueryStore,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'storage',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'minidb-qs-'));

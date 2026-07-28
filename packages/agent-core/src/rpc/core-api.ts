@@ -14,7 +14,7 @@ import type {
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
-import type { ToolInfo } from '#/agent/tool';
+import type { ToolDisclosure, ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
@@ -263,6 +263,7 @@ export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+  readonly disclosure?: ToolDisclosure;
 }
 export interface UnregisterToolPayload {
   readonly name: string;

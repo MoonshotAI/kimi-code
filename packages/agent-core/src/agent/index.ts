@@ -63,7 +63,13 @@ import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { SwarmModeTrigger } from './swarm';
-export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
+export type {
+  BuiltinTool,
+  ToolDisclosure,
+  ToolInfo,
+  ToolSource,
+  UserToolRegistration,
+} from './tool';
 export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';

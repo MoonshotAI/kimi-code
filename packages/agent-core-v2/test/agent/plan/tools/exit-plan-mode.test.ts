@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
 import {
   ExitPlanModeInputSchema,
-  ExitPlanModeTool,
   type ExitPlanModeInput,
-} from '#/agent/plan/tools/exit-plan-mode';
+} from '#/agent/tools/plan/exit-plan-mode/exit-plan-mode';
+import { ExitPlanModeTool } from '#/agent/tools/plan/exit-plan-mode/exitPlanModeTool';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';

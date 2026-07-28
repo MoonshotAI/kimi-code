@@ -109,6 +109,8 @@ export const IAgentPromptService: ServiceIdentifier<IAgentPromptService> =
 
 ```ts
 // promptService.ts — impl delegates to the native v2 Service
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+
 constructor(@IAgentPromptService private readonly prompt: IAgentPromptService /*, ... */) {}
 // submit() builds v2-native input, calls the native Service, projects the result
 // back into the protocol PromptSubmitResult.
@@ -117,7 +119,7 @@ registerScopedService(
   LifecycleScope.Agent,            // scope = the lifetime of the legacy state
   IAgentPromptService,
   AgentPromptLegacyService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'prompt',
 );
 ```

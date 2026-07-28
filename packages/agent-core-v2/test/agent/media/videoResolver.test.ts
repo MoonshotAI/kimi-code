@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { buildKimiFileUrl, parseKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { AgentVideoResolverService } from '#/agent/media/videoResolverService';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import type { GetResult, IFileService } from '#/app/file/fileService';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -55,6 +56,11 @@ function blobStore(): IBlobStore {
     _serviceBrand: undefined,
     put: async (scope, key, bytes) => {
       data.set(`${scope}/${key}`, bytes);
+    },
+    putStream: async (scope, key, source) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of source) chunks.push(chunk);
+      data.set(`${scope}/${key}`, Buffer.concat(chunks));
     },
     get: async (scope, key) => data.get(`${scope}/${key}`),
     getStream: async function* () {},
@@ -125,6 +131,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     );
     const req = requester({ uploadVideo: upload });
     const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
@@ -143,13 +150,13 @@ describe('AgentVideoResolverService', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentVideoResolverService(fileService(files), blobs, telemetry).resolve(
+    await new AgentVideoResolverService(fileService(files), blobs, telemetry, new AgentStateService()).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentVideoResolverService(fileService(files), blobs, telemetry).resolve(
+    const out = await new AgentVideoResolverService(fileService(files), blobs, telemetry, new AgentStateService()).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -165,6 +172,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     ).resolve([videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))], requester({ videoIn: false, uploadVideo: upload }));
 
     expect(firstPart(out)).toEqual({ type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` });
@@ -176,6 +184,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     ).resolve([videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))], requester({ protocol: 'anthropic', uploadVideo: undefined }));
 
     expect(firstPart(out)).toEqual({
@@ -189,6 +198,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     ).resolve([videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))], requester({ protocol: 'openai', uploadVideo: undefined }));
 
     expect(firstPart(out)).toEqual({ type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` });
@@ -202,6 +212,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     );
 
     await expect(
@@ -221,6 +232,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     );
     const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
 
@@ -245,6 +257,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     );
     const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
     const req = requester({ uploadVideo: upload });
@@ -266,6 +279,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: PNG_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     ).resolve([videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))], requester({ uploadVideo: upload }));
 
     expect(firstPart(out)).toEqual({ type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` });
@@ -273,7 +287,7 @@ describe('AgentVideoResolverService', () => {
   });
 
   it('tags a stale reference by its materialization path', async () => {
-    const out = await new AgentVideoResolverService(fileService(new Map()), blobStore(), telemetry).resolve(
+    const out = await new AgentVideoResolverService(fileService(new Map()), blobStore(), telemetry, new AgentStateService()).resolve(
       [videoMessage(buildKimiFileUrl('missing', FALLBACK_PATH))],
       requester({ uploadVideo: vi.fn() }),
     );
@@ -282,7 +296,7 @@ describe('AgentVideoResolverService', () => {
   });
 
   it('emits an unavailable placeholder when a stale reference has no fallback path', async () => {
-    const out = await new AgentVideoResolverService(fileService(new Map()), blobStore(), telemetry).resolve(
+    const out = await new AgentVideoResolverService(fileService(new Map()), blobStore(), telemetry, new AgentStateService()).resolve(
       [videoMessage(buildKimiFileUrl('missing'))],
       requester({ uploadVideo: vi.fn() }),
     );
@@ -298,6 +312,7 @@ describe('AgentVideoResolverService', () => {
       fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
       blobStore(),
       telemetry,
+      new AgentStateService(),
     );
     const messages = [videoMessage('ms://already-uploaded')];
 

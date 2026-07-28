@@ -31,16 +31,24 @@
  *       round-trips from the contract message into the wire shape (the base
  *       conversion never emits `extras`), and message-level `tools`
  *       declarations are embedded into the message;
- *     - reasoning: `reasoningKey` names the wire field carrying reasoning
- *       content (`reasoning_content`, used for both inbound extraction and
- *       outbound replay); `preserveThinking` force-replays it in a
- *       `keep: 'all'` session with thinking not disabled — it reads the
- *       already-seeded request kwargs (the thinking config `withThinking`
- *       just encoded), so it decides per request, not per instance;
+ *     - reasoning: the trait deliberately does NOT pin `reasoningKey` — the
+ *       base auto-detects the endpoint's reasoning dialect from inbound
+ *       responses (`reasoning_content` by default, `reasoning` on newer vLLM)
+ *       and echoes that field on outbound replay; operator config
+ *       (`reasoning_key`) or a trait declaration still pins when present.
+ *       `preserveThinking` force-replays the field in a `keep: 'all'` session
+ *       with thinking not disabled — it reads the already-seeded request
+ *       kwargs (the thinking config `withThinking` just encoded), so it
+ *       decides per request, not per instance;
  *     - usage: `extractUsage` finds the usage payload of a Kimi stream chunk
  *       either at the top level (the base's default location) or inside
  *       `choices[0].usage`; returning `undefined` defers to the base default
  *       when neither position carries one;
+ *     - errors: `convertError` classifies Moonshot's quota/balance-exhausted
+ *       429s (structured `exceeded_current_quota_error` type/code, billing
+ *       wordings) as the non-retryable `APIProviderQuotaExhaustedError` via
+ *       `classifyKimiQuotaError` from `./kimi-errors`, before the base's own
+ *       classification would mint a retryable rate limit;
  *     - video upload: `uploadVideo` uploads through the Kimi files API
  *       (`KimiFiles` from `./kimi-files`), memoized per trait context with a
  *       WeakMap — one composition (one resolved ctx) gets one files client,
@@ -50,16 +58,20 @@
  *    `output_config.effort`, and the interleaved-thinking beta is stripped
  *    from the seeded beta list. The `keep` dimension needs no trait handling
  *    — the Anthropic base overlays the context-management edit itself. The
- *    trait deliberately does NOT declare `strictThinkingValidation`: over
- *    this foreign transport the backend may accept efforts the local catalog
- *    metadata does not list, so client-side validation stays lenient
- *    (warning + pass-through).
+ *    trait declares the same `convertError` quota classification as the
+ *    OpenAI registration (the classifier reads the SDK error structurally,
+ *    so it is transport-agnostic). It deliberately does NOT declare
+ *    `strictThinkingValidation`: over this foreign transport the backend may
+ *    accept efforts the local catalog metadata does not list, so client-side
+ *    validation stays lenient (warning + pass-through).
  *
  * Vendor-level facts — the endpoint fallback chain, full host-header
- * forwarding, OAuth-catalog model discovery, and the UNKNOWN capability
- * declaration (Kimi model capabilities come from the catalog, not from
- * client-side tables) — are shared constants declared identically on both
- * registrations, so id-level queries read either one.
+ * forwarding, and OAuth-catalog model discovery — are shared constants
+ * declared identically on both registrations, so id-level queries read
+ * either one. Kimi declares no vendor-level capability: model capabilities
+ * come from the catalog, not from client-side tables (Kimi model ids never
+ * match the protocol bases' builtin catalogs, so the detected layer answers
+ * UNKNOWN on its own).
  *
  * Deliberately absent (do not reintroduce): a 64-char tool-call-id policy
  * (the base default is identical), an extra-body deep-merge morph, and a
@@ -67,7 +79,6 @@
  * base's `'openai'`).
  */
 
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type {
@@ -78,14 +89,13 @@ import type {
 
 import { type OpenAIToolParam, toolToOpenAI } from '../../bases/openai/openai-common';
 import { registerProviderDefinition } from '../../providerDefinition';
+import { classifyKimiQuotaError } from './kimi-errors';
 import { KimiFiles } from './kimi-files';
 import { normalizeKimiToolSchema } from './kimi-schema';
 
 export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
 export const KIMI_BASE_URL_ENV = 'KIMI_BASE_URL';
 export const KIMI_DEFAULT_BASE_URL = 'https://api.moonshot.ai/v1';
-
-export const KIMI_REASONING_KEY = 'reasoning_content';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 
@@ -174,6 +184,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
     defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
   }),
 
+  convertError: (error) => classifyKimiQuotaError(error),
+
   cacheKey: (key) => ({ prompt_cache_key: key }),
 
   withThinking: (effort, options, generationKwargs) => {
@@ -198,8 +210,6 @@ export const kimiOpenAITrait: ProtocolTrait = {
     }
     return undefined;
   },
-
-  reasoningKey: () => KIMI_REASONING_KEY,
 
   withMaxCompletionTokens: (maxCompletionTokens) => ({
     max_completion_tokens: maxCompletionTokens,
@@ -274,6 +284,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
 };
 
 export const kimiAnthropicTrait: ProtocolTrait = {
+  convertError: (error) => classifyKimiQuotaError(error),
+
   withThinking: (effort, _options, generationKwargs) => {
     const seeded = generationKwargs['betaFeatures'];
     const betaFeatures = (Array.isArray(seeded) ? (seeded as string[]) : []).filter(
@@ -308,7 +320,6 @@ registerProviderDefinition({
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
-  capability: UNKNOWN_CAPABILITY,
 });
 
 registerProviderDefinition({
@@ -318,5 +329,4 @@ registerProviderDefinition({
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
-  capability: UNKNOWN_CAPABILITY,
 });

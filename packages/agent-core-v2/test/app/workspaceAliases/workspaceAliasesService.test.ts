@@ -4,9 +4,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -44,21 +44,21 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       LifecycleScope.App,
       IWorkspacePersistence,
       FileWorkspacePersistence,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspace',
     );
     registerScopedService(
       LifecycleScope.App,
       IWorkspaceService,
       WorkspaceService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspace',
     );
     registerScopedService(
       LifecycleScope.App,
       IWorkspaceAliases,
       WorkspaceAliasesService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspaceAliases',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-aliases-'));
