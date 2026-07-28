@@ -264,19 +264,19 @@ describe('AgentProfileService.applyProfile', () => {
     svc.update({ profileName: 'ghost', systemPrompt: 'old prompt', disallowedTools: [] });
 
     await converge.fireAsync({}, new AbortController().signal);
+    await converge.fireAsync({}, new AbortController().signal);
 
     expect(svc.data().systemPrompt).toBe('old prompt');
     const events = context.newEvents() as readonly {
       event: string;
       args?: { code?: string };
     }[];
-    expect(
-      events.some(
-        (entry) =>
-          entry.event === 'warning' &&
-          entry.args?.code === 'system-prompt-refresh-profile-missing',
-      ),
-    ).toBe(true);
+    const warnings = events.filter(
+      (entry) =>
+        entry.event === 'warning' &&
+        entry.args?.code === 'system-prompt-refresh-profile-missing',
+    );
+    expect(warnings).toHaveLength(1);
     converge.dispose();
   });
 });

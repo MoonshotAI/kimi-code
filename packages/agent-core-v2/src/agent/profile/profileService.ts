@@ -55,7 +55,7 @@
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
  * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
- * / the two emitted-warning dedupe sets / the first-render `now`) is
+ * / the three emitted-warning dedupe sets / the first-render `now`) is
  * registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
  * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
@@ -192,6 +192,10 @@ export const profileEmittedToolPatternWarningsKey = defineState<Set<string>>(
   'profile.emittedToolPatternWarnings',
   () => new Set(),
 );
+export const profileEmittedMissingProfileWarningsKey = defineState<Set<string>>(
+  'profile.emittedMissingProfileWarnings',
+  () => new Set(),
+);
 export const profileRenderedNowKey = defineState<string | undefined>(
   'profile.renderedNow',
   () => undefined as string | undefined,
@@ -240,6 +244,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.states.register(profileAgentsMdWarningKey);
     this.states.register(profileEmittedThinkingEffortWarningsKey);
     this.states.register(profileEmittedToolPatternWarningsKey);
+    this.states.register(profileEmittedMissingProfileWarningsKey);
     this.states.register(profileRenderedNowKey);
     this.configure({});
     this._register(
@@ -284,6 +289,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private get emittedToolPatternWarnings(): Set<string> {
     return this.states.get(profileEmittedToolPatternWarningsKey);
+  }
+
+  private get emittedMissingProfileWarnings(): Set<string> {
+    return this.states.get(profileEmittedMissingProfileWarningsKey);
   }
 
   private get renderedNow(): string {
@@ -487,13 +496,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         await this.catalog.ready;
         profile = this.catalog.get(profileName);
         if (profile === undefined) {
-          this.eventBus.publish({
-            type: 'warning',
-            message:
-              `System prompt refresh skipped: agent profile "${profileName}" no longer exists; ` +
-              'the persisted prompt and tool binding are kept.',
-            code: 'system-prompt-refresh-profile-missing',
-          });
+          if (!this.emittedMissingProfileWarnings.has(profileName)) {
+            this.emittedMissingProfileWarnings.add(profileName);
+            this.eventBus.publish({
+              type: 'warning',
+              message:
+                `System prompt refresh skipped: agent profile "${profileName}" no longer exists; ` +
+                'the persisted prompt and tool binding are kept.',
+              code: 'system-prompt-refresh-profile-missing',
+            });
+          }
           return;
         }
         rebind = true;

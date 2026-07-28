@@ -3,8 +3,9 @@
  * `agent-core-v2/app/plugin/plugin.ts` and `agent-core-v2/app/plugin/types.ts`;
  * nested `McpServerConfig` mirrors `agent-core-v2/agent/mcp/config-schema.ts`,
  * `HookDefConfig` mirrors `agent-core-v2/agent/externalHooks/configSection.ts`.
- * `pluginSkillRoots`, `enabledSessionStarts`, `enabledMcpServers`, and
- * `enabledHooks` are excluded (not part of the klient wire surface).
+ * `pluginSkillRoots`, `enabledSessionStarts`, `enabledSystemPrompts`,
+ * `enabledMcpServers`, and `enabledHooks` are excluded (not part of the
+ * klient wire surface).
  */
 
 import { z } from 'zod';

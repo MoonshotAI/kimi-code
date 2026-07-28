@@ -187,7 +187,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 
 每项贡献限制为 32 KB（UTF-8 字节）：超限的 `systemPrompt` 字段或 `systemPromptPath` 文件会被忽略，并显示在 plugin 的 diagnostics 中。一次提示词构建最多注入所有已启用 plugin 合计 64 KB 的指令；超出预算的贡献会被跳过并给出警告。
 
-新会话创建时会包含当前已启用 plugin 的指令。安装、启用、禁用、移除或重载 plugin 时，会在操作返回前一并更新所有活跃会话的 Skill 列表与系统提示词。从磁盘恢复的会话保有其持久化的提示词，直到下一次 plugin 变更。切换 plugin 的 MCP server 不会影响提示词。
+新会话创建时会包含当前已启用 plugin 的指令。安装、启用、禁用、移除或重载 plugin 时，会在操作返回前一并更新所有活跃会话的 Skill 列表与系统提示词；若某个会话收敛超时，其更新会被中止，并在下一次 plugin 变更时重试。从磁盘恢复的会话保有其持久化的提示词，直到下一次 plugin 变更。切换 plugin 的 MCP server 不会影响提示词。
 
 内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖主-agent-的系统提示词)。
 
