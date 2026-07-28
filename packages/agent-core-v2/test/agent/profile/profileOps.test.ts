@@ -21,6 +21,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
+import { IPluginService } from '#/app/plugin/plugin';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -212,6 +213,10 @@ function buildHost(key: string): {
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IHostIdentity, stubUnused());
+  host.stub(IPluginService, {
+    _serviceBrand: undefined,
+    onDidReload: () => ({ dispose: () => {} }),
+  });
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());

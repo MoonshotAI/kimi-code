@@ -25,6 +25,7 @@ import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import {
   normalizePluginId,
   type EnabledPluginSessionStart,
+  type EnabledPluginSystemPrompt,
   type PluginCapabilityState,
   type PluginCommandDef,
   type PluginGithubMetadata,
@@ -319,6 +320,17 @@ export class PluginManager {
       const skill = record.manifest?.sessionStart?.skill;
       if (skill === undefined) continue;
       out.push({ pluginId: record.id, skillName: skill });
+    }
+    return out;
+  }
+
+  enabledSystemPrompts(): readonly EnabledPluginSystemPrompt[] {
+    const out: EnabledPluginSystemPrompt[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok') continue;
+      const content = record.manifest?.systemPrompt;
+      if (content === undefined) continue;
+      out.push({ pluginId: record.id, content });
     }
     return out;
   }

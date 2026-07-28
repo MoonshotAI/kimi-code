@@ -33,9 +33,9 @@
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher fires it voided (an unhandled
- * rejection would crash kap-server) and the Session tool-policy fan-out
- * awaits it across agents. Tool-policy entries that can never activate
+ * because the `[tools]` config watcher and the plugin reload listener fire it
+ * voided (an unhandled rejection would crash kap-server) and the Session
+ * tool-policy fan-out awaits it across agents. Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
  * `mcp__` literals) surface as `warning` events instead of silently shrinking
  * the tool set; the known-name vocabulary is the live registry plus
@@ -85,6 +85,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { IPluginService } from '#/app/plugin/plugin';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 
@@ -199,6 +200,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostIdentity private readonly hostIdentity: IHostIdentity,
+    @IPluginService private readonly plugins: IPluginService,
   ) {
     super();
     this.states.register(profileActiveToolNamesOverlayKey);
@@ -217,6 +219,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
           this.publishToolPatternWarnings();
           void this.refreshSystemPrompt();
         }
+      }),
+    );
+    this._register(
+      this.plugins.onDidReload(() => {
+        void this.refreshSystemPrompt();
       }),
     );
   }
@@ -841,6 +848,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       { additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs },
     );
     const skills = await this.resolveSkillListing();
+    const pluginSections = await this.resolvePluginSections();
     return {
       ...base,
       cwd: effectiveCwd,
@@ -849,6 +857,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       shellPath: this.env.shellPath,
       now: new Date().toISOString(),
       skills,
+      pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
       productName: this.hostIdentity.productName,
       replyStyleGuide: this.hostIdentity.replyStyleGuide,
@@ -875,6 +884,17 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     try {
       await this.skillCatalog.ready;
       return this.skillCatalog.catalog.getModelSkillListing();
+    } catch {
+      return '';
+    }
+  }
+
+  private async resolvePluginSections(): Promise<string> {
+    try {
+      const sections = await this.plugins.enabledSystemPrompts();
+      return sections
+        .map((section) => `<!-- From: plugin ${section.pluginId} -->\n${section.content}`)
+        .join('\n\n');
     } catch {
       return '';
     }

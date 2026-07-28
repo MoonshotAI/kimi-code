@@ -176,6 +176,7 @@ describe('PluginService (plugin boundary)', () => {
       const svc = host.app.accessor.get(IPluginService);
       await expect(svc.pluginSkillRoots()).resolves.toEqual([]);
       await expect(svc.enabledSessionStarts()).resolves.toEqual([]);
+      await expect(svc.enabledSystemPrompts()).resolves.toEqual([]);
       await expect(svc.enabledHooks()).resolves.toEqual([]);
     } finally {
       host.dispose();
@@ -251,6 +252,22 @@ describe('PluginService (plugin boundary)', () => {
         expect.objectContaining({ id: 'recovery-demo' }),
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('serves enabled plugin system-prompt sections on the consumption plane', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('prompt-demo', { systemPrompt: 'Always cite sources.' });
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('prompt-demo', pluginRoot)));
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.enabledSystemPrompts()).resolves.toEqual([
+        { pluginId: 'prompt-demo', content: 'Always cite sources.' },
+      ]);
     } finally {
       host.dispose();
     }

@@ -106,6 +106,8 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
   const skillInstructions =
     typeof raw['skillInstructions'] === 'string' ? raw['skillInstructions'] : undefined;
 
+  const systemPrompt = stringField(raw, 'systemPrompt');
+
   recordUnsupportedRuntimeFields(raw, diagnostics);
 
   const manifest: PluginManifest = {
@@ -123,6 +125,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     commands: await readCommands(pluginRoot, raw['commands'], diagnostics),
     interface: readInterface(raw['interface']),
     skillInstructions,
+    systemPrompt,
   };
 
   return { manifest, manifestKind, manifestPath, shadowedManifestPath, diagnostics };

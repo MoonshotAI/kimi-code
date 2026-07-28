@@ -62,4 +62,37 @@ describe('plugin manifest parser', () => {
       '"commands" path must start with "./" (got "../outside.md")',
     ]);
   });
+
+  it('reads the systemPrompt field, trimming surrounding whitespace', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: '\nAlways cite sources.\n' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('treats a missing, blank, or non-string systemPrompt as absent', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: '   ' }),
+      'utf8',
+    );
+
+    const blank = await parseManifest(dir);
+    expect(blank.manifest?.systemPrompt).toBeUndefined();
+
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 42 }),
+      'utf8',
+    );
+
+    const nonString = await parseManifest(dir);
+    expect(nonString.manifest?.systemPrompt).toBeUndefined();
+  });
 });

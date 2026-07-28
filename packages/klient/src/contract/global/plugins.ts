@@ -90,6 +90,7 @@ export const pluginManifestSchema = z.object({
   commands: z.array(pluginCommandEntrySchema).optional(),
   interface: pluginInterfaceSchema.optional(),
   skillInstructions: z.string().optional(),
+  systemPrompt: z.string().optional(),
 });
 
 export const pluginMcpServerInfoSchema = z.object({
