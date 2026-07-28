@@ -39,12 +39,13 @@ import {
   useShortcutOverrides,
 } from '../../composables/useShortcuts';
 import { track } from '../../lib/track';
+import type { ShortcutActionId } from '../../../shared/action-ids';
 
 const { t } = useI18n();
 const overrides = useShortcutOverrides();
 
 const query = ref('');
-const recordingId = ref<string | null>(null);
+const recordingId = ref<ShortcutActionId | null>(null);
 const recordError = ref<string | null>(null);
 // Error pinned to a row OUTSIDE recording (e.g. a refused reset).
 const rowError = ref<{ id: string; message: string } | null>(null);
@@ -124,7 +125,7 @@ function setGlobalShortcutSuspended(suspended: boolean): void {
  *  the OS refuses it (already taken by the system or another app) — without
  *  the rollback the row would show a binding that can never fire. */
 async function finishOsGlobalRecording(
-  id: string,
+  id: ShortcutActionId,
   previous: { customized: boolean; binding: string | null | undefined },
 ): Promise<boolean> {
   await nextTick();

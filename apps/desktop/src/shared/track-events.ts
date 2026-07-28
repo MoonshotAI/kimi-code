@@ -5,16 +5,41 @@
 
 import { z } from 'zod';
 
+import { ACTION_INVOKED_IDS, SHORTCUT_ACTION_IDS } from './action-ids';
+
 const shortStringSchema = z.string().min(1).max(64);
 const optionalCappedStringSchema = z.string().max(64).optional().catch(undefined);
-const optionalShortStringSchema = shortStringSchema.optional().catch(undefined);
 const optionalBooleanSchema = z.boolean().optional().catch(undefined);
+
+const shortcutBindingChangedPropertiesSchema = z.discriminatedUnion('op', [
+  z.object({
+    action: z.enum(SHORTCUT_ACTION_IDS),
+    op: z.enum(['assign', 'reset', 'clear']),
+    had_conflict: optionalBooleanSchema,
+  }),
+  z.object({
+    action: z.literal('*'),
+    op: z.literal('reset_all'),
+    had_conflict: optionalBooleanSchema,
+  }),
+]);
+
+const settingsChangedPropertiesSchema = z.discriminatedUnion('key', [
+  z.object({ key: z.literal('language'), value: z.enum(['en', 'zh']) }),
+  z.object({ key: z.literal('theme'), value: z.enum(['system', 'light', 'dark']) }),
+  z.object({ key: z.literal('font-size'), value: z.enum(['small', 'medium', 'large', 'xlarge']) }),
+  z.object({ key: z.literal('vibrancy'), value: z.enum(['on', 'off']) }),
+  z.object({ key: z.literal('notifications'), value: z.enum(['on', 'off']) }),
+  z.object({ key: z.literal('open-in-default'), value: shortStringSchema }),
+  z.object({ key: z.literal('dock-icon'), value: z.enum(['light', 'dark', 'auto']) }),
+  z.object({ key: z.literal('update-auto-download'), value: z.enum(['on', 'off']) }),
+]);
 
 export const rendererTrackEventSchema = z.discriminatedUnion('event', [
   z.object({
     event: z.literal('action_invoked'),
     properties: z.object({
-      action: shortStringSchema,
+      action: z.enum(ACTION_INVOKED_IDS),
       source: z.enum(['shortcut', 'menu', 'button', 'tray']),
     }),
   }),
@@ -32,61 +57,74 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
   z.object({
     event: z.literal('onboarding_step'),
     properties: z.object({
-      step: shortStringSchema,
+      step: z.enum(['preferences', 'login']),
       skipped: optionalBooleanSchema,
     }),
   }),
   z.object({
     event: z.literal('oauth_login_step'),
     properties: z.object({
-      stage: shortStringSchema,
+      stage: z.enum(['starting', 'device-code', 'success', 'expired', 'error']),
       ok: optionalBooleanSchema,
     }),
   }),
   z.object({
     event: z.literal('shortcut_binding_changed'),
-    properties: z.object({
-      action: shortStringSchema,
-      op: z.enum(['assign', 'reset', 'clear', 'reset_all']),
-      had_conflict: optionalBooleanSchema,
-    }),
+    properties: shortcutBindingChangedPropertiesSchema,
   }),
   z.object({
     event: z.literal('settings_changed'),
-    properties: z.object({
-      key: shortStringSchema,
-      value: optionalShortStringSchema,
-    }),
+    properties: settingsChangedPropertiesSchema,
   }),
   z.object({
     event: z.literal('native_feature_used'),
     properties: z.object({
-      feature: shortStringSchema,
+      feature: z.enum(['workspace_drop', 'workspace_picker', 'open_in']),
       fallback: optionalBooleanSchema,
     }),
   }),
   z.object({
     event: z.literal('approval_decision'),
     properties: z.object({
-      decision: shortStringSchema,
+      decision: z.enum([
+        'approve',
+        'approveSession',
+        'reject',
+        'approvePlan',
+        'approveOption',
+        'revisePlan',
+        'rejectAndExit',
+      ]),
       via: z.enum(['button', 'number-key']),
     }),
   }),
   z.object({
     event: z.literal('session_menu_action'),
-    properties: z.object({ action: shortStringSchema }),
+    properties: z.object({
+      action: z.enum([
+        'copyAll',
+        'copyFinalSummary',
+        'copySessionId',
+        'rename',
+        'fork',
+        'export',
+        'archive',
+        'openChanges',
+        'openPr',
+      ]),
+    }),
   }),
   z.object({
     event: z.literal('attachment_added'),
     properties: z.object({
       via: z.enum(['drop', 'click', 'paste']),
-      kind: optionalShortStringSchema,
+      kind: z.enum(['image', 'video', 'file']).optional().catch(undefined),
     }),
   }),
   z.object({
     event: z.literal('ui_element_toggled'),
     properties: z.object({
-      element: shortStringSchema,
+      element: z.enum(['thinking_block', 'tool_call']),
       expanded: z.boolean(),
     }),
   }),
@@ -107,6 +145,7 @@ export type ShortcutBindingChangedEvent = RendererEventPayloads['shortcut_bindin
 export type SettingsChangedEvent = RendererEventPayloads['settings_changed'];
 export type NativeFeatureUsedEvent = RendererEventPayloads['native_feature_used'];
 export type ApprovalDecisionEvent = RendererEventPayloads['approval_decision'];
+export type ApprovalDecisionName = ApprovalDecisionEvent['decision'];
 export type SessionMenuActionEvent = RendererEventPayloads['session_menu_action'];
 export type AttachmentAddedEvent = RendererEventPayloads['attachment_added'];
 export type UiElementToggledEvent = RendererEventPayloads['ui_element_toggled'];

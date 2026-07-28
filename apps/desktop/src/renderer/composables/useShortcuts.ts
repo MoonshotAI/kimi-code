@@ -22,6 +22,7 @@ import {
   type ShortcutScope,
 } from '../lib/keymap';
 import { safeGetJson, safeSetJson, STORAGE_KEYS } from '../lib/storage';
+import type { ShortcutActionId } from '../../shared/action-ids';
 
 /** action id → canonical binding (null = unassigned; absent = default). */
 export type ShortcutOverrides = Record<string, string | null>;
@@ -169,7 +170,7 @@ watch(
 );
 
 /** First action in `scope` whose effective binding matches the event. */
-export function matchShortcutAction(e: KeyboardEvent, scope: ShortcutScope): string | null {
+export function matchShortcutAction(e: KeyboardEvent, scope: ShortcutScope): ShortcutActionId | null {
   for (const action of SHORTCUT_ACTIONS) {
     if (action.scope !== scope) continue;
     const binding = resolvedBinding(action.id);

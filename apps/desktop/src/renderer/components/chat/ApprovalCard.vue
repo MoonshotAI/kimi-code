@@ -7,7 +7,11 @@ import type { ApprovalDecision } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
 import HighlightedCode from '../HighlightedCode.vue';
-import { approvalDecisionName, type ApprovalVia } from '../../lib/approvalTelemetry';
+import {
+  approvalDecisionName,
+  type ApprovalTelemetryAction,
+  type ApprovalVia,
+} from '../../lib/approvalTelemetry';
 import { track } from '../../lib/track';
 
 const props = defineProps<{
@@ -177,7 +181,7 @@ watch(
 );
 
 function act(
-  action: string,
+  action: ApprovalTelemetryAction,
   response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
   via: ApprovalVia,
 ): void {

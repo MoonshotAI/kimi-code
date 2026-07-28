@@ -5,7 +5,7 @@ import { approvalDecisionName } from '../../src/renderer/lib/approvalTelemetry';
 // for the two composites flattened here (plan options and feedback submits).
 describe('approvalDecisionName', () => {
   it('passes the plain action keys through unchanged', () => {
-    for (const action of ['approve', 'approveSession', 'reject', 'approvePlan', 'rejectAndExit']) {
+    for (const action of ['approve', 'approveSession', 'reject', 'approvePlan', 'rejectAndExit'] as const) {
       expect(approvalDecisionName(action)).toBe(action);
     }
   });

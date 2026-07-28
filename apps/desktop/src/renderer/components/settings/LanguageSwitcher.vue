@@ -9,9 +9,14 @@ const { locale } = useI18n();
 
 const options = availableLocales.map((l) => ({ value: l.code, label: l.label }));
 
+function isLocaleCode(code: string): code is LocaleCode {
+  return availableLocales.some((locale) => locale.code === code);
+}
+
 function choose(code: string): void {
+  if (!isLocaleCode(code)) return;
   if (locale.value === code) return;
-  setLocale(code as LocaleCode);
+  setLocale(code);
   track('settings_changed', { key: 'language', value: code });
 }
 </script>

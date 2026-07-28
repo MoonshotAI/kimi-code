@@ -64,6 +64,7 @@ import {
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
 import { track } from './lib/track';
+import { isAppActionId, type AppActionId } from '../shared/action-ids';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -311,7 +312,7 @@ let offMenuAction: (() => void) | null = null;
 
 // Native menu item id → shortcut action id (main/menu.ts); both entry points
 // run the same handler.
-const MENU_ACTION_TO_SHORTCUT: Record<string, string> = {
+const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
   'open-settings': 'openSettings',
   'new-chat': 'newSession',
   'open-folder': 'openFolder',
@@ -337,7 +338,7 @@ async function openWorkspaceInDefaultApp(): Promise<void> {
 // Single funnel for app-level actions — the keydown dispatcher, the native
 // menu, and the UI buttons all dispatch through here, so action_invoked
 // source attribution lives in exactly one place.
-function runShortcutAction(id: string, source: 'shortcut' | 'menu' | 'button'): void {
+function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'button'): void {
   track('action_invoked', { action: id, source });
   switch (id) {
     case 'openSettings':
@@ -409,7 +410,7 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   // otherwise archive chat after chat (no confirm), and toggles would flap.
   if (e.repeat) return;
   const id = matchShortcutAction(e, 'global');
-  if (id === null) return;
+  if (id === null || !isAppActionId(id)) return;
   // Session-scoped actions (archive / side chat / open-in) only fire with an
   // active chat — never on the new-chat draft or onboarding pages.
   const action = shortcutActionById(id);

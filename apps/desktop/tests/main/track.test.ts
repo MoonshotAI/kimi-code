@@ -44,10 +44,7 @@ describe('asRendererTrackEvent', () => {
   });
 
   it.each(['cmd', '', 'menu;drop', 42])('rejects action_invoked with bad action %j', (action) => {
-    const payload = { action, source: 'menu' };
-    const expected = typeof action === 'string' && action.length > 0;
-    // Only non-empty strings survive; anything else is dropped.
-    expect(asRendererTrackEvent('action_invoked', payload) !== null).toBe(expected);
+    expect(asRendererTrackEvent('action_invoked', { action, source: 'menu' })).toBeNull();
   });
 
   it.each(['keyboard', 'click', '', 1])('rejects action_invoked with bad source %j', (source) => {
@@ -105,18 +102,20 @@ describe('asRendererTrackEvent', () => {
       event: 'onboarding_step',
       properties: { step: 'login', skipped: true },
     });
-    expect(asRendererTrackEvent('onboarding_step', { step: 'workspace' })).toEqual({
+    expect(asRendererTrackEvent('onboarding_step', { step: 'preferences' })).toEqual({
       event: 'onboarding_step',
-      properties: { step: 'workspace', skipped: undefined },
+      properties: { step: 'preferences', skipped: undefined },
     });
+    expect(asRendererTrackEvent('onboarding_step', { step: 'workspace' })).toBeNull();
     expect(asRendererTrackEvent('onboarding_step', {})).toBeNull();
   });
 
   it('accepts oauth_login_step with optional ok', () => {
-    expect(asRendererTrackEvent('oauth_login_step', { stage: 'polling', ok: false })).toEqual({
+    expect(asRendererTrackEvent('oauth_login_step', { stage: 'starting', ok: false })).toEqual({
       event: 'oauth_login_step',
-      properties: { stage: 'polling', ok: false },
+      properties: { stage: 'starting', ok: false },
     });
+    expect(asRendererTrackEvent('oauth_login_step', { stage: 'polling' })).toBeNull();
     expect(asRendererTrackEvent('oauth_login_step', { ok: true })).toBeNull();
   });
 
@@ -134,16 +133,39 @@ describe('asRendererTrackEvent', () => {
     expect(
       asRendererTrackEvent('shortcut_binding_changed', { action: 'summonApp', op: 'rebind' }),
     ).toBeNull();
+    expect(
+      asRendererTrackEvent('shortcut_binding_changed', { action: 'unknown', op: 'assign' }),
+    ).toBeNull();
+    expect(
+      asRendererTrackEvent('shortcut_binding_changed', { action: '*', op: 'assign' }),
+    ).toBeNull();
+    expect(
+      asRendererTrackEvent('shortcut_binding_changed', { action: '*', op: 'reset_all' }),
+    ).toEqual({
+      event: 'shortcut_binding_changed',
+      properties: { action: '*', op: 'reset_all', had_conflict: undefined },
+    });
   });
 
-  it('accepts settings_changed and caps value length', () => {
+  it('accepts settings_changed only for known key/value pairs', () => {
     expect(asRendererTrackEvent('settings_changed', { key: 'theme', value: 'dark' })).toEqual({
       event: 'settings_changed',
       properties: { key: 'theme', value: 'dark' },
     });
+    expect(asRendererTrackEvent('settings_changed', { key: 'theme', value: 'sepia' })).toBeNull();
+    expect(asRendererTrackEvent('settings_changed', { key: 'unknown', value: 'on' })).toBeNull();
     expect(
-      asRendererTrackEvent('settings_changed', { key: 'theme', value: 'x'.repeat(65) }),
-    ).toEqual({ event: 'settings_changed', properties: { key: 'theme', value: undefined } });
+      asRendererTrackEvent('settings_changed', { key: 'open-in-default', value: 'zed' }),
+    ).toEqual({
+      event: 'settings_changed',
+      properties: { key: 'open-in-default', value: 'zed' },
+    });
+    expect(
+      asRendererTrackEvent('settings_changed', {
+        key: 'open-in-default',
+        value: 'x'.repeat(65),
+      }),
+    ).toBeNull();
     expect(asRendererTrackEvent('settings_changed', { value: 'dark' })).toBeNull();
   });
 
@@ -154,6 +176,9 @@ describe('asRendererTrackEvent', () => {
       event: 'native_feature_used',
       properties: { feature: 'workspace_picker', fallback: true },
     });
+    expect(
+      asRendererTrackEvent('native_feature_used', { feature: 'unknown_feature' }),
+    ).toBeNull();
     expect(asRendererTrackEvent('native_feature_used', {})).toBeNull();
   });
 
@@ -167,20 +192,28 @@ describe('asRendererTrackEvent', () => {
     expect(
       asRendererTrackEvent('approval_decision', { decision: 'approve', via: 'mouse' }),
     ).toBeNull();
+    expect(
+      asRendererTrackEvent('approval_decision', { decision: 'custom', via: 'button' }),
+    ).toBeNull();
   });
 
-  it('accepts session_menu_action with a non-empty action', () => {
+  it('accepts session_menu_action with a known action', () => {
     expect(asRendererTrackEvent('session_menu_action', { action: 'fork' })).toEqual({
       event: 'session_menu_action',
       properties: { action: 'fork' },
     });
     expect(asRendererTrackEvent('session_menu_action', { action: '' })).toBeNull();
+    expect(asRendererTrackEvent('session_menu_action', { action: 'custom' })).toBeNull();
   });
 
   it('accepts attachment_added with a valid via and optional kind', () => {
     expect(asRendererTrackEvent('attachment_added', { via: 'paste', kind: 'image' })).toEqual({
       event: 'attachment_added',
       properties: { via: 'paste', kind: 'image' },
+    });
+    expect(asRendererTrackEvent('attachment_added', { via: 'paste', kind: 'archive' })).toEqual({
+      event: 'attachment_added',
+      properties: { via: 'paste', kind: undefined },
     });
     expect(asRendererTrackEvent('attachment_added', { via: 'api' })).toBeNull();
   });
@@ -194,6 +227,9 @@ describe('asRendererTrackEvent', () => {
     });
     expect(
       asRendererTrackEvent('ui_element_toggled', { element: 'tool_call', expanded: 'yes' }),
+    ).toBeNull();
+    expect(
+      asRendererTrackEvent('ui_element_toggled', { element: 'custom', expanded: true }),
     ).toBeNull();
   });
 });
