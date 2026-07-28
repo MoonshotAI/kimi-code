@@ -1,3 +1,12 @@
+/**
+ * `plugin` domain (L3) — owns the on-disk `installed.json` record store.
+ *
+ * Reads, validates, and atomically rewrites the installed-plugin file for
+ * `PluginManager`. Records are validated rather than cast because the file is
+ * hand-editable and survives downgrades; every schema is loose at every level
+ * so a record written by a newer client round-trips through an older one.
+ */
+
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -9,31 +18,20 @@ const INSTALLED_REL = path.join('plugins', 'installed.json');
 
 const PluginSourceSchema: z.ZodType<PluginSource> = z.enum(['local-path', 'zip-url', 'github']);
 
-const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.object({
+const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.looseObject({
   owner: z.string(),
   repo: z.string(),
-  ref: z.object({
+  ref: z.looseObject({
     kind: z.enum(['branch', 'tag', 'sha']),
     value: z.string(),
   }),
   installedSha: z.string().optional(),
 });
 
-const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.object({
-  mcpServers: z.record(z.string(), z.object({ enabled: z.boolean() })).optional(),
+const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.looseObject({
+  mcpServers: z.record(z.string(), z.looseObject({ enabled: z.boolean() })).optional(),
 });
 
-/*
-  Records are validated field by field rather than trusted from disk: `installed.json`
-  is hand-editable, survives downgrades, and is written by older versions, so a
-  structurally valid file can still carry records that violate the type. Consumers
-  dereference these fields unconditionally — `PluginManager.load` reads `entry.id`
-  and `entry.root`, and the TUI renders `github.ref.value` — so an unchecked cast
-  turns a bad record into a crash far from the file that caused it.
-
-  Unknown keys are kept (`loose`) so a record written by a newer version round-trips
-  through an older one instead of losing fields on the next write.
-*/
 const InstalledRecordSchema = z.looseObject({
   id: z.string(),
   root: z.string(),

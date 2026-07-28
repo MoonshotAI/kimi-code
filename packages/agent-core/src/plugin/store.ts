@@ -17,18 +17,18 @@ const PluginSourceSchema: z.ZodType<PluginSource> = z.enum([
   'github',
 ]);
 
-const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.object({
+const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.looseObject({
   owner: z.string(),
   repo: z.string(),
-  ref: z.object({
+  ref: z.looseObject({
     kind: z.enum(['branch', 'tag', 'sha']),
     value: z.string(),
   }),
   installedSha: z.string().optional(),
 });
 
-const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.object({
-  mcpServers: z.record(z.string(), z.object({ enabled: z.boolean() })).optional(),
+const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.looseObject({
+  mcpServers: z.record(z.string(), z.looseObject({ enabled: z.boolean() })).optional(),
 });
 
 /*
@@ -39,8 +39,10 @@ const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.object({
   and `entry.root`, and the TUI renders `github.ref.value` — so an unchecked cast
   turns a bad record into a crash far from the file that caused it.
 
-  Unknown keys are kept (`loose`) so a record written by a newer version round-trips
-  through an older one instead of losing fields on the next write.
+  Every level is loose, not just the top one: `readInstalled` returns what
+  `writeInstalled` later persists, so a nested `z.object` would strip fields a
+  newer client wrote — `github.ref` and the per-server capability entries most
+  of all — and the next write would drop them for good.
 */
 const InstalledRecordSchema = z.looseObject({
   id: z.string(),

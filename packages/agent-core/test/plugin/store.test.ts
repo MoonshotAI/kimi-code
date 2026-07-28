@@ -182,4 +182,33 @@ describe('plugin store', () => {
       nested: true,
     });
   });
+
+  // A top-level unknown key is not enough: `readInstalled` returns what the next
+  // `writeInstalled` persists, so any level that strips loses the field for good.
+  it('keeps unknown keys nested inside github and capabilities, and survives a rewrite', async () => {
+    const home = await makeKimiHome();
+    const fromNewerVersion = {
+      ...VALID_RECORD,
+      futureTopLevel: 'kept',
+      github: {
+        owner: 'wbxl2000',
+        repo: 'superpowers',
+        ref: { kind: 'tag', value: 'v1.2.0', resolvedAt: '2026-07-28T00:00:00Z' },
+        installedSha: '45b441d62b81b5f27d3bfd8700e04436cd4de5b3',
+        signature: 'ed25519:abc',
+      },
+      capabilities: {
+        mcpServers: { finance: { enabled: true, transport: 'stdio' } },
+      },
+    };
+    await writeRaw(home, { version: 1, plugins: [fromNewerVersion] });
+
+    const read = await readInstalled(home);
+    expect(read.plugins[0]).toEqual(fromNewerVersion);
+
+    // The load-edit-save path an older client actually takes.
+    await writeInstalled(home, read);
+    const reread = await readInstalled(home);
+    expect(reread.plugins[0]).toEqual(fromNewerVersion);
+  });
 });

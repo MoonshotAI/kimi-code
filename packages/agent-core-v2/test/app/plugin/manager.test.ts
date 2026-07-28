@@ -84,9 +84,7 @@ describe('PluginManager', () => {
     ]);
   });
 
-  it('fails the load with the offending index when installed.json holds a bad record', async () => {
-    // `load()` dereferences `entry.id` and `entry.root` for every record, so a
-    // malformed one has to be rejected at the store instead of crashing here.
+  it('rejects a bad installed.json record at the store, naming its index, rather than dereferencing it in load()', async () => {
     await writeFile(
       join(home, 'plugins', 'installed.json'),
       JSON.stringify({ version: 1, plugins: [null] }),
