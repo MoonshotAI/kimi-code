@@ -573,4 +573,48 @@ describe('ToolCallDeduplicator', () => {
       expect(true).toBe(true);
     });
   });
+
+  describe('skipped registration (calls rejected before prepareToolExecution)', () => {
+    // Calls rejected in preflight (e.g. invalid args) never reach
+    // prepareToolExecution/checkSameStep; the loop registers them late via
+    // registerSkipped at finalize time so the breaker still counts them.
+    async function runRejected(
+      dedup: ToolCallDeduplicator,
+      callId: string,
+      result: ExecutableToolResult,
+    ): Promise<ExecutableToolResult> {
+      dedup.registerSkipped(callId, 'Bash', { timeout: 60 });
+      return dedup.finalizeResult(callId, 'Bash', { timeout: 60 }, result);
+    }
+
+    it('counts skipped calls toward the streak and force-stops at 12, keeping the error flag', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 12; i += 1) {
+        dedup.beginStep();
+        last = await runRejected(dedup, `c${String(i)}`, errResult('Invalid args'));
+        dedup.endStep();
+      }
+      expect(last!.isError).toBe(true);
+      expect(last!.stopTurn).toBe(true);
+      expect(last!.output as string).toContain(REMINDER_TEXT_3.trim());
+    });
+
+    it('does not double-register a call that already went through checkSameStep', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 2; i += 1) {
+        dedup.beginStep();
+        const callId = `c${String(i)}`;
+        expect(dedup.checkSameStep(callId, 'Read', { p: 1 })).toBeNull();
+        dedup.registerSkipped(callId, 'Read', { p: 1 });
+        await dedup.finalizeResult(callId, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      // Exactly one repeat at count 2 — a double registration would inflate
+      // the streak and fire the reminder one occurrence early.
+      const repeats = events.filter((e) => e.event === 'tool_call_repeat');
+      expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
+    });
+  });
 });

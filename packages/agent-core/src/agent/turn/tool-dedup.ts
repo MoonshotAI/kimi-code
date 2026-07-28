@@ -191,6 +191,19 @@ export class ToolCallDeduplicator {
   }
 
   /**
+   * Register a call that bypassed `prepareToolExecution` — e.g. args
+   * validation rejected it in preflight, so the prepare hook never ran. Must
+   * be called before `finalizeResult` for such calls, otherwise the repeat
+   * circuit breaker never counts rejected calls and the model can re-issue
+   * the same invalid call without ever tripping the streak. No-op when the
+   * call was already registered through the normal prepare path.
+   */
+  registerSkipped(toolCallId: string, toolName: string, args: unknown): void {
+    if (this.callKeyByCallId.has(toolCallId)) return;
+    this.checkSameStep(toolCallId, toolName, args);
+  }
+
+  /**
    * Called from `finalizeToolResult`, in provider order. For first-occurrence
    * calls, projects the consecutive streak ending at this call and, if the
    * threshold is reached, appends the system reminder, then resolves the

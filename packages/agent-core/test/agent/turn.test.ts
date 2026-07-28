@@ -793,6 +793,36 @@ describe('Agent turn flow', () => {
     });
   });
 
+  it('force-stops a turn that keeps re-issuing the same validation-rejected call', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('bad'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    // 12 identical calls missing the required "command": each is rejected in
+    // preflight. If the breaker did not count them, the turn would keep going
+    // and consume the 13th scripted response.
+    for (let i = 0; i < 12; i += 1) {
+      ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(12);
+    const actions = records
+      .filter((entry) => entry.event === 'tool_call_repeat')
+      .map((entry) => entry.properties?.['action']);
+    expect(actions).toEqual([
+      'none', 'r1', 'r1', 'r2', 'r2', 'r2', 'r3', 'r3', 'r3', 'r3', 'stop',
+    ]);
+  });
+
   it('fires PostToolUse for same-step dups with the original real output, not the dedup placeholder', async () => {
     // Hook command asserts the dup's PostToolUse payload carries the real
     // stdout ('dup'), not the placeholder ('').
@@ -2796,6 +2826,15 @@ function bashCallWithId(id: string, command: string): ToolCall {
     id,
     name: 'Bash',
     arguments: JSON.stringify({ command, timeout: 60 }),
+  };
+}
+
+function invalidBashCallWithId(id: string): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name: 'Bash',
+    arguments: JSON.stringify({ timeout: 60 }),
   };
 }
 
