@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { createCloudAppenderMock, logMock, replayWindowLifecycleMock } = vi.hoisted(() => ({
-  createCloudAppenderMock: vi.fn(),
-  logMock: { info: vi.fn(), error: vi.fn() },
-  replayWindowLifecycleMock: vi.fn(),
-}));
+const { createCloudAppenderMock, logMock, replayWindowLifecycleMock, systemMetricsMock } =
+  vi.hoisted(() => ({
+    createCloudAppenderMock: vi.fn(),
+    logMock: { info: vi.fn(), error: vi.fn() },
+    replayWindowLifecycleMock: vi.fn(),
+    systemMetricsMock: { start: vi.fn(), stop: vi.fn() },
+  }));
 
 vi.mock('@moonshot-ai/agent-core-v2', () => ({
   createCloudAppender: createCloudAppenderMock,
@@ -13,6 +15,10 @@ vi.mock('@moonshot-ai/agent-core-v2', () => ({
   ITelemetryService: 'ITelemetryService',
 }));
 vi.mock('../../src/main/log', () => ({ log: logMock }));
+vi.mock('../../src/main/system-metrics', () => ({
+  startDesktopSystemMetrics: systemMetricsMock.start,
+  stopDesktopSystemMetrics: systemMetricsMock.stop,
+}));
 vi.mock('../../src/main/window-lifecycle', () => ({
   replayWindowLifecycle: replayWindowLifecycleMock,
 }));
@@ -88,6 +94,8 @@ describe('wireDesktopTelemetry', () => {
     createCloudAppenderMock.mockReset();
     logMock.info.mockClear();
     logMock.error.mockClear();
+    systemMetricsMock.start.mockClear();
+    systemMetricsMock.stop.mockClear();
     replayWindowLifecycleMock.mockClear();
   });
 
@@ -101,6 +109,7 @@ describe('wireDesktopTelemetry', () => {
     expect(handle).toBeNull();
     expect(telemetryService.setAppender).not.toHaveBeenCalled();
     expect(createCloudAppenderMock).not.toHaveBeenCalled();
+    expect(systemMetricsMock.start).not.toHaveBeenCalled();
   });
 
   it('returns null when KIMI_DISABLE_TELEMETRY is truthy', async () => {
@@ -131,6 +140,7 @@ describe('wireDesktopTelemetry', () => {
     expect(telemetryService.setAppender).toHaveBeenCalledWith(appender);
     expect(appender.startPeriodicFlush).toHaveBeenCalledOnce();
     expect(appender.retryDiskEvents).toHaveBeenCalledOnce();
+    expect(systemMetricsMock.start).toHaveBeenCalledOnce();
     expect(replayWindowLifecycleMock).toHaveBeenCalledOnce();
     expect(telemetryService.track2).not.toHaveBeenCalledWith('first_launch');
   });
@@ -191,6 +201,7 @@ describe('wireDesktopTelemetry', () => {
     expect(handle).not.toBeNull();
     await Promise.all([handle!.shutdown(), handle!.shutdown()]);
 
+    expect(systemMetricsMock.stop).toHaveBeenCalledOnce();
     expect(telemetryService.track2).toHaveBeenCalledOnce();
     expect(telemetryService.track2).toHaveBeenCalledWith('exit', {
       duration_ms: expect.any(Number),

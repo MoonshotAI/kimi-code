@@ -9,7 +9,7 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 - **kimi-code 是 CLI / server / agent 的主仓库**，以 submodule 钉在本仓库根目录，其 `packages/*` 通过 pnpm workspace 直接以源码链接进来——desktop 的 Electron 主进程会把其中的 server（`kap-server`、`agent-core-v2` 等）打包为内嵌 server。
 - **web 产物分发**：`pnpm sync:web`（`scripts/sync-web-to-kimi-code.mjs`）把 `apps/web/dist` 拷贝到一个 kimi-code checkout 的 `apps/kimi-code/dist-web`，用 `KIMI_CODE_REPO` 指定目标 checkout（必传）。
 - **Windows 窗口 chrome**：desktop 用 Window Controls Overlay 保留原生窗口按钮，并由 renderer 绘制品牌与文件/编辑/视图/帮助菜单入口。
-- **desktop 遥测**：仅内嵌 server 模式由主进程给 agent-core-v2 接入 CloudAppender；宿主与 renderer 事件经本地白名单汇入同一管线，遵循配置项 `telemetry` 与 `KIMI_DISABLE_TELEMETRY`，退出时等待最终 flush。事件契约与分叉范围见 `apps/desktop/docs/native-todos.md`。
+- **desktop 遥测**：仅内嵌 server 模式由主进程给 agent-core-v2 接入 CloudAppender；宿主与 renderer 事件经本地白名单汇入同一管线，遵循配置项 `telemetry` 与 `KIMI_DISABLE_TELEMETRY`，退出时等待最终 flush。`system-metrics.ts` 周期采样主进程/Chromium 子进程内存 CPU 与 renderer JS 堆（`system_metrics`，口径对齐 CLI v1）。事件契约与分叉范围见 `apps/desktop/docs/native-todos.md`。
 
 ## 下载
 

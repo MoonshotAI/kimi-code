@@ -15,6 +15,7 @@
 
 1. 主进程层：内嵌 server 就绪后的 renderer 加载结果、崩溃、菜单/托盘/快捷键、updater 状态机——目前只写本地日志或完全无记录。
 2. renderer 层：入口归因、更新漏斗 UI 半段、设置变更、desktop 专属功能采用率、onboarding/登录漏斗——完全空白，且需新建上报通道。
+3. 性能层：宿主内存/CPU 完全无观测——CLI v1 collector（kimi-code `packages/telemetry`）有 `system_metrics` 周期采样，但只覆盖 CLI 进程；desktop 主进程（含内嵌 server）、Chromium 子进程、renderer JS 堆均不可见，"内存是否随使用增长、长在哪个进程组"无数据可答。
 
 ## 已有埋点清单
 
@@ -57,6 +58,7 @@
 | `global_shortcut_register_failed` | `shortcuts.ts:43,55` | `reason`(invalid/conflicted) | 注册失败率（现仅 warn 日志） | P1 ✅ |
 | `window_lifecycle` | `window.ts:321-349` | `action`(shown/hidden/closed)（platform 走 context 公共字段，不入事件） | 使用时长、mac 隐藏 vs 退出习惯 | P2 ✅ |
 | `native_ipc_used` | `ipc.ts` 仅在成功处理 dialog-open/save、open-in、vibrancy、show-window 后上报；启动同步与能力查询不计 | `channel`（不带 `kimi:` 前缀） | 原生功能使用率总览 | P2 ✅ |
+| `system_metrics` | `system-metrics.ts` 周期采样（warmup 1.5s + 5min interval；consent 门内由 `telemetry.ts` 启停，外部 server 模式不采） | 主进程（含内嵌 server）内存/区间 CPU/load 等字段口径对齐 CLI v1 collector；`getAppMetrics` 按类型聚合子进程（`renderer/gpu/other_working_set_bytes` + `*_cpu_seconds` 累计）；注入主窗口读 renderer JS 堆（`renderer_js_heap_*_bytes`，2s 超时降级省略，renderer 零改动） | 内存/CPU 是否随 uptime 与版本增长、长在哪个进程组 | P2 ✅ |
 
 ## 计划埋点：renderer
 

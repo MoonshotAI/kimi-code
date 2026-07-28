@@ -76,6 +76,40 @@ export interface NativeIpcUsedEvent {
   channel: 'dialog-open' | 'dialog-save' | 'open-in' | 'show-window' | 'vibrancy';
 }
 
+// Main-process fields mirror the CLI v1 collector (kimi-code
+// packages/telemetry system_metrics) so CLI and desktop samples stay
+// comparable; the embedded server runs in-process, so its usage is folded
+// into the main numbers. Child-process CPU fields are cumulative seconds
+// since each process started (diff across samples), absent when the platform
+// reports none. Emitted by system-metrics.ts, entirely from the main process.
+export interface SystemMetricsEvent {
+  process_started_at: number;
+  process_uptime_ms: number;
+  rss_bytes: number;
+  heap_used_bytes: number;
+  heap_total_bytes: number;
+  external_bytes: number;
+  array_buffers_bytes: number;
+  cpu_user_us: number;
+  cpu_system_us: number;
+  cpu_elapsed_us: number;
+  load_avg_1m: number;
+  free_mem_bytes: number;
+  total_mem_bytes: number;
+  cpu_count: number;
+  constrained_memory_bytes?: number;
+  renderer_working_set_bytes: number;
+  renderer_process_count: number;
+  gpu_working_set_bytes: number;
+  other_working_set_bytes: number;
+  renderer_cpu_seconds?: number;
+  gpu_cpu_seconds?: number;
+  other_cpu_seconds?: number;
+  renderer_js_heap_used_bytes?: number;
+  renderer_js_heap_total_bytes?: number;
+  renderer_js_heap_limit_bytes?: number;
+}
+
 export interface DesktopEventPayloads {
   embedded_renderer_load_result: EmbeddedRendererLoadResultEvent;
   app_crashed: AppCrashedEvent;
@@ -89,6 +123,7 @@ export interface DesktopEventPayloads {
   global_shortcut_register_failed: GlobalShortcutRegisterFailedEvent;
   window_lifecycle: WindowLifecycleEvent;
   native_ipc_used: NativeIpcUsedEvent;
+  system_metrics: SystemMetricsEvent;
   onboarding_step: OnboardingStepEvent;
   oauth_login_step: OauthLoginStepEvent;
   shortcut_binding_changed: ShortcutBindingChangedEvent;

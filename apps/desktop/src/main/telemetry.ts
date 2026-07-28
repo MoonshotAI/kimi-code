@@ -8,6 +8,7 @@ import {
 
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
+import { startDesktopSystemMetrics, stopDesktopSystemMetrics } from './system-metrics';
 import { setDesktopTrackImpl } from './track';
 import { replayWindowLifecycle } from './window-lifecycle';
 
@@ -81,6 +82,7 @@ export async function wireDesktopTelemetry(
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});
+    startDesktopSystemMetrics();
     if (identity.firstLaunch) {
       telemetry.track2('first_launch');
     }
@@ -91,6 +93,7 @@ export async function wireDesktopTelemetry(
     return {
       shutdown: () =>
         (shutdownOnce ??= (async () => {
+          stopDesktopSystemMetrics();
           telemetry.track2('exit', { duration_ms: Date.now() - startedAt });
           appender.stopPeriodicFlush();
           await raceTimeout(telemetry.shutdown(), SHUTDOWN_TIMEOUT_MS);
