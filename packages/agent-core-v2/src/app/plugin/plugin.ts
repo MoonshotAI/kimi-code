@@ -6,8 +6,9 @@
  * MCP servers, and hooks. Successful mutations expose an awaitable
  * `onDidChange` synchronization point whose `kind` tells consumers whether the
  * prompt-relevant catalog changed (`catalog`) or only MCP server enablement
- * did (`mcp`); explicit reloads are also announced through `onDidReload`.
- * Bound at App scope.
+ * did (`mcp`); explicit reloads are also announced through `onDidReload` as
+ * soon as the reload commits, without waiting for `onDidChange`
+ * participants. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

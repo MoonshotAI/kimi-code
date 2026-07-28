@@ -130,6 +130,7 @@ export class PluginService extends Disposable implements IPluginService {
         const summary = await this.manager.reload();
         this.hasLoadedSnapshot = true;
         this.loadError = undefined;
+        this.onDidReloadEmitter.fire(summary);
         return summary;
       } catch (error) {
         this.loadError = error instanceof Error ? error : new Error(String(error));
@@ -140,10 +141,7 @@ export class PluginService extends Disposable implements IPluginService {
         );
       }
     });
-    const reload = this.completePluginChange(mutation, 'catalog').then((summary) => {
-      this.onDidReloadEmitter.fire(summary);
-      return summary;
-    });
+    const reload = this.completePluginChange(mutation, 'catalog');
     this.initialLoadPromise ??= reload.then(
       () => undefined,
       () => undefined,

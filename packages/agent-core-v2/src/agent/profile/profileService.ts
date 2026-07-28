@@ -1001,7 +1001,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       parts.push(block);
     }
     if (skipped.length > 0) {
-      const signature = skipped.join('');
+      const signature = JSON.stringify(skipped);
       if (!this.emittedPluginBudgetWarnings.has(signature)) {
         this.emittedPluginBudgetWarnings.add(signature);
         this.eventBus.publish({

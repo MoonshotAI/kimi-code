@@ -314,4 +314,58 @@ describe('SessionPluginContributionService', () => {
       vi.useRealTimers();
     }
   });
+
+  it('queues a later change behind an in-flight convergence and retries it after the hang clears', async () => {
+    vi.useFakeTimers();
+    try {
+      const change = new AsyncEmitter<PluginChangedEvent>();
+      const { host, session } = makeHost({ change, skillRoots: [] });
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        const coordinator = session.accessor.get(ISessionPluginContributionService);
+        await catalog.load();
+
+        const hang = deferred();
+        const firstCalled = deferred();
+        coordinator.onDidChange((event) => {
+          firstCalled.resolve();
+          event.waitUntil(hang.promise);
+        });
+        const firstFire = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
+
+        await firstCalled.promise;
+        await vi.advanceTimersByTimeAsync(30_000);
+        await firstFire;
+
+        let second = 0;
+        coordinator.onDidChange((event) => {
+          second += 1;
+          event.waitUntil(Promise.resolve());
+        });
+        let secondSettled = false;
+        const secondFire = change
+          .fireAsync({ kind: 'catalog' }, new AbortController().signal)
+          .then(() => {
+            secondSettled = true;
+          });
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(second).toBe(0);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        await secondFire;
+        expect(secondSettled).toBe(true);
+        expect(second).toBe(0);
+
+        hang.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(second).toBe(1);
+      } finally {
+        host.dispose();
+        change.dispose();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
