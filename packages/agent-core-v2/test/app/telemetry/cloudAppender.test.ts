@@ -103,26 +103,6 @@ describe('CloudAppender', () => {
     expect(typeof event?.['timestamp']).toBe('number');
   });
 
-  it('reports the host-provided coreVersion instead of the resolved one', async () => {
-    const requests: CapturedRequest[] = [];
-    const appender = new CloudAppender(
-      baseOptions({
-        homeDir,
-        deviceId: 'dev123',
-        coreVersion: '9.9.9-host',
-        fetchImpl: makeFetch((req) => {
-          requests.push(req);
-          return okResponse();
-        }),
-      }),
-    );
-
-    appender.track('tool.call', {});
-    await appender.flush();
-
-    expect(requests[0]?.body.events[0]?.['context_core_version']).toBe('9.9.9-host');
-  });
-
   it('applies setContext sessionId and model updates to subsequent events', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
