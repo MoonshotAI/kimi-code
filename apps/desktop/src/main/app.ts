@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { DESKTOP_WINDOWS_APP_ID, DESKTOP_WINDOWS_DEV_APP_ID } from '../shared/identity';
 import { log } from './log';
 import { registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
@@ -31,8 +32,12 @@ export function main(): void {
   // Windows Toast notifications are grouped and activated by AppUserModelID.
   // Keep this exactly aligned with electron-builder.config.cjs `appId`, whose
   // NSIS shortcut supplies the matching Start Menu identity in packaged builds.
+  // Dev needs its own identity so Windows never associates the installed window
+  // with an Electron shortcut created by an unpackaged launch.
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.kimi.code.desktop');
+    app.setAppUserModelId(
+      app.isPackaged ? DESKTOP_WINDOWS_APP_ID : DESKTOP_WINDOWS_DEV_APP_ID,
+    );
   }
 
   // Packaged launches stay single-instance. Dev intentionally skips this lock

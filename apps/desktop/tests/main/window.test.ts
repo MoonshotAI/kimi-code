@@ -10,6 +10,8 @@ import {
   shouldPersistBounds,
   titleBarWindowOptions,
   vibrancyWindowOptions,
+  windowsAppDetails,
+  windowsWindowOptions,
 } from '../../src/main/window';
 
 describe('titleBarWindowOptions', () => {
@@ -175,5 +177,63 @@ describe('vibrancyWindowOptions', () => {
   it('passes no vibrancy options off macOS', () => {
     expect(vibrancyWindowOptions('win32')).toEqual({ backgroundColor: '#0b0b0c' });
     expect(vibrancyWindowOptions('linux')).toEqual({ backgroundColor: '#0b0b0c' });
+  });
+});
+
+describe('Windows taskbar identity', () => {
+  it('uses a separate branded identity for an unpackaged Windows window', () => {
+    const options = windowsWindowOptions(
+      'win32',
+      false,
+      'C:\\repo\\apps\\desktop\\out',
+      'C:\\resources',
+    );
+    expect(options).toEqual({ icon: 'C:\\repo\\apps\\desktop\\build\\icon.ico' });
+    expect(
+      windowsAppDetails(
+        'win32',
+        false,
+        options.icon as string,
+        'C:\\Program Files\\Electron\\electron.exe',
+        'C:\\repo\\apps\\desktop',
+      ),
+    ).toEqual({
+      appId: 'com.kimi.code.desktop.dev',
+      appIconPath: 'C:\\repo\\apps\\desktop\\build\\icon.ico',
+      appIconIndex: 0,
+      relaunchCommand:
+        '"C:\\Program Files\\Electron\\electron.exe" "C:\\repo\\apps\\desktop"',
+      relaunchDisplayName: 'Kimi Code Dev',
+    });
+  });
+
+  it('pins packaged Windows windows to the installed app metadata', () => {
+    const options = windowsWindowOptions(
+      'win32',
+      true,
+      'C:\\app\\resources\\app.asar\\out',
+      'C:\\app\\resources',
+    );
+    expect(options).toEqual({ icon: 'C:\\app\\resources\\build\\icon.ico' });
+    expect(
+      windowsAppDetails(
+        'win32',
+        true,
+        options.icon as string,
+        'C:\\Program Files\\Kimi Code\\Kimi Code.exe',
+        'C:\\Program Files\\Kimi Code\\resources\\app.asar',
+      ),
+    ).toEqual({
+      appId: 'com.kimi.code.desktop',
+      appIconPath: 'C:\\app\\resources\\build\\icon.ico',
+      appIconIndex: 0,
+      relaunchCommand: '"C:\\Program Files\\Kimi Code\\Kimi Code.exe"',
+      relaunchDisplayName: 'Kimi Code',
+    });
+  });
+
+  it('leaves non-Windows windows to their platform packaging', () => {
+    expect(windowsWindowOptions('darwin', false, '/app/out', '/app/resources')).toEqual({});
+    expect(windowsAppDetails('linux', false, undefined, 'electron', '/app')).toBeNull();
   });
 });

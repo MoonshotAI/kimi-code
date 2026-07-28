@@ -2,13 +2,19 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
-import type { BrowserWindowConstructorOptions } from 'electron';
+import type { AppDetailsOptions, BrowserWindowConstructorOptions } from 'electron';
 
+import {
+  DESKTOP_DISPLAY_NAME,
+  DESKTOP_WINDOWS_APP_ID,
+  DESKTOP_WINDOWS_DEV_APP_ID,
+} from '../shared/identity';
 import { connect } from './connect';
 import { installEditableContextMenu } from './context-menu';
 import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
+import { quoteWindowsCommandLineArg } from './jump-list';
 import { log, redactUrlForLog } from './log';
 import { isVibrancyEnabled } from './ui-state';
 
@@ -312,6 +318,39 @@ export function vibrancyWindowOptions(
   return { backgroundColor: '#0b0b0c' };
 }
 
+export function windowsWindowOptions(
+  platform: NodeJS.Platform,
+  isPackaged: boolean,
+  bundleDir: string,
+  resourcesPath: string,
+): Pick<BrowserWindowConstructorOptions, 'icon'> {
+  if (platform !== 'win32') return {};
+  return {
+    icon: isPackaged
+      ? join(resourcesPath, 'build', 'icon.ico')
+      : join(bundleDir, '..', 'build', 'icon.ico'),
+  };
+}
+
+export function windowsAppDetails(
+  platform: NodeJS.Platform,
+  isPackaged: boolean,
+  iconPath: string | undefined,
+  execPath: string,
+  appPath: string,
+): AppDetailsOptions | null {
+  if (platform !== 'win32' || iconPath === undefined) return null;
+  return {
+    appId: isPackaged ? DESKTOP_WINDOWS_APP_ID : DESKTOP_WINDOWS_DEV_APP_ID,
+    appIconPath: iconPath,
+    appIconIndex: 0,
+    relaunchCommand: [execPath, ...(isPackaged ? [] : [appPath])]
+      .map(quoteWindowsCommandLineArg)
+      .join(' '),
+    relaunchDisplayName: isPackaged ? DESKTOP_DISPLAY_NAME : `${DESKTOP_DISPLAY_NAME} Dev`,
+  };
+}
+
 /** Live-apply the settings vibrancy toggle to the created window. Re-enabling
     re-pins visualEffectState 'inactive' — Electron keeps it from the creation
     options and applies it on every SetVibrancy. */
@@ -324,6 +363,12 @@ export function applyWindowVibrancy(enabled: boolean): void {
 
 export function createWindow(): void {
   installQuitWatch();
+  const windowsOptions = windowsWindowOptions(
+    process.platform,
+    app.isPackaged,
+    __dirname,
+    process.resourcesPath,
+  );
   const win = new BrowserWindow({
     ...loadBounds(),
     // Sidebar (264px) + a usable conversation column (~636px) — just above the
@@ -331,6 +376,7 @@ export function createWindow(): void {
     minWidth: 900,
     minHeight: 480,
     ...vibrancyWindowOptions(process.platform),
+    ...windowsOptions,
     title: 'Kimi Code',
     // macOS: hide the native title bar and float the traffic lights over the
     // content; the web UI reserves a draggable strip at the top to clear them.
@@ -347,6 +393,14 @@ export function createWindow(): void {
   });
   mainWindow = win;
   if (process.platform === 'win32') {
+    const details = windowsAppDetails(
+      process.platform,
+      app.isPackaged,
+      typeof windowsOptions.icon === 'string' ? windowsOptions.icon : undefined,
+      process.execPath,
+      app.getAppPath(),
+    );
+    if (details !== null) win.setAppDetails(details);
     win.setMenuBarVisibility(false);
     const syncTitleBar = (): void => applyWindowsTitleBarOverlay(win);
     nativeTheme.on('updated', syncTitleBar);

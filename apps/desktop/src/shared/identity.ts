@@ -19,6 +19,12 @@ export const DESKTOP_MSH_PLATFORM = 'kimi_code_desktop';
 /** UI mode the renderer reports to the local server. */
 export const DESKTOP_UI_MODE = 'desktop';
 
+/** Windows taskbar / notification identity; matches electron-builder `appId`. */
+export const DESKTOP_WINDOWS_APP_ID = 'com.kimi.code.desktop';
+
+/** Keeps unpackaged Electron launches from claiming the installed app's shell identity. */
+export const DESKTOP_WINDOWS_DEV_APP_ID = `${DESKTOP_WINDOWS_APP_ID}.dev`;
+
 /**
  * Display name rendered into the base system prompt's ${product_name} slot
  * (the CLI default is "Kimi Code CLI"). Matches the electron-builder
