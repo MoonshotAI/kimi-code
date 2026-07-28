@@ -4,8 +4,6 @@
  * test suite and are intentionally not re-tested here.
  */
 
-import { describe, expect, it, vi } from 'vitest';
-
 import {
   itemId,
   type StepHeader,
@@ -14,6 +12,7 @@ import {
   type TurnHeader,
   type TurnState,
 } from '@moonshot-ai/transcript';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WsLike } from '../channel/wsLike';
 import {
@@ -52,7 +51,13 @@ const textFrameUpsert = (turnId: string, stepId: string, frameId: string, text: 
   frame: { kind: 'text' as const, frameId, role: 'assistant' as const, text },
 });
 
-const frameAppend = (turnId: string, stepId: string, frameId: string, offset: number, text: string) => ({
+const frameAppend = (
+  turnId: string,
+  stepId: string,
+  frameId: string,
+  offset: number,
+  text: string,
+) => ({
   op: 'append' as const,
   target: { type: 'frame' as const, turnId, stepId, frameId },
   offset,
@@ -132,7 +137,12 @@ class FakeWs implements WsLike {
 
 function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0]['handlers']> = {}) {
   const seen = {
-    ops: [] as { agentId: string; ops: readonly TranscriptOperation[]; at?: string; seq?: number }[],
+    ops: [] as {
+      agentId: string;
+      ops: readonly TranscriptOperation[];
+      at?: string;
+      seq?: number;
+    }[],
     resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
     resyncs: 0,
     reconnects: 0,
@@ -172,7 +182,9 @@ describe('fetchTranscriptPage', () => {
     agent_id: 'main',
     items: [turnItem(1)],
     has_more: true,
-    tasks: [{ taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' }],
+    tasks: [
+      { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' },
+    ],
     interactions: [],
     attachments: [],
     todos: [],
@@ -597,7 +609,9 @@ describe('TranscriptChatStore', () => {
         ...emptyPage,
         items: [turnItem(1), turnItem(2)],
         hasMoreOlder: true,
-        tasks: [{ taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' }],
+        tasks: [
+          { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' },
+        ],
         meta: { activity: 'idle' },
         pendingInteractions: ['apr-1'],
       },
@@ -613,8 +627,16 @@ describe('TranscriptChatStore', () => {
 
   it('prepends older pages ahead of the window, dedupes, keeps live globals', () => {
     const store = new TranscriptChatStore();
-    store.applyPage({ ...emptyPage, items: [turnItem(3)], hasMoreOlder: true, meta: { activity: 'idle' } }, { replace: true });
-    store.applyPage({ ...emptyPage, items: [turnItem(1), turnItem(2)], hasMoreOlder: true, meta: {} });
+    store.applyPage(
+      { ...emptyPage, items: [turnItem(3)], hasMoreOlder: true, meta: { activity: 'idle' } },
+      { replace: true },
+    );
+    store.applyPage({
+      ...emptyPage,
+      items: [turnItem(1), turnItem(2)],
+      hasMoreOlder: true,
+      meta: {},
+    });
     expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
     expect(store.getState().hasMoreOlder).toBe(true);
     // Globals from the older page do not clobber the fresher live state.

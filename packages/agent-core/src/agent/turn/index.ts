@@ -978,6 +978,16 @@ export class TurnFlow {
               return this.agent.permission.beforeToolCall(ctx);
             },
             finalizeToolResult: async (ctx) => {
+              // Calls rejected in preflight (e.g. invalid args) never reach
+              // prepareToolExecution, so register them here — otherwise the
+              // repeat breaker cannot count them and the model can re-issue
+              // the same invalid call indefinitely.
+              deduper.registerSkipped(
+                ctx.toolCall.id,
+                ctx.toolCall.name,
+                ctx.args,
+                ctx.toolCall.arguments,
+              );
               // Resolve dedup BEFORE firing the PostToolUse hook so same-step
               // dups (whose ctx.result is the dedup placeholder) report the
               // original's real outcome, not an empty success.

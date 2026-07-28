@@ -29,10 +29,16 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: vi.fn(),
 }));
 
-vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
-  createKimiDeviceId: mocks.createKimiDeviceId,
-  KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
-}));
+vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
+  // Spread the real module: the SDK's v2 client pulls agent-core-v2 into the
+  // import graph, which subclasses KimiOAuthToolkit from this package.
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
+  return {
+    ...actual,
+    createKimiDeviceId: mocks.createKimiDeviceId,
+    KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
+  };
+});
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();

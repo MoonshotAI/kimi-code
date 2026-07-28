@@ -95,6 +95,7 @@ function makeStartupInput(
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: { items: null, command: null },
       ...tuiConfig,
     },
     version: '0.0.0-test',

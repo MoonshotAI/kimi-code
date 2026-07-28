@@ -10,24 +10,26 @@
  * the `models` view is the full-width model catalog; the `services` view is
  * the full-width app-scope Service reflection (`AppServicesView`); the
  * `bash` view is the full-width `IBashParserService` playground
- * (`BashParserView`).
+ * (`BashParserView`); the `search` view is the full-width global message
+ * search (`SearchView`) whose hits navigate back into the chat timeline.
  */
 
-import { useEffect, useState } from 'react';
-
 import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
 import { AppServicesView } from './components/AppServicesView';
 import { BashParserView } from './components/BashParserView';
-import { ChatView } from './components/ChatView';
+import { ChatView, type ChatJump } from './components/ChatView';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
+import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
 import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
 import { useConnection } from './connection';
+import type { SearchHit } from './search/api';
 import { errorMessage } from './ui';
 
 export function App() {
@@ -39,6 +41,8 @@ export function App() {
   const [resumeError, setResumeError] = useState<unknown>(null);
   /** Audit trail of the chat view's transcript channel, rendered in the right dock. */
   const [trail, setTrail] = useState<AuditTrail | null>(null);
+  /** Pending chat navigation requested from another view (search result click). */
+  const [jump, setJump] = useState<ChatJump | null>(null);
 
   // Resume (materialize) the session on the server when it is selected, so
   // session / agent scoped Services become reachable.
@@ -66,7 +70,22 @@ export function App() {
   useEffect(() => {
     setSessionId(null);
     setAgentId('main');
+    setJump(null);
   }, [baseUrl]);
+
+  // A search hit opens the chat view at its session / agent / turn / step.
+  // Title hits belong to the session (agent '') and carry no turn: switch
+  // over without a scroll target.
+  const openSearchHit = (hit: SearchHit): void => {
+    setSessionId(hit.sessionId);
+    setAgentId(hit.agentId === '' ? 'main' : hit.agentId);
+    setView('chat');
+    setJump({
+      turnId: hit.turn === undefined ? undefined : `t${hit.turn}`,
+      stepId: hit.stepId,
+      nonce: Date.now(),
+    });
+  };
 
   return (
     <div className="flex h-screen flex-col">
@@ -94,6 +113,8 @@ export function App() {
               setView('chat');
             }}
           />
+        ) : view === 'search' ? (
+          <SearchView onOpenResult={openSearchHit} />
         ) : (
           <>
             <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
@@ -108,6 +129,9 @@ export function App() {
                 agentId={agentId}
                 ready={ready}
                 onTrailChange={setTrail}
+                jump={jump}
+                onJumpHandled={() => setJump(null)}
+                onOpenSearchHit={openSearchHit}
               />
             )}
             <RightPanel
