@@ -129,6 +129,19 @@ describe('InMemorySkillCatalog model skill listing', () => {
     expect(rendered).not.toContain('sub-step');
   });
 
+  it('lists every plugin skill by its canonical invocation name', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Alpha review', undefined, { type: 'prompt' }, { id: 'alpha' }),
+      makeSkill('review', 'extra', 'Beta review', undefined, { type: 'prompt' }, { id: 'beta' }),
+    ]);
+
+    const rendered = registry.getModelSkillListing();
+
+    expect(rendered).toContain('- alpha:review: Alpha review');
+    expect(rendered).toContain('- beta:review: Beta review');
+    expect(rendered).not.toContain('\n- review:');
+  });
+
   it('returns an empty string when no skills are model-invocable', () => {
     const registry = makeRegistry([
       makeSkill('private', 'user', 'Private', undefined, {
@@ -357,6 +370,57 @@ describe('InMemorySkillCatalog plugin lookup', () => {
     expect(registry.getSkill('review')).toMatchObject({ description: 'second' });
     expect(registry.getPluginSkill('superpowers', 'review')).toMatchObject({
       description: 'second',
+    });
+  });
+
+  it('resolves a plugin-qualified name to the selected plugin skill', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Alpha review', undefined, {}, { id: 'alpha' }),
+      makeSkill('review', 'extra', 'Beta review', undefined, {}, { id: 'beta' }),
+    ]);
+
+    expect(registry.resolveSkill('beta:review')).toMatchObject({
+      kind: 'resolved',
+      canonicalName: 'beta:review',
+      skill: { description: 'Beta review', plugin: { id: 'beta' } },
+    });
+  });
+
+  it('keeps a bare plugin skill name as an alias when it has one candidate', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Plugin review', undefined, {}, { id: 'alpha' }),
+    ]);
+
+    expect(registry.resolveSkill('review')).toMatchObject({
+      kind: 'resolved',
+      canonicalName: 'alpha:review',
+      skill: { description: 'Plugin review' },
+    });
+  });
+
+  it('reports every qualified candidate for an ambiguous bare plugin skill name', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Beta review', undefined, {}, { id: 'beta' }),
+      makeSkill('review', 'extra', 'Alpha review', undefined, {}, { id: 'alpha' }),
+    ]);
+
+    expect(registry.resolveSkill('review')).toEqual({
+      kind: 'ambiguous',
+      candidates: ['alpha:review', 'beta:review'],
+    });
+  });
+
+  it('keeps the merged non-plugin winner available by its bare name', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Alpha review', undefined, {}, { id: 'alpha' }),
+      makeSkill('review', 'extra', 'Beta review', undefined, {}, { id: 'beta' }),
+    ]);
+    registry.register(makeSkill('review', 'project', 'Project review'), { replace: true });
+
+    expect(registry.resolveSkill('review')).toMatchObject({
+      kind: 'resolved',
+      canonicalName: 'review',
+      skill: { description: 'Project review', source: 'project' },
     });
   });
 });

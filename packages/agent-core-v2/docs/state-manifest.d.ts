@@ -497,6 +497,40 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
     } | undefined;
+    resolveSkill: (name: string) => /* SkillResolution — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly kind: 'resolved';
+      readonly skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly path: string;
+        readonly dir: string;
+        readonly content: string;
+        readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+          readonly name?: string;
+          readonly description?: string;
+          readonly type?: string;
+          readonly whenToUse?: string;
+          readonly disableModelInvocation?: boolean;
+          readonly isSubSkill?: boolean;
+          readonly safe?: boolean;
+          readonly arguments?: string | readonly unknown[];
+          [key: string]: unknown;
+        };
+        readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+        readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+          readonly id: string;
+          readonly instructions?: string;
+        };
+        readonly mermaid?: string;
+        readonly d2?: string;
+      };
+      readonly canonicalName: string;
+    } | {
+      readonly kind: 'not-found';
+    } | {
+      readonly kind: 'ambiguous';
+      readonly candidates: readonly string[];
+    };
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
       readonly description: string;
@@ -1010,7 +1044,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2667": undefined;
+    readonly "__@mediaStripSnapshotBrand@2682": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {

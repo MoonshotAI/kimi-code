@@ -26,7 +26,7 @@ import { IAgentSkillService } from '#/agent/skill/skill';
 import { renderModelToolSkillPrompt } from '#/agent/skill/prompt';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
-import { isInlineSkillType } from '#/app/skillCatalog/types';
+import { formatAmbiguousSkillMessage, isInlineSkillType } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -100,18 +100,22 @@ export async function executeModelSkill(
   }
 
   await catalog.ready;
-  const skill = catalog.catalog.getSkill(args.skill);
-  if (skill === undefined) {
+  const resolution = catalog.catalog.resolveSkill(args.skill);
+  if (resolution.kind === 'not-found') {
     return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
   }
+  if (resolution.kind === 'ambiguous') {
+    return errorResult(formatAmbiguousSkillMessage(args.skill, resolution.candidates));
+  }
+  const { canonicalName, skill } = resolution;
   if (skill.metadata.disableModelInvocation === true) {
     return errorResult(
-      `Skill "${args.skill}" can only be triggered by the user (model invocation is disabled).`,
+      `Skill "${canonicalName}" can only be triggered by the user (model invocation is disabled).`,
     );
   }
   if (!isInlineSkillType(skill.metadata.type)) {
     return errorResult(
-      `Skill "${skill.name}" is not an inline skill and cannot be invoked by the model in v1.`,
+      `Skill "${canonicalName}" is not an inline skill and cannot be invoked by the model in v1.`,
     );
   }
 
@@ -120,7 +124,7 @@ export async function executeModelSkill(
   const origin: SkillActivationOrigin = {
     kind: 'skill_activation',
     activationId: randomUUID(),
-    skillName: skill.name,
+    skillName: canonicalName,
     skillArgs: skillArgs.length > 0 ? skillArgs : undefined,
     trigger,
     skillType: skill.metadata.type,
@@ -134,7 +138,7 @@ export async function executeModelSkill(
       {
         type: 'text',
         text: renderModelToolSkillPrompt({
-          skillName: skill.name,
+          skillName: canonicalName,
           skillArgs,
           skillContent,
           skillSource: skill.source,
@@ -148,7 +152,7 @@ export async function executeModelSkill(
   };
   skillService.recordModelToolActivation(origin);
   return {
-    output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
+    output: `Skill "${canonicalName}" loaded inline. Follow its instructions.`,
     delivery: { kind: 'steer', message },
   };
 }

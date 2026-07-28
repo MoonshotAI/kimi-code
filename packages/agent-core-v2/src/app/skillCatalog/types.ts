@@ -46,6 +46,18 @@ export interface SkillPluginContext {
   readonly instructions?: string;
 }
 
+export type SkillResolution =
+  | {
+      readonly kind: 'resolved';
+      readonly skill: SkillDefinition;
+      readonly canonicalName: string;
+    }
+  | { readonly kind: 'not-found' }
+  | {
+      readonly kind: 'ambiguous';
+      readonly candidates: readonly string[];
+    };
+
 export interface SkippedSkill {
   readonly path: string;
   readonly type: string;
@@ -55,6 +67,7 @@ export interface SkippedSkill {
 export interface SkillCatalog {
   getSkill(name: string): SkillDefinition | undefined;
   getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined;
+  resolveSkill(name: string): SkillResolution;
   renderSkillPrompt(
     skill: SkillDefinition,
     rawArgs: string,
@@ -69,6 +82,17 @@ export interface SkillCatalog {
 
 export function normalizeSkillName(name: string): string {
   return name.toLowerCase();
+}
+
+export function canonicalSkillName(skill: SkillDefinition): string {
+  return skill.plugin === undefined ? skill.name : `${skill.plugin.id}:${skill.name}`;
+}
+
+export function formatAmbiguousSkillMessage(
+  name: string,
+  candidates: readonly string[],
+): string {
+  return `Skill "${name}" is ambiguous. Use one of these qualified names: ${candidates.map((candidate) => `"${candidate}"`).join(', ')}.`;
 }
 
 export function isInlineSkillType(type: string | undefined): boolean {
