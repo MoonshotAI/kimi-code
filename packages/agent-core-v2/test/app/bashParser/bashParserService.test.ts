@@ -56,6 +56,27 @@ describe('BashParserService', () => {
     expect(result).toEqual({ ok: false, reason: 'aborted' });
   });
 
+  it('snapshots deeply nested trees without overflowing the call stack', () => {
+    // A long left-associative arithmetic chain nests one binary_expression
+    // per operand; with a few thousand operands the tree is thousands of
+    // levels deep but still within budget. A recursive DTO conversion
+    // overflows the JS call stack here (RangeError) instead of returning.
+    const source = `echo $((${'1+'.repeat(3000)}1))`;
+    const result = service.parse(source, { timeoutMs: 5000 });
+    if (!result.ok) {
+      throw new Error('expected ok');
+    }
+    expect(result.hasError).toBe(false);
+    let maxDepth = 0;
+    const stack: Array<readonly [BashSyntaxNode, number]> = [[result.root, 0]];
+    while (stack.length > 0) {
+      const [node, depth] = stack.pop()!;
+      maxDepth = Math.max(maxDepth, depth);
+      for (const child of node.children) stack.push([child, depth + 1]);
+    }
+    expect(maxDepth).toBeGreaterThan(3000);
+  });
+
   it('returns a JSON-serializable tree with text/range fidelity', () => {
     const source = 'echo "你好 🎉" | grep 你';
     const result = service.parse(source);
