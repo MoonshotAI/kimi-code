@@ -73,7 +73,7 @@ export default {
   group: {
     // Done-tense per-kind clauses consumed by the activity-run summary
     // (lib/activitySummary.ts); unknown kinds fall back to countOther.
-    countOther: '{number}个工具调用',
+    countOther: '执行了 {count} 次工具调用',
     typed: {
       read: { done: '读取了 {count} 个文件' },
       bash: { done: '运行了 {count} 条命令' },

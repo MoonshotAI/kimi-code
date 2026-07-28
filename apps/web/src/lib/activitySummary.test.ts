@@ -65,7 +65,7 @@ describe('summarizeActivity', () => {
 
   it('falls back to the generic counter for unknown kinds', () => {
     const s = summarizeActivity([tool('frobnicate'), tool('frobnicate')]);
-    expect(render(s.clauses)).toBe('两个工具调用');
+    expect(render(s.clauses)).toBe('执行了 2 次工具调用');
   });
 
   it('joins everything into a flat plain string for the tooltip', () => {

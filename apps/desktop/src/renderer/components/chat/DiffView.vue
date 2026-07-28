@@ -9,13 +9,12 @@ import type { DiffViewLine } from '../../types';
 import type { DiffFullTexts } from '../../lib/diffFullTexts';
 import HighlightedCode from '../HighlightedCode.vue';
 import { Button, Icon, PanelHeader, ScrollArea, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
-import { formatCountNumber } from '@moonshot-ai/web-i18n';
 
 const { t } = useI18n();
 
 function formatFileCount(count: number): string {
   const key = count === 1 ? 'diff.fileCountOne' : 'diff.fileCountOther';
-  return t(key, { number: formatCountNumber(count, t) });
+  return t(key, { number: count });
 }
 
 const props = withDefaults(
