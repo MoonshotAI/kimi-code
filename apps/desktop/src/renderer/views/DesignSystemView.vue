@@ -451,6 +451,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--duration-fast</td><td class="val">120ms</td><td>press, focus</td></tr>
                 <tr><td class="tk">--duration-base</td><td class="val">160ms</td><td>hover, show/hide</td></tr>
                 <tr><td class="tk">--duration-slow</td><td class="val">260ms</td><td>dialog, Sheet, layout</td></tr>
+                <tr><td class="tk">--duration-hover-intent</td><td class="val">250ms</td><td>hover-intent reveal gate (TOC rail)</td></tr>
                 <tr><td class="tk">--anim-rive-spin</td><td class="val">416.7ms</td><td>new-chat / folder-plus icon: plus spin on hover</td></tr>
                 <tr><td class="tk">--anim-leftbar</td><td class="val">533.3ms</td><td>sidebar toggle icon: arrow fly-in on hover</td></tr>
                 <tr><td class="tk">--anim-leftbar-shrink</td><td class="val">200ms</td><td>sidebar toggle icon: divider shrink on hover</td></tr>
@@ -460,7 +461,7 @@ onUnmounted(() => {
 
             <h4 class="mini">Reduced motion</h4>
             <div class="callout info"><span class="ico">i</span><div>
-              Under <code>@media (prefers-reduced-motion: reduce)</code>, all animation and transition durations drop to about <code>0.001ms</code> (effectively off), and the chat working indicator's mascot renders its static fallback instead of the Rive loop. Components should not check this individually; it is handled uniformly in the global styles.
+              Under <code>@media (prefers-reduced-motion: reduce)</code>, all animation and transition durations drop to about <code>0.001ms</code> (effectively off), and the chat working indicator's mascot renders its static fallback instead of the Rive loop. Components should not check this individually; it is handled uniformly in the global styles. The switch clears durations, not <code>transition-delay</code>: a hover-intent gate (the conversation TOC's 250ms reveal) decides <i>whether</i> hidden content appears, and clearing it would make pointer fly-bys strobe content for reduced-motion users.
             </div></div>
 
             <h3 class="sub">Layout &amp; breakpoints</h3>

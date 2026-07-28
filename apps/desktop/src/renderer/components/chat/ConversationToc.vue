@@ -159,6 +159,7 @@ onBeforeUnmount(() => {
 }
 .conversation-toc:hover,
 .conversation-toc:focus-within { opacity: 1; }
+.conversation-toc:hover:not(:focus-within) { transition-delay: var(--duration-hover-intent); }
 
 .toc-scroll {
   position: relative;
@@ -213,11 +214,16 @@ onBeforeUnmount(() => {
     color var(--duration-fast) var(--ease-out);
 }
 
-/* Hover / focus: enlarge bars and reveal labels to the right. */
+/* Hover / focus: enlarge bars and reveal labels to the right. Hover reveal
+   is delayed by --duration-hover-intent (fly-by guard); focus and mouse-out stay
+   instant. Per-property delays keep row feedback (bar opacity, label
+   color) instant once the rail is open. */
 .conversation-toc:hover .toc-bar,
 .conversation-toc:focus-within .toc-bar { height: 18px; opacity: 0.5; }
 .conversation-toc:hover .toc-label,
 .conversation-toc:focus-within .toc-label { max-width: 220px; opacity: 1; }
+.conversation-toc:hover:not(:focus-within) .toc-bar { transition-delay: 0ms, var(--duration-hover-intent); }
+.conversation-toc:hover:not(:focus-within) .toc-label { transition-delay: var(--duration-hover-intent), var(--duration-hover-intent), 0ms; }
 
 .toc-row.active .toc-bar { opacity: 1; height: 18px; }
 .toc-row.active .toc-label { color: var(--color-accent); font-weight: var(--weight-medium); }

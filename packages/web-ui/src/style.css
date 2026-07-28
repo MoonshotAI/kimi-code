@@ -329,6 +329,7 @@ html[data-color-scheme="dark"] {
   --duration-fast: 120ms;
   --duration-base: 160ms;
   --duration-slow: 260ms;
+  --duration-hover-intent: 250ms;
 
   /* Composer card, per the production recipe (kimiwork .chat-input__shell):
      fill = groupedBackground.secondary, rest border = separator.s1 hairline,
