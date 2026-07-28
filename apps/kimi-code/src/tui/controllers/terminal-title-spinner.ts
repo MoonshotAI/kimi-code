@@ -93,8 +93,12 @@ export class TerminalTitleSpinnerController {
 
   /** Keep the composed title within the terminal-title cap. */
   private fitTitle(title: string): string {
-    return title.length > MAX_TERMINAL_TITLE_LENGTH
-      ? title.slice(0, MAX_TERMINAL_TITLE_LENGTH)
-      : title;
+    if (title.length <= MAX_TERMINAL_TITLE_LENGTH) return title;
+    let end = MAX_TERMINAL_TITLE_LENGTH;
+    // Never cut a surrogate pair (e.g. emoji) in half: a code point above
+    // U+FFFF starting before the cap straddles it, so back up one unit.
+    const codePoint = title.codePointAt(end - 1);
+    if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
+    return title.slice(0, end);
   }
 }

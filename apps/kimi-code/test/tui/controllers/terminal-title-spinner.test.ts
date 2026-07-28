@@ -121,6 +121,18 @@ describe('TerminalTitleSpinnerController', () => {
     controller.dispose();
   });
 
+  it('does not split a surrogate pair at the truncation boundary', () => {
+    // 29 ASCII chars plus one emoji = 31 UTF-16 units; with the `| ` prefix
+    // the composed title is 33 units, so a naive slice would keep a lone high
+    // surrogate at the cap.
+    const longTitle = `${'x'.repeat(29)}\u{1F311}`;
+    const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });
+    const controller = new TerminalTitleSpinnerController(host, 'line');
+    controller.sync();
+    expect(titles[0]).toBe(`| ${'x'.repeat(29)}`);
+    controller.dispose();
+  });
+
   it('keeps the phase title within the terminal-title cap', () => {
     const longTitle = 'y'.repeat(MAX_TERMINAL_TITLE_LENGTH + 8);
     const { host, titles } = createHost({ busy: true, phase: 'thinking', staticTitle: longTitle });
