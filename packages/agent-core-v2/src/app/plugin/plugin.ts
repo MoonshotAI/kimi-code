@@ -8,7 +8,9 @@
  * prompt-relevant catalog changed (`catalog`) or only MCP server enablement
  * did (`mcp`); explicit reloads are also announced through `onDidReload` as
  * soon as the reload commits, without waiting for `onDidChange`
- * participants. Bound at App scope.
+ * participants. Participants are delivered and awaited one at a time, so a
+ * mutation's latency grows with the number of live sessions. Bound at App
+ * scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

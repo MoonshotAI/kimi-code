@@ -75,7 +75,7 @@ export class SessionPluginContributionService
       if (timer !== undefined) clearTimeout(timer);
       if (result === 'timeout') {
         this.log.warn(
-          'Plugin contribution convergence timed out; the next plugin change retries it',
+          'Plugin contribution convergence timed out; a later plugin change retries once the stalled work clears',
         );
       }
     });

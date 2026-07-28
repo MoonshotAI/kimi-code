@@ -6,7 +6,11 @@
  * through `skillDiscovery`, and resolves managed endpoint settings through
  * `provider` plus the startup snapshot from `bootstrap`. Exposes plugin
  * contributions through the hook, MCP, skill, and system-prompt contracts.
- * Bound at App scope.
+ * Mutations serialize through `mutationQueue` and consumption reads wait on
+ * it, so the `onDidChange` barrier rides a separate `pluginChangeQueue`:
+ * participants issuing consumption reads while the barrier is open only
+ * join the mutation tail, never the queue their own wait feeds. Bound at
+ * App scope.
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
