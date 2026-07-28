@@ -12,6 +12,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
+import { Error2, ErrorCodes } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -85,7 +86,7 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
   assertAllowed(absPath: string, op: PathAccessOperation): string {
     const target = this.resolve(absPath);
     if (!this.isWithin(target)) {
-      throw new Error(`Path outside workspace (${op}): ${target}`);
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `Path outside workspace (${op}): ${target}`);
     }
     return target;
   }
