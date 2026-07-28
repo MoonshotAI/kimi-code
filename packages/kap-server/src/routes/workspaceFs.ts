@@ -11,6 +11,12 @@
  *   - `HostFolderNotFoundError`    → 40409 fs.path_not_found
  *   - `HostFolderPermissionError`  → 40411 fs.permission_denied
  *
+ * `fs::mkdir` is another server-v2 addition with no v1 counterpart: it creates
+ * a directory by absolute path (the folder picker's "new folder" backend). It
+ * is TEMPORARILY implemented directly on `node:fs/promises.mkdir` here in the
+ * transport layer; the engine deliberately has no "unconfined write" domain
+ * Service, same as the read side.
+ *
  * `fs::content` is a server-v2 addition with no v1 counterpart: it serves ANY
  * absolute path on the host as a raw byte stream, so the global bearer auth
  * is its only access gate. The response is plain file content (no envelope)
@@ -34,6 +40,7 @@
  *   GET /fs::browse?path=<abs-path>    list sub-directories (v1 mirror)
  *   GET /fs::home                      $HOME + recent workspace roots (v1 mirror)
  *   GET /fs::content?path=<abs-path>   raw content of any host file (server-v2 addition)
+ *   POST /fs::mkdir { path }           create a directory by absolute path (server-v2 addition)
  *
  * **Wire path vs source path.** The source path strings carry a double colon
  * (`/fs::browse`, `/fs::home`) because that is the v1 declaration this mirror
@@ -48,6 +55,7 @@
  */
 
 import { createReadStream, type ReadStream } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
 import {
@@ -94,6 +102,14 @@ interface WorkspaceFsRouteHost {
     handler: (
       req: { id: string; query: { path?: string }; headers: Record<string, unknown> },
       reply: FsContentReply,
+    ) => Promise<void> | void,
+  ): unknown;
+  post(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
+    handler: (
+      req: { id: string; body: unknown },
+      reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
 }
@@ -176,6 +192,33 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     contentRoute.path,
     contentRoute.options,
     contentRoute.handler as unknown as Parameters<WorkspaceFsRouteHost['get']>[2],
+  );
+
+  const mkdirRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/fs::mkdir',
+      body: fsMkdirBodySchema,
+      success: { data: fsMkdirResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
+        [ErrorCode.FS_ALREADY_EXISTS]: {},
+      },
+      description:
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist.',
+      tags: ['workspaces'],
+      operationId: 'fsMkdir',
+    },
+    async (req, reply) => {
+      return handleFsMkdir(req, reply);
+    },
+  );
+  app.post(
+    mkdirRoute.path,
+    mkdirRoute.options,
+    mkdirRoute.handler as unknown as Parameters<WorkspaceFsRouteHost['post']>[2],
   );
 }
 
@@ -288,6 +331,68 @@ async function handleFsContent(
   const stream = createReadStream(abs);
   stream.on('error', onStreamError(stream));
   return reply.send(stream) as unknown as void;
+}
+
+// ---------------------------------------------------------------------------
+// fs:mkdir — host-side directory creation, temporarily on node fs directly.
+// ---------------------------------------------------------------------------
+
+const fsMkdirBodySchema = z.object({
+  path: z.string().min(1),
+});
+
+const fsMkdirResponseSchema = z.object({
+  path: z.string(),
+});
+
+interface FsMkdirRequest {
+  id: string;
+  body: { path: string };
+}
+
+async function handleFsMkdir(
+  req: FsMkdirRequest,
+  reply: { send(payload: unknown): unknown },
+): Promise<void> {
+  const requestId = req.id;
+  const { path } = req.body;
+  if (!isAbsolute(path)) {
+    reply.send(
+      errEnvelope(ErrorCode.VALIDATION_FAILED, `path must be absolute: ${path}`, requestId),
+    );
+    return;
+  }
+
+  // Non-recursive on purpose: the folder picker creates one level at a time,
+  // and a missing parent surfacing as fs.path_not_found beats silently
+  // creating a deep tree the user mistyped.
+  try {
+    await mkdir(path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    switch (code) {
+      case 'EEXIST':
+        reply.send(
+          errEnvelope(ErrorCode.FS_ALREADY_EXISTS, `path already exists: ${path}`, requestId),
+        );
+        return;
+      case 'ENOENT':
+      case 'ENOTDIR':
+        reply.send(
+          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `parent path not found: ${path}`, requestId),
+        );
+        return;
+      case 'EACCES':
+      case 'EPERM':
+        reply.send(
+          errEnvelope(ErrorCode.FS_PERMISSION_DENIED, `permission denied: ${path}`, requestId),
+        );
+        return;
+    }
+    throw err;
+  }
+
+  reply.send(okEnvelope({ path }, requestId));
 }
 
 /** Map a coded `os.fs.*` failure from `IHostFileSystem` onto the wire codes. */
