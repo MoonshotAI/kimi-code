@@ -288,7 +288,7 @@ describe('tray telemetry', () => {
     createTray(actions);
     setTrayAttention(attention({ unread: 2, approvals: 1 }));
     const template = lastTemplate();
-    clickItem(template.find((item) => item.label === 'Show Main Window'));
+    clickItem(template.find((item) => item.label === trayOpenLabel('en')));
     expect(actions.showMainWindow).toHaveBeenCalledOnce();
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
       action: 'show-window',
@@ -306,7 +306,7 @@ describe('tray telemetry', () => {
     const { createTray } = await importTray();
     const actions = fakeActions();
     createTray(actions);
-    clickItem(lastTemplate().find((item) => item.label === 'Show Main Window'));
+    clickItem(lastTemplate().find((item) => item.label === trayOpenLabel('en')));
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
       action: 'show-window',
       pending_count: 0,
