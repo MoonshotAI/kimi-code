@@ -23,24 +23,29 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-/// Find the kimi-agent binary, preferring release over debug.
+/// Find the kimi-agent binary across both build layouts — the per-crate
+/// `target/` (pre-workspace builds) and the workspace-root `target/` —
+/// picking the most recently built candidate so a stale binary can never
+/// shadow the code under test.
 fn find_binary() -> Option<std::path::PathBuf> {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let ext = if cfg!(windows) { ".exe" } else { "" };
-    let candidates = [
-        std::path::PathBuf::from(manifest_dir)
-            .join("target/release/kimi-agent-cli")
-            .with_extension(""),
-        std::path::PathBuf::from(manifest_dir)
-            .join(format!("target/release/kimi-agent-cli{}", ext)),
-        std::path::PathBuf::from(manifest_dir).join(format!("target/debug/kimi-agent-cli{}", ext)),
-    ];
-    for c in &candidates {
-        if c.exists() {
-            return Some(c.clone());
+    let name = format!("kimi-agent-cli{ext}");
+    let roots = [manifest_dir.join("target"), manifest_dir.join("../../target")];
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for root in &roots {
+        for profile in ["release", "debug"] {
+            let candidate = root.join(profile).join(&name);
+            let Ok(meta) = std::fs::metadata(&candidate) else {
+                continue;
+            };
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            if best.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                best = Some((mtime, candidate));
+            }
         }
     }
-    None
+    best.map(|(_, path)| path)
 }
 
 /// A simple RPC client driving the child process stdio.
@@ -654,4 +659,273 @@ fn bg_append_output_settle() {
     assert_eq!(get_resp["result"]["base"]["status"], "completed");
 
     client.shutdown();
+}
+
+// ── Session-owned agent surface ───────────────────────────────────────
+
+/// Drives one `session/prompt` request, answering host callbacks from an
+/// LLM script and collecting `host/event` notifications. Returns the prompt
+/// response. `inject_after_llm_call` writes a raw request line right after
+/// the Nth LLM reply — that is how a mid-flight `session/cancel` rides the
+/// same stdin pipe.
+fn drive_session_prompt(
+    stdin: &mut std::process::ChildStdin,
+    stdout: &mut BufReader<std::process::ChildStdout>,
+    prompt_id: u32,
+    llm_script: &mut dyn FnMut(u32, &serde_json::Value) -> serde_json::Value,
+    events: &mut Vec<serde_json::Value>,
+    host_tool_calls: &mut u32,
+    mut inject_after_llm_call: Option<(u32, String)>,
+) -> Result<serde_json::Value, String> {
+    let mut llm_calls: u32 = 0;
+    let mut buf = String::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if Instant::now() > deadline {
+            return Err("timed out waiting for session/prompt response".into());
+        }
+        buf.clear();
+        let n = stdout.read_line(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("stdout closed before session/prompt response".into());
+        }
+        let trimmed = buf.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let msg: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match (msg.get("method").and_then(|m| m.as_str()), msg.get("id")) {
+            // The prompt response we are waiting for.
+            (None, Some(id)) if *id == serde_json::json!(prompt_id) => return Ok(msg),
+            // Responses to other requests (e.g. session/cancel): ignore.
+            (None, _) => continue,
+            // Fire-and-forget notifications: collect lifecycle events.
+            (Some("host/event"), None) => {
+                if let Some(params) = msg.get("params") {
+                    events.push(params.clone());
+                }
+            }
+            (Some(method), Some(id)) => {
+                let response = if method == "host/llm_chat" {
+                    llm_calls += 1;
+                    let tool_calls = llm_script(llm_calls, &msg);
+                    let finish = if tool_calls.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+                        "tool_calls"
+                    } else {
+                        "stop"
+                    };
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": {
+                            "tool_calls": tool_calls,
+                            "finish_reason": finish,
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                        }
+                    })
+                } else if method == "host/execute_tool" {
+                    *host_tool_calls += 1;
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": {"content": "ok", "is_error": false, "is_prediction": false}
+                    })
+                } else {
+                    serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null })
+                };
+                writeln!(stdin, "{response}").map_err(|e| e.to_string())?;
+                stdin.flush().map_err(|e| e.to_string())?;
+                if method == "host/llm_chat" {
+                    if let Some((after, _)) = inject_after_llm_call {
+                        if llm_calls >= after {
+                            let (_, line) = inject_after_llm_call.take().unwrap();
+                            writeln!(stdin, "{line}").map_err(|e| e.to_string())?;
+                            stdin.flush().map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+            _ => continue,
+        }
+    }
+}
+
+/// The session surface end-to-end: create → prompt (CreateGoal → engine-owned
+/// continuation with the canonical steering → UpdateGoal complete) → save →
+/// load. Goal tools must settle inside the engine, never at the host.
+#[test]
+fn session_prompt_drives_the_goal_and_persists() {
+    let binary = match find_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping test: kimi-agent binary not built.");
+            return;
+        }
+    };
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn kimi-agent");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    let create = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "session/create",
+        "params": {"session_id": "it-s1", "system_prompt": "test", "model": "mock", "goal_enabled": true}
+    });
+    writeln!(stdin, "{create}").unwrap();
+    stdin.flush().unwrap();
+
+    let prompt = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "session/prompt",
+        "params": {"session_id": "it-s1", "input": [{"type": "text", "text": "pursue the goal"}]}
+    });
+    writeln!(stdin, "{prompt}").unwrap();
+    stdin.flush().unwrap();
+
+    let mut events = Vec::new();
+    let mut host_tools = 0u32;
+    let mut saw_steering = false;
+    let response = drive_session_prompt(
+        &mut stdin,
+        &mut stdout,
+        2,
+        &mut |call, msg| {
+            if serde_json::to_string(&msg["params"]["messages"])
+                .unwrap_or_default()
+                .contains("Continue working toward the active thread goal")
+            {
+                saw_steering = true;
+            }
+            match call {
+                1 => serde_json::json!([{"id": "g1", "name": "CreateGoal", "arguments": {"objective": "finish it"}}]),
+                3 => serde_json::json!([{"id": "g2", "name": "UpdateGoal", "arguments": {"status": "complete", "reason": "done"}}]),
+                _ => serde_json::json!([]),
+            }
+        },
+        &mut events,
+        &mut host_tools,
+        None,
+    )
+    .expect("prompt response");
+
+    assert_eq!(response["result"]["stop_reason"], "EndTurn", "got: {response}");
+    assert_eq!(host_tools, 0, "goal tools must settle inside the engine");
+    assert!(saw_steering, "the continuation steering must reach the model");
+    let types: Vec<&str> = events.iter().filter_map(|e| e["type"].as_str()).collect();
+    assert!(types.contains(&"session.turn.started"));
+    assert!(types.contains(&"session.turn.ended"));
+
+    // Persistence round trip inside the same engine process.
+    let mut client_like = |id: u32, method: &str, params: serde_json::Value| {
+        let req = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        writeln!(stdin, "{req}").unwrap();
+        stdin.flush().unwrap();
+        let mut buf = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(Instant::now() <= deadline, "timed out on {method}");
+            buf.clear();
+            if stdout.read_line(&mut buf).unwrap_or(0) == 0 {
+                panic!("stdout closed during {method}");
+            }
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(buf.trim()) else {
+                continue;
+            };
+            if msg.get("method").is_none() && msg.get("id") == Some(&serde_json::json!(id)) {
+                return msg;
+            }
+        }
+    };
+    let saved = client_like(3, "session/save", serde_json::json!({"session_id": "it-s1"}));
+    assert_eq!(saved["result"]["ok"], true);
+    let loaded = client_like(4, "session/load", serde_json::json!({"session_id": "it-s1"}));
+    assert_eq!(loaded["result"]["found"], true);
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// A mid-flight `session/cancel` aborts the prompt at the step boundary and
+/// pauses the goal with interrupt semantics (not budget/error).
+#[test]
+fn session_cancel_aborts_the_prompt_and_pauses_the_goal() {
+    let binary = match find_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping test: kimi-agent binary not built.");
+            return;
+        }
+    };
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn kimi-agent");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    let create = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "session/create",
+        "params": {"session_id": "it-c1", "system_prompt": "test", "model": "mock", "goal_enabled": true}
+    });
+    writeln!(stdin, "{create}").unwrap();
+    stdin.flush().unwrap();
+
+    let prompt = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "session/prompt",
+        "params": {"session_id": "it-c1", "input": [{"type": "text", "text": "never stop"}]}
+    });
+    writeln!(stdin, "{prompt}").unwrap();
+    stdin.flush().unwrap();
+
+    let mut events = Vec::new();
+    let mut host_tools = 0u32;
+    // The model never volunteers to stop (every step asks for another goal
+    // tool); a `session/cancel` injected right after the second LLM reply is
+    // the only way the turn can end — the engine must abort at the next step
+    // boundary and pause the goal with interrupt semantics.
+    let cancel_line = serde_json::json!({
+        "jsonrpc": "2.0", "id": 99, "method": "session/cancel",
+        "params": {"session_id": "it-c1"}
+    })
+    .to_string();
+    let response = drive_session_prompt(
+        &mut stdin,
+        &mut stdout,
+        2,
+        &mut |call, _msg| {
+            if call == 1 {
+                serde_json::json!([{"id": "g1", "name": "CreateGoal", "arguments": {"objective": "run forever"}}])
+            } else {
+                serde_json::json!([{"id": format!("k{call}"), "name": "GoalStatus", "arguments": {}}])
+            }
+        },
+        &mut events,
+        &mut host_tools,
+        Some((2, cancel_line)),
+    )
+    .expect("prompt response");
+
+    assert_eq!(
+        response["result"]["stop_reason"], "Aborted",
+        "a cancelled prompt must abort, got: {response}"
+    );
+    let goal_updates: Vec<&str> = events
+        .iter()
+        .filter(|e| e["type"] == "session.goal.updated")
+        .filter_map(|e| e["status"].as_str())
+        .collect();
+    assert_eq!(
+        goal_updates.last(),
+        Some(&"Paused"),
+        "the goal must pause as interrupted, events: {events:?}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
