@@ -3243,6 +3243,7 @@ export function useKimiWebClient() {
     // File system actions
     listDir: workspaceState.listDir,
     readFileContent: workspaceState.readFileContent,
+    readHostFileContent: workspaceState.readHostFileContent,
     getFileDownloadUrl: workspaceState.getFileDownloadUrl,
     openWorkspaceFile: workspaceState.openWorkspaceFile,
     openInApp: workspaceState.openInApp,

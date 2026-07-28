@@ -104,8 +104,21 @@ export class DaemonHttpClient {
    *  must carry the Bearer token — e.g. <video>/<img> src, which the browser
    *  fetches natively and cannot authorize on its own. Returns the body as a
    *  Blob on 2xx; otherwise parses the daemon envelope and throws. */
-  async getBlob(path: string): Promise<Blob> {
-    const url = buildRestUrl(this.opts.origin, path);
+  async getBlob(
+    path: string,
+    query?: Record<string, string | number | boolean | undefined>,
+  ): Promise<Blob> {
+    let url = buildRestUrl(this.opts.origin, path);
+    if (query) {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined) {
+          params.set(key, String(value));
+        }
+      }
+      const qs = params.toString();
+      if (qs) url = `${url}?${qs}`;
+    }
     const requestId = createRequestId();
     const headers: Record<string, string> = { 'X-Request-Id': requestId };
     this.addClientHeaders(headers);

@@ -10,6 +10,7 @@ import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
+import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
@@ -482,6 +483,9 @@ const {
   openDiffDetail,
   closeDiffDetail,
   selectDiffFile,
+  turnDiffChange,
+  openTurnDiff,
+  closeTurnDiff,
   btwVisible,
   openSideChatTab,
   closeSideChat,
@@ -1211,6 +1215,7 @@ function openPr(url: string): void {
       @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
+      @open-turn-diff="openTurnDiff($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
@@ -1335,6 +1340,14 @@ function openPr(url: string): void {
         @close="closeFilePreview"
         @open-external="openPreviewInEditor"
         @reveal="revealPreviewFile"
+      />
+      <TurnDiffPanel
+        v-else-if="detailTarget === 'turn-diff' && turnDiffChange"
+        :change="turnDiffChange"
+        :cwd="client.status.value.cwd"
+        closable
+        @close="closeTurnDiff"
+        @open-file="openFilePreview({ path: $event, allowHostRead: true })"
       />
     </aside>
 

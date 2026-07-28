@@ -9,6 +9,7 @@ import {
   splitAssistantFold,
   turnActivitySeedMs,
   turnBlocks,
+  turnFileChanges,
   turnFinalText,
   turnToMarkdown,
   turnVisibleFinalText,
@@ -458,5 +459,163 @@ describe('turnWorkMs', () => {
   it('never goes negative', () => {
     expect(turnWorkMs({ startMs: T0 + 5000, endedMs: T0, state: { phase: 'settled' } })).toBe(0);
     expect(turnWorkMs({ startMs: T0, state: { phase: 'live', nowMs: T0 - 1000 } })).toBe(0);
+  });
+});
+
+describe('turnFileChanges', () => {
+  const editArg = (path: string, oldS: string, newS: string) =>
+    JSON.stringify({ path, old_string: oldS, new_string: newS });
+
+  it('is empty for a turn without file-touching tools', () => {
+    expect(turnFileChanges(assistantTurn([toolBlock('t1')]))).toEqual([]);
+    expect(turnFileChanges(assistantTurn([{ kind: 'text', text: 'done' }]))).toEqual([]);
+  });
+
+  it('counts a single edit’s added/removed lines', () => {
+    const turn = assistantTurn([toolBlock('t1', { name: 'Edit', arg: editArg('a.ts', 'x\ny', 'x\nz\nw') })]);
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'a.ts', added: 2, removed: 1, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('merges repeated edits to the same file, keeping first-mention order', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('b.ts', 'a', 'a\nb') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('a.ts', 'q', 'q') }),
+      toolBlock('t3', { name: 'multi_edit', arg: JSON.stringify({ path: 'b.ts', edits: [{ old_string: 'c', new_string: 'd\ne' }] }) }),
+    ]);
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'b.ts', added: 3, removed: 1, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+      { path: 'a.ts', added: 0, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('merges equivalent spellings of one file into a single entry', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('src/a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('./src/a.ts', 'p', 'p\nq') }),
+      toolBlock('t3', { name: 'Edit', arg: editArg('src//a.ts', 'm', 'm\nn') }),
+    ]);
+    // One entry (first-seen spelling kept), counts summed across all three.
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'src/a.ts', added: 3, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('keeps an unresolvable leading ".." so distinct files do not merge', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('../shared/a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('shared/a.ts', 'p', 'p\nq') }),
+    ]);
+    // "../shared/a.ts" and "shared/a.ts" are different files — two entries.
+    expect(turnFileChanges(turn)).toEqual([
+      { path: '../shared/a.ts', added: 1, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+      { path: 'shared/a.ts', added: 1, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('keeps a POSIX absolute path distinct from its rootless twin', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('/tmp/a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('tmp/a.ts', 'p', 'p\nq') }),
+    ]);
+    // "/tmp/a.ts" ≠ "tmp/a.ts" — the absolute root is an anchor, so two entries.
+    expect(turnFileChanges(turn)).toEqual([
+      { path: '/tmp/a.ts', added: 1, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+      { path: 'tmp/a.ts', added: 1, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('folds case for Windows paths but not POSIX', () => {
+    const win = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('C:\\Repo\\a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('c:\\repo\\A.ts', 'p', 'p\nq') }),
+    ]);
+    // Windows paths are case-insensitive — one entry (first-seen spelling kept).
+    expect(turnFileChanges(win).length).toBe(1);
+    const posix = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('/Repo/a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('/repo/A.ts', 'p', 'p\nq') }),
+    ]);
+    // POSIX stays case-sensitive — two distinct files.
+    expect(turnFileChanges(posix).length).toBe(2);
+  });
+
+  it('keeps a UNC share root as an unpoppable anchor', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('\\\\server\\share\\a.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('\\\\server\\share\\sub\\..\\a.ts', 'p', 'p\nq') }),
+    ]);
+    // Both spell the same file on the share — one entry.
+    expect(turnFileChanges(turn).length).toBe(1);
+  });
+
+  it('does not merge a UNC child path with the share root', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('\\\\server\\share\\dir\\file.ts', 'x', 'x\ny') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('\\\\server\\sharedir\\file.ts', 'p', 'p\nq') }),
+    ]);
+    // "//server/share/dir/file.ts" ≠ "//server/sharedir/file.ts" — two entries,
+    // not one merged by a missing separator.
+    expect(turnFileChanges(turn).length).toBe(2);
+  });
+
+  it('treats a write as incomplete — new file vs overwrite is unknowable', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Write', arg: JSON.stringify({ path: 'n.ts', content: 'l1\nl2\nl3\n' }) }),
+    ]);
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'n.ts', added: 0, removed: 0, hasWrite: true, statsIncomplete: true, diff: null },
+    ]);
+  });
+
+  it('flags edits whose stats cannot be derived (replace_all, bad arg)', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: JSON.stringify({ path: 'r.ts', old_string: 'a', new_string: 'b', replace_all: true }) }),
+      toolBlock('t2', { name: 'Edit', arg: 'not json' }),
+      toolBlock('t3', { name: 'Write', arg: JSON.stringify({ path: 'w.ts' }) }),
+    ]);
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'r.ts', added: 0, removed: 0, hasWrite: false, statsIncomplete: true, diff: null },
+      { path: 'w.ts', added: 0, removed: 0, hasWrite: true, statsIncomplete: true, diff: null },
+    ]);
+  });
+
+  it('skips errored calls — their diff describes an attempt, not a change', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('a.ts', 'x', 'y'), status: 'error' }),
+    ]);
+    expect(turnFileChanges(turn)).toEqual([]);
+  });
+
+  it('reads tools from the aggregate field when blocks are absent', () => {
+    const turn = assistantTurn([], {
+      blocks: undefined,
+      tools: [tool('t1', { name: 'Edit', arg: editArg('f.ts', 'one', 'one\ntwo') })],
+    });
+    expect(turnFileChanges(turn)).toEqual([
+      { path: 'f.ts', added: 1, removed: 0, hasWrite: false, statsIncomplete: false, diff: expect.any(Array) },
+    ]);
+  });
+
+  it('carries the per-file line diff alongside the stats', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('g.ts', 'alpha\nbeta', 'alpha\ngamma') }),
+    ]);
+    const change = turnFileChanges(turn)[0]!;
+    expect(change.diff).not.toBeNull();
+    // The diff shows the removed and the added line for the one edited line.
+    const texts = change.diff!.map((l) => `${l.type}:${l.text}`);
+    expect(texts).toContain('del:beta');
+    expect(texts).toContain('add:gamma');
+  });
+
+  it('joins a repeated edit’s diff with a hunk separator', () => {
+    const turn = assistantTurn([
+      toolBlock('t1', { name: 'Edit', arg: editArg('h.ts', 'a', 'a\nb') }),
+      toolBlock('t2', { name: 'Edit', arg: editArg('h.ts', 'c', 'c\nd') }),
+    ]);
+    const change = turnFileChanges(turn)[0]!;
+    expect(change.diff!.some((l) => l.type === 'hunk')).toBe(true);
   });
 });

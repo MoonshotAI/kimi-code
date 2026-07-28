@@ -1636,6 +1636,35 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
   }
 
+  /** Read any host file by ABSOLUTE path via the daemon's global fs:content
+   *  (server-v2 addition). Unlike the session fs:read, there is no workspace
+   *  prefix gate, so files outside the active cwd (e.g. a worktree the turn
+   *  touched) open too; a missing file surfaces the daemon's real not-found.
+   *  Text files decode as utf-8; binary content returns base64. */
+  async readHostFileContent(path: string): Promise<{
+    path: string;
+    content: string;
+    encoding: 'utf-8' | 'base64';
+    mime: string;
+    isBinary: boolean;
+    size: number;
+  }> {
+    const blob = await this.http.getBlob('/fs:content', { path });
+    // An empty Content-Type must reach isTextLikeMime as empty (it reads as
+    // text) — don't pre-fill octet-stream and flip the file to binary. The
+    // reported mime falls back per kind so the preview can render it: text for
+    // a text file, octet-stream for a binary one.
+    const rawMime = blob.type;
+    const isBinary = !isTextLikeMime(rawMime);
+    const mime = rawMime || (isBinary ? 'application/octet-stream' : 'text/plain');
+    if (isBinary) {
+      const content = await blobToBase64(blob);
+      return { path, content, encoding: 'base64', mime, isBinary: true, size: blob.size };
+    }
+    const content = await blob.text();
+    return { path, content, encoding: 'utf-8', mime, isBinary: false, size: blob.size };
+  }
+
   // -------------------------------------------------------------------------
   // WebSocket events
   // -------------------------------------------------------------------------
@@ -1828,4 +1857,26 @@ function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefre
     unchanged: data.unchanged,
     failed: data.failed,
   };
+}
+
+/** A mime counts as previewable text when it is text/*, a structured text
+ *  format (json/xml/javascript…), or empty — everything else is treated as
+ *  binary and base64-encoded for the preview panel. */
+function isTextLikeMime(mime: string): boolean {
+  const m = mime.toLowerCase().split(';')[0]!.trim();
+  if (m === '' || m === 'text/plain') return true;
+  if (m.startsWith('text/')) return true;
+  return /(json|xml|javascript|typescript|x-yaml|yaml|svg|x-sh|x-python|markdown|csv|html|css)$/.test(m);
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      resolve(url.slice(url.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }

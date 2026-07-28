@@ -21,6 +21,7 @@ import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf 
 import { isFindKeyEvent } from '../../lib/transcriptSearch';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
+import type { TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
 
@@ -135,6 +136,7 @@ const emit = defineEmits<{
   login: [];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
+  openTurnDiff: [change: TurnFileChange];
   openCompaction: [target: { turnId: string }];
   openAgent: [toolCallId: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
@@ -1877,8 +1879,7 @@ function onKeyDown(event: KeyboardEvent): void {
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier
   // handler that consumed the key (defaultPrevented). The same keypress must
-  // not also interrupt a running prompt behind any of these. (Hardcoded to
-  // Escape by decision — not customizable.)
+  // not also interrupt a running prompt behind any of these.
   if (
     event.key === 'Escape' &&
     !props.overlayOpen &&
@@ -2240,6 +2241,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               ref="chatPaneRef"
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
+              :cwd="status.cwd"
               :approvals="approvals"
               :questions="questions"
               :turn-active="turnActive"
@@ -2255,6 +2257,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               :interrupted-turn-id="interruptedTurnId"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
+              @open-turn-diff="emit('openTurnDiff', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"

@@ -2,7 +2,10 @@
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
-import type { ChatTurn, TaskNotification, TurnBlock } from '../types';
+import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock } from '../types';
+import { diffStats } from '../lib/diffLines';
+import { buildEditDiffLines, toolFilePath } from '../lib/toolDiff';
+import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.
@@ -286,4 +289,184 @@ export function renderBlockKey(block: AssistantRenderBlock, index: number): stri
   }
   if (block.kind === 'tool') return toolStackKey({ tool: block.tool, sourceIndex: block.sourceIndex });
   return `${block.kind}-${block.sourceIndex}`;
+}
+
+/** One file touched by the turn's Edit/MultiEdit/Write calls, aggregated across
+    every call that named it (a file edited three times appears once). */
+export interface TurnFileChange {
+  path: string;
+  added: number;
+  removed: number;
+  /** At least one Write named the file. */
+  hasWrite: boolean;
+  /** At least one edit's stats could not be derived from its args
+      (replace_all, args beyond the diff budget, unparseable arg) — or it was
+      a Write, whose removed lines are unknowable (new file vs overwrite).
+      The totals are then a lower bound, not the full count. */
+  statsIncomplete: boolean;
+  /** The turn's line diff for this file (the same LCS the stats derive from),
+      segments joined in call order; null when underivable (Write / incomplete). */
+  diff: DiffViewLine[] | null;
+}
+
+/** The turn's file modifications, derived from its Edit/MultiEdit/Write tool
+    calls (the daemon carries no per-turn diff stats). Counts what the agent
+    declared through those tools — independent of git, so user edits in
+    between do not distort it. Errored calls are skipped: their diff describes
+    what was attempted, not what happened. Order follows first mention. */
+export function turnFileChanges(turn: ChatTurn): TurnFileChange[] {
+  const byPath = new Map<string, TurnFileChange>();
+  for (const block of turnBlocks(turn)) {
+    if (block.kind !== 'tool' || block.tool.status === 'error') continue;
+    const tool = block.tool;
+    const kind = normalizeToolName(tool.name);
+    if (kind !== 'edit' && kind !== 'multi_edit' && kind !== 'write') continue;
+
+    let path: string | undefined;
+    let added = 0;
+    let removed = 0;
+    let hasWrite = false;
+    let statsIncomplete = false;
+    let diff: DiffViewLine[] | null = null;
+    if (kind === 'write') {
+      // A Write carries only the final content, so the client cannot tell a
+      // new file from an overwrite — the removed lines are unknowable. Report
+      // it as incomplete rather than an exact +N −0 that would dress an
+      // overwrite up as a pure addition.
+      path = toolFilePath(tool);
+      hasWrite = true;
+      statsIncomplete = true;
+    } else {
+      diff = buildEditDiffLines(tool);
+      path = toolFilePath(tool);
+      if (diff) {
+        const stats = diffStats(diff);
+        added = stats.added;
+        removed = stats.removed;
+      } else {
+        statsIncomplete = true;
+      }
+    }
+    if (!path) continue;
+
+    // Aggregate equivalent spellings of the same file: normalize separators
+    // and `.` segments for the map key ("src/a.ts" ≡ "./src/a.ts" ≡
+    // "src//a.ts"), while keeping the first-seen spelling for display.
+    const key = normalizePathKey(path);
+    const entry = byPath.get(key);
+    if (entry) {
+      entry.added += added;
+      entry.removed += removed;
+      entry.hasWrite ||= hasWrite;
+      entry.statsIncomplete ||= statsIncomplete;
+      // Join this call's diff segment onto the file's, hunk-separated; once any
+      // call is underivable the whole file's diff is unknowable (null). The
+      // incoming segment's line numbers restart at 1, so offset them past the
+      // numbers already joined — the highlighter maps tokens by these numbers
+      // and a duplicate would paint the earlier hunk with the later one's
+      // tokens.
+      if (entry.diff !== null && diff !== null) {
+        let oldBase = 0;
+        let newBase = 0;
+        for (const l of entry.diff) {
+          if (l.oldNo !== undefined && l.oldNo > oldBase) oldBase = l.oldNo;
+          if (l.newNo !== undefined && l.newNo > newBase) newBase = l.newNo;
+        }
+        const shifted = diff.map((l) => ({
+          ...l,
+          oldNo: l.oldNo !== undefined ? l.oldNo + oldBase : undefined,
+          newNo: l.newNo !== undefined ? l.newNo + newBase : undefined,
+        }));
+        entry.diff = [...entry.diff, { type: 'hunk', text: '···' }, ...shifted];
+      } else {
+        entry.diff = null;
+      }
+    } else {
+      byPath.set(key, { path, added, removed, hasWrite, statsIncomplete, diff });
+    }
+  }
+  return [...byPath.values()];
+}
+
+// Unify separators and resolve `.` segments so equivalent path spellings map
+// to one key. A turn's tools almost always spell one file one way; this stops
+// the obvious splits without needing the cwd:
+//   - the path KIND's root is kept as an anchor, so "/tmp/a.ts" ≠ "tmp/a.ts";
+//   - a Windows drive ("C:") or UNC share ("//server/share") is never popped
+//     and folds case, since Windows paths are case-insensitive (POSIX stays
+//     case-sensitive);
+//   - a ".." that can't cancel a normal segment is kept on a relative path and
+//     dropped at an absolute root.
+export function normalizePathKey(path: string): string {
+  const norm = path.replace(/\\/g, '/');
+  // Peel the root anchor: UNC share, a Windows drive, or a POSIX root. These
+  // stay out of the segment stack so a ".." can never pop them.
+  let root = '';
+  let rest = norm;
+  let windows = false;
+  const unc = /^\/\/([^/]+\/[^/]+)(\/|$)/.exec(norm);
+  if (unc) {
+    // Keep the trailing slash so root+body re-joins with a separator (else
+    // "//server/share/dir" would collapse into "//server/sharedir").
+    root = `//${unc[1]!.toLowerCase()}/`;
+    rest = norm.slice(unc[0].length - (unc[0].endsWith('/') ? 1 : 0));
+    windows = true;
+  } else if (/^[a-zA-Z]:\//.test(norm)) {
+    root = `${norm[0]!.toLowerCase()}:/`;
+    rest = norm.slice(3);
+    windows = true;
+  } else if (norm.startsWith('/')) {
+    root = '/';
+    rest = norm.slice(1);
+  }
+  const isAbs = root !== '';
+
+  const out: string[] = [];
+  for (const part of rest.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      // Pop a normal segment only; keep a leading ".." on a relative path.
+      if (out.length > 0 && out[out.length - 1] !== '..') out.pop();
+      else if (!isAbs) out.push(part);
+      continue;
+    }
+    out.push(part);
+  }
+  const body = out.join('/');
+  const key = root + body;
+  return windows ? key.toLowerCase() : key;
+}
+
+// turnFileChanges synthesizes an LCS diff per Edit, and the turns array is
+// rebuilt (fresh objects) on every streamed event — so memoize per turn, keyed
+// by an O(1) signature of the tool inputs the stats derive from (NOT the raw
+// args, which can hold whole file contents). The cap is a backstop far above
+// any real session's turn count, so eviction never thrashes the current scan.
+const TURN_FILE_CHANGES_CACHE_CAP = 2000;
+const turnFileChangesCache = new Map<string, { key: string; changes: TurnFileChange[] }>();
+
+function turnFileChangesKey(turn: ChatTurn): string {
+  const parts: string[] = [];
+  for (const block of turnBlocks(turn)) {
+    if (block.kind !== 'tool') continue;
+    const tool = block.tool;
+    const kind = normalizeToolName(tool.name);
+    if (kind !== 'edit' && kind !== 'multi_edit' && kind !== 'write') continue;
+    parts.push(`${tool.id}:${tool.status}:${tool.arg.length}`);
+  }
+  return parts.join('|');
+}
+
+/** turnFileChanges memoized across turns-array rebuilds (see the cache note). */
+export function turnFileChangesCached(turn: ChatTurn): TurnFileChange[] {
+  const key = turnFileChangesKey(turn);
+  const hit = turnFileChangesCache.get(turn.id);
+  if (hit && hit.key === key) return hit.changes;
+  const changes = turnFileChanges(turn);
+  turnFileChangesCache.set(turn.id, { key, changes });
+  if (turnFileChangesCache.size > TURN_FILE_CHANGES_CACHE_CAP) {
+    const oldest = turnFileChangesCache.keys().next().value;
+    if (oldest !== undefined) turnFileChangesCache.delete(oldest);
+  }
+  return changes;
 }

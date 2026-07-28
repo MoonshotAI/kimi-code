@@ -3,6 +3,7 @@
 
 import { computed, ref, watch, type Ref } from 'vue';
 import type { AgentMember } from '../types';
+import type { TurnFileChange } from '../components/chatTurnRendering';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
 import { toAgentMember } from './messagesToTurns';
@@ -282,6 +283,33 @@ export function useDetailPanel({
   }
 
   // ---------------------------------------------------------------------------
+  // Turn file-diff detail (opened from a turn's file-change summary card)
+  // ---------------------------------------------------------------------------
+  // Unlike the git 'diff' slot (workspace vs HEAD), this shows ONE turn's edit to
+  // ONE file — the DiffViewLine[] the summary derived alongside its stats.
+  const turnDiffChange = ref<TurnFileChange | null>(null);
+
+  function openTurnDiff(change: TurnFileChange): void {
+    // Toggle only on the SAME change object: two turns may touch one path, and
+    // their TurnFileChange entries are distinct objects — comparing paths would
+    // read the second turn's tap as a toggle-off instead of a switch. And only
+    // while the turn-diff panel is the active target: after the user moved on
+    // to the file preview (header "open file", or a U row opening the file), the
+    // stale ref must not turn the next tap into a no-op close.
+    if (turnDiffChange.value === change && detailTarget.value === 'turn-diff') {
+      closeTurnDiff();
+      return;
+    }
+    turnDiffChange.value = change;
+    detailTarget.value = 'turn-diff';
+  }
+
+  function closeTurnDiff(): void {
+    turnDiffChange.value = null;
+    if (detailTarget.value === 'turn-diff') detailTarget.value = null;
+  }
+
+  // ---------------------------------------------------------------------------
   // Side chat (BTW) — now rendered in the unified right-side detail layer.
   // ---------------------------------------------------------------------------
   async function openSideChatTab(prompt?: string): Promise<void> {
@@ -388,6 +416,7 @@ export function useDetailPanel({
     if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
     if (detailTarget.value === 'file') { closeFilePreview(); return true; }
     if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
+    if (detailTarget.value === 'turn-diff') { closeTurnDiff(); return true; }
     if (detailTarget.value === 'btw') { closeSideChat(); return true; }
     return false;
   }
@@ -405,6 +434,7 @@ export function useDetailPanel({
     closeCompactionPanel();
     closeAgentPanel();
     closeDiffDetail();
+    closeTurnDiff();
     hideSideChatPanel();
     // Restore the entering session's panel, if it had one.
     if (newId) {
@@ -440,6 +470,9 @@ export function useDetailPanel({
     openDiffDetail,
     closeDiffDetail,
     selectDiffFile,
+    turnDiffChange,
+    openTurnDiff,
+    closeTurnDiff,
     btwVisible,
     openSideChatTab,
     closeSideChat,

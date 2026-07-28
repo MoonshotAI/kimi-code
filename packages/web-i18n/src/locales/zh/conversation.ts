@@ -45,6 +45,16 @@ export default {
     worked: '已工作 {duration}',
     workedUnknown: '工作过程',
   },
+  turnFiles: {
+    titleOne: '{number} 个文件已修改',
+    titleOther: '{number} 个文件已修改',
+    more: '还有 {number} 个文件',
+    moreOne: '还有 1 个文件',
+    showLess: '收起',
+    diffTitle: '本次改动',
+    diffUnavailable: '此文件的改动无法逐项展示',
+    openFile: '打开文件',
+  },
   goal: {
     continuation: '目标续跑',
   },

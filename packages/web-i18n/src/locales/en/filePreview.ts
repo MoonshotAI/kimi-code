@@ -30,6 +30,7 @@ export default {
     unsupportedPath: 'URLs and remote paths cannot be previewed',
     outsideWorkspace: 'Only files inside the current workspace can be previewed',
     isDirectory: 'Select a file instead of a directory',
+    notFound: 'File no longer exists or was moved',
     loadFailed: 'Unable to read this file',
   },
 } as const;

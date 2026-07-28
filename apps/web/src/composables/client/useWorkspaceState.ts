@@ -2857,6 +2857,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // Absolute-path read via the daemon's global fs:content — no workspace prefix
+  // gate, so a file the turn touched outside the active cwd (e.g. a worktree)
+  // opens too. Throws on daemon not-found so the preview can show the real cause.
+  async function readHostFileContent(path: string) {
+    return getKimiWebApi().readHostFileContent(path);
+  }
+
   // Matches the daemon's FS_READ_MAX_BYTES. Without an explicit length the
   // protocol defaults to 1MiB and silently truncates — half a PNG decodes as a
   // broken image, which is worse than falling back to the original src.
@@ -3029,6 +3036,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     undo,
     listDir,
     readFileContent,
+    readHostFileContent,
     getFileDownloadUrl,
     openWorkspaceFile,
     openInApp,

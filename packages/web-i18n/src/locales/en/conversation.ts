@@ -45,6 +45,16 @@ export default {
     worked: 'Worked {duration}',
     workedUnknown: 'Work details',
   },
+  turnFiles: {
+    titleOne: '{number} file changed',
+    titleOther: '{number} files changed',
+    more: '{number} more files',
+    moreOne: '1 more file',
+    showLess: 'Show less',
+    diffTitle: 'Changes this turn',
+    diffUnavailable: 'This file’s changes can’t be shown line by line',
+    openFile: 'Open file',
+  },
   goal: {
     continuation: 'Goal continuation',
   },

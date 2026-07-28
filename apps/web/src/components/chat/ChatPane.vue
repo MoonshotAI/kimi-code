@@ -6,6 +6,7 @@ import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedProm
 import ToolCall from './ToolCall.vue';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
+import TurnFilesSummary from './TurnFilesSummary.vue';
 import NotificationCard from './NotificationCard.vue';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
@@ -29,10 +30,11 @@ import {
   splitAssistantFold,
   turnActivitySeedMs,
   turnBlocks,
+  turnFileChangesCached,
   turnToMarkdown,
   turnVisibleFinalText,
 } from '../chatTurnRendering';
-import type { AssistantFold } from '../chatTurnRendering';
+import type { AssistantFold, TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
 const { confirm } = useConfirmDialog();
@@ -59,6 +61,12 @@ onUnmounted(() => {
 const props = withDefaults(
   defineProps<{
     turns: ChatTurn[];
+    /** Active session's working directory — used to display a turn's file
+        changes as workspace-relative paths (files outside it stay absolute). */
+    cwd?: string;
+    /** False where nothing handles the summary's row action (the BTW side
+        chat) — its file rows render as plain text instead of links. */
+    turnFilesInteractive?: boolean;
     approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string; toolCallId?: string }[];
     /** Pending questions for the session (AskUserQuestion awaiting an answer) —
         a tool tail waiting on one reads as parked, not streaming. */
@@ -200,6 +208,22 @@ const streamingTurnId = computed<string | null>(() => {
   return last.role === 'assistant' ? last.id : null;
 });
 
+// Per-turn file-change summaries, derived once per turns array instead of
+// twice per turn in the template, and memoized per turn across turns-array
+// rebuilds via turnFileChangesCached (the turns array is rebuilt on every
+// streamed event; the LCS diffs behind the stats must not be re-synthesized
+// for every old turn each time). Keyed by turn id; turns without changes are
+// simply absent.
+const turnFileChangesById = computed(() => {
+  const map = new Map<string, ReturnType<typeof turnFileChangesCached>>();
+  for (const turn of props.turns) {
+    if (turn.role !== 'assistant' || turn.id === streamingTurnId.value) continue;
+    const changes = turnFileChangesCached(turn);
+    if (changes.length > 0) map.set(turn.id, changes);
+  }
+  return map;
+});
+
 // Trailing working indicator: shown while the main conversation has an
 // unfinished prompt. `working` is the union of the optimistic submit window
 // and the main turn's liveness (restored from the snapshot's inFlightTurn
@@ -224,6 +248,8 @@ const workingLabel = computed(() => {
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
+  /** Show one turn's diff for one file (from its file-change summary card). */
+  openTurnDiff: [change: TurnFileChange];
   copyConversationCopied: [];
   /** Show a compaction divider's summary text in the right-side panel. */
   openCompaction: [target: { turnId: string }];
@@ -929,6 +955,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
+        <TurnFilesSummary
+          v-if="turnFileChangesById.get(turn.id)"
+          :changes="turnFileChangesById.get(turn.id)!"
+          :cwd="props.cwd"
+          :interactive="turnFilesInteractive"
+          @open-diff="emit('openTurnDiff', $event)"
+          @open-file="emit('openFile', $event)"
+        />
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnDurationLabel(turn))" class="a-msg-ft">
           <span v-if="turnDurationLabel(turn)" class="a-duration">{{ turnDurationLabel(turn) }}</span>
           <button

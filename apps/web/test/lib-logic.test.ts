@@ -20,6 +20,7 @@ import {
   joinWorkspacePathCandidate,
   parseWorkspacePathInput,
 } from '../src/lib/workspacePathInput';
+import { pathRelativeTo } from '../src/lib/pathRelativeTo';
 import {
   commitLevel,
   defaultThinkingLevelFor,
@@ -252,6 +253,36 @@ describe('workspace path input', () => {
   it('only returns a validated path while it still matches the current input', () => {
     expect(currentValidatedWorkspacePath('/var', '', '/tmp')).toBeNull();
     expect(currentValidatedWorkspacePath('/tmp/', '', '/tmp')).toBe('/tmp');
+  });
+});
+
+describe('pathRelativeTo', () => {
+  it('relativizes an in-root path and rejects an outside one', () => {
+    expect(pathRelativeTo('/repo/src/a.ts', '/repo')).toBe('src/a.ts');
+    expect(pathRelativeTo('/other/a.ts', '/repo')).toBeNull();
+    expect(pathRelativeTo('/repo', '/repo')).toBeNull(); // equal → empty → null
+  });
+
+  it('rejects an escaped path that prefixes the root then climbs out', () => {
+    // "/repo/../other/file.ts" starts with "/repo/" lexically but escapes it.
+    expect(pathRelativeTo('/repo/../other/file.ts', '/repo')).toBeNull();
+  });
+
+  it('compares case-sensitively on POSIX but insensitively for a Windows root', () => {
+    // POSIX: /Repo is NOT /repo.
+    expect(pathRelativeTo('/Repo/a.ts', '/repo')).toBeNull();
+    // Windows drive: case-insensitive on the drive + path.
+    expect(pathRelativeTo('C:\\repo\\a.ts', 'C:\\repo')).toBe('a.ts');
+    expect(pathRelativeTo('c:/Repo/A.ts', 'C:/repo')).toBe('A.ts');
+  });
+
+  it('handles a filesystem-root root', () => {
+    expect(pathRelativeTo('/a/b.ts', '/')).toBe('a/b.ts');
+    expect(pathRelativeTo('C:/a/b.ts', 'C:/')).toBe('a/b.ts');
+  });
+
+  it('normalizes separators for the comparison but keeps the input casing', () => {
+    expect(pathRelativeTo('C:\\repo\\src\\a.ts', 'C:/repo')).toBe('src/a.ts');
   });
 });
 

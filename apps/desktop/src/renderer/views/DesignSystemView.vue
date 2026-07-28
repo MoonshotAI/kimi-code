@@ -4,9 +4,22 @@ import { ICON_GROUPS } from '../lib/icons';
 import { Icon } from '@moonshot-ai/web-ui';
 import DockIconPicker from '../components/settings/DockIconPicker.vue';
 import WorkingIndicator from '../components/chat/WorkingIndicator.vue';
+import TurnFilesSummary from '../components/chat/TurnFilesSummary.vue';
+import type { TurnFileChange } from '../components/chatTurnRendering';
 import type { DockIconChoice } from '../lib/dockIconChoice';
 
 const dockIconDemo = ref<DockIconChoice>('auto');
+
+// A fixed sample for the §04 turn-files summary stage: a complete-stats file, a
+// Write (unknowable overwrite), and a fourth row collapsed behind "more files".
+const turnFilesDemo: TurnFileChange[] = [
+  { path: '/repo/apps/web/src/components/chat/TurnFilesSummary.vue', added: 19, removed: 4, hasWrite: false, statsIncomplete: false, diff: null },
+  { path: '/repo/apps/web/src/composables/useFilePreview.ts', added: 8, removed: 1, hasWrite: false, statsIncomplete: false, diff: null },
+  { path: '/repo/apps/web/src/components/chatTurnRendering.ts', added: 0, removed: 0, hasWrite: true, statsIncomplete: true, diff: null },
+  { path: '/repo/apps/web/src/lib/toolDiff.ts', added: 3, removed: 2, hasWrite: false, statsIncomplete: false, diff: null },
+];
+const turnFilesDemoCwd = '/repo';
+function noopOpenFile(): void {}
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -1286,7 +1299,17 @@ onUnmounted(() => {
               <li>Status keeps the shared vocabulary: running (pulsing accent dot) / done (green ✓) / failed (red ✗), at the line's right edge. <b>Only two types keep a full card</b>: <code>Question</code> and <code>Approval</code> — they genuinely need the user's attention. The Swarm composite keeps one quiet card (raised surface, 0.5px hairline, large radius) for its phase overview + member accordion.</li>
               <li><b>A task notification is a status card, not a quiet line</b> (<code>NotificationCard.vue</code>): the hidden <code>&lt;notification&gt;</code> injections (background-task / sub-agent settlement) render where they landed in the turn — a 28px status chip + title/sub head tinted with the toast status token pairs (completed → success, failed / timed_out / lost → danger, killed → warning, else neutral surface), expanding in place to the fields, the body, an output-file row (copy path) and the raw payload. ≥2 CONSECUTIVE notifications merge into one neutral group card (count + per-item status dots + compact rows, each expanding on its own). Notifications break the activity run but are never turn boundaries, and they <b>never fold</b> — a notification is an event worth noticing, not process noise, so it punches out of the turn fold and renders right after the fold row, in order.</li>
               <li><b>A goal-continuation turn carries a provenance row</b>: the hidden <code>goal_continuation</code> trigger (goal mode's self-driven next turn — a turn boundary, unlike task notifications) never renders its machine prompt; instead the assistant turn it opens shows one faint 12px line flush with the stream's left edge — the <code>target</code> glyph shared with the Goal tool (this turn belongs to the goal) + a localized label — ABOVE the turn's content and OUTSIDE the turn fold, so the row survives as the turn's provenance after settling. The marker lands with the trigger (before the first assistant block), and while the newest exchange is a goal-continuation turn the undo affordances (edit-and-resend, Esc undo) are suppressed — rewinding would drop the hidden trigger while refilling the older user text.</li>
+              <li><b>A settled turn's file changes are one summary card</b> (<code>TurnFilesSummary.vue</code>): between the turn's final text and its footer, a §03 <code>Card</code> (hairline border, no shadow — NOT the quiet tool line, the artifacts are worth a discrete object) lists every file the turn's Edit / Write calls touched. The head reads "N files changed" with the aggregate <code>+A −D</code> and the mini diffbar; the aggregate hides whenever any row's stats are incomplete (a Write or an underivable edit makes the total a lower bound, never presented as exact). Each row is one clickable workspace-relative path (short and self-locating; a file outside the cwd stays absolute) with its per-file <code>+A −D</code> at the right edge. The row's action keys on the tool kind, and the stats tell it apart: a <b>Write</b> has no per-file count (its diff is underivable) and opens the whole file in the preview; an <b>Edit / MultiEdit</b> carries its <code>+A −D</code> and opens that file's <b>turn diff</b> in the right-side detail layer (<code>TurnDiffPanel.vue</code> — the turn's own X→Y change, not the git diff), whose header keeps an open-file action. The first three files show inline; the rest collapse behind a "N more files" ghost-button row in the card's foot. Where nothing handles the row action (the BTW side chat), the card renders its file rows as plain text instead of links.</li>
             </ul>
+
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Turn files summary · a real TurnFilesSummary (fixed sample)</span></div>
+              <div class="stage p col">
+                <div style="max-width:560px;width:100%">
+                  <TurnFilesSummary :changes="turnFilesDemo" :cwd="turnFilesDemoCwd" @open-diff="noopOpenFile" @open-file="noopOpenFile" />
+                </div>
+              </div>
+            </div>
 
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Tool Call · quiet lines (expand on demand)</span></div>
