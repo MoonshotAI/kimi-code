@@ -64,7 +64,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
-      astron: { stream: true, temperature: 0.7, maxTokens: 4096, searchDisable: false },
+      astron: { stream: true, temperature: 1, maxTokens: 32768, searchDisable: true },
     });
   });
 
@@ -90,7 +90,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
-      astron: { stream: true, temperature: 0.7, maxTokens: 4096, searchDisable: false },
+      astron: { stream: true, temperature: 1, maxTokens: 32768, searchDisable: true },
     });
   });
 
@@ -124,7 +124,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
-        astron: { stream: true, temperature: 0.7, maxTokens: 4096, searchDisable: false },
+        astron: { stream: true, temperature: 1, maxTokens: 32768, searchDisable: true },
       },
       filePath,
     );
@@ -136,7 +136,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
-      astron: { stream: true, temperature: 0.7, maxTokens: 4096, searchDisable: false },
+      astron: { stream: true, temperature: 1, maxTokens: 32768, searchDisable: true },
     });
   });
 
