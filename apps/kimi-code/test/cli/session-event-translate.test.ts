@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+
+import { SessionEventTranslator } from '#/cli/session-event-translate';
+
+describe('SessionEventTranslator', () => {
+  it('maps the engine wire events onto the SDK Event union', () => {
+    const t = new SessionEventTranslator('s1', 'main');
+
+    const started = t.translate({ type: 'session.turn.started', session_id: 's1', turn_id: 3 });
+    expect(started).toMatchObject({
+      type: 'turn.started',
+      sessionId: 's1',
+      agentId: 'main',
+      turnId: 3,
+      origin: { kind: 'user' },
+    });
+
+    // Streaming deltas carry no turn id — the translator remembers it.
+    const delta = t.translate({ type: 'llm.delta', part: { type: 'text', text: 'Hi' } });
+    expect(delta).toMatchObject({ type: 'assistant.delta', turnId: 3, delta: 'Hi' });
+    const think = t.translate({ type: 'llm.delta', part: { type: 'think', think: 'hmm' } });
+    expect(think).toMatchObject({ type: 'thinking.delta', turnId: 3, delta: 'hmm' });
+
+    const toolStart = t.translate({
+      type: 'session.tool.started',
+      tool_call_id: 'c1',
+      tool_name: 'Read',
+      arguments: { path: 'a.txt' },
+    });
+    expect(toolStart).toMatchObject({
+      type: 'tool.call.started',
+      toolCallId: 'c1',
+      name: 'Read',
+      args: { path: 'a.txt' },
+    });
+    const toolEnd = t.translate({
+      type: 'session.tool.settled',
+      tool_call_id: 'c1',
+      tool_name: 'Read',
+      content: 'file body',
+      is_error: false,
+    });
+    expect(toolEnd).toMatchObject({
+      type: 'tool.result',
+      toolCallId: 'c1',
+      output: 'file body',
+      isError: false,
+    });
+
+    const ended = t.translate({
+      type: 'session.turn.ended',
+      turn_id: 3,
+      stop_reason: 'Aborted',
+      steps: 2,
+    });
+    expect(ended).toMatchObject({ type: 'turn.ended', turnId: 3, reason: 'cancelled' });
+    // Natural end maps to completed.
+    expect(
+      t.translate({ type: 'session.turn.ended', turn_id: 4, stop_reason: 'EndTurn' }),
+    ).toMatchObject({ reason: 'completed' });
+
+    // Unknown / internal events render nothing.
+    expect(t.translate({ type: 'llm.step.begin', model: 'm' })).toBeNull();
+    expect(t.translate({ type: 'session.goal.updated', status: 'Paused' })).toBeNull();
+    expect(t.translate('not-an-object')).toBeNull();
+  });
+});

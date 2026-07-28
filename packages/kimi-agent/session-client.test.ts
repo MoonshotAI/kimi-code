@@ -80,6 +80,13 @@ describe('createSessionClient (stdio e2e)', () => {
     const types = events.map((e) => e.type);
     expect(types).toContain('session.turn.started');
     expect(types).toContain('session.turn.ended');
+    // Tool activity is reported for thin-client rendering: the host tool
+    // call shows up as started/settled even though it settled at the host.
+    const toolEvents = events as { type?: string; tool_name?: string; content?: string }[];
+    const toolStarted = toolEvents.find((e) => e.type === 'session.tool.started');
+    const toolSettled = toolEvents.find((e) => e.type === 'session.tool.settled');
+    expect(toolStarted?.tool_name).toBe('HostEcho');
+    expect(toolSettled?.content).toBe('echo: ping');
 
     // Persistence round trip through the client handle.
     expect(await client!.save()).toBe(true);

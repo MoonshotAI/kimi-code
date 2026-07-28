@@ -18,7 +18,65 @@ use crate::rpc::types::{BoxFuture, LlmChatRequest, LlmChatResponse, ToolExecuteR
 use crate::tools::NativeToolset;
 use crate::turn_loop::types as loop_types;
 
-// ── Goal interceptor + tools ──────────────────────────────────────────────────
+// ── Goal interceptor + tools ──────────────────────────────────────────────
+
+/// The session surface's tool render channel: every tool call — wherever it
+/// settles (engine-native, goal, MCP, knowledge, or host) — reports
+/// `session.tool.started` / `session.tool.settled` over `host/event`, so a
+/// thin client can draw tool cards without owning the loop. Sits outermost
+/// on the interceptor chain to observe all of it.
+struct ToolEventInterceptor {
+    inner: Arc<dyn HostCallbacks>,
+    session_id: Option<String>,
+}
+impl HostCallbacks for ToolEventInterceptor {
+    fn supports_tool_lifecycle(&self) -> bool { self.inner.supports_tool_lifecycle() }
+    fn llm_chat(&self, r: LlmChatRequest) -> BoxFuture<'static, Result<LlmChatResponse, String>> { self.inner.llm_chat(r) }
+    fn execute_tool(&self, req: ToolExecuteRequest) -> BoxFuture<'static, Result<ToolExecuteResponse, String>> {
+        let inner = self.inner.clone();
+        let session_id = self.session_id.clone();
+        Box::pin(async move {
+            let tool_call_id = req.tool_call_id.clone();
+            let tool_name = req.tool_name.clone();
+            inner.emit_event(serde_json::json!({
+                "type": "session.tool.started",
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments": req.arguments,
+            }));
+            let result = inner.execute_tool(req).await;
+            let (content, is_error) = match &result {
+                Ok(resp) => (truncate_for_event(&resp.content), resp.is_error),
+                Err(error) => (truncate_for_event(error), true),
+            };
+            inner.emit_event(serde_json::json!({
+                "type": "session.tool.settled",
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "content": content,
+                "is_error": is_error,
+            }));
+            result
+        })
+    }
+    fn emit_event(&self, e: serde_json::Value) { self.inner.emit_event(e); }
+    fn prepare_tool_execution(&self, r: crate::rpc::types::PrepareToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::PrepareToolResponse>, String>> { self.inner.prepare_tool_execution(r) }
+    fn authorize_tool_execution(&self, r: crate::rpc::types::AuthorizeToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::AuthorizeToolResponse>, String>> { self.inner.authorize_tool_execution(r) }
+    fn finalize_tool_result(&self, r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> { self.inner.finalize_tool_result(r) }
+}
+
+/// Event payloads are for rendering, not transcripts: cap the content so a
+/// huge tool output cannot flood the notification channel.
+fn truncate_for_event(content: &str) -> String {
+    const MAX: usize = 2000;
+    if content.chars().count() <= MAX {
+        return content.to_string();
+    }
+    let kept: String = content.chars().take(MAX).collect();
+    format!("{kept}\n… (truncated for event)")
+}
 
 struct GoalToolInterceptor { inner: Arc<dyn HostCallbacks>, goal: std::sync::Mutex<Option<GoalMode>> }
 impl GoalToolInterceptor {
@@ -356,6 +414,12 @@ impl Agent {
         let goal_temp = self.goal.take();
         goal_interceptor.bind_goal(goal_temp);
         callbacks = goal_interceptor.clone();
+        // Outermost: report every tool call over `host/event` so thin
+        // clients can render tool cards without owning the loop.
+        callbacks = Arc::new(ToolEventInterceptor {
+            inner: callbacks,
+            session_id: self.session_id.clone(),
+        });
 
         // ── Tool definitions: native + goal ──
         let mut tool_defs: Vec<loop_types::ToolInfo> = toolset.as_ref()
