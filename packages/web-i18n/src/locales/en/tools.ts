@@ -73,7 +73,7 @@ export default {
   group: {
     // Done-tense per-kind clauses consumed by the activity-run summary
     // (lib/activitySummary.ts); unknown kinds fall back to countOther.
-    countOther: '{number} tool calls',
+    countOther: '{count} tool call | {count} tool calls',
     typed: {
       read: { done: 'Read {count} file | Read {count} files' },
       bash: { done: 'Ran {count} command | Ran {count} commands' },

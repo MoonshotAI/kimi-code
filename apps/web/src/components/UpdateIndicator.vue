@@ -4,8 +4,10 @@
      app-region drag). Clicking opens the canonical §03 Dialog (Anatomy A,
      padded · lg · auto — see §09 in DesignSystemView.vue) with the version,
      release date, the state-dependent actions (download / background /
-     restart / retry) and an auto-download checkbox pinned to the foot's left,
-     plus "本次跳过" to mute a version persistently. When the
+     restart / retry) and an auto-download checkbox on its own foot row below
+     the buttons — it is a pure preference for FUTURE checks
+     (never starts the waiting download, never closes the dialog), plus
+     "本次跳过" to mute a version persistently. When the
      main process fetched the version's changelog (CDN changelog.{zh,en}.md),
      a "更新内容 / What's new" section renders it under the meta line — the
      current locale's text, falling back to the other language, hidden when
@@ -102,8 +104,6 @@ const changelogText = computed(() => {
 
 const icon = computed<IconName>(() => {
   switch (status.value.state) {
-    case 'downloaded':
-      return 'check';
     case 'error':
       return 'alert-triangle';
     default:
@@ -148,30 +148,34 @@ function onRestartNow(): void {
       <p v-if="status.state === 'error' && status.message" class="upd-message">{{ status.message }}</p>
 
       <template #foot>
-        <Checkbox
-          v-if="canToggleAutoDownload"
-          class="upd-auto"
-          :model-value="autoDownload"
-          @update:model-value="setAutoDownload($event)"
-        >
-          {{ t('sidebar.updateAutoDownload') }}
-        </Checkbox>
-        <template v-if="status.state === 'available'">
-          <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
-          <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
-        </template>
-        <template v-else-if="status.state === 'downloading'">
-          <!-- The download continues on its own; this just dismisses the dialog
-               (the pill keeps showing live percent). -->
-          <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
-        </template>
-        <template v-else-if="status.state === 'downloaded'">
-          <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
-          <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
-        </template>
-        <template v-else-if="status.state === 'error'">
-          <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
-        </template>
+        <div class="upd-foot">
+          <div class="upd-foot-actions">
+            <template v-if="status.state === 'available'">
+              <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
+              <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
+            </template>
+            <template v-else-if="status.state === 'downloading'">
+              <!-- The download continues on its own; this just dismisses the dialog
+                   (the pill keeps showing live percent). -->
+              <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
+            </template>
+            <template v-else-if="status.state === 'downloaded'">
+              <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
+              <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
+            </template>
+            <template v-else-if="status.state === 'error'">
+              <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
+            </template>
+          </div>
+          <Checkbox
+            v-if="canToggleAutoDownload"
+            class="upd-auto"
+            :model-value="autoDownload"
+            @update:model-value="setAutoDownload($event)"
+          >
+            {{ t('sidebar.updateAutoDownload') }}
+          </Checkbox>
+        </div>
       </template>
     </Dialog>
   </span>
@@ -304,10 +308,25 @@ function onRestartNow(): void {
   border-top: none;
 }
 
-/* The foot's left slot: the auto-download checkbox pushes the action buttons
-   to the right. */
+/* The foot stacks two fixed rows (never scrolls with the body): the
+   auto-download checkbox gets its own right-aligned line below the action
+   buttons — one shared row is too narrow for it, especially with the zh
+   label. */
+.upd-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  width: 100%;
+}
+.upd-foot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 .upd-auto {
-  margin-right: auto;
+  align-self: flex-end;
 }
 
 .upd-progress {

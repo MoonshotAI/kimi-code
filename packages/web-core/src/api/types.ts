@@ -1049,11 +1049,19 @@ export type OAuthLoginStartResult =
 // Managed-account plan usage (GET /api/v1/oauth/usage)
 // ---------------------------------------------------------------------------
 
+export interface UsageWindow {
+  duration: number;
+  unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
 export interface UsageRow {
-  label: string;
+  /** Server-supplied custom name, passed through verbatim. */
+  name?: string;
+  window?: UsageWindow;
   used: number;
   limit: number;
-  resetHint?: string;
+  /** Absolute ISO timestamp of the next reset. */
+  resetAt?: string;
 }
 
 export interface BoosterWallet {

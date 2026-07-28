@@ -27,8 +27,8 @@ function fakeBridge(initial: UpdateStatus) {
       }),
       downloadUpdate: vi.fn().mockResolvedValue(undefined),
       installUpdate: vi.fn().mockResolvedValue(undefined),
-      // Manual (click-to-download) mode by default; the auto-mode visibility
-      // rules get their own describe block below.
+      // Manual (click-to-download) preference by default; the auto-mode
+      // preference tests get their own describe block below.
       getUpdateAutoDownload: vi.fn().mockResolvedValue(false),
       setUpdateAutoDownload: vi.fn().mockResolvedValue(undefined),
     },
@@ -242,7 +242,7 @@ describe('visibility & version skip', () => {
 });
 
 describe('auto-download mode', () => {
-  it('surfaces only the downloaded state — background phases stay silent', async () => {
+  it('keeps every non-idle state visible — background progress and failures surface too', async () => {
     const { bridge, emit } = fakeBridge({ state: 'idle' });
     bridge.getUpdateAutoDownload.mockResolvedValue(true);
     const tracker = createUpdateTracker(bridge);
@@ -250,23 +250,23 @@ describe('auto-download mode', () => {
     expect(tracker.autoDownload.value).toBe(true);
 
     emit({ state: 'available', version: '1.2.3' });
-    expect(tracker.visible.value).toBe(false);
+    expect(tracker.visible.value).toBe(true);
     emit({ state: 'downloading', version: '1.2.3', percent: 42 });
-    expect(tracker.visible.value).toBe(false);
+    expect(tracker.visible.value).toBe(true);
     emit({ state: 'downloaded', version: '1.2.3' });
     expect(tracker.visible.value).toBe(true);
-    // A failed background download retries on the next scheduled check —
-    // no error pill.
+    // A failed background download surfaces with a retry path (the next
+    // scheduled check retries on its own too).
     emit({ state: 'error', version: '1.2.3', message: 'network down' });
-    expect(tracker.visible.value).toBe(false);
+    expect(tracker.visible.value).toBe(true);
   });
 
-  it('switches the visibility rules live when the toggle flips', async () => {
+  it('flipping the toggle never changes visibility of the current update', async () => {
     const { bridge } = fakeBridge({ state: 'downloading', version: '1.2.3', percent: 42 });
     bridge.getUpdateAutoDownload.mockResolvedValue(true);
     const tracker = createUpdateTracker(bridge);
     await flush();
-    expect(tracker.visible.value).toBe(false);
+    expect(tracker.visible.value).toBe(true);
 
     tracker.setAutoDownload(false);
     expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(false);
@@ -276,7 +276,6 @@ describe('auto-download mode', () => {
       value: 'off',
     });
     expect(tracker.autoDownload.value).toBe(false);
-    // Manual mode surfaces the in-flight download again.
     expect(tracker.visible.value).toBe(true);
 
     tracker.setAutoDownload(true);
@@ -287,7 +286,7 @@ describe('auto-download mode', () => {
       value: 'on',
     });
     expect(trackMock).toHaveBeenCalledTimes(2);
-    expect(tracker.visible.value).toBe(false);
+    expect(tracker.visible.value).toBe(true);
   });
 
   it('reports canToggleAutoDownload=false without a bridge or with a legacy one', async () => {

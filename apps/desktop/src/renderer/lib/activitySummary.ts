@@ -14,7 +14,6 @@
 // The UI colours fragments by `tone`; `plain` joins everything into one flat
 // string for the row's title tooltip.
 
-import { formatCountNumber } from '@moonshot-ai/web-i18n';
 import { i18n } from '../i18n';
 import { formatDuration } from '../components/chatTurnRendering';
 import { normalizeToolName, toolSummary } from './toolMeta';
@@ -59,7 +58,7 @@ export interface LiveSummary {
 
 // Kinds with a typed done-tense template under tools.group.typed (multi_edit
 // narrates as edit). Unrecognized kinds — skills, MCP tools, anything without
-// a template — fall back to the generic "{number} 个工具调用" counter.
+// a template — fall back to the generic tool-call counter.
 const TYPED_KINDS = new Set(['read', 'bash', 'grep', 'search', 'glob', 'ls', 'web_fetch', 'edit', 'write']);
 
 /** The summary's kind identity: multi_edit narrates as edit. */
@@ -94,7 +93,7 @@ function aggregate(items: ActivitySummaryItem[]): { order: string[]; byKind: Map
 
 function doneClauseText(kind: string, count: number): string {
   if (TYPED_KINDS.has(kind)) return t(`tools.group.typed.${kind}.done`, { count });
-  return t('tools.group.countOther', { number: formatCountNumber(count, t) });
+  return t('tools.group.countOther', { count });
 }
 
 function failedFragment(count: number): SummaryFragment {

@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UsageRow } from '../src/api/types';
 import {
-  localizeResetHint,
-  localizeUsageLabel,
+  formatResetAt,
+  formatUsageLabel,
   moneyParts,
   usagePercent,
   usageSeverity,
@@ -9,7 +10,8 @@ import {
 
 // Minimal zh-flavoured translator double: records params, renders readable keys.
 const zhStrings: Record<string, string> = {
-  'settings.planUsage.weeklyLimit': '每周限额',
+  'settings.planUsage.weekLimit': '每周限额',
+  'settings.planUsage.genericLimit': '限额',
   'settings.planUsage.hourLimit': '{n} 小时限额',
   'settings.planUsage.dayLimit': '{n} 天限额',
   'settings.planUsage.minuteLimit': '{n} 分钟限额',
@@ -27,33 +29,62 @@ function t(key: string, params?: Record<string, unknown>): string {
   return out;
 }
 
-describe('localizeUsageLabel', () => {
-  it('maps the weekly and windowed limit labels', () => {
-    expect(localizeUsageLabel('Weekly limit', t)).toBe('每周限额');
-    expect(localizeUsageLabel('5h limit', t)).toBe('5 小时限额');
-    expect(localizeUsageLabel('3d limit', t)).toBe('3 天限额');
-    expect(localizeUsageLabel('30m limit', t)).toBe('30 分钟限额');
+function row(partial: Partial<UsageRow>): UsageRow {
+  return { used: 0, limit: 0, ...partial };
+}
+
+describe('formatUsageLabel', () => {
+  it('localizes each window unit', () => {
+    expect(formatUsageLabel(row({ window: { duration: 1, unit: 'week' } }), t)).toBe('每周限额');
+    expect(formatUsageLabel(row({ window: { duration: 3, unit: 'day' } }), t)).toBe('3 天限额');
+    expect(formatUsageLabel(row({ window: { duration: 5, unit: 'hour' } }), t)).toBe('5 小时限额');
+    expect(formatUsageLabel(row({ window: { duration: 30, unit: 'minute' } }), t)).toBe('30 分钟限额');
   });
 
-  it('passes unknown labels through verbatim', () => {
-    expect(localizeUsageLabel('Coding quota', t)).toBe('Coding quota');
-    expect(localizeUsageLabel('Limit #2', t)).toBe('Limit #2');
+  it('prefers the window over a server-supplied name', () => {
+    expect(formatUsageLabel(row({ name: 'Coding quota', window: { duration: 1, unit: 'week' } }), t)).toBe('每周限额');
+  });
+
+  it('passes a windowless custom name through verbatim', () => {
+    expect(formatUsageLabel(row({ name: 'Coding quota' }), t)).toBe('Coding quota');
+    expect(formatUsageLabel(row({ name: 'Limit #2' }), t)).toBe('Limit #2');
+  });
+
+  it('falls back to the generic label', () => {
+    expect(formatUsageLabel(row({}), t)).toBe('限额');
   });
 });
 
-describe('localizeResetHint', () => {
-  it('localizes duration hints', () => {
-    expect(localizeResetHint('resets in 5d 12h 57m', t)).toBe('5 天 12 小时 57 分钟后重置');
-    expect(localizeResetHint('resets in 3h 8m', t)).toBe('3 小时 8 分钟后重置');
-    expect(localizeResetHint('resets in 45s', t)).toBe('45 秒后重置');
+describe('formatResetAt', () => {
+  const NOW = Date.UTC(2026, 6, 28, 0, 0, 0);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
   });
 
-  it('maps the already-reset state', () => {
-    expect(localizeResetHint('reset', t)).toBe('已重置');
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('passes unparseable hints through', () => {
-    expect(localizeResetHint('resets at 2026-07-27T05:20:51Z', t)).toBe('resets at 2026-07-27T05:20:51Z');
+  function after(ms: number): string {
+    return new Date(NOW + ms).toISOString();
+  }
+
+  it('breaks the remaining time down like the TUI duration format', () => {
+    expect(formatResetAt(after((5 * 86400 + 12 * 3600 + 57 * 60) * 1000), t)).toBe('5 天 12 小时 57 分钟后重置');
+    expect(formatResetAt(after((3 * 3600 + 8 * 60) * 1000), t)).toBe('3 小时 8 分钟后重置');
+    expect(formatResetAt(after(30 * 60 * 1000), t)).toBe('30 分钟后重置');
+    expect(formatResetAt(after(45 * 1000), t)).toBe('45 秒后重置');
+  });
+
+  it('reads an already-passed timestamp as reset', () => {
+    expect(formatResetAt(after(-1000), t)).toBe('已重置');
+    expect(formatResetAt(after(0), t)).toBe('已重置');
+  });
+
+  it('returns an empty string for unparseable timestamps', () => {
+    expect(formatResetAt('not-a-date', t)).toBe('');
   });
 });
 

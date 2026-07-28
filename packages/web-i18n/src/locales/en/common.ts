@@ -9,16 +9,4 @@ export default {
   dismiss: 'Dismiss',
   loading: 'Loading',
   copy: 'Copy',
-  countWords: {
-    one: 'One',
-    two: 'Two',
-    three: 'Three',
-    four: 'Four',
-    five: 'Five',
-    six: 'Six',
-    seven: 'Seven',
-    eight: 'Eight',
-    nine: 'Nine',
-    ten: 'Ten',
-  },
 } as const;

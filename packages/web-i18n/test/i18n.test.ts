@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from 'vue';
 import { createI18n } from 'vue-i18n';
-import { createKimiI18n, formatCountNumber, KimiI18nKey, useKimiI18n } from '../src';
+import { createKimiI18n, KimiI18nKey, useKimiI18n } from '../src';
 
 describe('createKimiI18n', () => {
   it('returns the Chinese message for locale "zh"', () => {
@@ -19,19 +19,6 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('commands.goal.desc')).toBe(
       'Create/control a goal: /goal <objective>, /goal pause|resume|cancel',
     );
-  });
-});
-
-describe('formatCountNumber', () => {
-  it('shares localized words for counts from one through ten', () => {
-    const i18n = createKimiI18n({ locale: 'zh' });
-    expect(formatCountNumber(1, i18n.global.t)).toBe('一');
-    expect(formatCountNumber(7, i18n.global.t)).toBe('七');
-  });
-
-  it('falls back to digits outside the localized word range', () => {
-    const i18n = createKimiI18n({ locale: 'en' });
-    expect(formatCountNumber(23, i18n.global.t)).toBe('23');
   });
 });
 

@@ -110,15 +110,20 @@ describe('startAutoUpdater', () => {
     ]);
   });
 
-  it('setAutoDownload flips the flag, starts a waiting update on enable, and never cancels in-flight', () => {
+  it('setAutoDownload flips the flag only — a waiting update still needs the user click, and disabling never cancels in-flight', () => {
     const { updater, controller } = setup({ autoDownload: false });
 
-    // Enabling with a waiting update starts the download immediately.
+    // Enabling with a waiting update does NOT start it — the preference only
+    // applies to future checks.
     updater.emit('update-available', { version: '1.2.3' });
     controller.setAutoDownload(true);
     expect(updater.autoDownload).toBe(true);
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    expect(controller.getStatus().state).toBe('available');
+
+    // A manual click still starts the download.
+    controller.download();
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
-    expect(controller.getStatus().state).toBe('downloading');
 
     // Disabling mid-flight does not cancel — the download finishes and lands.
     controller.setAutoDownload(false);
@@ -131,7 +136,7 @@ describe('startAutoUpdater', () => {
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('setAutoDownload(true) retries a failed download right away', () => {
+  it('setAutoDownload(true) does not retry a failed download', () => {
     const { updater, controller } = setup({ autoDownload: false });
     updater.emit('update-available', { version: '1.2.3' });
     controller.download();
@@ -139,8 +144,8 @@ describe('startAutoUpdater', () => {
     expect(controller.getStatus().state).toBe('error');
 
     controller.setAutoDownload(true);
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2);
-    expect(controller.getStatus().state).toBe('downloading');
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(controller.getStatus().state).toBe('error');
   });
 
   it('streams available → downloading → downloaded statuses', () => {

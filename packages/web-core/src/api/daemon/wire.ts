@@ -608,12 +608,19 @@ export interface WireLogoutResult {
 // `GET /oauth/usage` — managed-account plan usage, discriminated by `kind`:
 // the server mirrors the toolkit result so the client can render inline
 // states (not signed in / endpoint unavailable / fetch failed) without a hard
-// HTTP failure.
+// HTTP failure. Rows are structured (window + absolute reset timestamp); the
+// client localizes labels and reset hints itself.
+export interface WireUsageWindow {
+  duration: number;
+  unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
 export interface WireUsageRow {
-  label: string;
+  name?: string;
+  window?: WireUsageWindow;
   used: number;
   limit: number;
-  reset_hint?: string;
+  reset_at?: string;
 }
 
 export interface WireBoosterWallet {
