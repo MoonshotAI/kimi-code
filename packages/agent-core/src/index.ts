@@ -37,6 +37,7 @@ export { renderToolResultForModel } from './agent/context/tool-result-render';
 export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {
   AgentContextData,
+  ContextBreakdownData,
   ContextMessage,
   PromptOrigin,
   UserPromptOrigin,

@@ -109,6 +109,7 @@ export interface TestAgentOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly log?: Logger;
   readonly experimentalFlags?: AgentOptions['experimentalFlags'];
+  readonly systemPromptContextProvider?: AgentOptions['systemPromptContextProvider'];
 }
 
 interface ConfigureOptions {
@@ -197,6 +198,7 @@ export class AgentTestContext {
       telemetry: options.telemetry,
       log: options.log,
       experimentalFlags: options.experimentalFlags,
+      systemPromptContextProvider: options.systemPromptContextProvider,
     });
     if (options.goal !== undefined) {
       (this.agent as unknown as { goal: GoalMode }).goal = options.goal;

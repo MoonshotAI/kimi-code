@@ -4,6 +4,7 @@ import {
   ErrorCodes,
   makeErrorPayload,
   type AgentContextData,
+  type ContextBreakdownData,
   type ApprovalRequest,
   type ApprovalResponse,
   type BeginGlobalMcpServerAuthResult,
@@ -558,6 +559,14 @@ export abstract class SDKRpcClientBase {
   async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const rpc = await this.getRpc();
     return rpc.getContext({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async getContextBreakdown(input: SessionIdRpcInput): Promise<ContextBreakdownData> {
+    const rpc = await this.getRpc();
+    return rpc.getContextBreakdown({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });

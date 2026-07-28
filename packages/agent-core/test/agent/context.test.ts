@@ -8,7 +8,7 @@ import { renderNotificationXml } from '../../src/agent/context/notification-xml'
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
 import { buildImageCompressionCaption } from '../../src/tools/support/image-compress';
-import { estimateTokensForMessages } from '../../src/utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../src/utils/tokens';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { testAgent } from './harness/agent';
@@ -1540,5 +1540,31 @@ describe('strictMessages duplicate tool call ids', () => {
     const strictResults = strict.filter((message) => message.role === 'tool');
     expect(strictResults).toHaveLength(1);
     expect(textOf(strictResults[0]!)).toBe('result 1');
+  });
+
+  it('estimates per-category context tokens for the /context report', async () => {
+    const ctx = testAgent({
+      systemPromptContextProvider: async () => ({
+        cwdListing: '',
+        agentsMd: '',
+        additionalDirsInfo: '',
+      }),
+    });
+    ctx.configure({ tools: ['Bash', 'Read'] });
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'hello' }]);
+
+    const breakdown = await ctx.agent.contextBreakdownData();
+    expect(breakdown.contextTokens).toBe(ctx.agent.context.tokenCount);
+    expect(breakdown.messages).toBe(ctx.agent.context.tokenCount);
+    expect(breakdown.maxContextTokens).toBeGreaterThan(0);
+    // The base system prompt is the rendered template minus the (empty)
+    // memory/skills sections.
+    expect(breakdown.systemPrompt).toBe(estimateTokens('You are a deterministic test agent.'));
+    expect(breakdown.systemTools).toBeGreaterThan(0);
+    // No MCP servers, no memory files, no skills in the test harness.
+    expect(breakdown.mcpTools).toBe(0);
+    expect(breakdown.memoryFiles).toBe(0);
+    expect(breakdown.skills).toBe(0);
   });
 });

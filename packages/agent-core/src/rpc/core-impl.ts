@@ -984,6 +984,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getContext(payload);
   }
 
+  getContextBreakdown({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getContextBreakdown(payload);
+  }
+
   getConfig({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getConfig(payload);
   }

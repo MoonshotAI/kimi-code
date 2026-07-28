@@ -2,6 +2,7 @@ import {
   ErrorCodes,
   KimiError,
   type AgentContextData,
+  type ContextBreakdownData,
   type KimiErrorCode,
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
@@ -324,6 +325,12 @@ export class Session {
   async getContext(): Promise<AgentContextData> {
     this.ensureOpen();
     return this.rpc.getContext({ sessionId: this.id });
+  }
+
+  /** Estimated per-category token cost of the interactive agent's context. */
+  async getContextBreakdown(): Promise<ContextBreakdownData> {
+    this.ensureOpen();
+    return this.rpc.getContextBreakdown({ sessionId: this.id });
   }
 
   async getUsage(): Promise<SessionUsage> {

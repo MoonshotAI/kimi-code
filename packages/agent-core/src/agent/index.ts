@@ -11,6 +11,8 @@ import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
 import type { PluginCommandOrigin } from './context';
+import type { ContextBreakdownData } from './context/types';
+import { estimateTokens } from '../utils/tokens';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
@@ -530,6 +532,38 @@ export class Agent {
     });
   }
 
+  /**
+   * Estimated per-category token cost behind the `/context` report. Re-gathers
+   * the system-prompt context (AGENTS.md, skill listing) so the memory/skills
+   * split reflects the current filesystem, then attributes the rendered system
+   * prompt between the base template and those injected sections.
+   */
+  async contextBreakdownData(): Promise<ContextBreakdownData> {
+    const context = this.systemPromptContextProvider === undefined
+      ? await prepareSystemPromptContext(this.kaos, this.brandHome, {
+          additionalDirs: this.additionalDirs,
+        })
+      : await this.systemPromptContextProvider();
+    const memoryFiles = estimateTokens(context.agentsMd ?? '');
+    const skills = estimateTokens(this.skills?.registry.getModelSkillListing() ?? '');
+    const systemPrompt = Math.max(
+      0,
+      estimateTokens(this.config.systemPrompt) - memoryFiles - skills,
+    );
+    const { systemTools, mcpTools } = this.tools.contextToolBreakdown();
+    const capability = this.config.modelCapabilities;
+    return {
+      contextTokens: this.context.tokenCount,
+      maxContextTokens: capability.max_input_tokens ?? capability.max_context_tokens ?? 0,
+      systemPrompt,
+      systemTools,
+      mcpTools,
+      memoryFiles,
+      skills,
+      messages: this.context.tokenCount,
+    };
+  }
+
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
     this.flushPendingAnthropicThinkingEffortWarnings();
@@ -713,6 +747,7 @@ export class Agent {
       getCronTasks: () => ({ tasks: this.cron?.listTaskSnapshots() ?? [] }),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
+      getContextBreakdown: () => this.contextBreakdownData(),
       getConfig: () => this.config.data(),
       getPermission: () => this.permission.data(),
       getPlan: () => this.planMode.data(),

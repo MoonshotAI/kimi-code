@@ -1,5 +1,5 @@
 import type { AgentConfigData } from '#/agent/config';
-import type { AgentContextData } from '#/agent/context';
+import type { AgentContextData, ContextBreakdownData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { CronTaskSnapshot } from '#/agent/cron';
 import type {
@@ -498,6 +498,7 @@ export interface AgentAPI {
   getCronTasks: (payload: EmptyPayload) => GetCronTasksResult;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
+  getContextBreakdown: (payload: EmptyPayload) => ContextBreakdownData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;
   getPlan: (payload: EmptyPayload) => PlanData;

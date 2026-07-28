@@ -17,6 +17,7 @@ import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
+import { estimateTokensForTools } from '../../utils/tokens';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
@@ -766,6 +767,28 @@ export class ToolManager {
 
   data(): readonly ToolInfo[] {
     return Array.from(this.toolInfos());
+  }
+
+  /**
+   * Estimated schema tokens of the tools currently exposed to the model,
+   * split into MCP and non-MCP (builtin + user) buckets for the `/context`
+   * report. Deferred tools are skipped: under progressive disclosure their
+   * schemas travel as context messages instead of the top-level `tools[]`,
+   * so their cost is already covered by the message estimate.
+   */
+  contextToolBreakdown(): { systemTools: number; mcpTools: number } {
+    let systemTools = 0;
+    let mcpTools = 0;
+    for (const tool of this.loopTools) {
+      if (tool.deferred === true) continue;
+      const estimate = estimateTokensForTools([tool]);
+      if (this.mcpTools.has(tool.name)) {
+        mcpTools += estimate;
+      } else {
+        systemTools += estimate;
+      }
+    }
+    return { systemTools, mcpTools };
   }
 
   storeData(): Readonly<Record<string, unknown>> {

@@ -19,10 +19,12 @@ export type Unsubscribe = () => void;
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
+  AgentContextData,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ConfigDiagnostics,
+  ContextBreakdownData,
   ContextMessage,
   CronTaskSnapshot,
   ExperimentalFeatureState,

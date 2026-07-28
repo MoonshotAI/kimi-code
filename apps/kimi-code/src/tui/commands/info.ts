@@ -1,8 +1,9 @@
 import { release as osRelease, type as osType } from 'node:os';
 
-import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { ContextBreakdownData, McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
+import { buildContextReportLines } from '../components/messages/context-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
 import {
@@ -181,6 +182,43 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   );
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
+}
+
+export async function showContextReport(host: SlashCommandHost): Promise<void> {
+  const session = host.requireSession();
+  // The detail lists are decorative — a failure there must not sink the report.
+  const [breakdownResult, skills, mcpServers] = await Promise.all([
+    loadContextBreakdown(host),
+    session.listSkills().catch(() => undefined),
+    session.listMcpServers().catch(() => undefined),
+  ]);
+  const panel = new UsagePanelComponent(
+    () =>
+      buildContextReportLines({
+        model: host.state.appState.model,
+        breakdown: breakdownResult.breakdown,
+        skills,
+        mcpServers,
+        error: breakdownResult.error,
+      }),
+    'primary',
+    ' Context ',
+  );
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+interface ContextBreakdownResult {
+  readonly breakdown?: ContextBreakdownData;
+  readonly error?: string;
+}
+
+async function loadContextBreakdown(host: SlashCommandHost): Promise<ContextBreakdownResult> {
+  try {
+    return { breakdown: await host.requireSession().getContextBreakdown() };
+  } catch (error) {
+    return { error: formatErrorMessage(error) };
+  }
 }
 
 async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {

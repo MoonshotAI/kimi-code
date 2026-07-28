@@ -131,3 +131,31 @@ export interface AgentContextData {
   history: readonly ContextMessage[];
   tokenCount: number;
 }
+
+/**
+ * Estimated per-category token cost of the agent's context, behind the
+ * `/context` report. All values except `contextTokens`/`messages` are
+ * character-heuristic estimates (see `estimateTokens`); the real numbers
+ * only exist per LLM round-trip and are not attributed per category.
+ */
+export interface ContextBreakdownData {
+  /** Last known total context tokens (same source as the status bar). */
+  contextTokens: number;
+  /** Model context-window size in tokens; 0 when unknown. */
+  maxContextTokens: number;
+  /**
+   * Estimated tokens of the base system prompt — the rendered template minus
+   * the injected memory (AGENTS.md) and skill-listing sections.
+   */
+  systemPrompt: number;
+  /** Estimated schema tokens of the builtin + user tools currently exposed. */
+  systemTools: number;
+  /** Estimated schema tokens of the MCP tools currently exposed inline. */
+  mcpTools: number;
+  /** Estimated tokens of the injected AGENTS.md memory content. */
+  memoryFiles: number;
+  /** Estimated tokens of the skill listing injected into the system prompt. */
+  skills: number;
+  /** Tokens of the conversation history (same as `contextTokens`). */
+  messages: number;
+}
