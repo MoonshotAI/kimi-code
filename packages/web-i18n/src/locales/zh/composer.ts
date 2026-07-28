@@ -17,6 +17,8 @@ export default {
   dropToAttach: '松开鼠标添加附件',
   remove: '移除',
   removeNamed: '移除 {name}',
+  clearAll: '清空全部附件',
+  attachmentCount: '共 {n} 个附件',
   uploading: '上传中',
   uploadFailed: '上传失败',
   attachFile: '添加附件',

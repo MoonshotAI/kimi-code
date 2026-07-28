@@ -17,6 +17,8 @@ export default {
   dropToAttach: 'Drop files to attach',
   remove: 'Remove',
   removeNamed: 'Remove {name}',
+  clearAll: 'Clear all attachments',
+  attachmentCount: '{n} attachments',
   uploading: 'Uploading',
   uploadFailed: 'Upload failed',
   attachFile: 'Attach file',

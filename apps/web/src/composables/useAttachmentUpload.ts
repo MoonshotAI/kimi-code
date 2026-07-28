@@ -277,6 +277,13 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     setForSession(sid, []);
   }
 
+  /** The strip's "clear all" affordance — submit's teardown, plus any open
+      preview goes away with its attachment. */
+  function clearAttachments(): void {
+    previewAttachment.value = null;
+    clearAfterSubmit();
+  }
+
   function patchAttachment(sid: string, localId: string, patch: Partial<Attachment>): void {
     const current = attachmentsBySession.value[sid] ?? [];
     if (!current.some((a) => a.localId === localId)) return;
@@ -310,8 +317,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
       const name = att.name ?? att.kind;
 
       if (att.fileId) {
-        // Ready as-is; fetch an authenticated thumbnail for protected URLs.
-        // File attachments have no thumbnail — nothing to fetch or revoke.
+        // Ready as-is; images fetch an authenticated thumbnail for protected
+        // URLs. Videos render a static play tile (the lightbox fetches on
+        // activation), files have no thumbnail — nothing to fetch or revoke.
         const entry: Attachment = {
           localId,
           name,
@@ -321,7 +329,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           fileId: att.fileId,
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
-        if (att.kind !== 'file' && !isData && !isBlob) {
+        if (att.kind === 'image' && !isData && !isBlob) {
           void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
             const blobUrl = URL.createObjectURL(blob);
             const current = attachmentsBySession.value[sid] ?? [];
@@ -416,6 +424,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     handleDragLeave,
     handleDrop,
     clearAfterSubmit,
+    clearAttachments,
     loadAttachments,
   };
 }

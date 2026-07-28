@@ -1,14 +1,14 @@
 <!-- apps/web/src/components/chat/MediaLightbox.vue
-     Floating preview overlay for media in SENT messages (user-bubble image/
-     video thumbnails). A canonical modal, not a local floating div: it
-     teleports to <body> (the chat scroll container can neither clip it nor
-     scroll behind it) and registers with the shared dialog stack
+     Floating preview overlay for media attachments — the sent-message chips
+     and the composer's pending-attachment strip open the same modal. A
+     canonical modal, not a local floating div: it teleports to <body> (no
+     ancestor's overflow or container-type can clip it or capture its fixed
+     geometry) and registers with the shared dialog stack
      (openDialogCount) — App's side-panel Esc handler and the conversation's
      Esc-interrupt both defer to open overlays, so a plain window-level Esc
      handler owns the key while the preview is up (same pattern as the web-ui
-     Dialog primitive). Visuals follow the composer's pending-attachment
-     lightbox (att-lightbox); bytes come through AuthMedia so file-store media
-     loads with auth. -->
+     Dialog primitive). Bytes come through AuthMedia so file-store media
+     loads with auth; local object URLs (composer drafts) pass through. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
