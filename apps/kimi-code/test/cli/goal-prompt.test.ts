@@ -27,7 +27,7 @@ describe('goalExitCode', () => {
     expect(goalExitCode('complete')).toBe(GOAL_EXIT_CODES.complete);
     expect(goalExitCode('blocked')).toBe(GOAL_EXIT_CODES.blocked);
     expect(goalExitCode('paused')).toBe(GOAL_EXIT_CODES.paused);
-    expect(goalExitCode(undefined)).toBe(0);
+    expect(goalExitCode()).toBe(0);
     // Folded-away statuses map to success (treated as complete/absent).
     expect(goalExitCode('impossible')).toBe(0);
     // The distinct codes are unique across the statuses.
@@ -105,6 +105,10 @@ const mocks = vi.hoisted(() => {
       }
     }),
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
+    // A print-turn-capable session: `runPromptTurn` no-ops unless this method
+    // exists (it marks the session as a `PrintTurnSession`). Returning
+    // anything but 'continue' lets the run settle after the turn completes.
+    handlePrintMainTurnCompleted: vi.fn(async () => 'stop' as const),
   };
   return {
     session,

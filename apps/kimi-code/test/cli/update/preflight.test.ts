@@ -240,7 +240,16 @@ async function flushBackgroundInstall(): Promise<void> {
 }
 
 describe('runUpdatePreflight', () => {
+  // The generic cases describe the POSIX baseline (plain spawn options); the
+  // win32/darwin variants pin their own platform locally. Without pinning
+  // here, a Windows dev host makes every generic case take the win32 branch
+  // (npm.cmd + shell:true + windowsHide:true) and mismatch the POSIX option
+  // assertions. `process.platform` is a configurable property, so omitted
+  // attributes are retained across redefinitions and the local overrides
+  // keep working; afterEach restores the real host value.
+  const REAL_PLATFORM = process.platform;
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
     // Pin the experimental flag off so rollout gating is deterministic
     // regardless of the host environment (the flag bypasses batch holds).
     // Tests that exercise the bypass opt back in with `vi.stubEnv(..., '1')`.
@@ -257,6 +266,7 @@ describe('runUpdatePreflight', () => {
   });
 
   afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: REAL_PLATFORM });
     vi.clearAllMocks();
     vi.unstubAllEnvs();
   });

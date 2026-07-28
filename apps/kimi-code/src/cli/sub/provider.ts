@@ -171,8 +171,23 @@ export async function handleProviderList(
   const config = await harness.getConfig();
 
   if (opts.json) {
+    // Never leak credentials to stdout: strip `apiKey` from every provider
+    // (and any nested `source.apiKey`) before serializing.
+    const redactedProviders: Record<string, Record<string, unknown>> = {};
+    for (const [id, provider] of Object.entries(config.providers)) {
+      const { apiKey: _apiKey, source, ...rest } = provider as Record<string, unknown> & {
+        apiKey?: unknown;
+        source?: Record<string, unknown>;
+      };
+      const redacted: Record<string, unknown> = { ...rest };
+      if (source !== undefined) {
+        const { apiKey: _sourceApiKey, ...sourceRest } = source;
+        redacted['source'] = sourceRest;
+      }
+      redactedProviders[id] = redacted;
+    }
     deps.stdout.write(
-      `${JSON.stringify({ providers: config.providers, models: config.models ?? {} }, null, 2)}\n`,
+      `${JSON.stringify({ providers: redactedProviders, models: config.models ?? {} }, null, 2)}\n`,
     );
     return;
   }
