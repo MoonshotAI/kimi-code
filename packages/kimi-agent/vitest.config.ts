@@ -7,6 +7,7 @@ export default defineConfig({
       'rust-loop.test.ts',
       'napi-cancel.test.ts',
       'napi-gated-write.test.ts',
+      'session-client.test.ts',
     ],
   },
 });

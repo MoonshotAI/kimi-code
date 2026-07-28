@@ -39,6 +39,10 @@ pub struct AgentOptions {
     pub max_steps_per_turn: u32,
     /// Maximum retries per step.
     pub max_retries_per_step: u32,
+    /// Host-provided tool definitions (name/description/schema). These are
+    /// presented to the model in addition to the engine's own tools; calls
+    /// to them settle at the host via `execute_tool`.
+    pub host_tools: Vec<crate::turn_loop::types::ToolInfo>,
 }
 
 impl Default for AgentOptions {
@@ -53,6 +57,7 @@ impl Default for AgentOptions {
             native_llm: None,
             max_steps_per_turn: 50,
             max_retries_per_step: 3,
+            host_tools: Vec::new(),
         }
     }
 }

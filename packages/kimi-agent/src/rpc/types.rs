@@ -266,6 +266,10 @@ pub struct SessionCreateParams {
     pub goal_enabled: Option<bool>,
     #[serde(default)]
     pub native_llm: Option<NativeLlmConfig>,
+    /// Host tool definitions presented to the model; calls settle at the
+    /// host via `host/execute_tool`.
+    #[serde(default)]
+    pub tools: Vec<ToolDef>,
 }
 
 /// Input for session/prompt.

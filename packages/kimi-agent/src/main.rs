@@ -328,6 +328,15 @@ async fn main() -> anyhow::Result<()> {
                         }),
                         goal_enabled: input.goal_enabled.unwrap_or(true),
                         native_llm: input.native_llm,
+                        host_tools: input
+                            .tools
+                            .into_iter()
+                            .map(|t| kimi_agent::turn_loop::types::ToolInfo {
+                                name: t.name,
+                                description: t.description,
+                                input_schema: t.input_schema,
+                            })
+                            .collect(),
                         ..Default::default()
                     },
                 )

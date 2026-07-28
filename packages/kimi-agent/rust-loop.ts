@@ -808,8 +808,13 @@ let napiEngine: NapiEngine | null = null;
 function initEngine(): EngineMode {
   if (engineMode !== 'js') return engineMode;
 
+  // The session-owned surface (`session/*`) is stdio-only. Setting
+  // KIMI_AGENT_FORCE_STDIO=1 skips the napi fast path so hosts (and tests)
+  // that need that surface reach the binary instead of the in-process addon.
+  const forceStdio = globalThis.process?.env?.['KIMI_AGENT_FORCE_STDIO'] === '1';
+
   // 1) Try napi-rs first (in-process, no subprocess overhead)
-  if (NapiEngine.isAvailable()) {
+  if (!forceStdio && NapiEngine.isAvailable()) {
     const engine = new NapiEngine();
     if (engine.load()) {
       napiEngine = engine;
@@ -1987,6 +1992,8 @@ export interface SessionCreateOptions {
   model?: string;
   goalEnabled?: boolean;
   nativeLlm?: NativeLlmDef;
+  /** Host tool definitions presented to the model (executed at the host). */
+  tools?: { name: string; description: string; inputSchema?: unknown }[];
 }
 
 /** Create a session-owned agent inside the engine. */
@@ -2001,6 +2008,11 @@ export async function sessionCreate(
     model: options.model,
     goal_enabled: options.goalEnabled,
     native_llm: options.nativeLlm,
+    tools: (options.tools ?? []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema ?? { type: 'object' },
+    })),
   });
 }
 
@@ -2042,6 +2054,119 @@ export async function sessionList(
   offset?: number,
 ): Promise<{ sessions: unknown[] } | null> {
   return agentCall('session/list', { limit, offset });
+}
+
+// ── Session client (host-facing wrapper over the session surface) ────────
+
+/** A host tool exposed to a session-owned agent. */
+export interface SessionToolDef {
+  name: string;
+  description: string;
+  /** JSON schema of the arguments (defaults to an open object). */
+  inputSchema?: unknown;
+  execute: (args: unknown) => Promise<{ output: string; isError?: boolean }>;
+}
+
+export interface SessionClientOptions {
+  sessionId?: string;
+  systemPrompt?: string;
+  model?: string;
+  goalEnabled?: boolean;
+  homedir?: string;
+  nativeLlm?: NativeLlmDef;
+  /**
+   * Answer one model step (host-proxy mode): given the engine's wire-shaped
+   * request, return the model reply. Unused when `nativeLlm` is set — the
+   * engine then talks to the provider directly and streams deltas back over
+   * `onEvent`.
+   */
+  llmStep?: (req: LlmChatRequest) => Promise<LlmChatResponse>;
+  /** Host tools the engine may call back for. */
+  tools?: SessionToolDef[];
+  /** Lifecycle + streaming events (`session.*`, `llm.*`). */
+  onEvent?: (event: EngineEvent) => void;
+}
+
+/**
+ * A session-owned agent handle: the ENGINE owns the loop, context, goal
+ * driving, and persistence — the host only answers model steps and tool
+ * calls, and renders from events. This is the phase-D integration point for
+ * hosts (print mode, TUI): hand it a step function and a tool table instead
+ * of running a turn loop.
+ */
+export interface SessionClient {
+  readonly sessionId: string;
+  /** Run one prompt; goal continuations run inside the engine. */
+  prompt(text: string): Promise<SessionPromptResult | null>;
+  /** Stop the running prompt at the next step boundary. */
+  cancel(): Promise<boolean>;
+  /** Persist context + goal under this session id. */
+  save(): Promise<boolean>;
+  /** Restore persisted state; an active goal comes back paused. */
+  load(): Promise<boolean>;
+}
+
+/**
+ * Create a session-owned agent and install the host handlers for it.
+ * Returns null when the stdio engine is unavailable (the session surface is
+ * stdio-only; set KIMI_AGENT_FORCE_STDIO=1 to skip a present napi addon).
+ *
+ * NOTE: host handlers live on the engine-process singleton, so one session
+ * client is active at a time — same constraint as the turn-override path.
+ */
+export async function createSessionClient(
+  options: SessionClientOptions,
+): Promise<SessionClient | null> {
+  if (initEngine() !== 'stdio') return null;
+  const created = await sessionCreate({
+    sessionId: options.sessionId,
+    homedir: options.homedir,
+    systemPrompt: options.systemPrompt,
+    model: options.model,
+    goalEnabled: options.goalEnabled,
+    nativeLlm: options.nativeLlm,
+    tools: (options.tools ?? []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    })),
+  });
+  if (created === null) return null;
+  const sessionId = created.session_id;
+
+  const toolMap = new Map((options.tools ?? []).map((tool) => [tool.name, tool]));
+  installSessionHostHandlers({
+    llmChat:
+      options.llmStep ??
+      (() =>
+        Promise.reject(
+          new Error('createSessionClient: llmStep is required in host-proxy mode'),
+        )),
+    toolExecute: async (req) => {
+      const tool = toolMap.get(req.tool_name);
+      if (tool === undefined) {
+        return { content: `Tool "${req.tool_name}" not found`, is_error: true };
+      }
+      try {
+        const result = await tool.execute(req.arguments);
+        return { content: result.output, is_error: result.isError === true };
+      } catch (error) {
+        return {
+          content: error instanceof Error ? error.message : String(error),
+          is_error: true,
+        };
+      }
+    },
+    onEvent: options.onEvent,
+  });
+
+  return {
+    sessionId,
+    prompt: (text) => sessionPrompt(sessionId, [{ type: 'text', text }]),
+    cancel: async () => (await sessionCancel(sessionId))?.cancelled ?? false,
+    save: async () => (await sessionSave(sessionId))?.ok ?? false,
+    load: async () => (await sessionLoad(sessionId))?.found ?? false,
+  };
 }
 
 // ── Cron RPC API ──────────────────────────────────────────────────────────────

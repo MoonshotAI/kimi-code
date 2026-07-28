@@ -209,6 +209,9 @@ pub struct Agent {
     pub max_steps_per_turn: u32,
     /// Maximum retries per step.
     pub max_retries_per_step: u32,
+    /// Host-provided tool definitions, presented to the model alongside the
+    /// engine's own tools; calls settle at the host via `execute_tool`.
+    pub host_tools: Vec<loop_types::ToolInfo>,
     /// Whether goal mode is enabled.
     pub goal_enabled: bool,
     /// Goal mode state machine (active goal lifecycle).
@@ -250,6 +253,7 @@ impl Agent {
             cancellation: Arc::new(AtomicBool::new(false)),
             max_steps_per_turn: options.max_steps_per_turn,
             max_retries_per_step: options.max_retries_per_step,
+            host_tools: options.host_tools.clone(),
             goal_enabled: options.goal_enabled,
             goal: if options.goal_enabled { Some(GoalMode::new()) } else { None },
             native_llm: options.native_llm.clone(),
@@ -374,6 +378,13 @@ impl Agent {
         // there are no per-skill tool definitions to register here.
         // Knowledge search tool.
         tool_defs.push(loop_types::ToolInfo { name: "SearchKnowledge".into(), description: "Search knowledge base".into(), input_schema: serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}) });
+        // Host-registered tools (session surface): presented to the model,
+        // executed at the host. Engine-side names win on collision.
+        for host_tool in &self.host_tools {
+            if !tool_defs.iter().any(|td| td.name == host_tool.name) {
+                tool_defs.push(host_tool.clone());
+            }
+        }
 
         // ── Compaction ──
         let msg_count = self.context.messages().len() as u64;
@@ -394,7 +405,10 @@ impl Agent {
             llm: &*llm,
             messages: messages_to_loop_messages(&messages),
             tools: &[],
-            tool_defs: vec![],
+            // The assembled table (native + goal + MCP + knowledge + host):
+            // this is what the model actually sees. It was previously
+            // dropped (`vec![]`), leaving the model blind to every tool.
+            tool_defs,
             hooks: loop_hooks.as_ref(),
             max_steps: self.max_steps_per_turn,
             goal: None,
