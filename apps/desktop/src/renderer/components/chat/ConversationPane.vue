@@ -262,13 +262,15 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   const tasks = props.tasks;
   const task =
     tasks.find((tk) => tk.id === toolCallId) ?? tasks.find((tk) => tk.parentToolCallId === toolCallId);
-  if (task) return task.id;
+  if (task?.agentId) return task.agentId;
   // A subagent task synthesized from a text delta (client subscribed after the
   // spawn, so the lifecycle parentToolCallId was missed) has no parentToolCallId.
   // When exactly one such unmapped subagent task exists, attribute it to this
   // Agent tool call so the Open-detail button stays reachable.
-  const unmapped = tasks.filter((tk) => tk.kind === 'subagent' && !tk.parentToolCallId);
-  if (unmapped.length === 1) return unmapped[0]!.id;
+  const unmapped = tasks.filter(
+    (tk) => tk.kind === 'subagent' && !tk.parentToolCallId && tk.agentId,
+  );
+  if (unmapped.length === 1) return unmapped[0]!.agentId;
   return undefined;
 }
 provide('resolveAgentTaskId', resolveAgentTaskId);

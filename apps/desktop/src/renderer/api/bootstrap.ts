@@ -60,6 +60,7 @@ function createApi(): KimiWebApi {
     tracer: webTracer,
     credentialStore: webCredentialStore,
     projectorFactory: createAgentProjector,
+    mainAgentOnly: true,
   });
 }
 

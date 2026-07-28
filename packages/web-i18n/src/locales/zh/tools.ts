@@ -45,6 +45,7 @@ export default {
   output: {
     waiting: '等待输出…',
     empty: '（无输出）',
+    saved: '已保存的结果',
   },
   plan: {
     review: {

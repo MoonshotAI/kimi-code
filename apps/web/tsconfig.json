@@ -13,7 +13,10 @@
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    // Workspace packages export source. Let each package enforce its own
+    // parameter policy instead of applying the web app's stricter setting to
+    // dependency internals; oxlint still catches unused app parameters.
+    "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,

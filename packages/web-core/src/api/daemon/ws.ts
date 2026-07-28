@@ -5,6 +5,12 @@
 
 import { noopTracer } from '../../contracts';
 import type { CredentialStore, Tracer } from '../../contracts';
+import {
+  transcriptOpsEventSchema,
+  transcriptResetEventSchema,
+  type AgentTranscriptSnapshot,
+  type TranscriptOperation,
+} from '@moonshot-ai/transcript';
 import { classifyFrame } from './frameClassifier';
 import type { WireEvent, WireServerFrame } from './wire';
 
@@ -48,6 +54,18 @@ export interface DaemonEventSocketHandlers {
   onError(code: number, msg: string, fatal: boolean): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
+  onTranscriptReset?(
+    sessionId: string,
+    agentId: string,
+    snapshot: AgentTranscriptSnapshot,
+    seq?: number,
+  ): void;
+  onTranscriptOps?(
+    sessionId: string,
+    agentId: string,
+    ops: readonly TranscriptOperation[],
+    seq?: number,
+  ): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +95,8 @@ export interface DaemonEventSocketOptions {
   handlers: DaemonEventSocketHandlers;
   tracer?: Tracer;
   credentialStore?: CredentialStore;
+  /** Limit the legacy raw event stream to the main agent. */
+  mainAgentOnly?: boolean;
 }
 
 export class DaemonEventSocket {
@@ -86,6 +106,13 @@ export class DaemonEventSocket {
 
   /** subscriptions we manage: sessionId → last known cursor {seq, epoch} */
   private readonly subscriptions = new Map<string, SessionCursor>();
+  /** One full Transcript grade spec per session. */
+  private readonly transcriptSubscriptions = new Map<
+    string,
+    { agentId: string; sinceSeq?: number }
+  >();
+  /** Legacy raw agents needed by side channels while main-only mode is enabled. */
+  private readonly sideChannelAgents = new Map<string, Set<string>>();
 
   /** subscriptions queued while not yet connected */
   private readonly pendingSubscriptions: PendingSubscription[] = [];
@@ -219,6 +246,54 @@ export class DaemonEventSocket {
         id: this.nextId(),
         payload: { session_ids: [sessionId] },
       });
+    }
+  }
+
+  /**
+   * Replace a session's Transcript stream with one agent. A switch from A to B
+   * is one control frame, so the server never observes an intermediate state.
+   */
+  subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void {
+    this.transcriptSubscriptions.set(sessionId, {
+      agentId,
+      ...(sinceSeq !== undefined ? { sinceSeq } : {}),
+    });
+    if (this.connected) this.sendTranscriptSubscribe(sessionId, agentId, sinceSeq);
+  }
+
+  unsubscribeTranscript(sessionId: string, agentIds?: string[]): void {
+    const current = this.transcriptSubscriptions.get(sessionId);
+    if (
+      agentIds === undefined ||
+      current === undefined ||
+      agentIds.includes(current.agentId)
+    ) {
+      this.transcriptSubscriptions.delete(sessionId);
+    }
+    if (!this.connected || !this.ws) return;
+    this.send({
+      type: 'unsubscribe_v2',
+      id: this.nextId(),
+      payload: {
+        session_id: sessionId,
+        ...(agentIds !== undefined ? { agent_ids: agentIds } : {}),
+      },
+    });
+  }
+
+  /** Keep one side-channel agent in the legacy raw filter for its parent session. */
+  markSideChannelAgent(sessionId: string, agentId: string): void {
+    if (!this.opts.mainAgentOnly) return;
+    let agents = this.sideChannelAgents.get(sessionId);
+    if (agents === undefined) {
+      agents = new Set();
+      this.sideChannelAgents.set(sessionId, agents);
+    }
+    if (agents.has(agentId)) return;
+    agents.add(agentId);
+    const cursor = this.subscriptions.get(sessionId);
+    if (this.connected && cursor !== undefined) {
+      this.sendSubscribe([sessionId], { [sessionId]: cursor });
     }
   }
 
@@ -360,7 +435,59 @@ export class DaemonEventSocket {
     // TypeScript from narrowing .payload in each case arm. Cast once here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const frame = rawFrame as any;
-    switch ((rawFrame as { type: string }).type) {
+    const rawType = (rawFrame as { type: string }).type;
+    if (rawType === 'transcript.reset') {
+      const parsed = transcriptResetEventSchema.safeParse({
+        type: rawType,
+        ...(frame.payload as object),
+      });
+      const sessionId = frame.session_id;
+      if (!parsed.success || typeof sessionId !== 'string') {
+        this.opts.handlers.onError(0, 'Invalid transcript.reset frame', false);
+        return;
+      }
+      const event = parsed.data;
+      this.opts.handlers.onTranscriptReset?.(
+        sessionId,
+        event.agent_id,
+        { ...event.snapshot, hasMoreOlder: event.has_more_older },
+        event.seq,
+      );
+      const subscription = this.transcriptSubscriptions.get(sessionId);
+      if (subscription?.agentId === event.agent_id && event.seq !== undefined) {
+        subscription.sinceSeq = event.seq;
+      }
+      return;
+    }
+    if (rawType === 'transcript.ops') {
+      const parsed = transcriptOpsEventSchema.safeParse({
+        type: rawType,
+        ...(frame.payload as object),
+      });
+      const sessionId = frame.session_id;
+      if (!parsed.success || typeof sessionId !== 'string') {
+        this.opts.handlers.onError(0, 'Invalid transcript.ops frame', false);
+        return;
+      }
+      const event = parsed.data;
+      const accepted = this.opts.handlers.onTranscriptOps?.(
+        sessionId,
+        event.agent_id,
+        event.ops,
+        event.seq,
+      );
+      const subscription = this.transcriptSubscriptions.get(sessionId);
+      if (
+        accepted !== false &&
+        subscription?.agentId === event.agent_id &&
+        event.seq !== undefined
+      ) {
+        subscription.sinceSeq = event.seq;
+      }
+      return;
+    }
+
+    switch (rawType) {
       case 'server_hello': {
         const hb = (frame.payload as { heartbeat_ms?: unknown } | undefined)?.heartbeat_ms;
         if (typeof hb === 'number' && hb > 0) this.heartbeatMs = hb;
@@ -512,8 +639,21 @@ export class DaemonEventSocket {
         client_id: this.opts.clientId,
         subscriptions: allSessionIds,
         cursors,
+        ...(this.opts.mainAgentOnly
+          ? {
+              agent_filter: this.rawAgentFilter(allSessionIds),
+            }
+          : {}),
       },
     });
+
+    for (const [sessionId, subscription] of this.transcriptSubscriptions) {
+      this.sendTranscriptSubscribe(
+        sessionId,
+        subscription.agentId,
+        subscription.sinceSeq,
+      );
+    }
 
     for (const attachment of this.terminalAttachments.values()) {
       this.sendTerminalAttach(attachment.sessionId, attachment.terminalId, attachment.lastSeq);
@@ -527,6 +667,38 @@ export class DaemonEventSocket {
       payload: {
         session_ids: sessionIds,
         cursors,
+        ...(this.opts.mainAgentOnly
+          ? {
+              agent_filter: this.rawAgentFilter(sessionIds),
+            }
+          : {}),
+      },
+    });
+  }
+
+  private rawAgentFilter(sessionIds: readonly string[]): Record<string, string[]> {
+    return Object.fromEntries(
+      sessionIds.map((sessionId) => [
+        sessionId,
+        ['main', ...(this.sideChannelAgents.get(sessionId) ?? [])],
+      ]),
+    );
+  }
+
+  private sendTranscriptSubscribe(
+    sessionId: string,
+    agentId: string,
+    sinceSeq?: number,
+  ): void {
+    this.send({
+      type: 'subscribe_v2',
+      id: this.nextId(),
+      payload: {
+        session_id: sessionId,
+        transcript: { [agentId]: 'delta' },
+        ...(sinceSeq !== undefined
+          ? { transcript_since: { [agentId]: sinceSeq } }
+          : {}),
       },
     });
   }

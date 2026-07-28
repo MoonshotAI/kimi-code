@@ -15,6 +15,9 @@ function subagentTask(
     subagentPhase?: AppTask['subagentPhase'];
     text?: string;
     outputLines?: string[];
+    agentId?: string;
+    runInBackground?: boolean;
+    backgroundTaskId?: string;
   } = {},
 ): AppTask {
   return {
@@ -28,7 +31,10 @@ function subagentTask(
     swarmIndex: opts.swarmIndex,
     text: opts.text,
     outputLines: opts.outputLines,
+    agentId: opts.agentId,
     subagentPhase: opts.subagentPhase ?? 'working',
+    runInBackground: opts.runInBackground,
+    backgroundTaskId: opts.backgroundTaskId,
   };
 }
 
@@ -82,8 +88,27 @@ describe('countSwarmMembers', () => {
 
 describe('swarmMembersByToolCall', () => {
   it('keeps single-member swarms so a resume-only AgentSwarm gets live progress', () => {
-    const map = swarmMembersByToolCall([subagentTask('a', 'swarm-1', { swarmIndex: 1 })]);
+    const map = swarmMembersByToolCall([
+      subagentTask('a', 'swarm-1', { swarmIndex: 1, agentId: 'a' }),
+    ]);
     expect(map.get('swarm-1')?.map((m) => m.id)).toEqual(['a']);
+    expect(map.get('swarm-1')?.map((m) => m.agentId)).toEqual(['a']);
+  });
+
+  it('does not expose a REST background-task id as an agent transcript id', () => {
+    const map = swarmMembersByToolCall([
+      subagentTask('task-1', 'swarm-1', { runInBackground: true }),
+      subagentTask('agent-2', 'swarm-1', {
+        agentId: 'agent-2',
+        runInBackground: true,
+        backgroundTaskId: 'task-2',
+      }),
+    ]);
+
+    expect(map.get('swarm-1')).toEqual([
+      expect.objectContaining({ id: 'agent-2', agentId: 'agent-2' }),
+      expect.objectContaining({ id: 'task-1', agentId: undefined }),
+    ]);
   });
 
   it('groups every subagent with the same parentToolCallId, ignoring swarmIndex', () => {

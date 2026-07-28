@@ -30,11 +30,10 @@ function hasDetail(task: TaskItem): boolean {
 }
 
 function handleClick(task: TaskItem): void {
-  // Subagents open their live detail in the right-side panel instead of
-  // expanding inline — the dock only lists background subagents, and their
-  // streaming progress belongs in the side panel.
-  if (task.kind === 'subagent') {
-    emit('open', task.id);
+  // Only a stable child-agent id can address a Transcript. REST-only rows keep
+  // their saved output available through the normal inline expansion.
+  if (task.kind === 'subagent' && task.agentId) {
+    emit('open', task.agentId);
     return;
   }
   if (!hasDetail(task)) return;
@@ -43,7 +42,7 @@ function handleClick(task: TaskItem): void {
 }
 
 function isClickable(task: TaskItem): boolean {
-  return task.kind === 'subagent' || hasDetail(task);
+  return Boolean((task.kind === 'subagent' && task.agentId) || hasDetail(task));
 }
 
 function glyphStatus(state: string): StatusGlyphStatus {
@@ -98,7 +97,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
               class="tp-stop"
               @click.stop="emit('cancel', task.id)"
             >{{ t('tasks.stop') }}</button>
-            <Icon v-if="task.kind === 'subagent'" class="tp-chevron" name="chevron-right" size="sm" />
+            <Icon v-if="task.kind === 'subagent' && task.agentId" class="tp-chevron" name="chevron-right" size="sm" />
             <Icon v-else-if="hasDetail(task)" class="tp-chevron" :class="{ open: expandedIds.has(task.id) }" name="chevron-right" size="sm" />
           </div>
           <div

@@ -103,6 +103,8 @@ export interface ToolCall {
   name: string; // e.g. 'read' | 'bash'
   arg: string; // e.g. '· src/api/client.ts'
   status: ToolStatus;
+  /** Stable child agent id used to open or resume its transcript. */
+  agentId?: string;
   timing?: string; // e.g. '12ms'
   output?: string[]; // shown line by line when expanded
   media?: ToolMedia;
@@ -319,6 +321,8 @@ export type TaskState = 'run' | 'done' | 'fail';
 
 export interface TaskItem {
   id: string;
+  /** Stable child-agent id. Unlike `id`, this is never a REST background-task id. */
+  agentId?: string;
   name: string;
   kind: string; // 'subagent' | 'task'
   state: TaskState;

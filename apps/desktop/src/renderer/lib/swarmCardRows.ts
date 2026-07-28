@@ -10,6 +10,7 @@ import type { SwarmResult, SwarmResultSubagent } from './parseSwarmResult';
 
 export interface SwarmCardRow {
   id: string;
+  agentId?: string;
   name: string;
   activity: string;
   phase: AppSubagentPhase;
@@ -49,6 +50,7 @@ function outcomeToPhase(outcome: string): AppSubagentPhase {
 function resultRow(sub: SwarmResultSubagent, index: number): SwarmCardRow {
   return {
     id: sub.agentId ?? sub.item ?? `result-${index}`,
+    agentId: sub.agentId,
     name: sub.item ?? `subagent ${index + 1}`,
     activity: sub.body.split('\n')[0] ?? '',
     phase: outcomeToPhase(sub.outcome),
@@ -63,7 +65,7 @@ function resultRow(sub: SwarmResultSubagent, index: number): SwarmCardRow {
  * description as a match.
  */
 function memberCoversResult(member: SwarmMember, sub: SwarmResultSubagent): boolean {
-  if (sub.agentId && member.id === sub.agentId) return true;
+  if (sub.agentId && member.agentId === sub.agentId) return true;
   if (sub.item && member.name.includes(sub.item)) return true;
   return false;
 }
@@ -81,6 +83,7 @@ function memberCoversResult(member: SwarmMember, sub: SwarmResultSubagent): bool
 export function buildSwarmCardRows(members: SwarmMember[], result: SwarmResult | null): SwarmCardRow[] {
   const memberRows = members.map((m) => ({
     id: m.id,
+    agentId: m.agentId,
     name: m.name,
     activity: swarmMemberActivity(m),
     phase: m.phase,

@@ -27,4 +27,5 @@ export default {
   openDetail: 'Open',
   collapse: 'Collapse',
   expand: 'Expand',
+  transcriptLoadError: 'Failed to load this sub agent’s conversation.',
 } as const;

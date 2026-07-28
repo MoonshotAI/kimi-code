@@ -414,15 +414,6 @@ function onShortcutKeydown(e: KeyboardEvent): void {
 // ---------------------------------------------------------------------------
 const detailTarget = ref<DetailTarget | null>(null);
 
-// True for one frame while the active session changes: suppresses the right
-// panel's width transition so a restored panel snaps to its width instead of
-// animating open from zero.
-const panelSwitching = ref(false);
-watch(client.activeSessionId, () => {
-  panelSwitching.value = true;
-  void nextTick(() => { panelSwitching.value = false; });
-});
-
 const {
   previewTarget,
   previewFile,
@@ -476,8 +467,16 @@ const {
   openCompactionPanel,
   closeCompactionPanel,
   agentPanelMember,
+  agentPanelTurns,
+  agentPanelLoading,
+  agentPanelLoadError,
+  agentPanelLoadingMore,
+  agentPanelLoadMoreError,
+  agentPanelHasMore,
+  agentPanelRunning,
   openAgentPanel,
   closeAgentPanel,
+  loadOlderAgentMessages,
   detailDiffMode,
   detailDiffPath,
   openDiffDetail,
@@ -1273,7 +1272,7 @@ function openPr(url: string): void {
       v-if="!isMobile || sidePanelVisible"
       ref="previewPanelEl"
       class="global-preview"
-      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging || panelSwitching }"
+      :class="{ open: sidePanelVisible, mobile: isMobile }"
       role="complementary"
       :aria-label="t('layout.detailPanelAria')"
       :aria-hidden="!sidePanelVisible"
@@ -1287,7 +1286,18 @@ function openPr(url: string): void {
       <AgentDetailPanel
         v-else-if="detailTarget === 'agent' && agentPanelMember"
         :member="agentPanelMember"
+        :turns="agentPanelTurns"
+        :running="agentPanelRunning"
+        :loading="agentPanelLoading"
+        :load-error="agentPanelLoadError"
+        :has-more="agentPanelHasMore"
+        :loading-more="agentPanelLoadingMore"
+        :load-more-error="agentPanelLoadMoreError"
         @close="closeAgentPanel"
+        @load-older-messages="loadOlderAgentMessages"
+        @open-agent="openAgentPanel"
+        @open-file="openFilePreview"
+        @open-media="openMediaPreview"
       />
       <SideChatPanel
         v-else-if="detailTarget === 'btw' && btwVisible"
@@ -1611,9 +1621,10 @@ function openPr(url: string): void {
   grid-template-rows: auto 1fr;
 }
 
-/* The right-side panel column: a permanent grid item whose width animates
-   0 ↔ var(--preview-w). The CONTENT keeps a fixed width (and carries the
-   left hairline) so it clips during the transition instead of reflowing. */
+/* The right-side panel column: a permanent grid item whose width toggles
+   0 ↔ var(--preview-w) with no transition — animating a grid track relayouts
+   the whole app grid every frame. The CONTENT keeps a fixed width (and carries
+   the left hairline) so resize drags never reflow it. */
 /* --preview-w lives on this element (set inline), NOT on the .app root:
    a custom property change invalidates every inheriting descendant's style,
    so scoping it here keeps resize-drag style recalculation inside the panel
@@ -1626,14 +1637,9 @@ function openPr(url: string): void {
   width: 0;
   background: var(--bg);
   overflow: hidden;
-  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .global-preview.open {
   width: var(--preview-w);
-}
-/* While dragging the resize handle, follow the pointer 1:1. */
-.global-preview.no-anim {
-  transition: none;
 }
 .global-preview:not(.mobile) > * {
   width: var(--preview-w);

@@ -343,6 +343,7 @@ export type WireTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface WireTask {
   id: string;
+  agent_id?: string;
   session_id: string;
   kind: 'subagent' | 'bash' | 'tool';
   description: string;

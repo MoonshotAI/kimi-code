@@ -45,6 +45,7 @@ export default {
   output: {
     waiting: 'Waiting for output…',
     empty: 'No output',
+    saved: 'Saved result',
   },
   plan: {
     review: {

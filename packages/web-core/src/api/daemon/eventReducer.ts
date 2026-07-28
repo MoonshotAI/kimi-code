@@ -759,6 +759,9 @@ export function reduceAppEvent(
           subagentType: event.task.subagentType ?? previous.subagentType,
           runInBackground: event.task.runInBackground ?? previous.runInBackground,
           backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
+          // The roster-seeded agent id anchors transcript resumes; a skeleton
+          // re-projection (no wire agent_id) must not drop it.
+          agentId: event.task.agentId ?? previous.agentId,
         };
         next.tasksBySession[sid] = patched;
       }

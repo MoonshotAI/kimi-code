@@ -6,6 +6,7 @@ import type { AgentMember } from '../types';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
 import { toAgentMember } from './messagesToTurns';
+import { auxiliaryTranscriptToTurns } from '../lib/auxiliaryTranscriptToTurns';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
@@ -92,49 +93,157 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Subagent detail panel
   // ---------------------------------------------------------------------------
-  // Sourced from the live subagent task (not the message flow), so the panel
-  // keeps streaming a still-running subagent's `outputLines`. `agentTarget`
-  // holds the subagent task id; the open entry points are the `Agent` tool card
-  // (keyed by its tool-call id) and a background subagent chip in the dock
-  // (keyed by the task id) — both resolve to a task id here.
-  const agentTarget = ref<{ subagentId: string } | null>(null);
+  // Callers resolve live tool calls before opening; historical Agent/Swarm
+  // cards already carry the persisted id needed for a cold transcript read.
+  const agentTarget = ref<{ sessionId: string; subagentId: string } | null>(null);
 
-  function resolveSubagentId(target: string): string | undefined {
-    const tasks = client.activeAppTasks.value;
-    const task =
-      tasks.find((tk) => tk.id === target) ?? tasks.find((tk) => tk.parentToolCallId === target);
-    if (task) return task.id;
-    // Same fallback as resolveAgentTaskId: a synthesized subagent task (missed
-    // spawn) has no parentToolCallId; if exactly one exists, open it.
-    const unmapped = tasks.filter((tk) => tk.kind === 'subagent' && !tk.parentToolCallId);
-    if (unmapped.length === 1) return unmapped[0]!.id;
-    return undefined;
+  const agentTranscriptState = computed(() => {
+    const target = agentTarget.value;
+    if (!target) return { entry: undefined, version: 0 };
+    const entry = client.auxiliaryTranscripts.getEntry(target.sessionId, target.subagentId);
+    return { entry, version: entry?.version.value ?? 0 };
+  });
+
+  function agentToolMetadata(agentId: string): {
+    name?: string;
+    subagentType?: string;
+    status?: 'running' | 'ok' | 'error';
+    outputLines?: string[];
+  } {
+    const tool = client.turns.value
+      .flatMap((turn) => turn.tools ?? [])
+      .find((item) => item.agentId === agentId);
+    if (!tool) return {};
+    try {
+      const input = JSON.parse(tool.arg) as Record<string, unknown>;
+      return {
+        name: typeof input['description'] === 'string' ? input['description'] : undefined,
+        subagentType:
+          typeof input['subagent_type'] === 'string' ? input['subagent_type'] : undefined,
+        status: tool.status,
+        outputLines: tool.output,
+      };
+    } catch {
+      return {};
+    }
   }
 
   const agentPanelMember = computed<AgentMember | null>(() => {
     const target = agentTarget.value;
     if (!target) return null;
-    const task = client.activeAppTasks.value.find((tk) => tk.id === target.subagentId);
-    return task ? toAgentMember(task) : null;
+    const task = client.activeAppTasks.value.find(
+      (tk) => tk.agentId === target.subagentId || tk.id === target.subagentId,
+    );
+    if (task) return toAgentMember(task);
+
+    const channel = agentTranscriptState.value.entry?.channel;
+    const descriptor = channel?.agents.find((agent) => agent.agentId === target.subagentId);
+    const failed = channel?.refreshError ?? false;
+    const loading = channel === undefined || channel.loading;
+    const running = channel?.snapshot.meta.activity === 'turn';
+    const toolMetadata = agentToolMetadata(target.subagentId);
+    const lastTurn = channel?.snapshot.items.findLast((item) => item.kind === 'turn');
+    const cancelled = lastTurn?.kind === 'turn' && lastTurn.state === 'cancelled';
+    const terminalFailed =
+      (lastTurn?.kind === 'turn' && lastTurn.state === 'failed') ||
+      toolMetadata.status === 'error';
+    const phase = running
+      ? 'working'
+      : terminalFailed || cancelled
+        ? 'failed'
+        : loading
+          ? 'queued'
+          : failed && toolMetadata.status === undefined
+            ? 'failed'
+            : 'completed';
+    const status = running
+      ? 'running'
+      : cancelled
+        ? 'cancelled'
+        : terminalFailed
+          ? 'failed'
+          : loading
+            ? 'running'
+            : failed && toolMetadata.status === undefined
+              ? 'failed'
+              : 'completed';
+    return {
+      id: target.subagentId,
+      name: descriptor?.label ?? toolMetadata.name ?? target.subagentId,
+      subagentType:
+        toolMetadata.subagentType ??
+        (descriptor?.type === 'sub' ? 'subagent' : descriptor?.type),
+      phase,
+      status,
+      outputLines: toolMetadata.outputLines,
+    };
   });
+  const agentPanelTurns = computed(() => {
+    const entry = agentTranscriptState.value.entry;
+    if (!entry) return [];
+    const target = agentTarget.value;
+    const descriptor = entry.channel.agents.find(
+      (agent) => agent.agentId === target?.subagentId,
+    );
+    return auxiliaryTranscriptToTurns(
+      entry.channel.snapshot,
+      client.getFileUrl,
+      descriptor,
+    );
+  });
+  const agentPanelLoading = computed(
+    () => agentTranscriptState.value.entry?.channel.loading ?? false,
+  );
+  const agentPanelLoadError = computed(
+    () => agentTranscriptState.value.entry?.channel.refreshError ?? false,
+  );
+  const agentPanelLoadingMore = computed(
+    () => agentTranscriptState.value.entry?.channel.loadingOlder ?? false,
+  );
+  const agentPanelLoadMoreError = computed(
+    () => agentTranscriptState.value.entry?.channel.loadOlderError ?? false,
+  );
+  const agentPanelHasMore = computed(
+    () => agentTranscriptState.value.entry?.channel.snapshot.hasMoreOlder ?? false,
+  );
+  const agentPanelRunning = computed(
+    () => agentTranscriptState.value.entry?.channel.snapshot.meta.activity === 'turn',
+  );
 
   const agentPanelVisible = computed(() => agentPanelMember.value !== null);
 
   function openAgentPanel(target: string): void {
-    const subagentId = resolveSubagentId(target);
-    if (!subagentId) return;
-    if (agentTarget.value?.subagentId === subagentId) {
-      agentTarget.value = null;
-      if (detailTarget.value === 'agent') detailTarget.value = null;
+    const sessionId = client.activeSessionId.value;
+    if (!target || !sessionId) return;
+    if (
+      detailTarget.value === 'agent' &&
+      agentTarget.value?.sessionId === sessionId &&
+      agentTarget.value.subagentId === target
+    ) {
+      closeAgentPanel();
       return;
     }
-    agentTarget.value = { subagentId };
+    agentTarget.value = { sessionId, subagentId: target };
     detailTarget.value = 'agent';
+    client.auxiliaryTranscripts.activate(sessionId, target);
   }
 
   function closeAgentPanel(): void {
+    const target = agentTarget.value;
+    if (target) client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
     agentTarget.value = null;
     if (detailTarget.value === 'agent') detailTarget.value = null;
+  }
+
+  watch(detailTarget, (current, previous) => {
+    if (previous !== 'agent' || current === 'agent') return;
+    const target = agentTarget.value;
+    if (target) client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
+  });
+
+  function loadOlderAgentMessages(): void {
+    const entry = agentTranscriptState.value.entry;
+    if (entry) void entry.channel.loadOlder().catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
@@ -248,8 +357,17 @@ export function useDetailPanel({
         detailTarget.value = 'compaction';
         break;
       case 'agent':
-        agentTarget.value = { subagentId: snap.subagentId };
-        detailTarget.value = 'agent';
+        if (client.activeSessionId.value) {
+          agentTarget.value = {
+            sessionId: client.activeSessionId.value,
+            subagentId: snap.subagentId,
+          };
+          detailTarget.value = 'agent';
+          client.auxiliaryTranscripts.activate(
+            client.activeSessionId.value,
+            snap.subagentId,
+          );
+        }
         break;
       case 'btw':
         // Only re-open the BTW panel if this session still has a live side chat;
@@ -301,9 +419,17 @@ export function useDetailPanel({
     openCompactionPanel,
     closeCompactionPanel,
     agentPanelMember,
+    agentPanelTurns,
+    agentPanelLoading,
+    agentPanelLoadError,
+    agentPanelLoadingMore,
+    agentPanelLoadMoreError,
+    agentPanelHasMore,
+    agentPanelRunning,
     agentPanelVisible,
     openAgentPanel,
     closeAgentPanel,
+    loadOlderAgentMessages,
     detailDiffMode,
     detailDiffPath,
     openDiffDetail,

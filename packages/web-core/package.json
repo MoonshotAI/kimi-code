@@ -7,7 +7,11 @@
     ".": "./src/index.ts",
     "./api": "./src/api/index.ts",
     "./contracts": "./src/contracts.ts",
-    "./lib": "./src/lib/index.ts"
+    "./lib": "./src/lib/index.ts",
+    "./transcript": "./src/transcript/index.ts"
+  },
+  "dependencies": {
+    "@moonshot-ai/transcript": "workspace:^"
   },
   "peerDependencies": {
     "vue": "^3.5.35"

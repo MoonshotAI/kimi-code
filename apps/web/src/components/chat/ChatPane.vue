@@ -105,6 +105,8 @@ const props = withDefaults(
      * Used to prevent the top sentinel from eagerly loading older messages on open.
      */
     isFollowing?: boolean;
+    /** Suppress main-conversation mutation affordances in transcript-only views. */
+    readOnly?: boolean;
     /**
      * Pending user messages queued while the session is busy. Rendered inline
      * at the tail of the transcript (after the running turn) — click to edit,
@@ -136,6 +138,7 @@ const props = withDefaults(
     loadingMore: false,
     loadingMoreError: false,
     isFollowing: false,
+    readOnly: false,
     queued: () => [],
     undoHintTurnId: null,
     interruptedTurnId: null,
@@ -316,6 +319,7 @@ const lastUserTurnId = computed<string | null>(() => {
     while the conversation has nothing unfinished and it isn't a slash activation. */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
+    !props.readOnly &&
     turn.role === 'user' &&
     turn.id === lastUserTurnId.value &&
     !props.working &&
@@ -824,8 +828,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               </button>
             </div>
           </div>
-          <div v-if="turn.createdAt || canEditTurn(turn) || undoHintTurnId === turn.id" class="u-meta">
-            <div v-if="canEditTurn(turn) || undoHintTurnId === turn.id" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
+          <div v-if="turn.createdAt || canEditTurn(turn) || (!readOnly && undoHintTurnId === turn.id)" class="u-meta">
+            <div v-if="canEditTurn(turn) || (!readOnly && undoHintTurnId === turn.id)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
               <!-- Armed after an Esc abort: clicking undoes directly — armed is the confirm step. -->
               <button
                 v-if="undoHintTurnId === turn.id"
