@@ -124,14 +124,6 @@ interface AnthropicContextManagement {
   edits: Array<{ type: string; keep?: unknown }>;
 }
 
-/**
- * The base-internal hook set: the L1 hooks with the context already bound
- * away. `withThinking` receives a defensive COPY of the seeded kwargs, so a
- * hook can never mutate base state — and a construction-headers synthetic
- * trait can never shadow a real dialect hook (the compositor picks the last
- * declarer). `convertError` is consulted by `convertAnthropicError` per the
- * contract in the file header.
- */
 export interface AnthropicHooks {
   withThinking?(
     effort: ThinkingEffort,
