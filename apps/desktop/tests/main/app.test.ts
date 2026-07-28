@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     stopShellEnvProbe: vi.fn(),
     destroyTray: vi.fn(),
     unregisterGlobalShortcuts: vi.fn(),
+    finalizeWindowLifecycle: vi.fn(),
   };
 });
 
@@ -60,6 +61,9 @@ vi.mock('../../src/main/shortcuts', () => ({
 vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn() }));
+vi.mock('../../src/main/window-lifecycle', () => ({
+  finalizeWindowLifecycle: mocks.finalizeWindowLifecycle,
+}));
 
 import { main } from '../../src/main/app';
 
@@ -101,7 +105,11 @@ describe('app second-instance routing', () => {
     onBeforeQuit?.(event);
 
     expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.finalizeWindowLifecycle).toHaveBeenCalledOnce();
     expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
+    expect(mocks.finalizeWindowLifecycle.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.closeServerHandle.mock.invocationCallOrder[0]!,
+    );
     expect(mocks.stopShellEnvProbe).toHaveBeenCalledOnce();
     expect(mocks.destroyTray).toHaveBeenCalledOnce();
     expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();

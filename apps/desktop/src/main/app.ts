@@ -13,6 +13,7 @@ import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
+import { finalizeWindowLifecycle } from './window-lifecycle';
 
 // --- app lifecycle ------------------------------------------------------------
 
@@ -63,6 +64,7 @@ export function main(): void {
   app.on('before-quit', () => {
     log.info('[kimi-desktop] quitting');
     for (const cleanup of [
+      finalizeWindowLifecycle,
       stopShellEnvProbe,
       destroyTray,
       unregisterGlobalShortcuts,

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { createCloudAppenderMock, logMock } = vi.hoisted(() => ({
+const { createCloudAppenderMock, logMock, replayWindowLifecycleMock } = vi.hoisted(() => ({
   createCloudAppenderMock: vi.fn(),
   logMock: { info: vi.fn(), error: vi.fn() },
+  replayWindowLifecycleMock: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', () => ({
@@ -12,6 +13,9 @@ vi.mock('@moonshot-ai/agent-core-v2', () => ({
   ITelemetryService: 'ITelemetryService',
 }));
 vi.mock('../../src/main/log', () => ({ log: logMock }));
+vi.mock('../../src/main/window-lifecycle', () => ({
+  replayWindowLifecycle: replayWindowLifecycleMock,
+}));
 
 import {
   isTelemetryConsentEnabled,
@@ -84,6 +88,7 @@ describe('wireDesktopTelemetry', () => {
     createCloudAppenderMock.mockReset();
     logMock.info.mockClear();
     logMock.error.mockClear();
+    replayWindowLifecycleMock.mockClear();
   });
 
   afterEach(() => {
@@ -126,6 +131,7 @@ describe('wireDesktopTelemetry', () => {
     expect(telemetryService.setAppender).toHaveBeenCalledWith(appender);
     expect(appender.startPeriodicFlush).toHaveBeenCalledOnce();
     expect(appender.retryDiskEvents).toHaveBeenCalledOnce();
+    expect(replayWindowLifecycleMock).toHaveBeenCalledOnce();
     expect(telemetryService.track2).not.toHaveBeenCalledWith('first_launch');
   });
 

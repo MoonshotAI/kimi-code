@@ -126,13 +126,6 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
           if (serverInitialization === initialization) serverInitialization = null;
         }
         log.info(`[kimi-desktop] connected to ${activeHandle.origin}`);
-        // The window showed before telemetry was wired (its 'show' fell into
-        // the no-op facade) — seed the lifecycle series with the current
-        // visibility so it has an initial state. Only on a fresh start: later
-        // windows report real 'show' transitions through the wired facade.
-        if (!win.isDestroyed() && win.isVisible()) {
-          trackDesktopEvent('window_lifecycle', { action: 'shown' });
-        }
       } else {
         log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
       }

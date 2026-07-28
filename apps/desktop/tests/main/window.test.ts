@@ -42,9 +42,8 @@ const mocks = vi.hoisted(() => ({
   windows: [] as unknown[],
 }));
 
-// Lifecycle telemetry fires from showMainWindow and the close/closed handlers;
-// mock Electron + the neighboring main modules so createWindow can run in the
-// node test environment.
+// Mock Electron + the neighboring main modules so lifecycle telemetry can run
+// through createWindow in the node test environment.
 vi.mock('electron', () => {
   class FakeBrowserWindow {
     handlers = new Map<string, ((...args: unknown[]) => void)[]>();
@@ -80,6 +79,9 @@ vi.mock('electron', () => {
     }
     isDestroyed(): boolean {
       return false;
+    }
+    isVisible(): boolean {
+      return true;
     }
     isMinimized(): boolean {
       return false;
@@ -291,13 +293,13 @@ describe('window lifecycle telemetry', () => {
     return win as FakeWindowHandle;
   }
 
-  it("tracks 'shown' only when Electron reports a real show transition", async () => {
+  it("tracks the initial 'shown' state once", async () => {
     const { showMainWindow } = await import('../../src/main/window');
     showMainWindow(); // no live window → createWindow
-    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
-    lastWindow().emit('show');
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', { action: 'shown' });
     mocks.trackDesktopEvent.mockClear();
+    lastWindow().emit('show');
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
     showMainWindow(); // live window → show/focus
     expect(lastWindow().show).toHaveBeenCalledOnce();
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();

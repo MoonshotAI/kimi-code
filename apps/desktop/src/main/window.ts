@@ -16,8 +16,8 @@ import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
 import { quoteWindowsCommandLineArg } from './jump-list';
 import { log, redactUrlForLog } from './log';
-import { trackDesktopEvent } from './track';
 import { isVibrancyEnabled } from './ui-state';
+import { recordWindowLifecycle } from './window-lifecycle';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -473,10 +473,10 @@ export function createWindow(): void {
   win.on('leave-full-screen', notifyFullscreen);
   installWindowsSessionEndWatch(process.platform, win, markQuitting);
   win.on('show', () => {
-    trackDesktopEvent('window_lifecycle', { action: 'shown' });
+    recordWindowLifecycle('shown');
   });
   win.on('hide', () => {
-    trackDesktopEvent('window_lifecycle', { action: 'hidden' });
+    recordWindowLifecycle('hidden');
   });
   win.on('close', (event) => {
     saveBounds(win);
@@ -499,7 +499,7 @@ export function createWindow(): void {
     }
   });
   win.on('closed', () => {
-    trackDesktopEvent('window_lifecycle', { action: 'closed' });
+    recordWindowLifecycle('closed');
     if (mainWindow === win) {
       mainWindow = null;
     }
@@ -508,6 +508,7 @@ export function createWindow(): void {
     // durable (localStorage) and pending approvals/questions live server-side,
     // so the badge's last-known state stays plausible until then.
   });
+  if (win.isVisible()) recordWindowLifecycle('shown');
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }

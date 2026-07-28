@@ -9,6 +9,7 @@ import {
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
 import { setDesktopTrackImpl } from './track';
+import { replayWindowLifecycle } from './window-lifecycle';
 
 export interface DesktopTelemetryHandle {
   /** Emits `exit`, flushes the buffer, stops periodic flush. Idempotent. */
@@ -83,6 +84,7 @@ export async function wireDesktopTelemetry(
     if (identity.firstLaunch) {
       telemetry.track2('first_launch');
     }
+    replayWindowLifecycle();
     log.info('[kimi-desktop] telemetry wired (cloud appender)');
 
     let shutdownOnce: Promise<void> | undefined;
