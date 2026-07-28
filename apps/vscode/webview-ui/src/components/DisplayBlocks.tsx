@@ -1,8 +1,18 @@
 import { useMemo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import type { DisplayBlock, DiffBlock, TodoBlock, BriefBlock, ShellBlock } from "shared/legacy-sdk";
+import { IconExternalLink } from "@tabler/icons-react";
+import type {
+  DisplayBlock,
+  DiffBlock,
+  TodoBlock,
+  BriefBlock,
+  ShellBlock,
+  PlanBlock,
+} from "shared/legacy-sdk";
 import { cn } from "@/lib/utils";
+import { bridge } from "@/services";
+import { Markdown } from "./Markdown";
 import * as Diff from "diff";
 
 function useIsDark(): boolean {
@@ -188,6 +198,34 @@ export function ShellBlockView({ block, maxHeight = "max-h-40" }: ShellBlockProp
   );
 }
 
+interface PlanBlockProps {
+  block: PlanBlock;
+  maxHeight?: string;
+}
+
+export function PlanBlockView({ block, maxHeight = "max-h-40" }: PlanBlockProps) {
+  return (
+    <div className="text-xs border border-border rounded-md overflow-hidden">
+      {block.path && (
+        <button
+          type="button"
+          onClick={() => {
+            void bridge.openPlanFile();
+          }}
+          className="flex items-center gap-1.5 w-full px-2 py-1 bg-muted/50 border-b border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+          title="Open plan file"
+        >
+          <span className="font-mono break-all text-left flex-1">{block.path}</span>
+          <IconExternalLink className="size-3.5 shrink-0" />
+        </button>
+      )}
+      <div className={cn("px-2 py-1.5 overflow-auto", maxHeight)}>
+        <Markdown content={block.plan} className="text-xs leading-relaxed" />
+      </div>
+    </div>
+  );
+}
+
 interface DisplayBlockViewProps {
   block: DisplayBlock;
   maxHeight?: string;
@@ -201,6 +239,8 @@ export function DisplayBlockView({ block, maxHeight }: DisplayBlockViewProps) {
       return <TodoBlockView block={block as TodoBlock} />;
     case "brief":
       return <BriefBlockView block={block as BriefBlock} />;
+    case "plan":
+      return <PlanBlockView block={block as PlanBlock} maxHeight={maxHeight} />;
     default:
       return null;
   }

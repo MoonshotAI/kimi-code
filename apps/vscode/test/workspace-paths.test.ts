@@ -280,6 +280,35 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
   });
 
+  it("opens the current session plan outside the workspace through the plan-only RPC", async () => {
+    const workDir = join(root, "project");
+    const planPath = join(root, "kimi-home", ".kimi-code", "plans", "refactor.md");
+    await mkdir(workDir);
+    await mkdir(join(root, "kimi-home", ".kimi-code", "plans"), { recursive: true });
+    await writeFile(planPath, "# Refactor plan");
+    const getPlan = vi.fn(async () => ({
+      id: "plan-1",
+      content: "# Refactor plan",
+      path: planPath,
+    }));
+    const ctx = {
+      ...createContext(vscodeHost.Uri.file(workDir)),
+      getSession: () => ({ session: { getPlan } }) as unknown as SessionRuntime,
+    } as HandlerContext;
+
+    const genericResult = await fileHandlers[Methods.OpenFile]!({ filePath: planPath }, ctx);
+    const planResult = await fileHandlers[Methods.OpenPlanFile]!(undefined, ctx);
+
+    expect(genericResult).toEqual({ ok: false });
+    expect(planResult).toEqual({ ok: true });
+    expect(getPlan).toHaveBeenCalledOnce();
+    expect(vscodeHost.executeCommand).toHaveBeenCalledOnce();
+    expect(vscodeHost.executeCommand).toHaveBeenCalledWith(
+      "vscode.open",
+      expect.objectContaining({ fsPath: planPath }),
+    );
+  });
+
   it("omits an outside symlink when an SDK Write event requests baseline capture", async () => {
     const workDir = join(root, "project");
     const outsideRoot = await mkdtemp(join(tmpdir(), "kimi-vscode-baseline-outside-"));

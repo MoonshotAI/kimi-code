@@ -170,6 +170,22 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(showLogs).not.toHaveBeenCalled();
   });
 
+  it("does not accept a Webview-supplied path for the plan-only open method", async () => {
+    const result = await bridge.handle(
+      {
+        id: "rpc-plan",
+        method: Methods.OpenPlanFile,
+        params: { filePath: "/tmp/untrusted-plan.md" },
+      },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-plan",
+      error: "Invalid bridge params for method: openPlanFile",
+    });
+  });
+
   it("does not execute an object-payload handler when a required field has the wrong type", async () => {
     const result = await bridge.handle(
       { id: "rpc-1", method: Methods.AddInputHistory, params: { text: 42 } },

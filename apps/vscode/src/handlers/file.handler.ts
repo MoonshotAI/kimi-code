@@ -75,6 +75,22 @@ const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, 
   return { ok: true };
 };
 
+const openPlanFile: Handler<void, { ok: boolean }> = async (_, ctx) => {
+  const runtime = ctx.getSession();
+  if (runtime === undefined) return { ok: false };
+  const plan = await runtime.session.getPlan();
+  if (plan === null) return { ok: false };
+
+  const uri = vscode.Uri.file(plan.path);
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    return { ok: false };
+  }
+  await vscode.commands.executeCommand("vscode.open", uri);
+  return { ok: true };
+};
+
 const openFileDiff: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
   const sessionId = ctx.getSessionId();
   const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), filePath);
@@ -180,6 +196,7 @@ export const fileHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetProjectFiles]: getProjectFiles,
   [Methods.PickMedia]: pickMedia,
   [Methods.OpenFile]: openFile,
+  [Methods.OpenPlanFile]: openPlanFile,
   [Methods.OpenFileDiff]: openFileDiff,
   [Methods.TrackFiles]: trackFiles,
   [Methods.ClearTrackedFiles]: clearTrackedFiles,

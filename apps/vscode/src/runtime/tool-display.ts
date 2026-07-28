@@ -67,9 +67,10 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
     case "skill_call":
     case "task":
     case "task_stop":
-    case "plan_review":
     case "goal_start":
     case "generic":
       return [{ type: "brief", text: describeToolDisplay(display) }];
+    case "plan_review":
+      return [{ type: "plan", plan: display.plan, path: display.path }];
   }
 }

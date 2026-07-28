@@ -50,6 +50,7 @@ export const Methods = {
   GetProjectFiles: "getProjectFiles",
   PickMedia: "pickMedia",
   OpenFile: "openFile",
+  OpenPlanFile: "openPlanFile",
   CheckFileExists: "checkFileExists",
   CheckFilesExist: "checkFilesExist",
   OpenFileDiff: "openFileDiff",
@@ -146,6 +147,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.GetRegisteredWorkDirs:
     case Methods.BrowseWorkDir:
     case Methods.ClearTrackedFiles:
+    case Methods.OpenPlanFile:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
       return params === undefined;
