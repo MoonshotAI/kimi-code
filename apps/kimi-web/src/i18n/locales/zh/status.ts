@@ -2,7 +2,7 @@ export default {
   connectionConnected: '已连接',
   connectionConnecting: '连接中…',
   connectionDisconnected: '未连接',
-  ctxTooltip: '使用 {used} / {max} tokens ({pct}%)',
+  ctxTooltip: '上下文: {pct}% ( {used} / {max} )',
   modelLabel: '模型',
   permissionManual: '逐条确认',
   permissionAuto: '完全自主',

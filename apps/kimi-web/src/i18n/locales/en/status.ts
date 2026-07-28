@@ -2,7 +2,7 @@ export default {
   connectionConnected: 'Connected',
   connectionConnecting: 'Connecting…',
   connectionDisconnected: 'Disconnected',
-  ctxTooltip: 'Used {used} / {max} tokens ({pct}%)',
+  ctxTooltip: 'Context: {pct}% ( {used} / {max} )',
   modelLabel: 'Model',
   permissionManual: 'Manual',
   permissionAuto: 'Auto',
