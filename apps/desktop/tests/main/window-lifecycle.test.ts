@@ -85,4 +85,43 @@ describe('window lifecycle telemetry state', () => {
     });
     setDesktopTrackImpl(null);
   });
+
+  it('tracks a minimize→restore→hide sequence and closes from hidden without visible time', async () => {
+    vi.useFakeTimers();
+    try {
+      const track = vi.fn();
+      const lifecycle = await import('../../src/main/window-lifecycle');
+      const { setDesktopTrackImpl } = await import('../../src/main/track');
+      setDesktopTrackImpl(track);
+
+      lifecycle.recordWindowLifecycle('shown');
+      vi.advanceTimersByTime(1_000);
+      lifecycle.recordWindowLifecycle('hidden', { reason: 'deactivate' });
+      vi.advanceTimersByTime(5_000);
+      // Restore from minimize reports 'shown' again, re-arming later hides.
+      lifecycle.recordWindowLifecycle('shown');
+      vi.advanceTimersByTime(2_000);
+      lifecycle.recordWindowLifecycle('hidden', { reason: 'close_to_tray' });
+      vi.advanceTimersByTime(3_000);
+      // Quitting from the hidden state must not count the hidden span.
+      lifecycle.finalizeWindowLifecycle();
+
+      expect(track.mock.calls).toEqual([
+        ['window_lifecycle', { action: 'shown' }],
+        [
+          'window_lifecycle',
+          { action: 'hidden', reason: 'deactivate', visible_duration_ms: 1_000 },
+        ],
+        ['window_lifecycle', { action: 'shown' }],
+        [
+          'window_lifecycle',
+          { action: 'hidden', reason: 'close_to_tray', visible_duration_ms: 2_000 },
+        ],
+        ['window_lifecycle', { action: 'closed', reason: 'quit' }],
+      ]);
+      setDesktopTrackImpl(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

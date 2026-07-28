@@ -375,9 +375,17 @@ export function createTray(actions: TrayActions): Tray | null {
   renderTray();
   if (process.platform === 'win32') {
     // Windows convention: left-click / double-click surfaces the window; the
-    // context menu opens on right-click without any handler.
-    tray.on('click', () => actions.showMainWindow());
-    tray.on('double-click', () => actions.showMainWindow());
+    // context menu opens on right-click without any handler. This is the
+    // dominant tray recall path on Windows, so it reports tray_action too.
+    const showFromTray = (): void => {
+      trackDesktopEvent('tray_action', {
+        action: 'show-window',
+        pending_count: lastAttention.unread + lastAttention.approvals + lastAttention.questions,
+      });
+      actions.showMainWindow();
+    };
+    tray.on('click', showFromTray);
+    tray.on('double-click', showFromTray);
   }
   return tray;
 }

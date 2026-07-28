@@ -120,9 +120,15 @@ function versionProps(): { version?: string } {
   return version === undefined ? {} : { version };
 }
 
-// The pill is the only way to open the dialog, so a rising edge = one shown.
-watch(open, (isOpen) => {
-  if (isOpen) track('update_prompt_shown', versionProps());
+// Shown = pill exposure: the update funnel's reach rate counts devices that
+// saw the pill, not only those who opened the dialog. Once per version.
+const shownForVersions = new Set<string>();
+watch(visible, (isVisible) => {
+  if (!isVisible) return;
+  const key = status.value.version ?? status.value.state;
+  if (shownForVersions.has(key)) return;
+  shownForVersions.add(key);
+  track('update_prompt_shown', versionProps());
 });
 
 function onDownload(): void {

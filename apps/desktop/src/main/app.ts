@@ -100,7 +100,9 @@ export function main(): void {
       duration_ms: Math.round(process.uptime() * 1000),
     });
     app.on('child-process-gone', (_event, details) => {
-      if (details.type === 'GPU') {
+      // Chromium recycles the GPU process in normal operation (clean-exit) —
+      // that is not a crash.
+      if (details.type === 'GPU' && details.reason !== 'clean-exit') {
         trackDesktopEvent('app_crashed', {
           process: 'gpu',
           kind: details.reason,

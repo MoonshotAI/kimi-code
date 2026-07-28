@@ -63,8 +63,13 @@ function back(): void {
 const wizardStartedAt = Date.now();
 let stepStartedAt = wizardStartedAt;
 let outcomeReported = false;
+// Each step reports at most once: going back and forward again must not
+// double-count a step (going back counts as leaving the step).
+const reportedStepIndexes = new Set<number>();
 
 function reportStepExit(skipped?: boolean): void {
+  if (reportedStepIndexes.has(stepIndex.value)) return;
+  reportedStepIndexes.add(stepIndex.value);
   track('onboarding_step', {
     step: step.value,
     step_index: stepIndex.value,
@@ -86,12 +91,16 @@ function reportOutcome(outcome: 'completed' | 'abandoned'): void {
 }
 
 watch(step, (_newStep, oldStep) => {
-  track('onboarding_step', {
-    step: oldStep,
-    step_index: STEPS.indexOf(oldStep),
-    total_steps: STEPS.length,
-    duration_ms: Date.now() - stepStartedAt,
-  });
+  const oldIndex = STEPS.indexOf(oldStep);
+  if (!reportedStepIndexes.has(oldIndex)) {
+    reportedStepIndexes.add(oldIndex);
+    track('onboarding_step', {
+      step: oldStep,
+      step_index: oldIndex,
+      total_steps: STEPS.length,
+      duration_ms: Date.now() - stepStartedAt,
+    });
+  }
   stepStartedAt = Date.now();
 });
 

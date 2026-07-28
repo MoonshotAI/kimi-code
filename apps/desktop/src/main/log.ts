@@ -163,8 +163,6 @@ export function installCrashGuards(): void {
       return;
     }
     log.error('uncaughtException', error);
-    // No-op before the appender is wired (early-boot crashes) — the file log
-    // above is the record of those.
     trackDesktopEvent('app_crashed', {
       process: 'main',
       kind: 'uncaught_exception',

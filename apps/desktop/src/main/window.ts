@@ -45,6 +45,7 @@ export function showMainWindow(): void {
   // Cancel a deferred full-screen hide scheduled by the close handler: the
   // explicit re-show is the fresher intent and wins.
   pendingFullscreenHide = false;
+  pendingHideReason = undefined;
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -89,6 +90,11 @@ export function markQuitting(): void {
 // createWindow). Cleared by showMainWindow: a re-show during the transition
 // cancels the stale close intent.
 let pendingFullscreenHide = false;
+
+// Reason for the next 'hide' event, set by the close→hide path; a plain hide
+// (Cmd+H, hide-on-blur) carries none. Module scope so showMainWindow can drop
+// a stale reason when a deferred close is cancelled.
+let pendingHideReason: 'close_to_tray' | undefined;
 
 /** Close-button policy: hide instead of destroy on macOS/Windows, unless quitting. */
 export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
@@ -485,9 +491,6 @@ export function createWindow(): void {
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
   installWindowsSessionEndWatch(process.platform, win, markQuitting);
-  // Reason for the next 'hide' event, set by the close→hide path below; a
-  // plain hide (Cmd+H, hide-on-blur) carries none.
-  let pendingHideReason: 'close_to_tray' | undefined;
   win.on('show', () => {
     reportStartupPhase('window_shown');
     recordWindowLifecycle('shown');
@@ -499,6 +502,11 @@ export function createWindow(): void {
   });
   win.on('minimize', () => {
     recordWindowLifecycle('hidden', { reason: 'deactivate' });
+  });
+  // Restoring from minimize fires 'restore', not 'show' — without this the
+  // state stays 'hidden' and every later hide is deduped away.
+  win.on('restore', () => {
+    recordWindowLifecycle('shown');
   });
   win.on('close', (event) => {
     saveBounds(win);

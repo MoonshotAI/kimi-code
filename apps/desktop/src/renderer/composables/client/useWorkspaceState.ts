@@ -1069,8 +1069,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sessionsInWs.length > 0) {
       const mostRecent = sessionsInWs[0];
       if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
-        // One user action (clicking the workspace) = one history entry.
-        void selectSession(mostRecent.id);
+        // One user action (clicking the workspace) = one history entry. The
+        // auto-selected session is a workspace switch, not a session open.
+        void selectSession(mostRecent.id, { skipTrack: true });
       }
     } else {
       setActiveSessionId(undefined);
@@ -1475,7 +1476,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     if (id === rawState.activeSessionId) return;
     if (rawState.sessions.some((s) => s.id === id)) {
-      void selectSession(id, { urlMode: 'none' });
+      void selectSession(id, { urlMode: 'none', skipTrack: true });
       return;
     }
     // A history entry can point at a session that has since been deleted (or one
@@ -1483,7 +1484,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // recent session and FIX the URL so the bad entry doesn't stick around.
     void (async () => {
       if (await fetchSessionIntoList(id)) {
-        await selectSession(id, { urlMode: 'none' });
+        await selectSession(id, { urlMode: 'none', skipTrack: true });
         return;
       }
       const next = rawState.sessions[0];
@@ -2715,7 +2716,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const forked = await getKimiWebApi().forkSession(sid);
       upsertSessionFront(forked);
-      await selectSession(forked.id);
+      // Forks are already counted by session_menu_action — no session_created.
+      await selectSession(forked.id, { skipTrack: true });
     } catch (err) {
       pushOperationFailure('fork', err, { sessionId: sid });
     }
