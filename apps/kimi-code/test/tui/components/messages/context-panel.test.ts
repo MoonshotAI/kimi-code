@@ -1,21 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
+import type { ContextBreakdownData } from '@moonshot-ai/kimi-code-sdk';
+
 import { buildContextReportLines } from '#/tui/components/messages/context-panel';
 
 function strip(text: string): string {
-  return text.replaceAll(/\[[0-9;]*m/g, '');
+  return text.replaceAll(/\[[0-9;]*m/g, '');
 }
 
-const BREAKDOWN = {
+const BREAKDOWN: ContextBreakdownData = {
   contextTokens: 28300,
   maxContextTokens: 200000,
   systemPrompt: 2400,
   systemTools: 8000,
   mcpTools: 555,
+  mcpServers: [{ name: 'MiniMax', tokens: 555 }],
   memoryFiles: 5100,
+  memoryFileEntries: [
+    { path: '/home/user/.kimi-code/AGENTS.md', tokens: 4200 },
+    { path: '/repo/AGENTS.md', tokens: 900 },
+  ],
   skills: 2000,
+  skillEntries: [
+    { name: 'code-review', source: 'user', tokens: 140 },
+    { name: 'tdd', source: 'project', tokens: 60 },
+  ],
   messages: 10200,
-} as const;
+};
 
 describe('context panel report lines', () => {
   it('renders the model, window usage, and per-category token estimates', () => {
@@ -38,7 +49,7 @@ describe('context panel report lines', () => {
     expect(output).toContain('Free space: 168k tokens (85.9%)');
   });
 
-  it('lists MCP servers and skills when provided', () => {
+  it('renders per-server, per-file, and per-skill token detail', () => {
     const lines = buildContextReportLines({
       model: 'k2',
       breakdown: BREAKDOWN,
@@ -46,20 +57,21 @@ describe('context panel report lines', () => {
         { name: 'MiniMax', transport: 'stdio', status: 'connected', toolCount: 2 },
         { name: 'broken', transport: 'http', status: 'failed', toolCount: 0 },
       ],
-      skills: [
-        { name: 'code-review', description: '', path: '/p/code-review', source: 'user' },
-        { name: 'tdd', description: '', path: '/p/tdd', source: 'project' },
-      ],
     }).map(strip);
 
     const output = lines.join('\n');
     expect(output).toContain('MCP tools: 555 tokens (0.3%) · 2 tools');
     expect(output).toContain('MCP servers · /mcp');
-    expect(output).toContain('MiniMax (2 tools)');
+    expect(output).toContain('MiniMax (2 tools) ~555 tokens');
+    // A server without exposed tools gets no token estimate.
     expect(output).toContain('broken (0 tools)');
+    expect(output).not.toContain('broken (0 tools) ~');
+    expect(output).toContain('Memory files');
+    expect(output).toContain('/home/user/.kimi-code/AGENTS.md ~4.1k tokens');
+    expect(output).toContain('/repo/AGENTS.md ~900 tokens');
     expect(output).toContain('Skills · /skills');
-    expect(output).toContain('code-review [user]');
-    expect(output).toContain('tdd [project]');
+    expect(output).toContain('code-review [user] ~140 tokens');
+    expect(output).toContain('tdd [project] ~60 tokens');
   });
 
   it('omits percentages and free space when the context window is unknown', () => {

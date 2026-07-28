@@ -1548,6 +1548,7 @@ describe('strictMessages duplicate tool call ids', () => {
         cwdListing: '',
         agentsMd: '',
         additionalDirsInfo: '',
+        agentsMdFiles: [],
       }),
     });
     ctx.configure({ tools: ['Bash', 'Read'] });
@@ -1556,7 +1557,6 @@ describe('strictMessages duplicate tool call ids', () => {
 
     const breakdown = await ctx.agent.contextBreakdownData();
     expect(breakdown.contextTokens).toBe(ctx.agent.context.tokenCount);
-    expect(breakdown.messages).toBe(ctx.agent.context.tokenCount);
     expect(breakdown.maxContextTokens).toBeGreaterThan(0);
     // The base system prompt is the rendered template minus the (empty)
     // memory/skills sections.
@@ -1564,7 +1564,24 @@ describe('strictMessages duplicate tool call ids', () => {
     expect(breakdown.systemTools).toBeGreaterThan(0);
     // No MCP servers, no memory files, no skills in the test harness.
     expect(breakdown.mcpTools).toBe(0);
+    expect(breakdown.mcpServers).toEqual([]);
     expect(breakdown.memoryFiles).toBe(0);
+    expect(breakdown.memoryFileEntries).toEqual([]);
     expect(breakdown.skills).toBe(0);
+    expect(breakdown.skillEntries).toEqual([]);
+
+    // Messages are the residual: the LLM-reported total already covers the
+    // system prompt and tool schemas, so they must not be counted twice.
+    // Before any LLM round-trip the total is 0 and the residual clamps to 0.
+    expect(breakdown.messages).toBe(0);
+    const overhead =
+      breakdown.systemPrompt +
+      breakdown.systemTools +
+      breakdown.mcpTools +
+      breakdown.memoryFiles +
+      breakdown.skills;
+    ctx.agent.context.updateTokenCount(overhead + 5000);
+    const updated = await ctx.agent.contextBreakdownData();
+    expect(updated.messages).toBe(5000);
   });
 });

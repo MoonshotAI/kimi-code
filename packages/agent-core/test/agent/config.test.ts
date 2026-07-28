@@ -96,6 +96,7 @@ describe('Agent config', () => {
       cwdListing: 'cwd listing',
       agentsMd: 'agents md',
       additionalDirsInfo: '### /extra\nextra-file.txt',
+      agentsMdFiles: [],
     });
 
     expect(ctx.agent.config.systemPrompt).toBe(

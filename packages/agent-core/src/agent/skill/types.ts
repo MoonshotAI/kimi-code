@@ -1,4 +1,4 @@
-import type { SkillDefinition } from '../../skill';
+import type { SkillDefinition, SkillSource } from '../../skill';
 
 export interface SkillRegistry {
   getSkill(name: string): SkillDefinition | undefined;
@@ -7,4 +7,5 @@ export interface SkillRegistry {
   listInvocableSkills(): readonly SkillDefinition[];
   getSkillRoots(): readonly string[];
   getModelSkillListing(): string;
+  getModelSkillListingEntries(): readonly { name: string; source: SkillSource; text: string }[];
 }

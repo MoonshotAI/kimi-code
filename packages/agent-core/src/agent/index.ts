@@ -537,6 +537,12 @@ export class Agent {
    * the system-prompt context (AGENTS.md, skill listing) so the memory/skills
    * split reflects the current filesystem, then attributes the rendered system
    * prompt between the base template and those injected sections.
+   *
+   * `contextTokens` (the status-bar total) is the last LLM-reported usage and
+   * therefore already covers system prompt + tool schemas + messages + the
+   * last turn's output — so messages are reported as the residual after
+   * subtracting every estimated category, keeping the panel consistent with
+   * the header total instead of double-counting the overhead.
    */
   async contextBreakdownData(): Promise<ContextBreakdownData> {
     const context = this.systemPromptContextProvider === undefined
@@ -550,7 +556,8 @@ export class Agent {
       0,
       estimateTokens(this.config.systemPrompt) - memoryFiles - skills,
     );
-    const { systemTools, mcpTools } = this.tools.contextToolBreakdown();
+    const { systemTools, mcpTools, mcpServers } = this.tools.contextToolBreakdown();
+    const overhead = systemPrompt + systemTools + mcpTools + memoryFiles + skills;
     const capability = this.config.modelCapabilities;
     return {
       contextTokens: this.context.tokenCount,
@@ -558,9 +565,19 @@ export class Agent {
       systemPrompt,
       systemTools,
       mcpTools,
+      mcpServers,
       memoryFiles,
+      memoryFileEntries: context.agentsMdFiles.map((file) => ({
+        path: file.path,
+        tokens: estimateTokens(file.content),
+      })),
       skills,
-      messages: this.context.tokenCount,
+      skillEntries: (this.skills?.registry.getModelSkillListingEntries() ?? []).map((entry) => ({
+        name: entry.name,
+        source: entry.source,
+        tokens: estimateTokens(entry.text),
+      })),
+      messages: Math.max(0, this.context.tokenCount - overhead),
     };
   }
 

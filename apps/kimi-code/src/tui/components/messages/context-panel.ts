@@ -2,13 +2,13 @@
  * ContextPanelComponent — renders the `/context` report: a Claude Code-style
  * context-usage panel with a block-grid visualization, model + context-window
  * summary, and the estimated per-category token cost of the context
- * (system prompt, tool schemas, MCP tools, memory files, skills, messages).
+ * (system prompt, tool schemas, MCP tools, memory files, skills, messages),
+ * with per-server / per-file / per-skill token detail under each section.
  */
 
 import type {
   ContextBreakdownData,
   McpServerInfo,
-  SkillSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { formatTokenCount, ratioSeverity, safeUsageRatio } from '#/utils/usage/usage-format';
@@ -24,7 +24,6 @@ const GRID_BLOCKS = GRID_COLS * GRID_ROWS;
 export interface ContextReportOptions {
   readonly model: string;
   readonly breakdown?: ContextBreakdownData;
-  readonly skills?: readonly SkillSummary[];
   readonly mcpServers?: readonly McpServerInfo[];
   readonly error?: string;
 }
@@ -69,14 +68,19 @@ function tokenValue(tokens: number, max: number): string {
   return max > 0 ? `${base} ${muted(`(${percentOf(tokens, max)}%)`)}` : base;
 }
 
-function countMcpTools(servers: readonly McpServerInfo[] | undefined): number {
-  return servers?.reduce((sum, server) => sum + server.toolCount, 0) ?? 0;
+/** "~555 tokens" for detail lines, where the value is always an estimate. */
+function estimateValue(tokens: number): string {
+  return currentTheme.fg('textDim', `~${formatTokenCount(tokens)} tokens`);
 }
 
-function buildMcpServerLines(servers: readonly McpServerInfo[] | undefined): string[] {
+function buildMcpServerLines(
+  servers: readonly McpServerInfo[] | undefined,
+  breakdown: ContextBreakdownData,
+): string[] {
   if (servers === undefined || servers.length === 0) return [];
   const muted = (text: string) => currentTheme.fg('textDim', text);
   const value = (text: string) => currentTheme.fg('text', text);
+  const tokensByServer = new Map(breakdown.mcpServers.map((server) => [server.name, server.tokens]));
   const lines: string[] = ['', currentTheme.boldFg('primary', `MCP servers · /mcp`)];
   const sorted = servers.toSorted((a, b) => a.name.localeCompare(b.name));
   for (let i = 0; i < sorted.length; i += 1) {
@@ -84,27 +88,42 @@ function buildMcpServerLines(servers: readonly McpServerInfo[] | undefined): str
     const isLast = i === sorted.length - 1;
     const branch = isLast ? '└' : '├';
     const statusBadge = server.status === 'connected' ? currentTheme.fg('success', '●') : muted('○');
+    const tokens = tokensByServer.get(server.name);
     lines.push(
       `  ${branch} ${statusBadge} ${value(server.name)} ${muted(
         `(${server.toolCount} tool${server.toolCount === 1 ? '' : 's'})`,
-      )}`,
+      )}${tokens === undefined ? '' : ` ${estimateValue(tokens)}`}`,
     );
   }
   return lines;
 }
 
-function buildSkillLines(skills: readonly SkillSummary[] | undefined): string[] {
-  if (skills === undefined || skills.length === 0) return [];
+function buildMemoryFileLines(breakdown: ContextBreakdownData): string[] {
+  const files = breakdown.memoryFileEntries;
+  if (files.length === 0) return [];
+  const value = (text: string) => currentTheme.fg('text', text);
+  const lines: string[] = ['', currentTheme.boldFg('roleUser', `Memory files`)];
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i]!;
+    const branch = i === files.length - 1 ? '└' : '├';
+    lines.push(`  ${branch} ${value(file.path)} ${estimateValue(file.tokens)}`);
+  }
+  return lines;
+}
+
+function buildSkillLines(breakdown: ContextBreakdownData): string[] {
+  const skills = breakdown.skillEntries;
+  if (skills.length === 0) return [];
   const muted = (text: string) => currentTheme.fg('textDim', text);
   const value = (text: string) => currentTheme.fg('text', text);
   const lines: string[] = ['', currentTheme.boldFg('shellMode', `Skills · /skills`)];
   const sorted = skills.toSorted((a, b) => a.name.localeCompare(b.name));
   for (let i = 0; i < sorted.length; i += 1) {
     const skill = sorted[i]!;
-    const isLast = i === sorted.length - 1;
-    const branch = isLast ? '└' : '├';
-    const source = muted(`[${skill.source}]`);
-    lines.push(`  ${branch} ${value(skill.name)} ${source}`);
+    const branch = i === sorted.length - 1 ? '└' : '├';
+    lines.push(
+      `  ${branch} ${value(skill.name)} ${muted(`[${skill.source}]`)} ${estimateValue(skill.tokens)}`,
+    );
   }
   return lines;
 }
@@ -147,7 +166,7 @@ export function buildContextReportLines(options: ContextReportOptions): string[]
   lines.push(categoryLine('⛁', 'warning', 'System prompt', tokenValue(breakdown.systemPrompt, max)));
   lines.push(categoryLine('⛁', 'accent', 'System tools', tokenValue(breakdown.systemTools, max)));
 
-  const mcpToolCount = countMcpTools(options.mcpServers);
+  const mcpToolCount = options.mcpServers?.reduce((sum, server) => sum + server.toolCount, 0) ?? 0;
   const mcpSuffix =
     mcpToolCount > 0
       ? muted(` · ${mcpToolCount} tool${mcpToolCount === 1 ? '' : 's'}`)
@@ -161,8 +180,9 @@ export function buildContextReportLines(options: ContextReportOptions): string[]
   lines.push(categoryLine('⛁', 'text', 'Messages', tokenValue(breakdown.messages, max)));
   lines.push(categoryLine('⛶', 'textDim', 'Free space', hasWindow ? tokenValue(freeTokens, max) : muted('unknown')));
 
-  lines.push(...buildMcpServerLines(options.mcpServers));
-  lines.push(...buildSkillLines(options.skills));
+  lines.push(...buildMcpServerLines(options.mcpServers, breakdown));
+  lines.push(...buildMemoryFileLines(breakdown));
+  lines.push(...buildSkillLines(breakdown));
 
   return lines;
 }

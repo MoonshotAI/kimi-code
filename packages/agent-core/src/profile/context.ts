@@ -20,6 +20,11 @@ export interface PreparedSystemPromptContext
   extends Pick<SystemPromptContext, 'cwdListing' | 'agentsMd' | 'additionalDirsInfo'> {
   /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
+  /**
+   * Per-file split of `agentsMd` (content without the `<!-- From: -->`
+   * annotation), for per-file token attribution in the `/context` report.
+   */
+  readonly agentsMdFiles: readonly { path: string; content: string }[];
 }
 
 export interface PrepareSystemPromptContextOptions {
@@ -42,6 +47,7 @@ export async function prepareSystemPromptContext(
     agentsMd: agentsMdResult.content,
     additionalDirsInfo,
     agentsMdWarning: agentsMdResult.warning,
+    agentsMdFiles: agentsMdResult.files,
   };
 }
 
@@ -53,6 +59,7 @@ export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<stri
 interface LoadedAgentsMd {
   readonly content: string;
   readonly warning: string | undefined;
+  readonly files: readonly AgentFile[];
 }
 
 async function loadAgentsMdForRoots(
@@ -111,7 +118,7 @@ async function loadAgentsMdForRoots(
         `${formatKB(AGENTS_MD_RECOMMENDED_MAX_BYTES)} KB. Large instruction files ` +
         `increase cost and may impact performance; consider trimming.`
       : undefined;
-  return { content, warning };
+  return { content, warning, files: discovered };
 }
 
 async function loadAdditionalDirsInfo(

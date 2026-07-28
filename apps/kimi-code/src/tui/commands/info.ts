@@ -186,10 +186,9 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
 
 export async function showContextReport(host: SlashCommandHost): Promise<void> {
   const session = host.requireSession();
-  // The detail lists are decorative — a failure there must not sink the report.
-  const [breakdownResult, skills, mcpServers] = await Promise.all([
+  // The MCP status list is decorative — a failure there must not sink the report.
+  const [breakdownResult, mcpServers] = await Promise.all([
     loadContextBreakdown(host),
-    session.listSkills().catch(() => undefined),
     session.listMcpServers().catch(() => undefined),
   ]);
   const panel = new UsagePanelComponent(
@@ -197,7 +196,6 @@ export async function showContextReport(host: SlashCommandHost): Promise<void> {
       buildContextReportLines({
         model: host.state.appState.model,
         breakdown: breakdownResult.breakdown,
-        skills,
         mcpServers,
         error: breakdownResult.error,
       }),

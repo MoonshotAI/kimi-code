@@ -38,6 +38,9 @@ export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {
   AgentContextData,
   ContextBreakdownData,
+  ContextBreakdownMcpServer,
+  ContextBreakdownMemoryFile,
+  ContextBreakdownSkill,
   ContextMessage,
   PromptOrigin,
   UserPromptOrigin,

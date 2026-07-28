@@ -141,6 +141,20 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     }
     return lines.length === 1 ? '' : lines.join('\n');
   }
+
+  /**
+   * Per-skill rendering of {@link getModelSkillListing}'s selection (invocable,
+   * non-sub-skills), for per-skill token attribution in the `/context` report.
+   */
+  getModelSkillListingEntries(): readonly { name: string; source: SkillSource; text: string }[] {
+    return this.listInvocableSkills()
+      .filter((skill) => skill.metadata.isSubSkill !== true)
+      .map((skill) => ({
+        name: skill.name,
+        source: skill.source,
+        text: formatModelSkill(skill).join('\n'),
+      }));
+  }
 }
 
 function pluginSkillKey(pluginId: string, skillName: string): string {

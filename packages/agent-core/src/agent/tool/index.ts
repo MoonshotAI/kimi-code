@@ -776,19 +776,29 @@ export class ToolManager {
    * schemas travel as context messages instead of the top-level `tools[]`,
    * so their cost is already covered by the message estimate.
    */
-  contextToolBreakdown(): { systemTools: number; mcpTools: number } {
+  contextToolBreakdown(): {
+    systemTools: number;
+    mcpTools: number;
+    mcpServers: readonly { name: string; tokens: number }[];
+  } {
     let systemTools = 0;
     let mcpTools = 0;
+    const perServer = new Map<string, number>();
     for (const tool of this.loopTools) {
       if (tool.deferred === true) continue;
       const estimate = estimateTokensForTools([tool]);
-      if (this.mcpTools.has(tool.name)) {
-        mcpTools += estimate;
-      } else {
+      const mcpEntry = this.mcpTools.get(tool.name);
+      if (mcpEntry === undefined) {
         systemTools += estimate;
+      } else {
+        mcpTools += estimate;
+        perServer.set(mcpEntry.serverName, (perServer.get(mcpEntry.serverName) ?? 0) + estimate);
       }
     }
-    return { systemTools, mcpTools };
+    const mcpServers = [...perServer.entries()]
+      .map(([name, tokens]) => ({ name, tokens }))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+    return { systemTools, mcpTools, mcpServers };
   }
 
   storeData(): Readonly<Record<string, unknown>> {
