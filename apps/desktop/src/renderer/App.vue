@@ -27,7 +27,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from './composables/useConfirmDialog';
-import type { PromptAttachment } from './composables/useKimiWebClient';
+import type { ColorScheme, FontScale, PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -258,7 +258,12 @@ onMounted(() => {
       // ownership here: opening the settings dialog on top of another modal
       // would stack competing focus traps — only the closing press (settings
       // already open) is allowed through.
-      if (anyOverlayOpen.value && !(actionId === 'openSettings' && showSettings.value)) return;
+      if (
+        anyOverlayOpen.value &&
+        !(actionId === 'openSettings' && (showSettings.value || showMobileSettings.value))
+      ) {
+        return;
+      }
       runShortcutAction(actionId, 'menu');
     }) ?? null;
 });
@@ -336,7 +341,11 @@ function runShortcutAction(id: string, source: 'shortcut' | 'menu' | 'button'): 
   track('action_invoked', { action: id, source });
   switch (id) {
     case 'openSettings':
-      showSettings.value = !showSettings.value;
+      if (isMobile.value) {
+        showMobileSettings.value = !showMobileSettings.value;
+      } else {
+        showSettings.value = !showSettings.value;
+      }
       break;
     case 'toggleSidebar':
       toggleSidebarCollapse();
@@ -411,7 +420,7 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   // traps and Escape handlers.
   if (anyOverlayOpen.value) {
     const closesOpenDialog =
-      (id === 'openSettings' && showSettings.value) ||
+      (id === 'openSettings' && (showSettings.value || showMobileSettings.value)) ||
       (id === 'searchSessions' && sidebarRef.value?.isSearchOpen() === true);
     if (!closesOpenDialog) return;
   }
@@ -1034,8 +1043,17 @@ function focusComposerAfterDraft(): void {
 // The sidebar settings entry always OPENS the dialog (the modal blocks a
 // second click), unlike the dispatcher's toggle for shortcut/menu presses.
 function openSettingsFromButton(): void {
-  track('action_invoked', { action: 'openSettings', source: 'button' });
-  showSettings.value = true;
+  if (!showSettings.value) runShortcutAction('openSettings', 'button');
+}
+
+function setColorSchemeFromSettings(scheme: ColorScheme): void {
+  client.setColorScheme(scheme);
+  track('settings_changed', { key: 'theme', value: scheme });
+}
+
+function setFontScaleFromSettings(scale: FontScale): void {
+  client.setFontScale(scale);
+  track('settings_changed', { key: 'font-size', value: scale });
 }
 
 // Primary "+ New": enter the draft state in the current workspace so the
@@ -1085,7 +1103,7 @@ function openPr(url: string): void {
     <WindowsTitleBar
       v-if="isWindowsDesktop && !isFullscreen"
       :sidebar-collapsed="sidebarCollapsed"
-      @toggle-sidebar="toggleSidebarCollapse"
+      @toggle-sidebar="runShortcutAction('toggleSidebar', 'button')"
     />
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
@@ -1149,7 +1167,7 @@ function openPr(url: string): void {
       :branch="client.status.value.branch"
       :session-count="activeWorkspaceSessionCount"
       @open-switcher="showMobileSwitcher = true"
-      @open-settings="showMobileSettings = true"
+      @open-settings="runShortcutAction('openSettings', 'button')"
     />
 
     <ConversationPane
@@ -1377,8 +1395,8 @@ function openPr(url: string): void {
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
       :initial-tab="settingsInitialTab"
-      @set-color-scheme="client.setColorScheme($event)"
-      @set-font-scale="client.setFontScale($event)"
+      @set-color-scheme="setColorSchemeFromSettings($event)"
+      @set-font-scale="setFontScaleFromSettings($event)"
       @set-notify="client.setNotifyEnabled($event)"
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
@@ -1466,8 +1484,8 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
-      @set-color-scheme="client.setColorScheme($event)"
-      @set-font-scale="client.setFontScale($event)"
+      @set-color-scheme="setColorSchemeFromSettings($event)"
+      @set-font-scale="setFontScaleFromSettings($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />

@@ -126,7 +126,7 @@ function setGlobalShortcutSuspended(suspended: boolean): void {
 async function finishOsGlobalRecording(
   id: string,
   previous: { customized: boolean; binding: string | null | undefined },
-): Promise<void> {
+): Promise<boolean> {
   await nextTick();
   const bridge = (window as { kimiDesktop?: MenuSuspendBridge }).kimiDesktop;
   const ok = (await bridge?.setGlobalShortcutSuspended?.(false)) ?? true;
@@ -134,13 +134,14 @@ async function finishOsGlobalRecording(
   recordError.value = null;
   liveKeys.value = [];
   setMenuSuspended(false);
-  if (ok) return;
+  if (ok) return true;
   if (previous.customized) {
     setShortcutBinding(id, previous.binding ?? null);
   } else {
     resetShortcutBinding(id);
   }
   rowError.value = { id, message: t('shortcuts.globalTaken') };
+  return false;
 }
 
 function onRecordKeydown(e: KeyboardEvent): void {
@@ -225,16 +226,16 @@ function onRecordKeydown(e: KeyboardEvent): void {
   }
   const previous = { customized: isShortcutCustomized(id), binding: overrides[id] };
   setShortcutBinding(id, binding);
-  // A same-scope conflict never reaches here (rejected above), so an assign
-  // never carries had_conflict.
-  track('shortcut_binding_changed', { action: id, op: 'assign' });
   // OS-global actions: the binding only goes live when the suspended
   // registration resumes — finalize asynchronously so a refused chord rolls
   // back with an error instead of sitting dead in the row.
   if (OS_GLOBAL_ACTIONS.includes(id)) {
-    void finishOsGlobalRecording(id, previous);
+    void finishOsGlobalRecording(id, previous).then((ok) => {
+      if (ok) track('shortcut_binding_changed', { action: id, op: 'assign' });
+    });
     return;
   }
+  track('shortcut_binding_changed', { action: id, op: 'assign' });
   stopRecording();
 }
 

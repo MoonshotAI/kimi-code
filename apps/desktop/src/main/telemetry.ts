@@ -5,8 +5,6 @@ import {
   ITelemetryService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
-import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
@@ -15,6 +13,11 @@ import { setDesktopTrackImpl } from './track';
 export interface DesktopTelemetryHandle {
   /** Emits `exit`, flushes the buffer, stops periodic flush. Idempotent. */
   readonly shutdown: () => Promise<void>;
+}
+
+export interface DesktopTelemetryIdentity {
+  readonly deviceId: string;
+  readonly firstLaunch: boolean;
 }
 
 const SHUTDOWN_TIMEOUT_MS = 3_000;
@@ -42,7 +45,10 @@ export function isTelemetryConsentEnabled(
  * plus the KIMI_DISABLE_TELEMETRY env. Returns null when consent denies or
  * wiring fails — telemetry must never break server startup.
  */
-export async function wireDesktopTelemetry(core: Scope): Promise<DesktopTelemetryHandle | null> {
+export async function wireDesktopTelemetry(
+  core: Scope,
+  identity: DesktopTelemetryIdentity,
+): Promise<DesktopTelemetryHandle | null> {
   try {
     const configService = core.accessor.get(IConfigService);
     await configService.ready;
@@ -59,17 +65,11 @@ export async function wireDesktopTelemetry(core: Scope): Promise<DesktopTelemetr
 
     const telemetry = core.accessor.get(ITelemetryService);
     const startedAt = Date.now();
-    let firstLaunch = false;
-    const deviceId = createKimiDeviceId(resolveKimiHome(), {
-      onFirstLaunch: () => {
-        firstLaunch = true;
-      },
-    });
     const auth = core.accessor.get(IOAuthToolkit);
     // Install before the renderer creates any session: session_started fires
     // inside session create/resume, and a late appender drops those events.
     const appender = createCloudAppender(core.accessor, {
-      deviceId,
+      deviceId: identity.deviceId,
       appName: DESKTOP_PRODUCT_NAME,
       uiMode: DESKTOP_UI_MODE,
       getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
@@ -80,7 +80,7 @@ export async function wireDesktopTelemetry(core: Scope): Promise<DesktopTelemetr
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});
-    if (firstLaunch) {
+    if (identity.firstLaunch) {
       telemetry.track2('first_launch');
     }
     log.info('[kimi-desktop] telemetry wired (cloud appender)');

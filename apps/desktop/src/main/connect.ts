@@ -17,6 +17,9 @@ import { trackDesktopEvent } from './track';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
+let serverInitialization: Promise<DesktopServerHandle | null> | null = null;
+let serverCloseRequested = false;
+let serverClosePromise: Promise<void> | null = null;
 
 // connect() calls are serialized through this queue: window (re)creation
 // (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
@@ -46,14 +49,24 @@ export function serverLogPath(): string {
   return join(resolveKimiHome(), 'server', 'server.log');
 }
 
-export function closeServerHandle(): void {
-  void serverHandle?.close();
-  serverHandle = null;
+export function closeServerHandle(): Promise<void> {
+  serverCloseRequested = true;
+  return (serverClosePromise ??= (async () => {
+    try {
+      await serverInitialization;
+    } catch {
+      // A failed start leaves no handle to close.
+    }
+    const handle = serverHandle;
+    serverHandle = null;
+    await handle?.close();
+  })());
 }
 
 // --- connect flow -------------------------------------------------------------
 
 export function connect(win: BrowserWindow): Promise<void> {
+  if (serverCloseRequested) return serverClosePromise ?? Promise.resolve();
   const run = connectQueue.then(() => connectOnce(win));
   // A rejected run must not poison the queue: the menu's 重试连接 is exactly
   // a later call, and it has to run even after a failed attempt.
@@ -62,9 +75,7 @@ export function connect(win: BrowserWindow): Promise<void> {
 }
 
 async function connectOnce(win: BrowserWindow): Promise<void> {
-  const startedAt = Date.now();
-  // Mirrors resolveConnectTarget: a non-empty KIMI_SERVER_URL means external.
-  const mode = process.env['KIMI_SERVER_URL']?.trim() ? 'external' : 'embedded';
+  if (serverCloseRequested) return;
   try {
     let origin: string;
     let token: string | undefined;
@@ -86,41 +97,63 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       // closing it first would tear down perfectly good sessions on every
       // window (re)creation. A failed start leaves the handle null, so a
       // later retry comes back through here and starts fresh.
-      if (serverHandle === null) {
-        // The embedded server and every tool it spawns share this process's
-        // env; wait for the probe (warmed up in index.ts) to fill it first.
-        await startShellEnvProbe();
-        serverHandle = await startDesktopServer({
-          // No static fallback in HMR dev: the renderer comes from the Vite dev
-          // server, and desktop-dist may not exist (kap-server would refuse to
-          // start without index.html in it).
-          webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
-          identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
-          extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
-        });
-        log.info(`[kimi-desktop] connected to ${serverHandle.origin}`);
+      let activeHandle = serverHandle;
+      if (activeHandle === null) {
+        const initialization = (async (): Promise<DesktopServerHandle | null> => {
+          // The embedded server and every tool it spawns share this process's
+          // env; wait for the probe (warmed up in index.ts) to fill it first.
+          await startShellEnvProbe();
+          if (serverCloseRequested) return null;
+          const handle = await startDesktopServer({
+            // No static fallback in HMR dev: the renderer comes from the Vite dev
+            // server, and desktop-dist may not exist (kap-server would refuse to
+            // start without index.html in it).
+            webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
+            identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
+            extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
+          });
+          serverHandle = handle;
+          return handle;
+        })();
+        serverInitialization = initialization;
+        try {
+          const handle = await initialization;
+          if (handle === null || serverCloseRequested) return;
+          activeHandle = handle;
+        } finally {
+          if (serverInitialization === initialization) serverInitialization = null;
+        }
+        log.info(`[kimi-desktop] connected to ${activeHandle.origin}`);
       } else {
-        log.info(`[kimi-desktop] reusing embedded server ${serverHandle.origin}`);
+        log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
       }
-      ({ origin, token } = serverHandle);
+      ({ origin, token } = activeHandle);
     }
     if (!win.isDestroyed()) {
-      await win.loadURL(rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled()));
+      const url = rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled());
+      if (target.external) {
+        await win.loadURL(url);
+      } else {
+        const startedAt = Date.now();
+        try {
+          await win.loadURL(url);
+          trackDesktopEvent('embedded_renderer_load_result', {
+            ok: true,
+            duration_ms: Date.now() - startedAt,
+          });
+        } catch (error) {
+          trackDesktopEvent('embedded_renderer_load_result', {
+            ok: false,
+            duration_ms: Date.now() - startedAt,
+            error_class: error instanceof Error ? error.name : 'unknown',
+          });
+          throw error;
+        }
+      }
     }
-    trackDesktopEvent('startup_connect_result', {
-      mode,
-      ok: true,
-      duration_ms: Date.now() - startedAt,
-    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[kimi-desktop] connect failed: ${message}`);
-    trackDesktopEvent('startup_connect_result', {
-      mode,
-      ok: false,
-      duration_ms: Date.now() - startedAt,
-      error_class: error instanceof Error ? error.name : 'unknown',
-    });
     if (!win.isDestroyed()) {
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }

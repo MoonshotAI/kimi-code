@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   let resolveReady = (): void => {};
+  let resolveClose = (): void => {};
   const app = {
     isPackaged: true,
     getVersion: vi.fn(() => '0.0.0-test'),
@@ -26,6 +27,16 @@ const mocks = vi.hoisted(() => {
     createWindow: vi.fn(),
     showMainWindow: vi.fn(),
     sendLaunchAction: vi.fn(),
+    closeServerHandle: vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    ),
+    closeDone: () => resolveClose(),
+    stopShellEnvProbe: vi.fn(),
+    destroyTray: vi.fn(),
+    unregisterGlobalShortcuts: vi.fn(),
   };
 });
 
@@ -36,7 +47,7 @@ vi.mock('../../src/main/protocol', () => ({
 }));
 vi.mock('../../src/main/connect', () => ({
   rendererDistRoot: '/renderer',
-  closeServerHandle: vi.fn(),
+  closeServerHandle: mocks.closeServerHandle,
 }));
 vi.mock('../../src/main/window', () => ({
   createWindow: mocks.createWindow,
@@ -46,11 +57,14 @@ vi.mock('../../src/main/window', () => ({
 }));
 vi.mock('../../src/main/tray', () => ({
   createTray: vi.fn(),
-  destroyTray: vi.fn(),
+  destroyTray: mocks.destroyTray,
 }));
 vi.mock('../../src/main/dock-icon', () => ({ initDockIcon: vi.fn() }));
 vi.mock('../../src/main/menu', () => ({ buildMenu: vi.fn() }));
-vi.mock('../../src/main/shortcuts', () => ({ unregisterGlobalShortcuts: vi.fn() }));
+vi.mock('../../src/main/shortcuts', () => ({
+  unregisterGlobalShortcuts: mocks.unregisterGlobalShortcuts,
+}));
+vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn() }));
 
@@ -75,5 +89,41 @@ describe('app second-instance routing', () => {
 
     expect(mocks.sendLaunchAction).toHaveBeenCalledWith({ action: 'new-chat' });
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('waits for the embedded server to close before resuming quit', async () => {
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mocks.closeServerHandle).toHaveBeenCalledOnce());
+    expect(mocks.app.quit).not.toHaveBeenCalled();
+
+    mocks.closeDone();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
+
+    const resumedEvent = { preventDefault: vi.fn() };
+    onBeforeQuit?.(resumedEvent);
+    expect(resumedEvent.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('still closes the server and resumes quit when another cleanup step fails', async () => {
+    mocks.destroyTray.mockImplementationOnce(() => {
+      throw new Error('tray cleanup failed');
+    });
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    onBeforeQuit?.({ preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(mocks.closeServerHandle).toHaveBeenCalledOnce());
+    expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
+    expect(mocks.app.quit).not.toHaveBeenCalled();
+
+    mocks.closeDone();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
   });
 });

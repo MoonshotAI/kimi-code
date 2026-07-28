@@ -33,16 +33,12 @@ const { t } = useI18n();
 // isMacosDesktop; web never renders it).
 const { vibrancy, setVibrancy } = useVibrancy();
 
-// settings_changed telemetry wrappers: every handler performs the original
-// write/emit first, then reports the short enum value (never free text).
 function onColorScheme(scheme: ColorScheme): void {
   emit('setColorScheme', scheme);
-  track('settings_changed', { key: 'theme', value: scheme });
 }
 
 function onFontScale(scale: FontScale): void {
   emit('setFontScale', scale);
-  track('settings_changed', { key: 'font-size', value: scale });
 }
 
 function onVibrancyChange(on: boolean): void {
@@ -239,7 +235,6 @@ const checkResult = ref<UpdateCheckResult | null>(null);
 
 function onAutoDownloadChange(on: boolean): void {
   updateTracker.setAutoDownload(on);
-  track('settings_changed', { key: 'update-auto-download', value: on ? 'on' : 'off' });
 }
 
 async function onCheckUpdate(): Promise<void> {

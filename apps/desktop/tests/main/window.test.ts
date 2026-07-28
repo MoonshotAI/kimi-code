@@ -289,16 +289,19 @@ describe('window lifecycle telemetry', () => {
     return win as FakeWindowHandle;
   }
 
-  it("tracks 'shown' on showMainWindow — recreate and re-show alike", async () => {
+  it("tracks 'shown' only when Electron reports a real show transition", async () => {
     const { showMainWindow } = await import('../../src/main/window');
     showMainWindow(); // no live window → createWindow
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+    lastWindow().emit('show');
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', { action: 'shown' });
+    mocks.trackDesktopEvent.mockClear();
     showMainWindow(); // live window → show/focus
     expect(lastWindow().show).toHaveBeenCalledOnce();
-    expect(mocks.trackDesktopEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
   });
 
-  it("tracks 'hidden' on the macOS hide-on-close path", async () => {
+  it("tracks 'hidden' only when Electron reports the window was hidden", async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', enumerable: true, configurable: true });
     const { showMainWindow } = await import('../../src/main/window');
     showMainWindow();
@@ -308,6 +311,8 @@ describe('window lifecycle telemetry', () => {
     win.emit('close', event);
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(win.hide).toHaveBeenCalledOnce();
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+    win.emit('hide');
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', { action: 'hidden' });
   });
 

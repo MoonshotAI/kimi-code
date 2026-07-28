@@ -168,6 +168,49 @@ describe('connect', () => {
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
 
+  it('waits for an in-flight embedded start and closes its handle before quitting', async () => {
+    const { closeServerHandle, connect } = await importConnect();
+    const handle = fakeHandle();
+    let resolveStart!: (h: DesktopServerHandle) => void;
+    mocks.startDesktopServer.mockImplementation(
+      () =>
+        new Promise<DesktopServerHandle>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const win = fakeWindow();
+
+    const connectPromise = connect(win as unknown as BrowserWindow);
+    await vi.waitFor(() => expect(mocks.startDesktopServer).toHaveBeenCalledOnce());
+    const closePromise = closeServerHandle();
+    expect(handle.close).not.toHaveBeenCalled();
+
+    resolveStart(handle);
+    await Promise.all([connectPromise, closePromise]);
+
+    expect(handle.close).toHaveBeenCalledOnce();
+    expect(win.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('does not start an embedded server when quit begins during the shell probe', async () => {
+    const { closeServerHandle, connect } = await importConnect();
+    let resolveProbe!: () => void;
+    mocks.startShellEnvProbe.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+
+    const connectPromise = connect(fakeWindow() as unknown as BrowserWindow);
+    await vi.waitFor(() => expect(mocks.startShellEnvProbe).toHaveBeenCalledOnce());
+    const closePromise = closeServerHandle();
+    resolveProbe();
+    await Promise.all([connectPromise, closePromise]);
+
+    expect(mocks.startDesktopServer).not.toHaveBeenCalled();
+  });
+
   it('shows the error page when the start fails, and the next retry starts fresh', async () => {
     const { connect } = await importConnect();
     mocks.startDesktopServer
@@ -206,37 +249,42 @@ describe('connect', () => {
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
 
-  it('tracks startup_connect_result for embedded success and failure', async () => {
+  it('tracks embedded_renderer_load_result after the embedded server starts', async () => {
     const { connect } = await importConnect();
-    mocks.startDesktopServer
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(fakeHandle());
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
     const win1 = fakeWindow();
     const win2 = fakeWindow();
+    win1.loadURL.mockRejectedValueOnce(new TypeError('renderer failed'));
 
     await connect(win1 as unknown as BrowserWindow);
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
-      'startup_connect_result',
-      expect.objectContaining({ mode: 'embedded', ok: false, error_class: 'Error' }),
+      'embedded_renderer_load_result',
+      expect.objectContaining({ ok: false, error_class: 'TypeError' }),
     );
 
     await connect(win2 as unknown as BrowserWindow);
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
-      'startup_connect_result',
-      expect.objectContaining({ mode: 'embedded', ok: true }),
+      'embedded_renderer_load_result',
+      expect.objectContaining({ ok: true }),
     );
   });
 
-  it('tracks startup_connect_result with external mode', async () => {
+  it('does not track a renderer result when the embedded server fails to start', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockRejectedValue(new Error('boom'));
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not track a renderer result in external-server mode', async () => {
     const { connect } = await importConnect();
     process.env['KIMI_SERVER_URL'] = 'http://127.0.0.1:58627';
     const win = fakeWindow();
 
     await connect(win as unknown as BrowserWindow);
 
-    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith(
-      'startup_connect_result',
-      expect.objectContaining({ mode: 'external', ok: true }),
-    );
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
   });
 });

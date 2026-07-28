@@ -1,18 +1,6 @@
-// Desktop-owned telemetry event contracts — the catalog of everything the
-// desktop host reports. Local on purpose, NOT in agent-core-v2's shared
-// registry (events.ts): kimi-code is a public repo and the desktop app is
-// unreleased — registering host events there (tray, native menu, updater…)
-// would publish the product surface ahead of release. Emission goes through
-// the untyped `ITelemetryService.track` (see track.ts), whose wire format is
-// identical to the registry-typed `track2`, so upstreaming this file later
-// is a mechanical move + a one-line switch.
-//
-// Same conventions as the shared registry: snake_case event and property
-// names, durations/counts carry `_ms`/`_count` suffixes, and never user
-// content or file paths.
+// Desktop-owned event contracts. Payloads never include user content or paths.
 
-export interface StartupConnectResultEvent {
-  mode: 'embedded' | 'external';
+export interface EmbeddedRendererLoadResultEvent {
   ok: boolean;
   duration_ms: number;
   error_class?: string;
@@ -65,10 +53,8 @@ export interface WindowLifecycleEvent {
   action: 'shown' | 'hidden' | 'closed';
 }
 
-// Curated user-initiated IPC channels only (channel without the `kimi:`
-// prefix); sync/poll channels would drown the signal.
 export interface NativeIpcUsedEvent {
-  channel: string;
+  channel: 'dialog-open' | 'dialog-save' | 'open-in' | 'show-window' | 'vibrancy';
 }
 
 export interface OnboardingStepEvent {
@@ -119,7 +105,7 @@ export interface UiElementToggledEvent {
 }
 
 export interface DesktopEventPayloads {
-  startup_connect_result: StartupConnectResultEvent;
+  embedded_renderer_load_result: EmbeddedRendererLoadResultEvent;
   app_crashed: AppCrashedEvent;
   update_status_changed: UpdateStatusChangedEvent;
   action_invoked: ActionInvokedEvent;

@@ -23,6 +23,7 @@
 import { computed, ref, type Ref } from 'vue';
 
 import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { track } from '../lib/track';
 
 export type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
 
@@ -151,7 +152,16 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
       typeof bridge?.getUpdateAutoDownload === 'function' && typeof bridge?.setUpdateAutoDownload === 'function',
     setAutoDownload: (enabled) => {
       autoDownload.value = enabled;
-      void bridge?.setUpdateAutoDownload?.(enabled).catch(() => {});
+      if (typeof bridge?.setUpdateAutoDownload !== 'function') return;
+      void bridge
+        .setUpdateAutoDownload(enabled)
+        .then(() => {
+          track('settings_changed', {
+            key: 'update-auto-download',
+            value: enabled ? 'on' : 'off',
+          });
+        })
+        .catch(() => {});
     },
     skipVersion: () => {
       const version = status.value.version;

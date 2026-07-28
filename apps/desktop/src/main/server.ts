@@ -5,8 +5,8 @@ import {
   createServerLogger,
   serverTokenPath,
 } from '@moonshot-ai/kap-server';
-import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { bootstrapSeed, hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
+import { createKimiDefaultHeaders, readKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import {
   installGlobalProxyDispatcher,
   resolveKimiHome,
@@ -52,10 +52,18 @@ export interface StartDesktopServerOptions {
 // platform. `createKimiDefaultHeaders` hardcodes X-Msh-Platform to the CLI's
 // `kimi_code_cli`, so we override the header after building it (value lives
 // in src/shared/identity.ts).
-function desktopHostHeaders(identity: KimiHostIdentity): Record<string, string> {
-  const headers = createKimiDefaultHeaders({ homeDir: resolveKimiHome(), ...identity });
+function desktopHostIdentity(
+  homeDir: string,
+  identity: KimiHostIdentity,
+): { headers: Record<string, string>; deviceId: string; firstLaunch: boolean } {
+  const firstLaunch = readKimiDeviceId(homeDir) === null;
+  const headers = createKimiDefaultHeaders({ homeDir, ...identity });
   headers['X-Msh-Platform'] = DESKTOP_MSH_PLATFORM;
-  return headers;
+  const deviceId = headers['X-Msh-Device-Id'];
+  if (deviceId === undefined || deviceId.length === 0) {
+    throw new Error('Kimi identity did not provide a device id');
+  }
+  return { headers, deviceId, firstLaunch };
 }
 
 function readServerToken(): string | undefined {
@@ -82,6 +90,8 @@ export async function startDesktopServer(
   opts: StartDesktopServerOptions,
 ): Promise<DesktopServerHandle> {
   installGlobalProxyDispatcher();
+  const homeDir = resolveKimiHome();
+  const deviceIdentity = desktopHostIdentity(homeDir, opts.identity);
 
   const handle = await startServer({
     host: '127.0.0.1',
@@ -105,13 +115,19 @@ export async function startDesktopServer(
     corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); the upstream model API reads identity from these.
-    seeds: hostRequestHeadersSeed(desktopHostHeaders(opts.identity)),
+    seeds: [
+      ...bootstrapSeed({ homeDir, clientVersion: opts.identity.version }),
+      ...hostRequestHeadersSeed(deviceIdentity.headers),
+    ],
   });
 
   // kap-server attaches no telemetry appender itself (everything falls into
   // the null appender); wire the cloud appender here, before the renderer can
   // create a session, and flush it before the server goes down.
-  const telemetry = await wireDesktopTelemetry(handle.core);
+  const telemetry = await wireDesktopTelemetry(handle.core, {
+    deviceId: deviceIdentity.deviceId,
+    firstLaunch: deviceIdentity.firstLaunch,
+  });
   log.info(`[kimi-desktop] embedded server listening on http://${handle.host}:${handle.port}`);
 
   return {

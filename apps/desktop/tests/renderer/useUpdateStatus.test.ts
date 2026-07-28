@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+
+vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
+
 import { createUpdateTracker, type UpdateStatus } from '../../src/renderer/composables/useUpdateStatus';
 
 // Two microtask flushes: the tracker's .then runs after the bridge promise
@@ -33,6 +37,9 @@ function fakeBridge(initial: UpdateStatus) {
 }
 
 describe('createUpdateTracker', () => {
+  beforeEach(() => {
+    trackMock.mockClear();
+  });
   it('stays idle with no desktop bridge (web / no-bridge fallback)', async () => {
     const tracker = createUpdateTracker(undefined);
     await flush();
@@ -263,12 +270,23 @@ describe('auto-download mode', () => {
 
     tracker.setAutoDownload(false);
     expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(false);
+    await flush();
+    expect(trackMock).toHaveBeenCalledWith('settings_changed', {
+      key: 'update-auto-download',
+      value: 'off',
+    });
     expect(tracker.autoDownload.value).toBe(false);
     // Manual mode surfaces the in-flight download again.
     expect(tracker.visible.value).toBe(true);
 
     tracker.setAutoDownload(true);
     expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(true);
+    await flush();
+    expect(trackMock).toHaveBeenLastCalledWith('settings_changed', {
+      key: 'update-auto-download',
+      value: 'on',
+    });
+    expect(trackMock).toHaveBeenCalledTimes(2);
     expect(tracker.visible.value).toBe(false);
   });
 

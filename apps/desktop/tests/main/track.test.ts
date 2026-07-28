@@ -13,7 +13,7 @@ beforeEach(() => {
 describe('trackDesktopEvent', () => {
   it('no-ops until an impl is installed', () => {
     expect(() =>
-      trackDesktopEvent('startup_connect_result', { mode: 'embedded', ok: true, duration_ms: 1 }),
+      trackDesktopEvent('embedded_renderer_load_result', { ok: true, duration_ms: 1 }),
     ).not.toThrow();
   });
 

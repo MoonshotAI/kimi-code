@@ -1,12 +1,4 @@
-// Desktop telemetry emission point. The CloudAppender lives on the embedded
-// server's ITelemetryService (wired by telemetry.ts); this module holds the
-// bound track behind a typed facade so other main-process modules — and the
-// kimi:track IPC handler — can emit events without touching the server
-// handle. No-ops until wired (consent off, wiring failed, or external-server
-// mode, where no appender ever exists) and again after shutdown: tracking
-// must never break app behavior. Event contracts live in telemetry-events.ts;
-// emission uses the untyped `track`, not the registry-typed `track2` (why:
-// see telemetry-events.ts).
+// Host telemetry facade; it is a no-op unless embedded telemetry is wired.
 
 import type { TelemetryProperties } from '@moonshot-ai/agent-core-v2';
 
@@ -44,10 +36,7 @@ export function trackDesktopEvent<K extends DesktopEventName>(
 
 // --- kimi:track IPC payloads --------------------------------------------------
 
-// Events the renderer is allowed to emit. The main process is the trust
-// boundary: each payload is re-validated field by field and unknown events or
-// properties are dropped, so a compromised or buggy renderer cannot inject
-// arbitrary data into the telemetry stream.
+// Main-process trust boundary for renderer telemetry.
 export type RendererTrackEvent =
   | { event: 'action_invoked'; properties: ActionInvokedEvent }
   | { event: 'update_prompt_shown'; properties: UpdatePromptShownEvent }
@@ -62,8 +51,6 @@ export type RendererTrackEvent =
   | { event: 'attachment_added'; properties: AttachmentAddedEvent }
   | { event: 'ui_element_toggled'; properties: UiElementToggledEvent };
 
-// Bounded enum-like string; oversized/free-form values are dropped (field
-// goes undefined), never truncated.
 function asShortString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 64 ? value : undefined;
 }

@@ -1,10 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { createCloudAppenderMock, createKimiDeviceIdMock, logMock } = vi.hoisted(() => ({
+const { createCloudAppenderMock, logMock } = vi.hoisted(() => ({
   createCloudAppenderMock: vi.fn(),
-  createKimiDeviceIdMock: vi.fn(
-    (_home: string, _options?: { onFirstLaunch?: () => void }) => 'device-1',
-  ),
   logMock: { info: vi.fn(), error: vi.fn() },
 }));
 
@@ -14,18 +11,14 @@ vi.mock('@moonshot-ai/agent-core-v2', () => ({
   IOAuthToolkit: 'IOAuthToolkit',
   ITelemetryService: 'ITelemetryService',
 }));
-vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
-  createKimiDeviceId: createKimiDeviceIdMock,
-}));
-vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
-  resolveKimiHome: () => '/tmp/kimi-test',
-}));
 vi.mock('../../src/main/log', () => ({ log: logMock }));
 
 import {
   isTelemetryConsentEnabled,
   wireDesktopTelemetry,
 } from '../../src/main/telemetry';
+
+const EXISTING_DEVICE = { deviceId: 'device-1', firstLaunch: false } as const;
 
 function makeCore(configValue: unknown, opts: { getThrows?: boolean } = {}) {
   const configService = {
@@ -89,7 +82,6 @@ describe('isTelemetryConsentEnabled', () => {
 describe('wireDesktopTelemetry', () => {
   beforeEach(() => {
     createCloudAppenderMock.mockReset();
-    createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     logMock.info.mockClear();
     logMock.error.mockClear();
   });
@@ -100,7 +92,7 @@ describe('wireDesktopTelemetry', () => {
 
   it('returns null without touching the telemetry service when config opts out', async () => {
     const { core, telemetryService } = makeCore(false);
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     expect(handle).toBeNull();
     expect(telemetryService.setAppender).not.toHaveBeenCalled();
     expect(createCloudAppenderMock).not.toHaveBeenCalled();
@@ -109,7 +101,7 @@ describe('wireDesktopTelemetry', () => {
   it('returns null when KIMI_DISABLE_TELEMETRY is truthy', async () => {
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', 'yes');
     const { core, telemetryService } = makeCore(undefined);
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     expect(handle).toBeNull();
     expect(telemetryService.setAppender).not.toHaveBeenCalled();
   });
@@ -119,7 +111,7 @@ describe('wireDesktopTelemetry', () => {
     createCloudAppenderMock.mockReturnValue(appender);
     const { core, telemetryService, auth } = makeCore(undefined);
 
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
 
     expect(handle).not.toBeNull();
     expect(createCloudAppenderMock).toHaveBeenCalledOnce();
@@ -143,7 +135,7 @@ describe('wireDesktopTelemetry', () => {
     const { core, auth } = makeCore(undefined);
     auth.getCachedAccessToken.mockResolvedValue(undefined);
 
-    await wireDesktopTelemetry(core as never);
+    await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     const host = createCloudAppenderMock.mock.calls[0]![1];
     await expect(host.getAccessToken()).resolves.toBeNull();
   });
@@ -151,13 +143,9 @@ describe('wireDesktopTelemetry', () => {
   it('tracks first_launch only after the appender is installed', async () => {
     const appender = makeAppender();
     createCloudAppenderMock.mockReturnValue(appender);
-    createKimiDeviceIdMock.mockImplementation((_home: string, options?: { onFirstLaunch?: () => void }) => {
-      options?.onFirstLaunch?.();
-      return 'device-new';
-    });
     const { core, telemetryService } = makeCore(undefined);
 
-    await wireDesktopTelemetry(core as never);
+    await wireDesktopTelemetry(core as never, { deviceId: 'device-new', firstLaunch: true });
 
     expect(telemetryService.track2).toHaveBeenCalledWith('first_launch');
     expect(telemetryService.setAppender.mock.invocationCallOrder[0]).toBeLessThan(
@@ -170,7 +158,7 @@ describe('wireDesktopTelemetry', () => {
     createCloudAppenderMock.mockReturnValue(appender);
     const { core, telemetryService } = makeCore(undefined, { getThrows: true });
 
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     expect(handle).not.toBeNull();
     expect(telemetryService.setAppender).toHaveBeenCalledWith(appender);
   });
@@ -183,7 +171,7 @@ describe('wireDesktopTelemetry', () => {
         }),
       },
     };
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     expect(handle).toBeNull();
     expect(logMock.error).toHaveBeenCalledOnce();
   });
@@ -193,7 +181,7 @@ describe('wireDesktopTelemetry', () => {
     createCloudAppenderMock.mockReturnValue(appender);
     const { core, telemetryService } = makeCore(undefined);
 
-    const handle = await wireDesktopTelemetry(core as never);
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
     expect(handle).not.toBeNull();
     await Promise.all([handle!.shutdown(), handle!.shutdown()]);
 

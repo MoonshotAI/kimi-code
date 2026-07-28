@@ -113,6 +113,8 @@ export interface StartAutoUpdaterDeps {
       against the CDN root; tests inject a fake). Notes are best-effort — the
       implementation never rejects. */
   fetchNotes?: (version: string) => Promise<ReleaseNotes>;
+  /** Flush host-owned resources before an explicit update install exits. */
+  prepareQuit?: () => Promise<void>;
 }
 
 const INITIAL_DELAY_MS = 10_000;
@@ -288,11 +290,22 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
         return;
       }
       log.info(`[kimi-desktop] installing update ${current.version ?? 'unknown'} (quitAndInstall)`);
-      // quitAndInstall emits before-quit only AFTER the window close events,
-      // so hide-on-close would intercept those closes and hang the install —
-      // mark quitting explicitly first (window.ts).
-      markQuitting();
-      updater.quitAndInstall(true, true);
+      const install = (): void => {
+        // quitAndInstall emits before-quit only AFTER the window close events,
+        // so hide-on-close would intercept those closes and hang the install —
+        // mark quitting explicitly first (window.ts).
+        markQuitting();
+        updater.quitAndInstall(true, true);
+      };
+      const preparation = deps.prepareQuit?.();
+      if (preparation === undefined) {
+        install();
+      } else {
+        void preparation.then(install, (error: unknown) => {
+          log.error('[kimi-desktop] pre-install shutdown failed', error);
+          install();
+        });
+      }
     },
     setAutoDownload: (enabled) => {
       updater.autoDownload = enabled;
@@ -338,13 +351,14 @@ export async function fetchReleaseNotes(version: string): Promise<ReleaseNotes> 
 
 let controller: UpdateController | null = null;
 
-export function initAutoUpdater(): void {
+export function initAutoUpdater(prepareQuit: () => Promise<void>): void {
   controller = startAutoUpdater({
     updater: autoUpdater,
     send: (status) => sendToRenderer(IPC.updateStatus, status),
     isPackaged: app.isPackaged,
     autoDownload: isUpdateAutoDownloadEnabled(),
     fetchNotes: fetchReleaseNotes,
+    prepareQuit,
   });
 }
 

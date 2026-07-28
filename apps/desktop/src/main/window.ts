@@ -23,9 +23,6 @@ export function getMainWindow(): BrowserWindow | null {
     click): un-minimize + show + focus when it exists (including hidden via
     hide-on-close); recreate it after a real destroy. */
 export function showMainWindow(): void {
-  // Records the summon intent, not a visibility change: the window may
-  // already be visible (menu/tray/shortcut callers surface it regardless).
-  trackDesktopEvent('window_lifecycle', { action: 'shown' });
   // Cancel a deferred full-screen hide scheduled by the close handler: the
   // explicit re-show is the fresher intent and wins.
   pendingFullscreenHide = false;
@@ -421,11 +418,16 @@ export function createWindow(): void {
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
   installWindowsSessionEndWatch(process.platform, win, markQuitting);
+  win.on('show', () => {
+    trackDesktopEvent('window_lifecycle', { action: 'shown' });
+  });
+  win.on('hide', () => {
+    trackDesktopEvent('window_lifecycle', { action: 'hidden' });
+  });
   win.on('close', (event) => {
     saveBounds(win);
     if (shouldHideOnClose(process.platform, isQuitting)) {
       event.preventDefault();
-      trackDesktopEvent('window_lifecycle', { action: 'hidden' });
       // A detached DevTools window would linger on screen after the hide.
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
       // Hiding a full-screen window would leave a black space behind (macOS)
