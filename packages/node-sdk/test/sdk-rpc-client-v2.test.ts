@@ -74,6 +74,45 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
+  it('honors skillDirs (explicit dirs) over default user / project discovery', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const explicitBase = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-explicit-'));
+    tempDirs.push(explicitBase);
+    const explicitDir = join(explicitBase, 'skills');
+    await writeSkill(join(homeDir, 'skills', 'demo-user-skill'), 'demo-user-skill');
+    await writeSkill(join(workDir, '.kimi-code', 'skills', 'demo-project-skill'), 'demo-project-skill');
+    await writeSkill(join(explicitDir, 'demo-explicit-skill'), 'demo-explicit-skill');
+    const harness = createKimiHarnessV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      skillDirs: [explicitDir],
+    });
+    try {
+      const skills = await harness.listWorkspaceSkills(workDir);
+      const byName = new Map(skills.map((skill) => [skill.name, skill]));
+      expect(byName.get('demo-explicit-skill')).toMatchObject({
+        description: 'Skill demo-explicit-skill for the escape-hatch test',
+        source: 'user',
+      });
+      expect(byName.has('demo-user-skill')).toBe(false);
+      expect(byName.has('demo-project-skill')).toBe(false);
+
+      // The session skill catalog (the Skill tool's listing) goes through the
+      // seeded engine runtime options, so it sees the same explicit source.
+      const session = await harness.createSession({ workDir });
+      const sessionNames = new Set((await session.listSkills()).map((skill) => skill.name));
+      expect(sessionNames.has('demo-explicit-skill')).toBe(true);
+      expect(sessionNames.has('demo-user-skill')).toBe(false);
+      expect(sessionNames.has('demo-project-skill')).toBe(false);
+      await session.close();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('serves the plugin catalog from the v2 engine on an empty home', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);

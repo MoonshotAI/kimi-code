@@ -157,6 +157,7 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentProfileService,
+  configuredRoots,
   IAgentRPCService,
   IAgentSkillService,
   IAgentSwarmService,
@@ -181,6 +182,7 @@ import {
   ISessionSkillCatalog,
   ISessionWorkspaceCommandService,
   ISessionWorkspaceContext,
+  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
@@ -198,6 +200,7 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
+  skillCatalogRuntimeOptionsSeed,
   summarizeSkill,
   userRoots,
   type IAgentScopeHandle,
@@ -296,6 +299,14 @@ export interface SDKRpcClientV2Options {
   readonly homeDir?: string;
   readonly configPath?: string;
   readonly identity?: KimiHostIdentity;
+  /**
+   * Explicit skill directories for this process (v1's SDK `skillDirs` /
+   * the CLI's `--skills-dir`): when non-empty, default user / project skill
+   * discovery is skipped and these directories serve as the user skill
+   * source. Seeded into the engine's app-scope
+   * `ISkillCatalogRuntimeOptions`.
+   */
+  readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
@@ -395,7 +406,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         configPath: this.configPath,
         clientVersion: this.identity?.version,
       },
-      [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
+      [
+        ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
+        // `--skills-dir` (v1 parity): explicit skill dirs replace default
+        // user / project discovery for every session this client hosts.
+        ...skillCatalogRuntimeOptionsSeed(options.skillDirs),
+      ],
     );
     this.app = app;
     this.klient = createKlient({ scope: app });
@@ -492,16 +508,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * klient has no skills facade; composed directly from the engine's
    * app-scope `ISkillDiscovery` plus the v2 root helpers (user + project
    * roots) and the code-defined `BUILTIN_SKILLS` via {@link engineAccessor}.
-   * Gap vs the v1 implementation: plugin skills are not included, and
-   * `skillDirs` (explicit dirs) is not honored yet.
+   * `skillDirs` (explicit dirs) replaces the default user / project roots,
+   * matching the engine's session skill catalog. Gap vs the v1
+   * implementation: plugin skills are not included.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const bootstrapService = this.engineAccessor.get(IBootstrapService);
     const discovery = this.engineAccessor.get(ISkillDiscovery);
-    const roots = [
-      ...(await userRoots(bootstrapService.homeDir, bootstrapService.osHomeDir)),
-      ...(await projectRoots(workDir)),
-    ];
+    const explicitDirs = this.engineAccessor.get(ISkillCatalogRuntimeOptions).explicitDirs ?? [];
+    const roots =
+      explicitDirs.length > 0
+        ? await configuredRoots(explicitDirs, workDir, bootstrapService.osHomeDir, 'user')
+        : [
+            ...(await userRoots(bootstrapService.homeDir, bootstrapService.osHomeDir)),
+            ...(await projectRoots(workDir)),
+          ];
     const { skills } = await discovery.discover(roots);
     // Builtins are the lowest-priority contribution: a discovered skill with
     // the same name shadows the builtin (v1 registry semantics).
