@@ -14,6 +14,7 @@
  *   interactive approval UI arrives with the TUI integration.
  */
 import { loadNativeLlmDef } from './rust-engine';
+import { SessionEngineController } from './session-engine-controller';
 
 interface SessionEngineIo {
   stdout: { write(chunk: string): unknown };
@@ -56,7 +57,40 @@ export async function tryRunSessionEnginePrompt(
   const rustLoop = await import('@moonshot-ai/kimi-agent/rust-loop');
 
   let sawText = false;
-  const client = await rustLoop.createSessionClient({
+  const controller = new SessionEngineController({
+    // Wrap the real engine client factory. The captured native-LLM config is
+    // typed, so it rides here rather than through the controller's opaque
+    // `nativeLlm` option.
+    createClient: (clientOptions) =>
+      rustLoop.createSessionClient({
+        sessionId: clientOptions.sessionId,
+        systemPrompt: clientOptions.systemPrompt,
+        model: clientOptions.model,
+        goalEnabled: clientOptions.goalEnabled,
+        homedir: clientOptions.homedir,
+        nativeLlm,
+        onEvent: clientOptions.onEvent,
+        lifecycle: clientOptions.lifecycle,
+      }),
+    emitEvent: (event) => {
+      // Native-LLM mode streams provider deltas as assistant text; render it
+      // directly. (Thinking deltas stay off stdout in print mode.)
+      if (event.type === 'assistant.delta') {
+        sawText = true;
+        args.stdout.write(event.delta);
+      }
+    },
+    onRawEvent: (raw) => {
+      const e = raw as { type?: string; status?: string };
+      if (e.type === 'session.goal.updated' && e.status !== undefined && e.status !== 'none') {
+        args.stderr.write(`[goal] ${e.status}\n`);
+      }
+    },
+    // Print mode is permission `auto`: no approver is supplied, so the
+    // engine's tool gate auto-allows (see SessionEngineController.authorize).
+  });
+
+  const started = await controller.start({
     sessionId: `print-${String(Date.now())}`,
     systemPrompt:
       'You are Kimi Code, an agentic coding assistant running in headless print mode. Answer directly and use tools when needed.',
@@ -64,45 +98,23 @@ export async function tryRunSessionEnginePrompt(
     goalEnabled: true,
     homedir: args.workDir,
     nativeLlm,
-    onEvent: (event) => {
-      const e = event as {
-        type?: string;
-        part?: { type?: string; text?: string };
-        status?: string;
-      };
-      // Native-LLM mode: the engine streams provider deltas; render text
-      // parts directly. (Think parts stay off stdout in print mode.)
-      if (e.type === 'llm.delta' && e.part?.type === 'text' && e.part.text !== undefined) {
-        sawText = true;
-        args.stdout.write(e.part.text);
-      }
-      if (e.type === 'session.goal.updated' && e.status !== undefined && e.status !== 'none') {
-        args.stderr.write(`[goal] ${e.status}\n`);
-      }
-    },
-    // Print mode runs with permission `auto`: the engine-native write gate
-    // auto-allows (resolved: the decision is final, no further host UI),
-    // mirroring the JS tools' behavior on this path.
-    lifecycle: {
-      authorizeTool: () => Promise.resolve({ block: false, resolved: true }),
-    },
   });
-  if (client === null) {
+  if (!started) {
     args.stderr.write(
       'KIMI_SESSION_ENGINE=1: stdio engine unavailable (no kimi-agent binary); falling back to the normal engine.\n',
     );
     return false;
   }
 
-  const result = await client.prompt(args.prompt);
-  if (result === null) {
+  const outcome = await controller.prompt(args.prompt);
+  if (outcome === null) {
     args.stderr.write('session engine: prompt failed\n');
     return true; // handled (as a failure) — do not double-run on the fallback
   }
   if (sawText) args.stdout.write('\n');
   args.stderr.write(
-    `[session-engine] stop=${result.stop_reason} steps=${String(result.steps)} tokens=${String(result.usage.total_tokens)}\n`,
+    `[session-engine] stop=${outcome.stopReason} steps=${String(outcome.steps)} tokens=${String(outcome.totalTokens)}\n`,
   );
-  await client.save();
+  await controller.save();
   return true;
 }
