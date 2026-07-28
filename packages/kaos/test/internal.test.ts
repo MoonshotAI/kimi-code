@@ -297,6 +297,20 @@ describe('globPatternToRegex', () => {
       expect(regex.test('a.txt')).toBe(false);
     });
 
+    it('matches nothing instead of throwing on a reversed range', () => {
+      // `[a--]` and `[z-a]` are legal globs but invalid JS character classes
+      // (`Range out of order`). Python fnmatch matches nothing for them, and
+      // `_globWalk` calls this outside a try block, so throwing would abort
+      // the whole directory walk instead of yielding no matches.
+      for (const pattern of ['[]--]', '[a--]', '[z-a]']) {
+        const regex = globPatternToRegex(pattern, true);
+
+        expect(regex.test(']')).toBe(false);
+        expect(regex.test('a')).toBe(false);
+        expect(regex.test('-')).toBe(false);
+      }
+    });
+
     it.skip('Python treats **/foo.txt as recursive; current helper is segment-based and does not implement zero-or-more directories', () => {
       const regex = globPatternToRegex('**/foo.txt', true);
 

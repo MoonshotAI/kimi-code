@@ -244,7 +244,18 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
     }
   }
   regex += '$';
-  return new RegExp(regex, caseSensitive ? '' : 'i');
+  const flags = caseSensitive ? '' : 'i';
+  try {
+    return new RegExp(regex, flags);
+  } catch {
+    // A character class can still be invalid as a JS regex even though it is a
+    // legal glob — `[a--]` and `[z-a]` are reversed ranges and make `RegExp`
+    // throw `Range out of order in character class`. Python `fnmatch` matches
+    // nothing for those, and callers such as `_globWalk` invoke this outside a
+    // try block, so throwing here would abort the whole walk. Fall back to a
+    // pattern that matches nothing.
+    return new RegExp('(?!)', flags);
+  }
 }
 
 /**

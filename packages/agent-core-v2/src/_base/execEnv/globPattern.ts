@@ -3,6 +3,12 @@
  *
  * Pure function. Mirrors Python pathlib semantics: includes dotfiles,
  * case-sensitive by default.
+ *
+ * Character classes follow POSIX / Python `fnmatch` rather than JS regex: a
+ * `]` in the first position of the class body (after an optional negating `!`)
+ * is a literal member, not the terminator, and a class that is a legal glob
+ * but an invalid JS regex — a reversed range such as `[a--]` — matches nothing
+ * instead of throwing, since callers invoke this outside a try block.
  */
 
 /**
@@ -23,12 +29,6 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
         regex += '[^/]';
         break;
       case '[': {
-        // POSIX (and Python fnmatch): a `]` in the first position of the class
-        // body — after an optional negating `!` — is a literal member rather
-        // than the terminator, so the scan for the real terminator has to start
-        // past it. Treating it as the terminator yields an empty JS class
-        // (`[]`), which matches nothing at all, so the pattern silently stops
-        // matching instead of matching a literal `]`.
         let scanFrom = i + 1;
         if (pattern[scanFrom] === '!') scanFrom++;
         if (pattern[scanFrom] === ']') scanFrom++;
@@ -37,7 +37,6 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
           regex += '\\[';
         } else {
           let charClass = pattern.slice(i + 1, end);
-          // Escape `]` too so a literal member cannot close the class early.
           charClass = charClass.replaceAll('\\', '\\\\').replaceAll(']', '\\]');
           if (charClass.startsWith('!')) {
             charClass = '^' + charClass.slice(1);
@@ -64,5 +63,10 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
     }
   }
   regex += '$';
-  return new RegExp(regex, caseSensitive ? '' : 'i');
+  const flags = caseSensitive ? '' : 'i';
+  try {
+    return new RegExp(regex, flags);
+  } catch {
+    return new RegExp('(?!)', flags);
+  }
 }
