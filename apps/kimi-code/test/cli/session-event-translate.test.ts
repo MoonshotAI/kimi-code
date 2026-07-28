@@ -59,9 +59,56 @@ describe('SessionEventTranslator', () => {
       t.translate({ type: 'session.turn.ended', turn_id: 4, stop_reason: 'EndTurn' }),
     ).toMatchObject({ reason: 'completed' });
 
+    // session.goal.updated now maps to the SDK goal.updated event with the
+    // snapshot fields remapped (snake_case → camelCase, PascalCase status →
+    // snake_case value).
+    const goal = t.translate({
+      type: 'session.goal.updated',
+      snapshot: {
+        goal_id: 'g1',
+        objective: 'ship it',
+        status: 'BudgetLimited',
+        turns_used: 4,
+        tokens_used: 1234,
+        wall_clock_ms: 5000,
+        budget: {
+          token_budget: 2000,
+          turn_budget: null,
+          wall_clock_budget_ms: null,
+          remaining_tokens: 766,
+          remaining_turns: null,
+          remaining_wall_clock_ms: null,
+          token_budget_reached: true,
+          turn_budget_reached: false,
+          wall_clock_budget_reached: false,
+          over_budget: true,
+        },
+        created_at: 10,
+        updated_at: 20,
+        terminal_reason: 'A configured budget was reached',
+      },
+    });
+    expect(goal).toMatchObject({
+      type: 'goal.updated',
+      snapshot: {
+        goalId: 'g1',
+        objective: 'ship it',
+        status: 'budget_limited',
+        turnsUsed: 4,
+        tokensUsed: 1234,
+        wallClockMs: 5000,
+        budget: { tokenBudget: 2000, remainingTokens: 766, tokenBudgetReached: true, overBudget: true },
+        terminalReason: 'A configured budget was reached',
+      },
+    });
+    // A cleared goal (no snapshot) maps to a null snapshot.
+    expect(t.translate({ type: 'session.goal.updated', status: 'none' })).toMatchObject({
+      type: 'goal.updated',
+      snapshot: null,
+    });
+
     // Unknown / internal events render nothing.
     expect(t.translate({ type: 'llm.step.begin', model: 'm' })).toBeNull();
-    expect(t.translate({ type: 'session.goal.updated', status: 'Paused' })).toBeNull();
     expect(t.translate('not-an-object')).toBeNull();
   });
 });

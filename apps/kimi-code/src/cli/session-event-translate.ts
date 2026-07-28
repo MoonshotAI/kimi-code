@@ -11,7 +11,7 @@
  * Stateful on purpose: streaming deltas carry no turn id on the wire, so the
  * translator remembers the turn opened by `session.turn.started`.
  */
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Event, GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 
 interface EngineWireEvent {
   type?: string;
@@ -26,6 +26,7 @@ interface EngineWireEvent {
   arguments?: unknown;
   content?: string;
   is_error?: boolean;
+  snapshot?: unknown;
 }
 
 export class SessionEventTranslator {
@@ -101,9 +102,16 @@ export class SessionEventTranslator {
           isError: event.is_error === true,
         };
       }
-      // session.goal.updated carries only a status string; the SDK
-      // `goal.updated` event wants a full snapshot. Skipped until the
-      // engine reports the snapshot shape.
+      case 'session.goal.updated': {
+        // Map the engine snapshot (snake_case fields, PascalCase status)
+        // onto the SDK shape. `snapshot` is null when the goal record was
+        // cleared (e.g. after a completion).
+        return {
+          ...base,
+          type: 'goal.updated',
+          snapshot: mapGoalSnapshot(event.snapshot),
+        };
+      }
       default:
         return null;
     }
@@ -119,4 +127,62 @@ function mapStopReason(stopReason: string | undefined): 'completed' | 'cancelled
     default:
       return 'completed';
   }
+}
+
+function numOrNull(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function strOr(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function mapGoalStatus(raw: unknown): GoalStatus {
+  switch (raw) {
+    case 'Paused':
+      return 'paused';
+    case 'Blocked':
+      return 'blocked';
+    case 'Complete':
+      return 'complete';
+    case 'BudgetLimited':
+      return 'budget_limited';
+    case 'UsageLimited':
+      return 'usage_limited';
+    default:
+      return 'active';
+  }
+}
+
+function mapGoalSnapshot(raw: unknown): GoalSnapshot | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const budget = (typeof s['budget'] === 'object' && s['budget'] !== null
+    ? s['budget']
+    : {}) as Record<string, unknown>;
+  return {
+    goalId: strOr(s['goal_id']),
+    objective: strOr(s['objective']),
+    completionCriterion:
+      typeof s['completion_criterion'] === 'string' ? s['completion_criterion'] : undefined,
+    status: mapGoalStatus(s['status']),
+    turnsUsed: Number(s['turns_used'] ?? 0),
+    tokensUsed: Number(s['tokens_used'] ?? 0),
+    wallClockMs: Number(s['wall_clock_ms'] ?? 0),
+    budget: {
+      tokenBudget: numOrNull(budget['token_budget']),
+      turnBudget: numOrNull(budget['turn_budget']),
+      wallClockBudgetMs: numOrNull(budget['wall_clock_budget_ms']),
+      remainingTokens: numOrNull(budget['remaining_tokens']),
+      remainingTurns: numOrNull(budget['remaining_turns']),
+      remainingWallClockMs: numOrNull(budget['remaining_wall_clock_ms']),
+      tokenBudgetReached: budget['token_budget_reached'] === true,
+      turnBudgetReached: budget['turn_budget_reached'] === true,
+      wallClockBudgetReached: budget['wall_clock_budget_reached'] === true,
+      overBudget: budget['over_budget'] === true,
+    },
+    createdAt: Number(s['created_at'] ?? 0),
+    updatedAt: Number(s['updated_at'] ?? 0),
+    terminalReason: typeof s['terminal_reason'] === 'string' ? s['terminal_reason'] : undefined,
+  };
 }

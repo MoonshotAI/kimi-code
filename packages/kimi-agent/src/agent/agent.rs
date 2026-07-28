@@ -606,18 +606,25 @@ impl Agent {
         self.emit_goal_status();
     }
 
-    /// Emit the current goal status for thin clients (`"none"` when no goal
-    /// record exists — including right after a completion cleared it).
+    /// Emit the current goal for thin clients: the full snapshot for
+    /// rendering (null when no goal record exists — e.g. right after a
+    /// completion cleared it) plus the bare status string for quick host
+    /// diagnostics. Snapshot field names are the engine's serde form; the
+    /// TS translator maps them onto the SDK `goal.updated` shape.
     fn emit_goal_status(&self) {
-        let status = self
-            .goal
+        let snapshot = self.goal.as_ref().and_then(|g| g.get_goal().goal);
+        let status = snapshot
             .as_ref()
-            .and_then(|g| g.get_goal().goal)
             .map(|s| format!("{:?}", s.status))
             .unwrap_or_else(|| "none".to_string());
+        let snapshot_json = snapshot
+            .as_ref()
+            .and_then(|s| serde_json::to_value(s).ok())
+            .unwrap_or(serde_json::Value::Null);
         self.callbacks.emit_event(serde_json::json!({
             "type": "session.goal.updated",
             "session_id": self.session_id,
+            "snapshot": snapshot_json,
             "status": status,
         }));
     }
