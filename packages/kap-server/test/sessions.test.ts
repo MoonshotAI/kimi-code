@@ -152,9 +152,16 @@ describe('server-v2 /api/v1/sessions', () => {
       JSON.stringify({ event: 'prompt.submitted', time: 2 }),
     ].join('\n');
 
+    // `connection: close` keeps the streamed download on a short-lived socket
+    // so undici never pools a keep-alive connection that would hold
+    // `server.close()` open in afterEach (fastify's default keepAliveTimeout
+    // is 72s, far beyond the hook timeout).
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
       body: JSON.stringify({ web_log: webLog }),
     } as never);
     const archive = Buffer.from(await res.arrayBuffer());
@@ -201,7 +208,10 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
       body: '{}',
     } as never);
     const reader = res.body?.getReader();
@@ -241,7 +251,10 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: authHeaders(server as RunningServer, {
+        'content-type': 'application/json',
+        connection: 'close',
+      }),
       body: JSON.stringify({ desktop: true }),
     } as never);
     const archive = Buffer.from(await res.arrayBuffer());
