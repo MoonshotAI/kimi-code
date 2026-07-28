@@ -631,6 +631,12 @@ defineExpose({ closeMenu });
   --sb-fade: 34px;
   --sb-fade-len: 26px;
 }
+/* With a badge the title tail never reaches the hover cluster — keep the rest-state fade. */
+.se:has(.ui-badge):hover .t,
+.se:has(.ui-badge):has(.ha.open) .t {
+  --sb-fade: 0px;
+  --sb-fade-len: 16px;
+}
 
 /* Leading emoji (the session icon): an ordinary title character — no
    decoration at rest or on hover. It stays a <button> for a11y; the kebab
