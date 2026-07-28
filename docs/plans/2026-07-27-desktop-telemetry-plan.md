@@ -79,4 +79,4 @@
 
 ## renderer 上报通道
 
-现有 CloudAppender 是 Node-only，renderer 够不着。已实现（P0）：新增 `kimi:track` IPC——renderer 经 preload 桥 `window.kimiDesktop.track(event, properties)`（`src/renderer/lib/track.ts` 薄封装，无桥 no-op）→ 主进程 `ipc.ts` handler 用 `src/main/track.ts` 的 `asRendererTrackEvent` 做事件白名单 + 逐字段校验（防 renderer 注入任意数据）→ `trackDesktopEvent` 汇入同一管线，复用 consent、deviceId、缓冲、脱敏、失败落盘；单一出口。renderer 可发事件限白名单内 12 个（见上表 renderer 全部），新增需扩 `asRendererTrackEvent` 并在 `telemetry-events.ts` 登记契约。
+现有 CloudAppender 是 Node-only，renderer 够不着。已实现（P0）：新增 `kimi:track` IPC——renderer 经 preload 桥 `window.kimiDesktop.track(event, properties)`（`src/renderer/lib/track.ts` 薄封装，无桥 no-op）→ 主进程 `ipc.ts` handler 用 `src/main/track.ts` 的 `asRendererTrackEvent` 做事件白名单 + 逐字段校验（防 renderer 注入任意数据）→ `trackDesktopEvent` 汇入同一管线，复用 consent、deviceId、缓冲、脱敏、失败落盘；单一出口。renderer 可发事件限白名单内 12 个（见上表 renderer 全部），新增需扩 `asRendererTrackEvent` 并在 `src/shared/track-events.ts` 登记契约（renderer `track()` 编译期直连该契约——事件名 / payload 拼写在 renderer 侧即编译报错，而非到白名单被静默丢弃；契约由 `telemetry-events.ts` re-export 保持单一数据目录）。

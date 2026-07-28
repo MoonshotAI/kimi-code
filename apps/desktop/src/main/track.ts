@@ -2,22 +2,8 @@
 
 import type { TelemetryProperties } from '@moonshot-ai/agent-core-v2';
 
-import type {
-  ActionInvokedEvent,
-  ApprovalDecisionEvent,
-  AttachmentAddedEvent,
-  DesktopEventName,
-  DesktopEventPayloads,
-  NativeFeatureUsedEvent,
-  OnboardingStepEvent,
-  OauthLoginStepEvent,
-  SessionMenuActionEvent,
-  SettingsChangedEvent,
-  ShortcutBindingChangedEvent,
-  UiElementToggledEvent,
-  UpdatePromptActionEvent,
-  UpdatePromptShownEvent,
-} from './telemetry-events';
+import type { RendererTrackEvent } from '../shared/track-events';
+import type { DesktopEventName, DesktopEventPayloads } from './telemetry-events';
 
 type TrackImpl = (event: string, properties?: TelemetryProperties) => void;
 
@@ -36,20 +22,9 @@ export function trackDesktopEvent<K extends DesktopEventName>(
 
 // --- kimi:track IPC payloads --------------------------------------------------
 
-// Main-process trust boundary for renderer telemetry.
-export type RendererTrackEvent =
-  | { event: 'action_invoked'; properties: ActionInvokedEvent }
-  | { event: 'update_prompt_shown'; properties: UpdatePromptShownEvent }
-  | { event: 'update_prompt_action'; properties: UpdatePromptActionEvent }
-  | { event: 'onboarding_step'; properties: OnboardingStepEvent }
-  | { event: 'oauth_login_step'; properties: OauthLoginStepEvent }
-  | { event: 'shortcut_binding_changed'; properties: ShortcutBindingChangedEvent }
-  | { event: 'settings_changed'; properties: SettingsChangedEvent }
-  | { event: 'native_feature_used'; properties: NativeFeatureUsedEvent }
-  | { event: 'approval_decision'; properties: ApprovalDecisionEvent }
-  | { event: 'session_menu_action'; properties: SessionMenuActionEvent }
-  | { event: 'attachment_added'; properties: AttachmentAddedEvent }
-  | { event: 'ui_element_toggled'; properties: UiElementToggledEvent };
+// Main-process trust boundary for renderer telemetry. The RendererTrackEvent
+// union is derived from the shared contract (shared/track-events.ts), so this
+// whitelist and the renderer's compile-time types can never drift apart.
 
 function asShortString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 64 ? value : undefined;

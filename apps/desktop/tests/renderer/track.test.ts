@@ -20,7 +20,7 @@ describe('track', () => {
 
   it('is a silent no-op when the bridge predates the track method', () => {
     globalRef.window = { kimiDesktop: {} };
-    expect(() => track('update_prompt_shown')).not.toThrow();
+    expect(() => track('update_prompt_shown', {})).not.toThrow();
   });
 
   it('forwards the event and properties to the bridge verbatim', () => {
@@ -31,11 +31,11 @@ describe('track', () => {
     expect(spy).toHaveBeenCalledWith('update_prompt_action', { action: 'skip', version: '1.2.3' });
   });
 
-  it('passes an undefined properties bag through when omitted', () => {
+  it('forwards an empty properties bag verbatim', () => {
     const spy = vi.fn();
     globalRef.window = { kimiDesktop: { track: spy } };
-    track('update_prompt_shown');
-    expect(spy).toHaveBeenCalledWith('update_prompt_shown', undefined);
+    track('update_prompt_shown', {});
+    expect(spy).toHaveBeenCalledWith('update_prompt_shown', {});
   });
 
   it('swallows bridge errors instead of letting them break the UI', () => {

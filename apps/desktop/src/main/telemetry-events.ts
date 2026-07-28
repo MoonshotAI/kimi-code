@@ -1,4 +1,37 @@
 // Desktop-owned event contracts. Payloads never include user content or paths.
+// Renderer-emittable contracts live in src/shared/track-events.ts (shared with
+// the renderer for compile-time checking) and are re-exported here so this
+// file stays the single readable catalog; the interfaces below are main-only.
+
+import type {
+  ActionInvokedEvent,
+  ApprovalDecisionEvent,
+  AttachmentAddedEvent,
+  NativeFeatureUsedEvent,
+  OnboardingStepEvent,
+  OauthLoginStepEvent,
+  SessionMenuActionEvent,
+  SettingsChangedEvent,
+  ShortcutBindingChangedEvent,
+  UiElementToggledEvent,
+  UpdatePromptActionEvent,
+  UpdatePromptShownEvent,
+} from '../shared/track-events';
+
+export type {
+  ActionInvokedEvent,
+  ApprovalDecisionEvent,
+  AttachmentAddedEvent,
+  NativeFeatureUsedEvent,
+  OnboardingStepEvent,
+  OauthLoginStepEvent,
+  SessionMenuActionEvent,
+  SettingsChangedEvent,
+  ShortcutBindingChangedEvent,
+  UiElementToggledEvent,
+  UpdatePromptActionEvent,
+  UpdatePromptShownEvent,
+} from '../shared/track-events';
 
 export interface EmbeddedRendererLoadResultEvent {
   ok: boolean;
@@ -13,20 +46,6 @@ export interface AppCrashedEvent {
 
 export interface UpdateStatusChangedEvent {
   state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
-  version?: string;
-}
-
-export interface ActionInvokedEvent {
-  action: string;
-  source: 'shortcut' | 'menu' | 'button' | 'tray';
-}
-
-export interface UpdatePromptShownEvent {
-  version?: string;
-}
-
-export interface UpdatePromptActionEvent {
-  action: 'skip' | 'download' | 'restart' | 'retry';
   version?: string;
 }
 
@@ -55,53 +74,6 @@ export interface WindowLifecycleEvent {
 
 export interface NativeIpcUsedEvent {
   channel: 'dialog-open' | 'dialog-save' | 'open-in' | 'show-window' | 'vibrancy';
-}
-
-export interface OnboardingStepEvent {
-  step: string;
-  skipped?: boolean;
-}
-
-export interface OauthLoginStepEvent {
-  stage: string;
-  ok?: boolean;
-}
-
-export interface ShortcutBindingChangedEvent {
-  action: string;
-  op: 'assign' | 'reset' | 'clear' | 'reset_all';
-  had_conflict?: boolean;
-}
-
-// `value` stays enum-like (theme names, locales, app ids, booleans) — never
-// free text; the IPC whitelist caps its length.
-export interface SettingsChangedEvent {
-  key: string;
-  value?: string;
-}
-
-export interface NativeFeatureUsedEvent {
-  feature: string;
-  fallback?: boolean;
-}
-
-export interface ApprovalDecisionEvent {
-  decision: string;
-  via: 'button' | 'number-key';
-}
-
-export interface SessionMenuActionEvent {
-  action: string;
-}
-
-export interface AttachmentAddedEvent {
-  via: 'drop' | 'click' | 'paste';
-  kind?: string;
-}
-
-export interface UiElementToggledEvent {
-  element: string;
-  expanded: boolean;
 }
 
 export interface DesktopEventPayloads {
