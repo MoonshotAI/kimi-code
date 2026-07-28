@@ -12,8 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -144,6 +143,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSkillService,
   AgentSkillService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'skill',
 );

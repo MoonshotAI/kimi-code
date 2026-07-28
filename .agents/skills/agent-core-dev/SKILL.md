@@ -60,7 +60,7 @@ Invariants that hold across every stage. Each is expanded in the stage file note
 2. `@IX` decorates constructor parameters only; parameter order depends on construction (static-first for `createInstance`, `@IX`-first for scoped services). (service-authoring.md)
 3. Both interface and impl carry `_serviceBrand`; the `createDecorator` name is globally unique. (implement.md)
 4. Parent scope never depends on child scope — short-lived may inject long-lived, never the reverse. (orient.md)
-5. No cyclic dependencies — refactor (extract a third Service / use an event / re-scope); do not break the cycle with `Delayed`. (design.md, implement.md)
+5. No cyclic dependencies — refactor (extract a third Service / use an event / re-scope); activation timing does not break dependency cycles. (design.md, implement.md)
 6. `ServicesAccessor` is valid only during `invokeFunction` — never stash it for async use. (implement.md)
 7. Scope follows state identity — no `Map<sessionId, …>` at `App` to fake per-session state. (design.md)
 8. Foundational layers never know upstream ones; business code never depends on the edge layer (`gateway`/`rpc`). (design.md)

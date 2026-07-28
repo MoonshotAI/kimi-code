@@ -17,6 +17,8 @@ import {
   interactionResolved,
 } from '#/session/interaction/interactionOps';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -65,6 +67,7 @@ describe('SessionInteractionService', () => {
       _serviceBrand: undefined,
       get: (id: string) => agents.get(id)?.handle,
     } as unknown as IAgentLifecycleService);
+    ix.set(ISessionStateService, new SessionStateService());
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
   });
   afterEach(() => disposables.dispose());

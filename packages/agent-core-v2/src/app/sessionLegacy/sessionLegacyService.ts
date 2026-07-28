@@ -17,8 +17,12 @@ import type { GoalSnapshot } from '#/agent/goal/types';
 
 import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -220,6 +224,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLegacyService,
   SessionLegacyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionLegacy',
 );

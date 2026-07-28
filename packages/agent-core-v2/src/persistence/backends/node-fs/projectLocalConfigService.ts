@@ -13,8 +13,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
@@ -314,6 +313,6 @@ registerScopedService(
   LifecycleScope.App,
   IProjectLocalConfigService,
   FileProjectLocalConfigService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'projectLocalConfig',
 );

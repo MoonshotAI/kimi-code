@@ -9,8 +9,7 @@
  * archived sessions too. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 
@@ -44,6 +43,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceSessions,
   WorkspaceSessionsService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'workspaceSessions',
 );

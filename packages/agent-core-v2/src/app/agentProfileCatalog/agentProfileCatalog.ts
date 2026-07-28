@@ -23,7 +23,7 @@
  * (`undefined` = any type).
  *
  * Profiles are contributed at module load via `registerAgentProfile(...)`, the
- * same "import = register" pattern used by `registerTool` and
+ * same "import = register" pattern used by `registerAgentToolService` and
  * `registerConfigSection`. `AgentProfileCatalogService` consumes the accumulated
  * contributions on construction and exposes `get(name)` / `getDefault()` /
  * `list()` to callers (the `Agent` tool, the swarm scheduler, and the per-agent
@@ -63,6 +63,8 @@ export interface AgentProfileContext {
   readonly now?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
+  readonly productName?: string;
+  readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
 }
 

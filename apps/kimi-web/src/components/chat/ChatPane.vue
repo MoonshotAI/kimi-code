@@ -274,7 +274,7 @@ function onQueueDragEnd(): void {
 }
 
 // Id of the most recent user turn — the only one offered an "edit & resend"
-// affordance (undo only rewinds the latest exchange).
+// affordance (undo only removes the latest exchange).
 const lastUserTurnId = computed<string | null>(() => {
   for (let i = props.turns.length - 1; i >= 0; i--) {
     if (props.turns[i]!.role === 'user') return props.turns[i]!.id;
@@ -314,10 +314,10 @@ function compactionDividerLabel(turn: ChatTurn): string {
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
-// Undo in-flight guard (keyed by turn id) — set while the server rewinds the
+// Undo in-flight guard (keyed by turn id) — set while the server undoes the
 // turn so a second undo can't fire until the first one settles.
 const undoingTurnId = ref<string | null>(null);
-// Fallback that releases the undoing state if the server rewind never removes
+// Fallback that releases the undoing state if the server undo never removes
 // the turn (e.g. the undo failed). Without it the guard in confirmEditMessage
 // would block any further undo.
 let undoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -339,7 +339,7 @@ function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
   emit('editMessage', { text: turn.text, attachments: turn.attachments });
-  // Fallback: if the server rewind never removes the turn (e.g. it failed),
+  // Fallback: if the server undo never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
     undoFallbackTimer = null;
@@ -347,7 +347,7 @@ function confirmEditMessage(turn: ChatTurn): void {
   }, UNDO_FALLBACK_MS);
 }
 
-// Release the undoing guard once the server rewind has actually removed the turn
+// Release the undoing guard once the server undo has actually removed the turn
 // from the list (post-render, so the element is already gone).
 watch(
   () => props.turns,

@@ -1,5 +1,6 @@
 import {
   APIConnectionError,
+  APIProviderQuotaExhaustedError,
   APITimeoutError,
   ChatProviderError,
   classifyBaseApiError,
@@ -97,13 +98,45 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
  * chain — it can never be converted into, nor returned as, a retryable
  * provider error.
  */
-export function convertOpenAIError(error: unknown): ChatProviderError {
+// OpenAI's own documented signal that the account quota/balance is exhausted:
+// the API sets `insufficient_quota` as both the body `error.type` and
+// `error.code` on a 429. This is protocol knowledge of the OpenAI wire — the
+// equivalent vendor-specific signals (e.g. Moonshot's
+// `exceeded_current_quota_error`) live with their vendor and reach this
+// converter through the optional `convertErrorHook` instead.
+export function isOpenAIInsufficientQuotaCode(code: string | null | undefined): boolean {
+  return code === 'insufficient_quota';
+}
+
+function isOpenAIInsufficientQuotaError(error: OpenAIAPIError): boolean {
+  if (error.status !== 429) return false;
+  if (typeof error.code === 'string' && isOpenAIInsufficientQuotaCode(error.code)) return true;
+  if (typeof error.type === 'string' && isOpenAIInsufficientQuotaCode(error.type)) return true;
+  // Gateways sometimes flatten the JSON body into the message text; the
+  // literal code string is unambiguous there, unlike prose wordings.
+  return error.message.toLowerCase().includes('insufficient_quota');
+}
+
+export function convertOpenAIError(
+  error: unknown,
+  convertErrorHook?: (error: unknown) => ChatProviderError | undefined,
+): ChatProviderError {
   // Abort guard FIRST: throws (never returns) the standard abort DOMException
   // for any abort shape, so a user cancellation is never misclassified as a
   // retryable provider failure.
   throwIfAbortError(error);
+  // Already-converted errors pass through untouched — they never re-enter
+  // vendor classification, so the hook below sees each raw failure exactly
+  // once even when a stream-minted error crosses an outer catch.
   if (error instanceof ChatProviderError) {
     return error;
+  }
+  // Vendor classification next: the hook sees the RAW error (the base
+  // conversion below drops the SDK-parsed body `error.code`/`error.type`),
+  // and `undefined` keeps the base classification.
+  const hooked = convertErrorHook?.(error);
+  if (hooked !== undefined) {
+    return hooked;
   }
   // v6: APIConnectionTimeoutError extends APIConnectionError, check timeout first
   if (error instanceof OpenAITimeoutError) {
@@ -115,13 +148,14 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
   // APIError with a status code => status error
   if (error instanceof OpenAIAPIError && typeof error.status === 'number') {
     const reqId = error.requestID ?? null;
-    return normalizeAPIStatusError(
-      error.status,
-      error.message,
-      reqId,
-      parseRetryAfterMs(error.headers),
-      parseTraceId(error.headers),
-    );
+    const retryAfterMs = parseRetryAfterMs(error.headers);
+    const traceId = parseTraceId(error.headers);
+    // Quota/balance exhaustion is a 429 but deterministic until the account
+    // is recharged — it must not classify as a retryable rate limit.
+    if (isOpenAIInsufficientQuotaError(error)) {
+      return new APIProviderQuotaExhaustedError(error.message, reqId, retryAfterMs, traceId);
+    }
+    return normalizeAPIStatusError(error.status, error.message, reqId, retryAfterMs, traceId);
   }
   // Base APIError with no status and no body => transport-layer failure.
   // When the error has a body (e.g. SSE error events from the server),

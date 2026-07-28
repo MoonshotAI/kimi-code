@@ -7,10 +7,9 @@
  *  2. Whole-subtree adds expand into fully fielded, indented tree rows.
  */
 
+import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-
-import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 
 import { diffValue } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';
@@ -51,7 +50,10 @@ describe('StateTree', () => {
   });
 
   it('expands whole-subtree adds into full field rows (all keys, no JSON dump)', () => {
-    const root = diffValue(serializeState(EMPTY_AGENT_STATE), serializeState(stateWith([turn(0, 'HELLO')])));
+    const root = diffValue(
+      serializeState(EMPTY_AGENT_STATE),
+      serializeState(stateWith([turn(0, 'HELLO')])),
+    );
     const html = renderToStaticMarkup(<StateTree root={root} />);
     expect(html).not.toContain('{"kind"');
     for (const field of ['turnId', 'ordinal', 'state', 'origin', 'prompt', 'steps']) {
@@ -96,5 +98,18 @@ describe('StateTree', () => {
       expect(html).toContain(field);
     }
     expect(html).not.toContain('{"kind"');
+  });
+
+  it('collapses multiline strings into a hover-preview button', () => {
+    const root = plainNode({ note: 'line one\nline two\nline three', single: 'one-liner' });
+    const html = renderToStaticMarkup(<StateTree root={root} defaultDepth={1} />);
+    // The multiline value renders as a compact button: first-line preview +
+    // line count, with the remaining lines NOT inlined into the tree (they
+    // only appear in the hover panel, which needs a real mouse to open).
+    expect(html).toContain('&quot;line one&quot; ⏎ 3');
+    expect(html).not.toContain('line two');
+    expect(html).not.toContain('line three');
+    // Single-line strings keep the inline rendering.
+    expect(html).toContain('&quot;one-liner&quot;');
   });
 });

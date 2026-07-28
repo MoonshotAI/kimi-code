@@ -828,7 +828,7 @@ watch(scrollKey, async (next, prev) => {
   }
   await nextTick();
   if (following.value || hasUserActionFollowLock()) {
-    // A rewind (undo / compaction) shortens the transcript — glide to the new
+    // An undo or compaction shortens the transcript — glide to the new
     // bottom smoothly; growth (new turns / streaming) snaps instantly so the
     // follow keeps up with the tail.
     scrollToBottom(next.length < prev.length);
@@ -928,9 +928,9 @@ function handleComposerSubmit(payload: { text: string; attachments: PromptAttach
   emit('submit', payload);
 }
 
-// Undo ("edit & resend") rewinds the transcript asynchronously — the server
+// Undo ("edit & resend") shortens the transcript asynchronously — the server
 // round-trip in App.vue's handleEditMessage truncates the turns after this emit
-// returns. Scrolling here would target the pre-rewind bottom and fight the
+// returns. Scrolling here would target the pre-undo bottom and fight the
 // bubble-exit animation, so we only arm the follow state; the scrollKey watcher
 // smooth-scrolls once the truncated turns actually land.
 function handleEditMessage(payload: {

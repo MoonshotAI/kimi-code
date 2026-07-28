@@ -5,21 +5,28 @@
  * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
  * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
  * hook to drive same-step suppression and cross-step repeat reminders, and
- * reports repeat telemetry through `telemetry`. Constructed eagerly at
+ * reports repeat telemetry through `telemetry`. The mutable dedupe state
+ * (`stepCalls`, `originalCallIndex`, `syntheticCallIds`, `callKeyByCallId`,
+ * `consecutiveKey`, `consecutiveCount`, `activeTurnId`, `activeStep`) is
+ * registered into `agentState` (`IAgentStateService`) and read/written
+ * through it; the `stepDeferreds` promise locks stay plain fields.
+ * Constructed eagerly at
  * Agent scope so the hooks are installed without any other service
  * injecting it.
  */
 
 import { createHash } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
@@ -107,24 +114,52 @@ function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDe
 
 const DEDUPE_PLACEHOLDER_RESULT: ToolDedupeResult = { output: '' };
 
+export const toolDedupeStepCallsKey = defineState<string[]>('toolDedupe.stepCalls', () => []);
+export const toolDedupeOriginalCallIndexKey = defineState<Map<string, number>>(
+  'toolDedupe.originalCallIndex',
+  () => new Map(),
+);
+export const toolDedupeSyntheticCallIdsKey = defineState<Set<string>>(
+  'toolDedupe.syntheticCallIds',
+  () => new Set(),
+);
+export const toolDedupeCallKeyByCallIdKey = defineState<Map<string, string>>(
+  'toolDedupe.callKeyByCallId',
+  () => new Map(),
+);
+export const toolDedupeConsecutiveKeyKey = defineState<string | null>(
+  'toolDedupe.consecutiveKey',
+  () => null,
+);
+export const toolDedupeConsecutiveCountKey = defineState<number>(
+  'toolDedupe.consecutiveCount',
+  () => 0,
+);
+export const toolDedupeActiveTurnIdKey = defineState<number | undefined>(
+  'toolDedupe.activeTurnId',
+  () => undefined as number | undefined,
+);
+export const toolDedupeActiveStepKey = defineState<number>('toolDedupe.activeStep', () => 0);
+
 export class AgentToolDedupeService extends Disposable implements IAgentToolDedupeService {
   declare readonly _serviceBrand: undefined;
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
-  private stepCalls: string[] = [];
-  private readonly originalCallIndex = new Map<string, number>();
-  private readonly syntheticCallIds = new Set<string>();
-  private readonly callKeyByCallId = new Map<string, string>();
-  private consecutiveKey: string | null = null;
-  private consecutiveCount = 0;
-  private activeTurnId: number | undefined;
-  private activeStep = 0;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(toolDedupeStepCallsKey);
+    this.states.register(toolDedupeOriginalCallIndexKey);
+    this.states.register(toolDedupeSyntheticCallIdsKey);
+    this.states.register(toolDedupeCallKeyByCallIdKey);
+    this.states.register(toolDedupeConsecutiveKeyKey);
+    this.states.register(toolDedupeConsecutiveCountKey);
+    this.states.register(toolDedupeActiveTurnIdKey);
+    this.states.register(toolDedupeActiveStepKey);
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();
@@ -145,6 +180,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       }
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
+      this.registerSkipped(
+        ctx.toolCall.id,
+        ctx.toolCall.name,
+        ctx.args,
+        ctx.toolCall.arguments,
+        ctx.trace,
+      );
       ctx.result = await this.finalizeResult(
         ctx.toolCall.id,
         ctx.toolCall.name,
@@ -157,6 +199,58 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       }
       await next();
     });
+  }
+
+  private get stepCalls(): string[] {
+    return this.states.get(toolDedupeStepCallsKey);
+  }
+
+  private set stepCalls(value: string[]) {
+    this.states.set(toolDedupeStepCallsKey, value);
+  }
+
+  private get originalCallIndex(): Map<string, number> {
+    return this.states.get(toolDedupeOriginalCallIndexKey);
+  }
+
+  private get syntheticCallIds(): Set<string> {
+    return this.states.get(toolDedupeSyntheticCallIdsKey);
+  }
+
+  private get callKeyByCallId(): Map<string, string> {
+    return this.states.get(toolDedupeCallKeyByCallIdKey);
+  }
+
+  private get consecutiveKey(): string | null {
+    return this.states.get(toolDedupeConsecutiveKeyKey);
+  }
+
+  private set consecutiveKey(value: string | null) {
+    this.states.set(toolDedupeConsecutiveKeyKey, value);
+  }
+
+  private get consecutiveCount(): number {
+    return this.states.get(toolDedupeConsecutiveCountKey);
+  }
+
+  private set consecutiveCount(value: number) {
+    this.states.set(toolDedupeConsecutiveCountKey, value);
+  }
+
+  private get activeTurnId(): number | undefined {
+    return this.states.get(toolDedupeActiveTurnIdKey);
+  }
+
+  private set activeTurnId(value: number | undefined) {
+    this.states.set(toolDedupeActiveTurnIdKey, value);
+  }
+
+  private get activeStep(): number {
+    return this.states.get(toolDedupeActiveStepKey);
+  }
+
+  private set activeStep(value: number) {
+    this.states.set(toolDedupeActiveStepKey, value);
   }
 
   private beginStep(turnId?: number, step?: number): void {
@@ -217,6 +311,23 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       return { syntheticResult: null };
     }
     return { syntheticResult: null };
+  }
+
+  private registerSkipped(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    rawArguments: unknown,
+    trace: LLMRequestTrace | undefined,
+  ): void {
+    if (this.callKeyByCallId.has(toolCallId)) return;
+    const keyArgs =
+      rawArguments !== undefined &&
+      rawArguments !== null &&
+      parseToolCallArguments(rawArguments).parseFailed
+        ? rawArguments
+        : args;
+    this.checkToolCall(toolCallId, toolName, keyArgs, trace);
   }
 
   private recordDupType(
@@ -317,6 +428,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolDedupeService,
   AgentToolDedupeService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolDedupe',
 );

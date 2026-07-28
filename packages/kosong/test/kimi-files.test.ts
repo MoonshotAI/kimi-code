@@ -2,8 +2,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { APIProviderQuotaExhaustedError, isRetryableGenerateError } from '#/errors';
 import { KimiChatProvider } from '#/providers/kimi';
 import { KimiFiles } from '#/providers/kimi-files';
+import { APIError as OpenAIAPIError } from 'openai';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 function createProvider(): KimiChatProvider {
@@ -195,6 +197,37 @@ describe('KimiFiles', () => {
           mimeType: 'image/png',
         }),
       ).rejects.toThrow(/video/i);
+    });
+  });
+
+  describe('upload error conversion', () => {
+    it('fails fast on a Moonshot quota-exhausted 429 from the files API', async () => {
+      const quotaError = new OpenAIAPIError(
+        429,
+        {
+          message: 'Your account is suspended due to insufficient balance, please recharge',
+          type: 'exceeded_current_quota_error',
+        },
+        '429 quota exhausted',
+        new Headers(),
+      );
+      const files = new KimiFiles({
+        baseUrl: 'https://api.example/v1',
+        clientFactory: () =>
+          ({ files: { create: vi.fn().mockRejectedValue(quotaError) } }) as never,
+      });
+
+      const caught = await files
+        .uploadVideo(
+          { data: Buffer.from([1, 2, 3]), mimeType: 'video/mp4' },
+          { auth: { apiKey: 'request-token' } },
+        )
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect(isRetryableGenerateError(caught)).toBe(false);
     });
   });
 });

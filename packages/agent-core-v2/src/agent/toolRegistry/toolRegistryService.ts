@@ -1,6 +1,13 @@
+/**
+ * `toolRegistry` domain (L3) — `IAgentToolRegistryService` implementation.
+ *
+ * The per-agent tool table (`tools`) stays a plain instance field: its values
+ * hold `ExecutableTool` class instances, not plain data, so it is not
+ * registered into `agentState` (`IAgentStateService`). Bound at Agent scope.
+ */
+
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -70,6 +77,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolRegistryService,
   AgentToolRegistryService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'toolRegistry',
 );

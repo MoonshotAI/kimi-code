@@ -7,9 +7,8 @@
  * App-scoped root. Has no cross-domain collaborators.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 
 import type {
@@ -157,6 +156,6 @@ registerScopedService(
   LifecycleScope.App,
   ITelemetryService,
   TelemetryService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'telemetry',
 );

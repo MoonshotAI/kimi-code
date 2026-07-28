@@ -18,8 +18,7 @@
  */
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type {
@@ -156,6 +155,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUserToolService,
   AgentUserToolService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'userTool',
 );

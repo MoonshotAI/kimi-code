@@ -14,8 +14,7 @@
  * App-scoped.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { SkillDiscoveryResult } from './skillDiscovery';
 import { ISkillDiscovery } from './skillDiscovery';
@@ -63,6 +62,6 @@ registerScopedService(
   LifecycleScope.App,
   ISkillDiscovery,
   InMemorySkillDiscovery,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'skillCatalog',
 );

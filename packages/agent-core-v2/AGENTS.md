@@ -53,6 +53,10 @@ Business domains **do not implement persistence themselves** — they depend on 
 
 Business code must not `import 'node:fs'`, write SQL, hand-roll append-logs / atomic writes, or hold file handles. Generic Stores are named by **access pattern** (`IAppendLogStore`, `IAtomicDocumentStore`); only domain-unique Stores are named after the domain (`ISessionIndex`). See `.agents/skills/agent-core-dev/persistence.md` for the full layering rules and decision tree.
 
+## Conversation undo
+
+`context.undo` is the only persisted undo fact. `contextMemory/conversationTime.ts` owns the conversation clock (`isUndoAnchor` — the single tick predicate used by `computeUndoCut`, the checkpoint reducers, and the transcript reducer) and the checkpoint protocol. A wire Model whose state must follow conversation undo (todo, plan, task-notification delivery, …) **MUST** be defined with `defineCheckpointedModel` — never hand-roll the push/clear/restore reducers — which also registers it into `CHECKPOINTED_MODELS` for the undo pipeline's pre-cut depth check. World-time state (turn counters, task registries, revision counters) must stay outside checkpointed Models.
+
 ## Docs
 
 Per-domain references live in `docs/`.
@@ -64,3 +68,4 @@ Per-domain references live in `docs/`.
 - [`docs/di-testing.md`](docs/di-testing.md) — Read **before writing or touching any DI/Scope test**: picking the right harness (`InstantiationService` vs `TestInstantiationService` vs `createScopedTestHost`), declaring deps with `@IService`, stubbing collaborators, and teardown via `DisposableStore`.
 - [`docs/config-manifest.toml`](docs/config-manifest.toml) — Generated list of every registered config section, in the on-disk `config.toml` shape (owner, scope, defaults, env bindings, schema fields). Do not edit by hand; regenerate with `pnpm gen:config-manifest` after adding or removing a `registerConfigSection` call — `test/app/config/configManifest.test.ts` enforces freshness.
 - [`docs/wire-manifest.d.ts`](docs/wire-manifest.d.ts) — Generated declaration file listing every registered wire record type as a payload interface (model, persist policy, `toEvent`, cross-reducers in the doc comment; payload fields in real TS type syntax), plus a `WirePayloadMap`. Do not edit by hand; regenerate with `pnpm gen:wire-manifest` after adding or removing a `defineOp` call — `test/wire/wireManifest.test.ts` enforces freshness and checks the file parses.
+- [`docs/state-manifest.d.ts`](docs/state-manifest.d.ts) — Generated declaration file listing every state key registered into `ISessionStateService` / `IAgentStateService`, as `SessionStateSnapshot` / `AgentStateSnapshot` interfaces (keys grouped by defining file), plus the `SessionStateKey` / `AgentStateKey` unions. Self-contained: every value type is expanded fully inline with each named type marked by a `/* TypeName — source/file.ts */` comment (recursion stops with a `recursive` marker) — no imports, no helper declarations. Do not edit by hand; regenerate with `pnpm gen:state-manifest` after adding or removing a `states.register(...)` call — `test/state/stateManifest.test.ts` enforces freshness and checks the file parses.

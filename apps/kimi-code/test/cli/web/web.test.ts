@@ -542,6 +542,38 @@ describe('server web asset directory resolution', () => {
     const { resolveServerWebAssetsDir } = await import('#/cli/sub/web/run');
     expect(resolveServerWebAssetsDir(null)).toMatch(/[/\\]dist-web$/);
   });
+
+  it('returns the assets dir when it is built, dev mode or not', async () => {
+    const { serverWebAssetsDir } = await import('#/cli/sub/web/run');
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-web-assets-'));
+    try {
+      writeFileSync(join(dir, 'index.html'), '<html></html>');
+      expect(serverWebAssetsDir({}, dir)).toBe(dir);
+      expect(serverWebAssetsDir({ KIMI_CODE_DEV_SERVER: '1' }, dir)).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('requires built assets outside dev mode', async () => {
+    const { serverWebAssetsDir } = await import('#/cli/sub/web/run');
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-web-assets-'));
+    try {
+      expect(serverWebAssetsDir({}, dir)).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('tolerates missing assets in dev mode (API-only server)', async () => {
+    const { serverWebAssetsDir } = await import('#/cli/sub/web/run');
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-web-assets-'));
+    try {
+      expect(serverWebAssetsDir({ KIMI_CODE_DEV_SERVER: '1' }, dir)).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 function makeLegacyKillDeps(overrides: Partial<LegacyKillDeps> = {}): {

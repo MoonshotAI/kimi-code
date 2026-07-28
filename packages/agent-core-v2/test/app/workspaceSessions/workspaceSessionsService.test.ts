@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -58,7 +58,7 @@ describe('WorkspaceSessionsService', () => {
       LifecycleScope.App,
       IWorkspaceSessions,
       WorkspaceSessionsService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'workspaceSessions',
     );
   });

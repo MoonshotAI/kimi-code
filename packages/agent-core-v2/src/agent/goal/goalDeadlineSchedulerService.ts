@@ -5,9 +5,8 @@
  * with the host timer API. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 
@@ -35,6 +34,6 @@ registerScopedService(
   LifecycleScope.App,
   IGoalDeadlineScheduler,
   GoalDeadlineSchedulerService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'goal',
 );

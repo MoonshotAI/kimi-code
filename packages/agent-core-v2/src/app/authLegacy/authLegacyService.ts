@@ -14,8 +14,7 @@
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import type { AuthSummary } from './authLegacy';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -78,6 +77,6 @@ registerScopedService(
   LifecycleScope.App,
   IAuthLegacyService,
   AuthLegacyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'authLegacy',
 );

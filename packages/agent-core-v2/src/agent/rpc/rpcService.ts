@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -19,6 +18,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ProfileError } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
@@ -64,6 +64,8 @@ export class AgentRPCService implements IAgentRPCService {
 
   constructor(
     @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentConversationUndoService
+    private readonly conversationUndo: IAgentConversationUndoService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -127,10 +129,8 @@ export class AgentRPCService implements IAgentRPCService {
     this.loop.cancel(turnId);
   }
 
-  undoHistory(payload: UndoHistoryPayload): number {
-    const undone = this.promptService.undo(payload.count);
-    this.telemetry.track2('conversation_undo', { count: payload.count });
-    return undone;
+  async undoHistory(payload: UndoHistoryPayload): Promise<number> {
+    return this.conversationUndo.undo(payload.count);
   }
 
   setPermission(payload: SetPermissionPayload): void {
@@ -236,6 +236,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'rpc',
 );

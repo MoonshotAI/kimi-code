@@ -22,6 +22,11 @@
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
  * itself, exactly like v1's restore-time `popMatchedMessage`.
  *
+ * `context.undo` counts conversation ticks with the single `isUndoAnchor`
+ * predicate (`./conversationTime`) — the same definition the checkpoint
+ * protocol pushes with, so anchor counting and checkpoint pushing can never
+ * drift apart.
+ *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
  *   in `context.append_message` and `context.append_loop_event` records,
@@ -43,6 +48,11 @@ import {
   createCompactionSummaryMessage,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
+import {
+  isPromptOwnedInjection,
+  isUndoAnchor,
+  isValidUndoCount,
+} from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
@@ -304,10 +314,16 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       stoppedAtCompaction = true;
       break;
     }
-    if (isRealUserPrompt(message)) {
+    if (isUndoAnchor(message)) {
       remaining--;
       removedCount++;
       cutIndex = i;
+      while (
+        cutIndex > 0 &&
+        isPromptOwnedInjection(state[cutIndex - 1]!, message)
+      ) {
+        cutIndex--;
+      }
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };
@@ -317,7 +333,11 @@ export function isFullyUndoable(cut: UndoCut, count: number): boolean {
   return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
-export type UndoUnavailableReason = 'empty' | 'compaction_boundary' | 'insufficient';
+export type UndoUnavailableReason =
+  | 'empty'
+  | 'compaction_boundary'
+  | 'insufficient'
+  | 'checkpoint_lost';
 
 export type UndoPrecheck =
   | { readonly ok: true }
@@ -349,25 +369,19 @@ export function formatUndoUnavailableMessage(
       return 'Nothing to undo: would cross a compaction boundary';
     case 'insufficient':
       return `Nothing to undo: only ${precheck.undoable} of ${precheck.requested} requested turn(s) available`;
+    case 'checkpoint_lost':
+      return 'Nothing to undo: conversation state checkpoints are incomplete';
   }
 }
 
 export const contextUndo = ContextModel.defineOp('context.undo', {
-  schema: z.object({ count: z.number() }),
+  schema: z.object({
+    count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }),
   apply: (state, p) => {
-    if (p.count <= 0 || state.length === 0) return state;
+    if (!isValidUndoCount(p.count) || state.length === 0) return state;
     const cut = computeUndoCut(state, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;
     return resetFold(state.slice(0, cut.cutIndex)) as ContextMessage[];
   },
 });
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
-}

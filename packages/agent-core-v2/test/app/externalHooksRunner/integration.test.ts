@@ -61,6 +61,7 @@ import { SessionExternalHooksService } from '#/session/externalHooks/externalHoo
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 
 function nodeCommand(source: string): string {
@@ -106,7 +107,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
     undo: (count) => {
       const cut = computeUndoCut(messages, count);
       if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        messages.splice(cut.cutIndex, messages.length - cut.cutIndex);
+        messages.splice(cut.cutIndex);
       }
       return cut;
     },
@@ -278,6 +279,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerStateServices(reg);
           registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
@@ -381,6 +383,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerStateServices(reg);
           registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
@@ -496,6 +499,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerStateServices(reg);
           reg.defineInstance(ISessionContext, {
             _serviceBrand: undefined,
             sessionId: 'session-1',
@@ -569,6 +573,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerStateServices(reg);
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(IConfigService, {
@@ -829,6 +834,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerStateServices(reg);
           reg.defineInstance(ISessionContext, {
             _serviceBrand: undefined,
             sessionId: 'session-1',
