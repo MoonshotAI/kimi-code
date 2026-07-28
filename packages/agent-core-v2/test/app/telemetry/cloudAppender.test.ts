@@ -98,7 +98,9 @@ describe('CloudAppender', () => {
     expect(event?.['context_app_name']).toBe('test-app');
     expect(event?.['context_client_version']).toBe('1.0.0');
     expect(event?.['context_version']).toBe('1.0.0');
-    expect(typeof event?.['context_core_version']).toBe('string');
+    // core_version was dropped from the context: client_version pins the
+    // engine build for every host, making the field redundant.
+    expect(event?.['context_core_version']).toBeUndefined();
     expect(typeof event?.['event_id']).toBe('string');
     expect(typeof event?.['timestamp']).toBe('number');
   });

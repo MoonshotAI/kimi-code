@@ -26,7 +26,6 @@ import {
   type EnrichedCloudEvent,
   isCloudPrimitive,
 } from './cloudTransport';
-import { getCoreVersion } from '#/_base/version';
 import { cleanTelemetryProperties } from './privacy';
 
 export interface CloudAppenderOptions {
@@ -188,7 +187,6 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
     app_name: options.appName,
     client_version: bootstrap.clientVersion,
     version: bootstrap.clientVersion,
-    core_version: getCoreVersion(),
     runtime: 'node',
     platform: bootstrap.platform,
     arch: bootstrap.arch,
