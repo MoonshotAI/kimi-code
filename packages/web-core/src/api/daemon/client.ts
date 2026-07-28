@@ -1570,10 +1570,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
       return { kind: 'error', message: data.message, status: data.status };
     }
     const mapRow = (row: WireUsageRow): UsageRow => ({
-      label: row.label,
+      name: row.name,
+      window: row.window,
       used: row.used,
       limit: row.limit,
-      resetHint: row.reset_hint,
+      resetAt: row.reset_at,
     });
     return {
       kind: 'ok',

@@ -10,8 +10,8 @@ import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { BoosterWallet, ManagedUsageResult, UsageRow } from '../../api/types';
 import {
-  localizeResetHint,
-  localizeUsageLabel,
+  formatResetAt,
+  formatUsageLabel,
   moneyParts,
   usagePercent,
   usageSeverity,
@@ -63,6 +63,10 @@ function money(cents: number, currency: string): string {
   const parts = moneyParts(cents, currency);
   return `${parts.symbol}${parts.number}`;
 }
+
+function resetHint(row: UsageRow): string {
+  return row.resetAt === undefined ? '' : formatResetAt(row.resetAt, t);
+}
 </script>
 
 <template>
@@ -85,10 +89,10 @@ function money(cents: number, currency: string): string {
       <div v-else-if="!hasUsageRows" class="pu-row pu-state pu-empty">{{ t('settings.planUsage.empty') }}</div>
 
       <!-- Usage rows -->
-      <div v-for="row in usageRows" v-else :key="row.label" class="pu-row">
+      <div v-for="(row, index) in usageRows" v-else :key="index" class="pu-row">
         <span class="pu-main">
-          <span class="pu-label">{{ localizeUsageLabel(row.label, t) }}</span>
-          <span v-if="row.resetHint" class="pu-hint">{{ localizeResetHint(row.resetHint, t) }}</span>
+          <span class="pu-label">{{ formatUsageLabel(row, t) }}</span>
+          <span v-if="resetHint(row)" class="pu-hint">{{ resetHint(row) }}</span>
         </span>
         <span class="pu-value">
           {{ t('settings.planUsage.usedPct', { pct: usagePercent(row.used, row.limit) }) }}
