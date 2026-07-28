@@ -13,6 +13,7 @@ import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
+import { trackDesktopEvent } from './track';
 import { finalizeWindowLifecycle } from './window-lifecycle';
 
 // --- app lifecycle ------------------------------------------------------------
@@ -90,6 +91,23 @@ export function main(): void {
     log.info(
       `[kimi-desktop] app ready (version=${app.getVersion()} platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged})`,
     );
+    const launch = parseLaunchArgs(process.argv);
+    trackDesktopEvent('app_launched', {
+      launch_intent: launch.newChat || launch.workspace !== undefined ? 'jump_list' : 'normal',
+    });
+    trackDesktopEvent('startup_timing', {
+      phase: 'main_ready',
+      duration_ms: Math.round(process.uptime() * 1000),
+    });
+    app.on('child-process-gone', (_event, details) => {
+      if (details.type === 'GPU') {
+        trackDesktopEvent('app_crashed', {
+          process: 'gpu',
+          kind: details.reason,
+          app_uptime_ms: Math.round(process.uptime() * 1000),
+        });
+      }
+    });
     // Dock icon follows the effective appearance (dark/light tile swap);
     // packaged builds additionally keep the static .icns for Finder etc.
     initDockIcon();

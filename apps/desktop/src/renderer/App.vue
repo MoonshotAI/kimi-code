@@ -64,6 +64,8 @@ import {
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
 import { track } from './lib/track';
+import { setSessionIntent } from './lib/session-intent';
+import type { SessionCreatedSource } from '../shared/track-events';
 import { isAppActionId, type AppActionId } from '../shared/action-ids';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
@@ -121,6 +123,7 @@ useTrayAttention(client);
 useJumpList(client, (payload) => {
   runWhenInitialized(client.initialized, () => {
     if (payload.action === 'new-chat') {
+      setSessionIntent('jump_list');
       handleCreateSession();
     } else {
       void openWorkspaceByRoot(payload.root);
@@ -338,6 +341,13 @@ async function openWorkspaceInDefaultApp(): Promise<void> {
 // Single funnel for app-level actions — the keydown dispatcher, the native
 // menu, and the UI buttons all dispatch through here, so action_invoked
 // source attribution lives in exactly one place.
+const SESSION_INTENT_BY_ACTION_SOURCE: Record<'shortcut' | 'menu' | 'button', SessionCreatedSource> = {
+  shortcut: 'shortcut',
+  menu: 'menu',
+  // The buttons all live in the sidebar (or its mobile/floating variants).
+  button: 'sidebar',
+};
+
 function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'button'): void {
   track('action_invoked', { action: id, source });
   switch (id) {
@@ -355,6 +365,7 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       sidebarRef.value?.toggleSearch();
       break;
     case 'newSession':
+      setSessionIntent(SESSION_INTENT_BY_ACTION_SOURCE[source]);
       handleCreateSession();
       break;
     case 'archiveSession': {
@@ -651,7 +662,10 @@ async function confirmDeleteWorkspace(id: string): Promise<void> {
     title: t('sidebar.removeWorkspace'),
     message: t('workspace.removeWorkspaceConfirm', { name }),
     variant: 'danger',
-    action: () => client.deleteWorkspace(id),
+    action: async () => {
+      await client.deleteWorkspace(id);
+      track('workspace_removed', { workspace_count: client.workspacesView.value.length });
+    },
   });
 }
 
@@ -836,6 +850,7 @@ async function handleCommand(cmd: string): Promise<void> {
     // session is only created when the user sends the first message.
     case '/new':
     case '/clear':
+      setSessionIntent('slash_command');
       handleCreateSession();
       break;
     case '/fork':
@@ -971,6 +986,7 @@ async function addWorkspace(root: string): Promise<boolean> {
   addWorkspaceError.value = null;
   const added = await client.addWorkspaceByPath(root);
   if (!added) return false;
+  track('workspace_added', { workspace_count: client.workspacesView.value.length });
   showAddWorkspace.value = false;
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
@@ -1049,12 +1065,12 @@ function openSettingsFromButton(): void {
 
 function setColorSchemeFromSettings(scheme: ColorScheme): void {
   client.setColorScheme(scheme);
-  track('settings_changed', { key: 'theme', value: scheme });
+  track('settings_changed', { key: 'theme', value: scheme, source_panel: 'settings' });
 }
 
 function setFontScaleFromSettings(scale: FontScale): void {
   client.setFontScale(scale);
-  track('settings_changed', { key: 'font-size', value: scale });
+  track('settings_changed', { key: 'font-size', value: scale, source_panel: 'settings' });
 }
 
 // Primary "+ New": enter the draft state in the current workspace so the
@@ -1074,8 +1090,15 @@ function handleCreateSession(): void {
 // state in the chosen workspace. No backend session is created until the user
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
+  setSessionIntent('sidebar');
   client.openWorkspaceDraft(workspaceId);
   focusComposerAfterDraft();
+}
+
+// Sidebar / mobile-switcher session clicks: both are sidebar-sourced resumes.
+function handleSelectSession(sessionId: string): void {
+  setSessionIntent('sidebar');
+  void client.selectSession(sessionId);
 }
 
 // Chat header: open a GitHub PR in a new tab.
@@ -1124,7 +1147,7 @@ function openPr(url: string): void {
         :unread-by-session="client.unreadBySession.value"
         :workspace-sort-mode="client.workspaceSortMode.value"
         :backend="client.backend.value"
-        @select="client.selectSession($event)"
+        @select="handleSelectSession($event)"
         @create="runShortcutAction('newSession', 'button')"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
@@ -1457,7 +1480,7 @@ function openPr(url: string): void {
       :active-id="client.activeSessionId.value"
       :attention-by-session="client.attentionBySession.value"
       :attention-by-workspace="client.attentionByWorkspace.value"
-      @select="client.selectSession($event)"
+      @select="handleSelectSession($event)"
       @create="runShortcutAction('newSession', 'button')"
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="runShortcutAction('openFolder', 'button')"

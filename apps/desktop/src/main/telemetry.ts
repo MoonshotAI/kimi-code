@@ -1,16 +1,22 @@
+import { statSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { nativeTheme } from 'electron';
 import {
   createCloudAppender,
   IConfigService,
   IOAuthToolkit,
   ITelemetryService,
   type Scope,
+  type TelemetryProperties,
 } from '@moonshot-ai/agent-core-v2';
+import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
+import { getRuntimeLocale, getServerMode } from './runtime-context';
 import { startDesktopSystemMetrics, stopDesktopSystemMetrics } from './system-metrics';
 import { setDesktopTrackImpl } from './track';
-import { replayWindowLifecycle } from './window-lifecycle';
 
 export interface DesktopTelemetryHandle {
   /** Emits `exit`, flushes the buffer, stops periodic flush. Idempotent. */
@@ -28,6 +34,41 @@ const DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
 // kimi-code) — the v2 pipeline never reads this env, so the desktop host
 // checks it itself to keep the killswitch working.
 const TRUE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
+
+const DAY_MS = 86_400_000;
+
+export function daysSince(birthtimeMs: number, nowMs: number): number {
+  return Math.max(0, Math.floor((nowMs - birthtimeMs) / DAY_MS));
+}
+
+// Install age is the device_id file's birth time (oauth identity.ts creates
+// it on first launch). Undefined when unreadable — the field is dropped.
+function readDaysSinceInstall(): number | undefined {
+  try {
+    return daysSince(statSync(join(resolveKimiHome(), 'device_id')).birthtimeMs, Date.now());
+  } catch {
+    return undefined;
+  }
+}
+
+// Super properties merged into every desktop event. Undefined values are
+// dropped; event-own fields always win the merge.
+function withSuperProperties(
+  startedAt: number,
+  daysSinceInstall: number | undefined,
+  properties: TelemetryProperties | undefined,
+): TelemetryProperties {
+  const injected: Record<string, string | number> = {
+    app_uptime_ms: Date.now() - startedAt,
+    theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+  };
+  const serverMode = getServerMode();
+  if (serverMode !== undefined) injected['server_mode'] = serverMode;
+  if (daysSinceInstall !== undefined) injected['days_since_install'] = daysSinceInstall;
+  const locale = getRuntimeLocale();
+  if (locale !== undefined) injected['locale'] = locale;
+  return { ...injected, ...properties };
+}
 
 export function isTelemetryConsentEnabled(
   configValue: unknown,
@@ -77,8 +118,9 @@ export async function wireDesktopTelemetry(
       getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
     });
     telemetry.setAppender(appender);
+    const daysSinceInstall = readDaysSinceInstall();
     setDesktopTrackImpl((event, properties) => {
-      telemetry.track(event, properties);
+      telemetry.track(event, withSuperProperties(startedAt, daysSinceInstall, properties));
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});
@@ -86,7 +128,6 @@ export async function wireDesktopTelemetry(
     if (identity.firstLaunch) {
       telemetry.track2('first_launch');
     }
-    replayWindowLifecycle();
     log.info('[kimi-desktop] telemetry wired (cloud appender)');
 
     let shutdownOnce: Promise<void> | undefined;

@@ -7,30 +7,50 @@ import type {
   ActionInvokedEvent,
   ApprovalDecisionEvent,
   AttachmentAddedEvent,
+  ConnectionRestoredEvent,
   NativeFeatureUsedEvent,
+  NotificationKindEvent,
+  OnboardingAbandonedEvent,
+  OnboardingCompletedEvent,
   OnboardingStepEvent,
   OauthLoginStepEvent,
+  PlanUsageCardViewedEvent,
+  RendererErrorEvent,
+  SearchExecutedEvent,
+  SessionCreatedEvent,
   SessionMenuActionEvent,
   SettingsChangedEvent,
   ShortcutBindingChangedEvent,
+  TelemetryConsentChangedEvent,
   UiElementToggledEvent,
   UpdatePromptActionEvent,
   UpdatePromptShownEvent,
+  WorkspaceCountEvent,
 } from '../shared/track-events';
 
 export type {
   ActionInvokedEvent,
   ApprovalDecisionEvent,
   AttachmentAddedEvent,
+  ConnectionRestoredEvent,
   NativeFeatureUsedEvent,
+  NotificationKindEvent,
+  OnboardingAbandonedEvent,
+  OnboardingCompletedEvent,
   OnboardingStepEvent,
   OauthLoginStepEvent,
+  PlanUsageCardViewedEvent,
+  RendererErrorEvent,
+  SearchExecutedEvent,
+  SessionCreatedEvent,
   SessionMenuActionEvent,
   SettingsChangedEvent,
   ShortcutBindingChangedEvent,
+  TelemetryConsentChangedEvent,
   UiElementToggledEvent,
   UpdatePromptActionEvent,
   UpdatePromptShownEvent,
+  WorkspaceCountEvent,
 } from '../shared/track-events';
 
 export interface EmbeddedRendererLoadResultEvent {
@@ -39,14 +59,55 @@ export interface EmbeddedRendererLoadResultEvent {
   error_class?: string;
 }
 
+export interface AppLaunchedEvent {
+  // tray/notification activations happen while already running and are covered
+  // by tray_action / notification_clicked; a second-instance launch never
+  // reaches app ready (single-instance lock).
+  launch_intent: 'normal' | 'jump_list';
+}
+
+// Cumulative milliseconds since process start (process.uptime()) at each
+// startup milestone; renderer_ready is the renderer-subscribed proxy for
+// first interactive.
+export interface StartupTimingEvent {
+  phase: 'main_ready' | 'window_shown' | 'renderer_loaded' | 'renderer_ready';
+  duration_ms: number;
+}
+
+export interface RendererCrashedEvent {
+  reason:
+    | 'clean-exit'
+    | 'abnormal-exit'
+    | 'killed'
+    | 'crashed'
+    | 'oom'
+    | 'launch-failed'
+    | 'integrity-failure';
+  exit_code: number;
+}
+
+export interface StartupConnectResultEvent {
+  ok: boolean;
+  failure_phase?: 'spawn' | 'port' | 'handshake' | 'auth' | 'timeout';
+  retry_count?: number;
+  error_class?: string;
+}
+
+export type StartupFailureScreenShownEvent = Record<string, never>;
+
 export interface AppCrashedEvent {
-  kind: 'uncaught_exception' | 'unhandled_rejection';
+  process: 'main' | 'gpu';
+  kind: string;
   error_name?: string;
+  app_uptime_ms: number;
 }
 
 export interface UpdateStatusChangedEvent {
   state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
-  version?: string;
+  from_version?: string;
+  to_version?: string;
+  prev_state?: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
+  error_class?: string;
 }
 
 // Main-only menu items — items forwarded to the renderer (open-settings,
@@ -70,6 +131,10 @@ export interface GlobalShortcutRegisterFailedEvent {
 
 export interface WindowLifecycleEvent {
   action: 'shown' | 'hidden' | 'closed';
+  // Absent on 'shown'; 'deactivate' covers minimize.
+  reason?: 'quit' | 'close_to_tray' | 'deactivate';
+  // Absent on 'shown'; visible time since the last 'shown'.
+  visible_duration_ms?: number;
 }
 
 export interface NativeIpcUsedEvent {
@@ -109,11 +174,17 @@ export interface SystemMetricsEvent {
   renderer_js_heap_used_bytes?: number;
   renderer_js_heap_total_bytes?: number;
   renderer_js_heap_limit_bytes?: number;
+  window_count: number;
 }
 
 export interface DesktopEventPayloads {
   embedded_renderer_load_result: EmbeddedRendererLoadResultEvent;
+  app_launched: AppLaunchedEvent;
+  startup_timing: StartupTimingEvent;
+  startup_connect_result: StartupConnectResultEvent;
+  startup_failure_screen_shown: StartupFailureScreenShownEvent;
   app_crashed: AppCrashedEvent;
+  renderer_crashed: RendererCrashedEvent;
   update_status_changed: UpdateStatusChangedEvent;
   action_invoked: ActionInvokedEvent;
   update_prompt_shown: UpdatePromptShownEvent;
@@ -126,14 +197,29 @@ export interface DesktopEventPayloads {
   native_ipc_used: NativeIpcUsedEvent;
   system_metrics: SystemMetricsEvent;
   onboarding_step: OnboardingStepEvent;
+  onboarding_completed: OnboardingCompletedEvent;
+  onboarding_abandoned: OnboardingAbandonedEvent;
   oauth_login_step: OauthLoginStepEvent;
   shortcut_binding_changed: ShortcutBindingChangedEvent;
   settings_changed: SettingsChangedEvent;
   native_feature_used: NativeFeatureUsedEvent;
   approval_decision: ApprovalDecisionEvent;
   session_menu_action: SessionMenuActionEvent;
+  session_created: SessionCreatedEvent;
   attachment_added: AttachmentAddedEvent;
   ui_element_toggled: UiElementToggledEvent;
+  notification_shown: NotificationKindEvent;
+  notification_clicked: NotificationKindEvent;
+  search_opened: Record<string, never>;
+  search_executed: SearchExecutedEvent;
+  logout: Record<string, never>;
+  plan_usage_card_viewed: PlanUsageCardViewedEvent;
+  telemetry_consent_changed: TelemetryConsentChangedEvent;
+  renderer_error: RendererErrorEvent;
+  connection_lost: Record<string, never>;
+  connection_restored: ConnectionRestoredEvent;
+  workspace_added: WorkspaceCountEvent;
+  workspace_removed: WorkspaceCountEvent;
 }
 
 export type DesktopEventName = keyof DesktopEventPayloads;

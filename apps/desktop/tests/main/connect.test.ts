@@ -280,7 +280,17 @@ describe('connect', () => {
 
     await connect(fakeWindow() as unknown as BrowserWindow);
 
-    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith(
+      'embedded_renderer_load_result',
+      expect.anything(),
+    );
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_connect_result', {
+      ok: false,
+      failure_phase: 'spawn',
+      retry_count: 1,
+      error_class: 'Error',
+    });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_failure_screen_shown', {});
   });
 
   it('does not track a renderer result in external-server mode', async () => {
@@ -290,6 +300,113 @@ describe('connect', () => {
 
     await connect(win as unknown as BrowserWindow);
 
-    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith(
+      'embedded_renderer_load_result',
+      expect.anything(),
+    );
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_connect_result', { ok: true });
+  });
+});
+
+describe('startup_connect_result', () => {
+  it('counts consecutive failures as retry_count and resets on success', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockRejectedValueOnce(new Error('boom again'))
+      .mockResolvedValue(fakeHandle());
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    // The server is now running and reused; a loadURL rejection is a
+    // handshake failure and restarts the consecutive count after the success.
+    const win4 = fakeWindow();
+    win4.loadURL.mockRejectedValueOnce(new Error('ERR_CONNECTION_REFUSED'));
+    await connect(win4 as unknown as BrowserWindow);
+    await connect(fakeWindow() as unknown as BrowserWindow);
+
+    const results = mocks.trackDesktopEvent.mock.calls
+      .filter((call) => call[0] === 'startup_connect_result')
+      .map((call) => call[1]);
+    expect(results).toEqual([
+      { ok: false, failure_phase: 'spawn', retry_count: 1, error_class: 'Error' },
+      { ok: false, failure_phase: 'spawn', retry_count: 2, error_class: 'Error' },
+      { ok: true },
+      { ok: false, failure_phase: 'handshake', retry_count: 1, error_class: 'Error' },
+      { ok: true },
+    ]);
+  });
+
+  it('classifies a renderer loadURL rejection as a handshake failure', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+    const win = fakeWindow();
+    win.loadURL.mockRejectedValueOnce(new Error('ERR_CONNECTION_REFUSED'));
+
+    await connect(win as unknown as BrowserWindow);
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_connect_result', {
+      ok: false,
+      failure_phase: 'handshake',
+      retry_count: 1,
+      error_class: 'Error',
+    });
+  });
+
+  it('shows and tracks the failure screen only on failure', async () => {
+    const { connect } = await importConnect();
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith(
+      'startup_failure_screen_shown',
+      expect.anything(),
+    );
+  });
+
+  it('records the server mode in the runtime context', async () => {
+    const { connect } = await importConnect();
+    const { getServerMode } = await import('../../src/main/runtime-context');
+    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    expect(getServerMode()).toBe('embedded');
+
+    process.env['KIMI_SERVER_URL'] = 'http://127.0.0.1:58627';
+    await connect(fakeWindow() as unknown as BrowserWindow);
+    expect(getServerMode()).toBe('external');
+  });
+});
+
+describe('classifyConnectFailure', () => {
+  async function classify(): Promise<typeof import('../../src/main/connect').classifyConnectFailure> {
+    return (await importConnect()).classifyConnectFailure;
+  }
+
+  it('maps embedded-server start errors to spawn, port-flavored ones to port', async () => {
+    const fn = await classify();
+    expect(fn(new Error('spawn failed'), 'server_start')).toBe('spawn');
+    expect(fn(new Error('listen EADDRINUSE: address already in use'), 'server_start')).toBe('port');
+    expect(fn(new Error('server already running (pid=1, port=2, started=x)'), 'server_start')).toBe('port');
+  });
+
+  it('maps renderer loadURL errors to handshake', async () => {
+    const fn = await classify();
+    expect(fn(new Error('ERR_CONNECTION_REFUSED'), 'load_url')).toBe('handshake');
+  });
+
+  it('lets auth and timeout message signals win over the stage default', async () => {
+    const fn = await classify();
+    expect(fn(new Error('HTTP 401 Unauthorized'), 'server_start')).toBe('auth');
+    expect(fn(new Error('invalid token'), 'load_url')).toBe('auth');
+    expect(fn(new Error('connect ETIMEDOUT'), 'load_url')).toBe('timeout');
+    expect(fn(new Error('request timeout'), 'server_start')).toBe('timeout');
+  });
+
+  it('handles non-Error rejections', async () => {
+    const fn = await classify();
+    expect(fn('plain failure', 'server_start')).toBe('spawn');
+    expect(fn(undefined, 'load_url')).toBe('handshake');
   });
 });

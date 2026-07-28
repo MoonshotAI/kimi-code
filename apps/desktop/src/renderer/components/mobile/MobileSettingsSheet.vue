@@ -350,7 +350,7 @@ watch(
       <span class="srow-main">
         <span class="srow-label">{{ t('sidebar.language') }}</span>
       </span>
-      <LanguageSwitcher />
+      <LanguageSwitcher panel="mobile_settings" />
     </div>
 
     <div class="srow read-only pref">

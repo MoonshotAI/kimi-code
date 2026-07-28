@@ -19,6 +19,7 @@ import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
 import { isFindKeyEvent } from '../../lib/transcriptSearch';
+import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
 
@@ -534,6 +535,7 @@ function openTranscriptSearch(): void {
   }
   searchPreFocus = document.activeElement;
   transcriptSearchOpen.value = true;
+  track('search_opened', {});
 }
 
 function closeTranscriptSearch(): void {

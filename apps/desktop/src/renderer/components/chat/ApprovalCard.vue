@@ -17,6 +17,8 @@ import { track } from '../../lib/track';
 const props = defineProps<{
   block: ApprovalBlock;
   agentName?: string;
+  /** Approval request id, reported as request_id on approval_decision. */
+  requestId?: string;
   /** True while a decision for this approval is in flight. Drives the action
    *  buttons' loading/disabled state and blocks duplicate decisions. */
   busy?: boolean;
@@ -189,7 +191,11 @@ function act(
   // not fire a duplicate request.
   if (props.busy) return;
   pendingAction.value = action;
-  track('approval_decision', { decision: approvalDecisionName(action, response.selectedLabel), via });
+  track('approval_decision', {
+    decision: approvalDecisionName(action, response.selectedLabel),
+    via,
+    request_id: props.requestId,
+  });
   emit('decide', response);
 }
 

@@ -20,10 +20,17 @@ describe('trackDesktopEvent', () => {
   it('forwards events to the installed impl', () => {
     const impl = vi.fn();
     setDesktopTrackImpl(impl);
-    trackDesktopEvent('app_crashed', { kind: 'uncaught_exception', error_name: 'TypeError' });
-    expect(impl).toHaveBeenCalledWith('app_crashed', {
+    trackDesktopEvent('app_crashed', {
+      process: 'main',
       kind: 'uncaught_exception',
       error_name: 'TypeError',
+      app_uptime_ms: 1,
+    });
+    expect(impl).toHaveBeenCalledWith('app_crashed', {
+      process: 'main',
+      kind: 'uncaught_exception',
+      error_name: 'TypeError',
+      app_uptime_ms: 1,
     });
   });
 
@@ -31,8 +38,46 @@ describe('trackDesktopEvent', () => {
     const impl = vi.fn();
     setDesktopTrackImpl(impl);
     setDesktopTrackImpl(null);
-    trackDesktopEvent('app_crashed', { kind: 'unhandled_rejection' });
+    trackDesktopEvent('app_crashed', {
+      process: 'main',
+      kind: 'unhandled_rejection',
+      app_uptime_ms: 1,
+    });
     expect(impl).not.toHaveBeenCalled();
+  });
+
+  it('buffers events fired before wiring and replays them in order on install', () => {
+    trackDesktopEvent('app_launched', { launch_intent: 'normal' });
+    trackDesktopEvent('startup_timing', { phase: 'main_ready', duration_ms: 10 });
+    const impl = vi.fn();
+    setDesktopTrackImpl(impl);
+    expect(impl.mock.calls).toEqual([
+      ['app_launched', { launch_intent: 'normal' }],
+      ['startup_timing', { phase: 'main_ready', duration_ms: 10 }],
+    ]);
+    trackDesktopEvent('global_shortcut_invoked', {});
+    expect(impl).toHaveBeenCalledTimes(3);
+  });
+
+  it('drops the buffered events when wiring never completes (impl cleared)', () => {
+    trackDesktopEvent('app_launched', { launch_intent: 'normal' });
+    setDesktopTrackImpl(null);
+    const impl = vi.fn();
+    setDesktopTrackImpl(impl);
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it('keeps only the newest 200 buffered events', () => {
+    for (let i = 0; i < 210; i += 1) {
+      trackDesktopEvent('startup_timing', { phase: 'main_ready', duration_ms: i });
+    }
+    const impl = vi.fn();
+    setDesktopTrackImpl(impl);
+    expect(impl).toHaveBeenCalledTimes(200);
+    expect(impl.mock.calls[0]).toEqual([
+      'startup_timing',
+      { phase: 'main_ready', duration_ms: 10 },
+    ]);
   });
 });
 
@@ -98,25 +143,58 @@ describe('asRendererTrackEvent', () => {
   });
 
   it('accepts onboarding_step with optional skipped', () => {
-    expect(asRendererTrackEvent('onboarding_step', { step: 'login', skipped: true })).toEqual({
+    expect(
+      asRendererTrackEvent('onboarding_step', {
+        step: 'login',
+        skipped: true,
+        step_index: 1,
+        total_steps: 2,
+      }),
+    ).toEqual({
       event: 'onboarding_step',
-      properties: { step: 'login', skipped: true },
+      properties: {
+        step: 'login',
+        skipped: true,
+        step_index: 1,
+        total_steps: 2,
+        duration_ms: undefined,
+      },
     });
-    expect(asRendererTrackEvent('onboarding_step', { step: 'preferences' })).toEqual({
+    expect(
+      asRendererTrackEvent('onboarding_step', { step: 'preferences', step_index: 0, total_steps: 2 }),
+    ).toEqual({
       event: 'onboarding_step',
-      properties: { step: 'preferences', skipped: undefined },
+      properties: {
+        step: 'preferences',
+        skipped: undefined,
+        step_index: 0,
+        total_steps: 2,
+        duration_ms: undefined,
+      },
     });
     expect(asRendererTrackEvent('onboarding_step', { step: 'workspace' })).toBeNull();
+    // step_index / total_steps are required by the contract.
+    expect(asRendererTrackEvent('onboarding_step', { step: 'login' })).toBeNull();
     expect(asRendererTrackEvent('onboarding_step', {})).toBeNull();
   });
 
   it('accepts oauth_login_step with optional ok', () => {
-    expect(asRendererTrackEvent('oauth_login_step', { stage: 'starting', ok: false })).toEqual({
+    expect(
+      asRendererTrackEvent('oauth_login_step', { stage: 'starting', ok: false, method: 'oauth' }),
+    ).toEqual({
       event: 'oauth_login_step',
-      properties: { stage: 'starting', ok: false },
+      properties: {
+        stage: 'starting',
+        ok: false,
+        method: 'oauth',
+        duration_ms: undefined,
+        error_class: undefined,
+      },
     });
-    expect(asRendererTrackEvent('oauth_login_step', { stage: 'polling' })).toBeNull();
-    expect(asRendererTrackEvent('oauth_login_step', { ok: true })).toBeNull();
+    expect(asRendererTrackEvent('oauth_login_step', { stage: 'polling', method: 'oauth' })).toBeNull();
+    // method is required by the contract.
+    expect(asRendererTrackEvent('oauth_login_step', { stage: 'starting' })).toBeNull();
+    expect(asRendererTrackEvent('oauth_login_step', { ok: true, method: 'oauth' })).toBeNull();
   });
 
   it('accepts shortcut_binding_changed with a valid op and drops junk flags', () => {
@@ -207,29 +285,61 @@ describe('asRendererTrackEvent', () => {
   });
 
   it('accepts attachment_added with a valid via and optional kind', () => {
-    expect(asRendererTrackEvent('attachment_added', { via: 'paste', kind: 'image' })).toEqual({
+    expect(
+      asRendererTrackEvent('attachment_added', {
+        via: 'paste',
+        kind: 'image',
+        size_bucket: '<1mb',
+        count: 1,
+      }),
+    ).toEqual({
       event: 'attachment_added',
-      properties: { via: 'paste', kind: 'image' },
+      properties: { via: 'paste', kind: 'image', size_bucket: '<1mb', count: 1 },
     });
-    expect(asRendererTrackEvent('attachment_added', { via: 'paste', kind: 'archive' })).toEqual({
+    expect(
+      asRendererTrackEvent('attachment_added', {
+        via: 'paste',
+        kind: 'archive',
+        size_bucket: '1-10mb',
+        count: 2,
+      }),
+    ).toEqual({
       event: 'attachment_added',
-      properties: { via: 'paste', kind: undefined },
+      properties: { via: 'paste', kind: undefined, size_bucket: '1-10mb', count: 2 },
     });
     expect(asRendererTrackEvent('attachment_added', { via: 'api' })).toBeNull();
+    // size_bucket / count are required by the contract.
+    expect(asRendererTrackEvent('attachment_added', { via: 'paste' })).toBeNull();
   });
 
   it('accepts ui_element_toggled only with a boolean expanded', () => {
     expect(
-      asRendererTrackEvent('ui_element_toggled', { element: 'tool_call', expanded: false }),
+      asRendererTrackEvent('ui_element_toggled', {
+        element: 'tool_call',
+        expanded: false,
+        sample_rate: 1,
+      }),
     ).toEqual({
       event: 'ui_element_toggled',
-      properties: { element: 'tool_call', expanded: false },
+      properties: { element: 'tool_call', expanded: false, sample_rate: 1 },
     });
     expect(
-      asRendererTrackEvent('ui_element_toggled', { element: 'tool_call', expanded: 'yes' }),
+      asRendererTrackEvent('ui_element_toggled', {
+        element: 'tool_call',
+        expanded: 'yes',
+        sample_rate: 1,
+      }),
+    ).toBeNull();
+    // sample_rate is a required literal by the contract.
+    expect(
+      asRendererTrackEvent('ui_element_toggled', { element: 'tool_call', expanded: true }),
     ).toBeNull();
     expect(
-      asRendererTrackEvent('ui_element_toggled', { element: 'custom', expanded: true }),
+      asRendererTrackEvent('ui_element_toggled', {
+        element: 'custom',
+        expanded: true,
+        sample_rate: 1,
+      }),
     ).toBeNull();
   });
 });

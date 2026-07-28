@@ -262,7 +262,10 @@ describe('oauth_login_step tracking', () => {
     const flow = scope.run(() => useOAuthLoginFlow(makeCallbacks()))!;
     await flow.startFlow();
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(payloads()).toEqual([{ stage: 'starting' }, { stage: 'device-code' }]);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+    ]);
   });
 
   it('tracks success with ok on the already-authenticated fast path', async () => {
@@ -275,17 +278,23 @@ describe('oauth_login_step tracking', () => {
     });
     const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
     await flow.startFlow();
-    expect(payloads()).toEqual([{ stage: 'starting' }, { stage: 'success', ok: true }]);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'success', ok: true, method: 'oauth', duration_ms: 0 },
+    ]);
   });
 
-  it('tracks error with ok=false when the start request fails', async () => {
+  it('tracks error with ok=false and start_failed when the start request fails', async () => {
     const callbacks = makeCallbacks({ onStartOAuthLogin: vi.fn(async () => null) });
     const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
     await flow.startFlow();
-    expect(payloads()).toEqual([{ stage: 'starting' }, { stage: 'error', ok: false }]);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'error', ok: false, method: 'oauth', duration_ms: 0, error_class: 'start_failed' },
+    ]);
   });
 
-  it('tracks success with ok when a poll authenticates', async () => {
+  it('tracks success with ok and the flow duration when a poll authenticates', async () => {
     const callbacks = makeCallbacks({
       onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'authenticated' as const })),
     });
@@ -293,13 +302,13 @@ describe('oauth_login_step tracking', () => {
     await flow.startFlow();
     await vi.advanceTimersByTimeAsync(5000);
     expect(payloads()).toEqual([
-      { stage: 'starting' },
-      { stage: 'device-code' },
-      { stage: 'success', ok: true },
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'success', ok: true, method: 'oauth', duration_ms: 5000 },
     ]);
   });
 
-  it('tracks expired with ok=false when the flow expires', async () => {
+  it('tracks expired with ok=false and the expired class when the flow expires', async () => {
     const callbacks = makeCallbacks({
       onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'expired' as const })),
     });
@@ -307,21 +316,35 @@ describe('oauth_login_step tracking', () => {
     await flow.startFlow();
     await vi.advanceTimersByTimeAsync(5000);
     expect(payloads()).toEqual([
-      { stage: 'starting' },
-      { stage: 'device-code' },
-      { stage: 'expired', ok: false },
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'expired', ok: false, method: 'oauth', duration_ms: 5000, error_class: 'expired' },
     ]);
   });
 
-  it('tracks error with ok=false after repeated poll failures', async () => {
+  it('tracks expired with the cancelled class when the user cancels on the OAuth host', async () => {
+    const callbacks = makeCallbacks({
+      onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'cancelled' as const })),
+    });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'expired', ok: false, method: 'oauth', duration_ms: 5000, error_class: 'cancelled' },
+    ]);
+  });
+
+  it('tracks error with ok=false and poll_failed after repeated poll failures', async () => {
     const callbacks = makeCallbacks({ onPollOAuthLogin: vi.fn(async () => null) });
     const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
     await flow.startFlow();
     await vi.advanceTimersByTimeAsync(15000); // three failed polls
     expect(payloads()).toEqual([
-      { stage: 'starting' },
-      { stage: 'device-code' },
-      { stage: 'error', ok: false },
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'error', ok: false, method: 'oauth', duration_ms: 15000, error_class: 'poll_failed' },
     ]);
   });
 });

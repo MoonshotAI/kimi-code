@@ -7,7 +7,7 @@
 
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
 
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type { ProcessMetric } from 'electron';
 
 import { log } from './log';
@@ -168,6 +168,7 @@ async function sample(): Promise<void> {
     free_mem_bytes: freemem(),
     total_mem_bytes: totalmem(),
     cpu_count: cpus().length,
+    window_count: BrowserWindow.getAllWindows().length,
     ...aggregateProcessMetrics(app.getAppMetrics()),
   };
   const constrainedMemory = getConstrainedMemoryBytes();

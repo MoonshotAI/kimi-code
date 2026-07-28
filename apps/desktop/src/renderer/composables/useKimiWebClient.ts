@@ -15,6 +15,8 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { logError, logWarn } from '../lib/log';
+import { track } from '../lib/track';
+import { setSessionIntent } from '../lib/session-intent';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -1176,6 +1178,11 @@ const enqueueEvent = createEventBatcher<PendingAppEvent>(
 // WS subscription (lazy, only when a session is selected)
 // ---------------------------------------------------------------------------
 
+// connection_lost only counts drops AFTER the first established connection —
+// the initial connect attempt failing is startup, not a lost connection.
+let wsEverConnected = false;
+let wsDisconnectedAt: number | null = null;
+
 function connectEventsIfNeeded(): void {
   if (eventConn !== null) return;
   // Guard: jsdom and some environments have no WebSocket
@@ -1251,6 +1258,18 @@ function connectEventsIfNeeded(): void {
       });
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
+      if (connected) {
+        if (wsDisconnectedAt !== null) {
+          track('connection_restored', {
+            duration_ms: Math.min(Date.now() - wsDisconnectedAt, 86_400_000),
+          });
+          wsDisconnectedAt = null;
+        }
+        wsEverConnected = true;
+      } else if (wsEverConnected && wsDisconnectedAt === null) {
+        track('connection_lost', {});
+        wsDisconnectedAt = Date.now();
+      }
       // The data channel is healthy again (server_hello received). Clear any
       // stale "Realtime connection error" toast instead of relying on its
       // auto-dismiss timer: iOS Safari freezes timers while a tab is
@@ -1495,7 +1514,7 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
 
   const next = rawState.sessions[0];
   if (next) {
-    await workspaceState.selectSession(next.id, { urlMode: 'replace' });
+    await workspaceState.selectSession(next.id, { urlMode: 'replace', skipTrack: true });
   } else {
     setActiveSessionId(undefined);
     rawState.sessionLoading = false;
@@ -3001,6 +3020,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
       promptId: finishedPromptId,
       onClick: () => {
+        setSessionIntent('notification');
         void workspaceState.selectSession(sid);
       },
     });
@@ -3024,6 +3044,7 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     questionPreview: preview,
     questionId: question.questionId,
     onClick: () => {
+      setSessionIntent('notification');
       void workspaceState.selectSession(sid);
     },
   });
@@ -3037,6 +3058,7 @@ function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
     toolName: approval.toolName,
     approvalId: approval.approvalId,
     onClick: () => {
+      setSessionIntent('notification');
       void workspaceState.selectSession(sid);
     },
   });

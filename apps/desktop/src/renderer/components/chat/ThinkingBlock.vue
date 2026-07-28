@@ -93,7 +93,7 @@ function onHeadClick(): void {
   open.value = !open.value;
   // User-initiated toggle only — the auto-fold when streaming ends (the
   // watcher above) deliberately stays silent.
-  track('ui_element_toggled', { element: 'thinking_block', expanded: open.value });
+  track('ui_element_toggled', { element: 'thinking_block', expanded: open.value, sample_rate: 1 });
   if (props.streaming) return;
   const el = headEl.value;
   if (el) nextTick(() => pinScroll(el));

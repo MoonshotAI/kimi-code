@@ -268,22 +268,24 @@ describe('auto-download mode', () => {
     await flush();
     expect(tracker.visible.value).toBe(true);
 
-    tracker.setAutoDownload(false);
+    tracker.setAutoDownload(false, 'settings');
     expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(false);
     await flush();
     expect(trackMock).toHaveBeenCalledWith('settings_changed', {
       key: 'update-auto-download',
       value: 'off',
+      source_panel: 'settings',
     });
     expect(tracker.autoDownload.value).toBe(false);
     expect(tracker.visible.value).toBe(true);
 
-    tracker.setAutoDownload(true);
+    tracker.setAutoDownload(true, 'settings');
     expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(true);
     await flush();
     expect(trackMock).toHaveBeenLastCalledWith('settings_changed', {
       key: 'update-auto-download',
       value: 'on',
+      source_panel: 'settings',
     });
     expect(trackMock).toHaveBeenCalledTimes(2);
     expect(tracker.visible.value).toBe(true);

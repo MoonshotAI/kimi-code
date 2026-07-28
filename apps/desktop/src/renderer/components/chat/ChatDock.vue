@@ -416,6 +416,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       class="dock-approval"
       :block="pendingApproval.block"
       :agent-name="pendingApproval.agentName"
+      :request-id="pendingApproval.approvalId"
       :busy="approvalBusy"
       :open-file="openFile"
       @decide="emit('approval', pendingApproval!.approvalId, $event)"

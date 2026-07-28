@@ -54,14 +54,63 @@ function back(): void {
   if (stepIndex.value > 0) stepIndex.value--;
 }
 
-// Telemetry: one event per step entry (the immediate fire covers the initial
-// mount); the ghost skip path adds `skipped` — on step 1 it abandons the whole
-// wizard, on step 2 just the login.
-watch(step, (s) => track('onboarding_step', { step: s }), { immediate: true });
+// Telemetry: a step is reported when LEAVING it (step switch, finish, skip),
+// carrying how long it was on screen; the wizard-level outcome
+// (completed/abandoned) is reported once from the single `reportOutcome`
+// funnel — Finish, both skips, login success and the custom-provider detour
+// all pass through it. Skipping step 1 abandons the whole wizard; skipping
+// step 2 only skips the login and still counts as completed.
+const wizardStartedAt = Date.now();
+let stepStartedAt = wizardStartedAt;
+let outcomeReported = false;
+
+function reportStepExit(skipped?: boolean): void {
+  track('onboarding_step', {
+    step: step.value,
+    step_index: stepIndex.value,
+    total_steps: STEPS.length,
+    duration_ms: Date.now() - stepStartedAt,
+    ...(skipped === true ? { skipped: true } : {}),
+  });
+}
+
+function reportOutcome(outcome: 'completed' | 'abandoned'): void {
+  if (outcomeReported) return;
+  outcomeReported = true;
+  const totalDuration = Math.min(Date.now() - wizardStartedAt, 3_600_000);
+  if (outcome === 'completed') {
+    track('onboarding_completed', { total_duration_ms: totalDuration });
+  } else {
+    track('onboarding_abandoned', { last_step: step.value, total_duration_ms: totalDuration });
+  }
+}
+
+watch(step, (_newStep, oldStep) => {
+  track('onboarding_step', {
+    step: oldStep,
+    step_index: STEPS.indexOf(oldStep),
+    total_steps: STEPS.length,
+    duration_ms: Date.now() - stepStartedAt,
+  });
+  stepStartedAt = Date.now();
+});
 
 function skip(): void {
-  track('onboarding_step', { step: step.value, skipped: true });
+  reportStepExit(true);
+  reportOutcome(stepIndex.value === 0 ? 'abandoned' : 'completed');
   emit('complete');
+}
+
+function finish(): void {
+  reportStepExit();
+  reportOutcome('completed');
+  emit('complete');
+}
+
+function onAddProvider(): void {
+  reportStepExit();
+  reportOutcome('completed');
+  emit('addProvider');
 }
 
 // -------------------------------------------------------------------------
@@ -84,6 +133,8 @@ const themeOptions: ReadonlyArray<{ value: ColorScheme; labelKey: string }> = [
 // -------------------------------------------------------------------------
 
 function onLoginSuccess(): void {
+  reportStepExit();
+  reportOutcome('completed');
   emit('loginSuccess');
 }
 </script>
@@ -159,7 +210,7 @@ function onLoginSuccess(): void {
             :on-poll-o-auth-login="props.onPollOAuthLogin"
             :on-cancel-o-auth-login="props.onCancelOAuthLogin"
             @success="onLoginSuccess"
-            @add-provider="emit('addProvider')"
+            @add-provider="onAddProvider"
           />
         </div>
       </section>
@@ -180,7 +231,7 @@ function onLoginSuccess(): void {
           variant="primary"
           size="lg"
           class="wiz-primary"
-          @click="emit('complete')"
+          @click="finish"
         >
           {{ t('onboarding.login.finish') }}
         </Button>

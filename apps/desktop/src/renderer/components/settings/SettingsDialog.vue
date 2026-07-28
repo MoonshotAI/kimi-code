@@ -43,12 +43,12 @@ function onFontScale(scale: FontScale): void {
 
 function onVibrancyChange(on: boolean): void {
   setVibrancy(on);
-  track('settings_changed', { key: 'vibrancy', value: on ? 'on' : 'off' });
+  track('settings_changed', { key: 'vibrancy', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 function onNotifyChange(on: boolean): void {
   emit('setNotify', on);
-  track('settings_changed', { key: 'notifications', value: on ? 'on' : 'off' });
+  track('settings_changed', { key: 'notifications', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived' | 'shortcuts';
@@ -167,7 +167,7 @@ const defaultOpenInApp = useDefaultOpenInTarget();
 function onDefaultOpenInChange(appId: string): void {
   saveDefaultOpenInTarget(appId);
   // The catalog ids are main-process enums; '' means "cleared back to auto".
-  track('settings_changed', { key: 'open-in-default', value: appId === '' ? 'auto' : appId });
+  track('settings_changed', { key: 'open-in-default', value: appId === '' ? 'auto' : appId, source_panel: 'settings' });
 }
 
 const openInSelectValue = computed(() => {
@@ -199,7 +199,7 @@ const showDockIconRow = isMacosDesktop && canSetDockIconChoice();
 // settings row is the only UI that changes it, so one site covers every edit.
 function onDockIconChange(value: DockIconChoice): void {
   dockIconChoice.value = value;
-  track('settings_changed', { key: 'dock-icon', value });
+  track('settings_changed', { key: 'dock-icon', value, source_panel: 'settings' });
 }
 
 function exportLog(): void {
@@ -234,7 +234,7 @@ const checkingUpdate = ref(false);
 const checkResult = ref<UpdateCheckResult | null>(null);
 
 function onAutoDownloadChange(on: boolean): void {
-  updateTracker.setAutoDownload(on);
+  updateTracker.setAutoDownload(on, 'settings');
 }
 
 async function onCheckUpdate(): Promise<void> {
@@ -384,6 +384,7 @@ function toggleDefaultThinking(): void {
 // (displayed as on) flips to `false` instead of writing a redundant `true`.
 function toggleTelemetry(): void {
   const enabled = props.config?.telemetry !== false;
+  track('telemetry_consent_changed', { enabled: !enabled });
   emit('updateConfig', { telemetry: !enabled } as Partial<AppConfig>);
 }
 
@@ -656,7 +657,11 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
-          <PlanUsageCard v-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
+          <PlanUsageCard
+            v-if="signedIn"
+            :on-fetch-usage="props.onFetchUsage"
+            :active="activeTab === 'account'"
+          />
         </section>
 
         <!-- Agent defaults -->

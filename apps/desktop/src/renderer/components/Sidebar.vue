@@ -35,6 +35,7 @@ import { isDesktop, isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag'
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { track } from '../lib/track';
+import { setSessionIntent } from '../lib/session-intent';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -369,6 +370,13 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 }
 
 function onSelectSession(sessionId: string): void {
+  emit('select', sessionId);
+}
+
+// A pick from the search dialog is a search-sourced resume; the App-level
+// select handler would otherwise fall back to 'sidebar'.
+function onSearchSelectSession(sessionId: string): void {
+  setSessionIntent('search');
   emit('select', sessionId);
 }
 
@@ -1112,7 +1120,7 @@ onBeforeUnmount(() => {
       v-if="showSearch"
       :sessions="sessions"
       :active-id="activeId"
-      @select="onSelectSession"
+      @select="onSearchSelectSession"
       @close="showSearch = false"
     />
     <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,

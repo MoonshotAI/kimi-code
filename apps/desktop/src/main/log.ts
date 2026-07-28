@@ -165,7 +165,12 @@ export function installCrashGuards(): void {
     log.error('uncaughtException', error);
     // No-op before the appender is wired (early-boot crashes) — the file log
     // above is the record of those.
-    trackDesktopEvent('app_crashed', { kind: 'uncaught_exception', error_name: error.name });
+    trackDesktopEvent('app_crashed', {
+      process: 'main',
+      kind: 'uncaught_exception',
+      error_name: error.name,
+      app_uptime_ms: Math.round(process.uptime() * 1000),
+    });
     surfaceUncaught(error);
   });
   process.on('unhandledRejection', (reason) => {
@@ -178,8 +183,10 @@ export function installCrashGuards(): void {
     // unexpected rejections through the same surfacing as exceptions.
     log.error('unhandledRejection', reason);
     trackDesktopEvent('app_crashed', {
+      process: 'main',
       kind: 'unhandled_rejection',
       error_name: reason instanceof Error ? reason.name : undefined,
+      app_uptime_ms: Math.round(process.uptime() * 1000),
     });
     surfaceUncaught(reason);
   });

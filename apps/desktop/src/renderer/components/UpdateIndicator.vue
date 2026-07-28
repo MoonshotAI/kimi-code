@@ -189,7 +189,7 @@ function onRestartNow(): void {
             v-if="canToggleAutoDownload"
             class="upd-auto"
             :model-value="autoDownload"
-            @update:model-value="setAutoDownload($event)"
+            @update:model-value="setAutoDownload($event, 'update_prompt')"
           >
             {{ t('sidebar.updateAutoDownload') }}
           </Checkbox>

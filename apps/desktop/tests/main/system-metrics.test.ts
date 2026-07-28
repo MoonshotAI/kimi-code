@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { appMock, windowMock, trackMock, logMock } = vi.hoisted(() => ({
+const { appMock, browserWindowMock, windowMock, trackMock, logMock } = vi.hoisted(() => ({
   appMock: { getAppMetrics: vi.fn(() => [] as unknown[]) },
+  browserWindowMock: { getAllWindows: vi.fn(() => [] as unknown[]) },
   windowMock: { getMainWindow: vi.fn(() => null as unknown) },
   trackMock: { trackDesktopEvent: vi.fn() },
   logMock: { info: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('electron', () => ({ app: appMock }));
+vi.mock('electron', () => ({ app: appMock, BrowserWindow: browserWindowMock }));
 vi.mock('../../src/main/window', () => ({ getMainWindow: windowMock.getMainWindow }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock.trackDesktopEvent }));
 vi.mock('../../src/main/log', () => ({ log: logMock }));
@@ -117,6 +118,7 @@ describe('desktop system metrics collector', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     appMock.getAppMetrics.mockReset().mockReturnValue([]);
+    browserWindowMock.getAllWindows.mockReset().mockReturnValue([]);
     windowMock.getMainWindow.mockReset().mockReturnValue(null);
     trackMock.trackDesktopEvent.mockClear();
     logMock.error.mockClear();
@@ -147,9 +149,18 @@ describe('desktop system metrics collector', () => {
     expect(sample['free_mem_bytes']).toEqual(expect.any(Number));
     expect(sample['total_mem_bytes']).toEqual(expect.any(Number));
     expect((sample['cpu_count'] as number) > 0).toBe(true);
+    expect(sample['window_count']).toBe(0);
     expect(sample['renderer_working_set_bytes']).toBe(0);
     expect(sample['renderer_process_count']).toBe(0);
     expect(sample['renderer_js_heap_used_bytes']).toBeUndefined();
+  });
+
+  it('reports the live BrowserWindow count as window_count', async () => {
+    browserWindowMock.getAllWindows.mockReturnValue([{}, {}]);
+    startDesktopSystemMetrics();
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    expect(lastSample()['window_count']).toBe(2);
   });
 
   it('does not sample before the warmup delay, then samples every 5 minutes', async () => {

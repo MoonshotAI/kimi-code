@@ -170,14 +170,18 @@ describe('installCrashGuards', () => {
 
       handlers.get('uncaughtException')?.(new TypeError('x'));
       expect(impl).toHaveBeenCalledWith('app_crashed', {
+        process: 'main',
         kind: 'uncaught_exception',
         error_name: 'TypeError',
+        app_uptime_ms: expect.any(Number),
       });
 
       handlers.get('unhandledRejection')?.('oops');
       expect(impl).toHaveBeenCalledWith('app_crashed', {
+        process: 'main',
         kind: 'unhandled_rejection',
         error_name: undefined,
+        app_uptime_ms: expect.any(Number),
       });
 
       impl.mockClear();

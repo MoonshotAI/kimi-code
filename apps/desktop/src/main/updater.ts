@@ -129,7 +129,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   const { updater, send } = deps;
 
   let current: UpdateStatus = { state: 'idle' };
-  const setStatus = (next: UpdateStatus): void => {
+  const setStatus = (next: UpdateStatus, errorClass?: string): void => {
     const previousState = current.state;
     // Release notes belong to a version: carried over while the version
     // stays, dropped as soon as a different version (or none) shows up.
@@ -140,7 +140,13 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
     // State transitions only — download-progress re-enters `downloading` per
     // chunk and would drown the stream.
     if (current.state !== previousState) {
-      trackDesktopEvent('update_status_changed', { state: current.state, version: current.version });
+      trackDesktopEvent('update_status_changed', {
+        state: current.state,
+        from_version: app.getVersion(),
+        to_version: current.version,
+        prev_state: previousState,
+        ...(current.state === 'error' && errorClass !== undefined ? { error_class: errorClass } : {}),
+      });
     }
   };
 
@@ -217,7 +223,10 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   });
   updater.on('error', (error) => {
     if (current.state === 'downloading') {
-      setStatus({ state: 'error', version: current.version, releaseDate: current.releaseDate, message: error.message });
+      setStatus(
+        { state: 'error', version: current.version, releaseDate: current.releaseDate, message: error.message },
+        error.name,
+      );
       log.error('[kimi-desktop] update download failed', error);
     } else {
       log.warn(`[kimi-desktop] background update check failed: ${error.message}`);

@@ -40,6 +40,8 @@ import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts'
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
+import { track } from '../../lib/track';
+import { consumeSessionIntent } from '../../lib/session-intent';
 import type {
   ActivityState,
   ConversationStatus,
@@ -997,14 +999,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           rawState.sessions.some((s) => s.id === urlSessionId) ||
           (await fetchSessionIntoList(urlSessionId));
         if (available) {
-          await selectSession(urlSessionId, { urlMode: 'replace' });
+          await selectSession(urlSessionId, { urlMode: 'replace', skipTrack: true });
         }
       }
 
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace' });
+        await selectSession(sessions[0]!.id, { urlMode: 'replace', skipTrack: true });
       }
     } catch (err) {
       traceStatus = 'failed';
@@ -1172,6 +1174,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function createDraftSession(workspaceId: string): Promise<string | null> {
     const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
     if (!ws) return null;
+    // Claim the pending entry-point intent up front: the internal selectSession
+    // below must not report it again as a resume.
+    const sessionSource = consumeSessionIntent('sidebar');
     // Capture the draft thinking level BEFORE any await: a concurrent session
     // switch during creation re-resolves rawState.thinking for the other
     // active session, which would otherwise seed the new session with that
@@ -1204,13 +1209,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         : session;
     upsertSessionFront(created);
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    track('session_created', { kind: 'new', source: sessionSource });
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
     // session" (createSession), here we immediately act on it: keeping
     // sessionLoading=true through the snapshot avoids flashing the empty-session
     // composer before the optimistic first turn lands. selectSession resolves,
     // then the caller adds the first turn synchronously (no await in between),
     // so the view goes loading → message with no empty-composer frame.
-    await selectSession(session.id);
+    await selectSession(session.id, { skipTrack: true });
     // Carry any mode toggles the user staged in the empty composer into the
     // newly-created session, so the first action honors them. Write them to
     // this session's per-session maps by id (not via the activeSessionId-based
@@ -1482,7 +1488,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
       const next = rawState.sessions[0];
       if (next) {
-        await selectSession(next.id, { urlMode: 'replace' });
+        await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
       } else {
         setActiveSessionId(undefined);
         writeSessionUrl(undefined, 'replace');
@@ -1499,7 +1505,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function selectSession(
     sessionId: string,
-    opts?: { urlMode?: SessionUrlMode },
+    opts?: { urlMode?: SessionUrlMode; skipTrack?: boolean },
   ): Promise<void> {
     // Jumps can target a session outside the loaded pages — a tray menu entry
     // kept across a window restart, or a notification for a session the
@@ -1532,6 +1538,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
       rawState.sessionLoading = !messagesLoaded && !knownEmpty;
       setActiveSessionId(sessionId);
+      // createDraftSession selects its own fresh session internally and already
+      // reported the 'new' event — skip the duplicate resume there.
+      if (!opts?.skipTrack) {
+        track('session_created', { kind: 'resumed', source: consumeSessionIntent('sidebar') });
+      }
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {
         rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
@@ -2557,7 +2568,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (rawState.activeSessionId === id) {
         const next = rawState.sessions[0];
         if (next) {
-          await selectSession(next.id, { urlMode: 'replace' });
+          await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
         } else {
           setActiveSessionId(undefined);
           writeSessionUrl(undefined, 'replace');
@@ -2670,6 +2681,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.logout();
+      track('logout', {});
       await checkAuth();
       await load();
     } catch (err) {

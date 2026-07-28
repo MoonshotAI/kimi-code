@@ -12,6 +12,7 @@ import {
   collectMatchRanges,
   setSearchHighlights,
 } from '../../lib/transcriptSearch';
+import { track } from '../../lib/track';
 
 const props = withDefaults(
   defineProps<{
@@ -158,6 +159,13 @@ function onQueryInput(): void {
   searchTimer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
 }
 
+function resultCountBucket(count: number): '0' | '1-10' | '11-50' | '50+' {
+  if (count === 0) return '0';
+  if (count <= 10) return '1-10';
+  if (count <= 50) return '11-50';
+  return '50+';
+}
+
 function runSearch(reveal: 'first' | 'backward' | false = 'first'): void {
   if (searchTimer !== null) {
     clearTimeout(searchTimer);
@@ -182,6 +190,14 @@ function runSearch(reveal: 'first' | 'backward' | false = 'first'): void {
   const found = result.ranges;
   truncated.value = result.truncated;
   matches.value = found;
+  // Only query-driven runs (typing debounce, Enter flush) count as executed
+  // searches — MutationObserver streaming refreshes pass reveal=false.
+  if (reveal !== false) {
+    track('search_executed', {
+      scope: 'current_session',
+      result_count_bucket: resultCountBucket(found.length),
+    });
+  }
   if (found.length === 0) {
     current.value = 0;
     setSearchHighlights([], 0);

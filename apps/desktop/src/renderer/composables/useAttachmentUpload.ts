@@ -79,6 +79,13 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     return 'file';
   }
 
+  function attachmentSizeBucket(size: number): '<1mb' | '1-10mb' | '10-50mb' | '50mb+' {
+    if (size < 1024 * 1024) return '<1mb';
+    if (size < 10 * 1024 * 1024) return '1-10mb';
+    if (size < 50 * 1024 * 1024) return '10-50mb';
+    return '50mb+';
+  }
+
   async function addFiles(files: File[], via: 'drop' | 'click' | 'paste'): Promise<void> {
     const upload = uploadImage();
     if (!upload) return;
@@ -89,7 +96,12 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
     for (const file of files) {
       const kind = attachmentKind(file.type);
-      track('attachment_added', { via, kind });
+      track('attachment_added', {
+        via,
+        kind,
+        size_bucket: attachmentSizeBucket(file.size),
+        count: files.length,
+      });
       const localId = nextLocalId();
       // Only media gets a thumbnail object URL; files render an icon chip.
       const previewUrl = kind === 'file' ? undefined : URL.createObjectURL(file);

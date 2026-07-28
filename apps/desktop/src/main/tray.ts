@@ -4,6 +4,7 @@ import { app, Menu, nativeImage, Tray } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
 import { trackDesktopEvent } from './track';
+import { setRuntimeLocale } from './runtime-context';
 import { setTaskbarAttention } from './taskbar';
 
 // System tray (macOS menu-bar / Windows notification area). Desktop-only — the
@@ -369,6 +370,8 @@ export function createTray(actions: TrayActions): Tray | null {
   tray = new Tray(image);
   trayActions = actions;
   lastAttention = ZERO_ATTENTION;
+  // Telemetry locale baseline until the renderer pushes its own (IPC.locale).
+  setRuntimeLocale(effectiveTrayLocale());
   renderTray();
   if (process.platform === 'win32') {
     // Windows convention: left-click / double-click surfaces the window; the
@@ -414,6 +417,7 @@ export function setTrayLocale(locale: TrayLocale): void {
     return;
   }
   trayLocale = locale;
+  setRuntimeLocale(locale);
   renderTray();
   syncTaskbarAttention();
 }

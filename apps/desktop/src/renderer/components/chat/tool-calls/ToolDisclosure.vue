@@ -65,7 +65,7 @@ function toggle(): void {
   if (!props.expandable) return;
   // Only user toggles reach here (head click / chevron button) — programmatic
   // open-state changes by the tool renderers don't emit 'toggle'.
-  track('ui_element_toggled', { element: 'tool_call', expanded: !props.open });
+  track('ui_element_toggled', { element: 'tool_call', expanded: !props.open, sample_rate: 1 });
   emit('toggle');
   const el = headEl.value;
   if (el) nextTick(() => pinScroll(el));

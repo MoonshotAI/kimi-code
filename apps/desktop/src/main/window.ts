@@ -16,6 +16,7 @@ import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
 import { quoteWindowsCommandLineArg } from './jump-list';
 import { log, redactUrlForLog } from './log';
+import { trackDesktopEvent } from './track';
 import { isVibrancyEnabled } from './ui-state';
 import { recordWindowLifecycle } from './window-lifecycle';
 
@@ -23,6 +24,18 @@ let mainWindow: BrowserWindow | null = null;
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+// Startup milestones (startup_timing): each phase is reported once per run.
+const startupPhaseSent = new Set<'window_shown' | 'renderer_loaded' | 'renderer_ready'>();
+
+function reportStartupPhase(phase: 'window_shown' | 'renderer_loaded' | 'renderer_ready'): void {
+  if (startupPhaseSent.has(phase)) return;
+  startupPhaseSent.add(phase);
+  trackDesktopEvent('startup_timing', {
+    phase,
+    duration_ms: Math.round(process.uptime() * 1000),
+  });
 }
 
 /** Bring the main window back on screen (Dock click, tray, notification
@@ -472,11 +485,20 @@ export function createWindow(): void {
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
   installWindowsSessionEndWatch(process.platform, win, markQuitting);
+  // Reason for the next 'hide' event, set by the close→hide path below; a
+  // plain hide (Cmd+H, hide-on-blur) carries none.
+  let pendingHideReason: 'close_to_tray' | undefined;
   win.on('show', () => {
+    reportStartupPhase('window_shown');
     recordWindowLifecycle('shown');
   });
   win.on('hide', () => {
-    recordWindowLifecycle('hidden');
+    const reason = pendingHideReason;
+    pendingHideReason = undefined;
+    recordWindowLifecycle('hidden', reason === undefined ? {} : { reason });
+  });
+  win.on('minimize', () => {
+    recordWindowLifecycle('hidden', { reason: 'deactivate' });
   });
   win.on('close', (event) => {
     saveBounds(win);
@@ -484,6 +506,7 @@ export function createWindow(): void {
       event.preventDefault();
       // A detached DevTools window would linger on screen after the hide.
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      pendingHideReason = 'close_to_tray';
       // Hiding a full-screen window would leave a black space behind (macOS)
       // — exit full-screen first, hide once the transition settles.
       if (win.isFullScreen()) {
@@ -508,7 +531,10 @@ export function createWindow(): void {
     // durable (localStorage) and pending approvals/questions live server-side,
     // so the badge's last-known state stays plausible until then.
   });
-  if (win.isVisible()) recordWindowLifecycle('shown');
+  if (win.isVisible()) {
+    reportStartupPhase('window_shown');
+    recordWindowLifecycle('shown');
+  }
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
@@ -533,6 +559,7 @@ export function createWindow(): void {
   const settleRendererReady = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
+    reportStartupPhase('renderer_ready');
     if (pendingTraySessionSelect !== null) {
       sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
       pendingTraySessionSelect = null;
@@ -553,8 +580,15 @@ export function createWindow(): void {
     log.error(
       `[kimi-desktop] renderer process gone (reason=${details.reason} exitCode=${details.exitCode})`,
     );
+    trackDesktopEvent('renderer_crashed', {
+      // The contract has no 'memory-eviction' (Chrome memory-pressure kill);
+      // it folds into 'oom'.
+      reason: details.reason === 'memory-eviction' ? 'oom' : details.reason,
+      exit_code: details.exitCode,
+    });
   });
   win.webContents.on('did-finish-load', () => {
+    reportStartupPhase('renderer_loaded');
     settleRendererReady(true);
     if (win.isDestroyed()) return;
     const factor = win.webContents.getZoomFactor();

@@ -72,8 +72,9 @@ export interface UpdateTracker {
       hide the settings row in plain web / older bridges). */
   canToggleAutoDownload: boolean;
   /** Flip the preference: updates the local ref immediately and persists
-      main-side. */
-  setAutoDownload: (enabled: boolean) => void;
+      main-side. `source` attributes the settings_changed event to the panel
+      the toggle lives in. */
+  setAutoDownload: (enabled: boolean, source: 'settings' | 'update_prompt') => void;
   /** "本次跳过": hide this version until a different one appears (persisted). */
   skipVersion: () => void;
   /** User-initiated check; resolves with the outcome for inline feedback. */
@@ -145,7 +146,7 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     autoDownload,
     canToggleAutoDownload:
       typeof bridge?.getUpdateAutoDownload === 'function' && typeof bridge?.setUpdateAutoDownload === 'function',
-    setAutoDownload: (enabled) => {
+    setAutoDownload: (enabled, source) => {
       autoDownload.value = enabled;
       if (typeof bridge?.setUpdateAutoDownload !== 'function') return;
       void bridge
@@ -154,6 +155,7 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
           track('settings_changed', {
             key: 'update-auto-download',
             value: enabled ? 'on' : 'off',
+            source_panel: source,
           });
         })
         .catch(() => {});

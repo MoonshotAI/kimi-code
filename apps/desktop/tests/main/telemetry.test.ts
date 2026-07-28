@@ -1,13 +1,25 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { createCloudAppenderMock, logMock, replayWindowLifecycleMock, systemMetricsMock } =
-  vi.hoisted(() => ({
-    createCloudAppenderMock: vi.fn(),
-    logMock: { info: vi.fn(), error: vi.fn() },
-    replayWindowLifecycleMock: vi.fn(),
-    systemMetricsMock: { start: vi.fn(), stop: vi.fn() },
-  }));
+const {
+  createCloudAppenderMock,
+  logMock,
+  systemMetricsMock,
+  nativeThemeMock,
+  resolveKimiHomeMock,
+} = vi.hoisted(() => ({
+  createCloudAppenderMock: vi.fn(),
+  logMock: { info: vi.fn(), error: vi.fn() },
+  systemMetricsMock: { start: vi.fn(), stop: vi.fn() },
+  nativeThemeMock: { shouldUseDarkColors: false },
+  resolveKimiHomeMock: vi.fn((): string => '/tmp/kimi-telemetry-test'),
+}));
 
+vi.mock('electron', () => ({ nativeTheme: nativeThemeMock }));
+vi.mock('@moonshot-ai/kimi-code-sdk', () => ({ resolveKimiHome: resolveKimiHomeMock }));
 vi.mock('@moonshot-ai/agent-core-v2', () => ({
   createCloudAppender: createCloudAppenderMock,
   IConfigService: 'IConfigService',
@@ -19,14 +31,19 @@ vi.mock('../../src/main/system-metrics', () => ({
   startDesktopSystemMetrics: systemMetricsMock.start,
   stopDesktopSystemMetrics: systemMetricsMock.stop,
 }));
-vi.mock('../../src/main/window-lifecycle', () => ({
-  replayWindowLifecycle: replayWindowLifecycleMock,
-}));
 
 import {
+  daysSince,
   isTelemetryConsentEnabled,
   wireDesktopTelemetry,
 } from '../../src/main/telemetry';
+import { setDesktopTrackImpl, trackDesktopEvent } from '../../src/main/track';
+import {
+  getRuntimeLocale,
+  getServerMode,
+  setRuntimeLocale,
+  setServerMode,
+} from '../../src/main/runtime-context';
 
 const EXISTING_DEVICE = { deviceId: 'device-1', firstLaunch: false } as const;
 
@@ -40,6 +57,7 @@ function makeCore(configValue: unknown, opts: { getThrows?: boolean } = {}) {
   };
   const telemetryService = {
     setAppender: vi.fn(),
+    track: vi.fn(),
     track2: vi.fn(),
     shutdown: vi.fn().mockResolvedValue(undefined),
   };
@@ -96,7 +114,6 @@ describe('wireDesktopTelemetry', () => {
     logMock.error.mockClear();
     systemMetricsMock.start.mockClear();
     systemMetricsMock.stop.mockClear();
-    replayWindowLifecycleMock.mockClear();
   });
 
   afterEach(() => {
@@ -141,7 +158,6 @@ describe('wireDesktopTelemetry', () => {
     expect(appender.startPeriodicFlush).toHaveBeenCalledOnce();
     expect(appender.retryDiskEvents).toHaveBeenCalledOnce();
     expect(systemMetricsMock.start).toHaveBeenCalledOnce();
-    expect(replayWindowLifecycleMock).toHaveBeenCalledOnce();
     expect(telemetryService.track2).not.toHaveBeenCalledWith('first_launch');
   });
 
@@ -208,5 +224,126 @@ describe('wireDesktopTelemetry', () => {
     });
     expect(appender.stopPeriodicFlush).toHaveBeenCalledOnce();
     expect(telemetryService.shutdown).toHaveBeenCalledOnce();
+  });
+});
+
+describe('daysSince', () => {
+  it('floors whole days and clamps negative values to zero', () => {
+    const day = 86_400_000;
+    const now = 100 * day;
+    expect(daysSince(now, now)).toBe(0);
+    expect(daysSince(now - 0.9 * day, now)).toBe(0);
+    expect(daysSince(now - 1.5 * day, now)).toBe(1);
+    expect(daysSince(now - 42 * day, now)).toBe(42);
+    // A birth time in the future (clock skew) never goes negative.
+    expect(daysSince(now + day, now)).toBe(0);
+  });
+});
+
+describe('super properties injection', () => {
+  let homeDir: string;
+
+  beforeEach(async () => {
+    createCloudAppenderMock.mockReset();
+    nativeThemeMock.shouldUseDarkColors = false;
+    setServerMode(undefined);
+    setRuntimeLocale(undefined);
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-telemetry-'));
+    resolveKimiHomeMock.mockReturnValue(homeDir);
+  });
+
+  afterEach(() => {
+    setDesktopTrackImpl(null);
+    setServerMode(undefined);
+    setRuntimeLocale(undefined);
+    vi.unstubAllEnvs();
+  });
+
+  function wiredTrack(): ReturnType<typeof vi.fn> {
+    createCloudAppenderMock.mockReturnValue(makeAppender());
+    return vi.fn();
+  }
+
+  it('merges runtime context into every event; event-own fields win', async () => {
+    await writeFile(join(homeDir, 'device_id'), 'device-1');
+    wiredTrack();
+    const { core, telemetryService } = makeCore(undefined);
+    setServerMode('embedded');
+    setRuntimeLocale('zh');
+
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
+    expect(handle).not.toBeNull();
+
+    trackDesktopEvent('window_lifecycle', { action: 'shown' });
+    expect(telemetryService.track).toHaveBeenCalledWith('window_lifecycle', {
+      action: 'shown',
+      server_mode: 'embedded',
+      locale: 'zh',
+      theme: 'light',
+      days_since_install: 0,
+      app_uptime_ms: expect.any(Number),
+    });
+
+    // The event's own app_uptime_ms is never overwritten.
+    trackDesktopEvent('app_crashed', { process: 'main', kind: 'uncaught_exception', app_uptime_ms: 42 });
+    expect(telemetryService.track).toHaveBeenCalledWith(
+      'app_crashed',
+      expect.objectContaining({ app_uptime_ms: 42 }),
+    );
+
+    await handle!.shutdown();
+  });
+
+  it('omits context values that are unset or unreadable', async () => {
+    // No device_id file in homeDir → days_since_install is dropped; server_mode
+    // and locale stay unset.
+    wiredTrack();
+    const { core, telemetryService } = makeCore(undefined);
+
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
+    expect(handle).not.toBeNull();
+
+    trackDesktopEvent('global_shortcut_invoked', {});
+    const properties = telemetryService.track.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(properties['server_mode']).toBeUndefined();
+    expect(properties['locale']).toBeUndefined();
+    expect(properties['days_since_install']).toBeUndefined();
+    expect(properties['app_uptime_ms']).toEqual(expect.any(Number));
+    expect(properties['theme']).toBe('light');
+
+    await handle!.shutdown();
+  });
+
+  it('reflects later context updates and the dark theme', async () => {
+    wiredTrack();
+    const { core, telemetryService } = makeCore(undefined);
+    nativeThemeMock.shouldUseDarkColors = true;
+
+    const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
+    setServerMode('external');
+    setRuntimeLocale('en');
+
+    trackDesktopEvent('global_shortcut_invoked', {});
+    expect(telemetryService.track).toHaveBeenCalledWith(
+      'global_shortcut_invoked',
+      expect.objectContaining({ server_mode: 'external', locale: 'en', theme: 'dark' }),
+    );
+
+    await handle!.shutdown();
+  });
+});
+
+describe('runtime-context', () => {
+  it('stores server_mode and locale, defaulting to undefined', () => {
+    expect(getServerMode()).toBeUndefined();
+    expect(getRuntimeLocale()).toBeUndefined();
+    setServerMode('embedded');
+    setRuntimeLocale('zh');
+    expect(getServerMode()).toBe('embedded');
+    expect(getRuntimeLocale()).toBe('zh');
+    setServerMode(undefined);
+    setRuntimeLocale(undefined);
+    expect(getServerMode()).toBeUndefined();
+    expect(getRuntimeLocale()).toBeUndefined();
   });
 });

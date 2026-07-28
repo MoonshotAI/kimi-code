@@ -45,16 +45,37 @@ const mocks = vi.hoisted(() => ({
 // Mock Electron + the neighboring main modules so lifecycle telemetry can run
 // through createWindow in the node test environment.
 vi.mock('electron', () => {
+  class FakeWebContents {
+    handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+    on(event: string, cb: (...args: unknown[]) => void): void {
+      this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]);
+    }
+    emit(event: string, ...args: unknown[]): void {
+      for (const cb of this.handlers.get(event) ?? []) cb(...args);
+    }
+    send = vi.fn();
+    session = {};
+    openDevTools = vi.fn();
+    isDevToolsOpened(): boolean {
+      return false;
+    }
+    closeDevTools = vi.fn();
+    getURL(): string {
+      return 'app://renderer/index.html';
+    }
+    getZoomFactor(): number {
+      return 1;
+    }
+    getZoomLevel(): number {
+      return 0;
+    }
+    executeJavaScript(): Promise<unknown> {
+      return Promise.resolve(1);
+    }
+  }
   class FakeBrowserWindow {
     handlers = new Map<string, ((...args: unknown[]) => void)[]>();
-    webContents = {
-      on: vi.fn(),
-      send: vi.fn(),
-      session: {},
-      openDevTools: vi.fn(),
-      isDevToolsOpened: () => false,
-      closeDevTools: vi.fn(),
-    };
+    webContents = new FakeWebContents();
     show = vi.fn();
     hide = vi.fn();
     focus = vi.fn();
@@ -115,7 +136,10 @@ vi.mock('electron', () => {
 vi.mock('../../src/main/connect', () => ({ connect: mocks.connect }));
 vi.mock('../../src/main/downloads', () => ({ installDownloadHandler: mocks.installDownloadHandler }));
 vi.mock('../../src/main/external-links', () => ({ installExternalLinkGuard: mocks.installExternalLinkGuard }));
-vi.mock('../../src/main/log', () => ({ log: { info: mocks.logInfo }, redactUrlForLog: (url: string) => url }));
+vi.mock('../../src/main/log', () => ({
+  log: { info: mocks.logInfo, error: vi.fn(), warn: vi.fn() },
+  redactUrlForLog: (url: string) => url,
+}));
 vi.mock('../../src/main/ui-state', () => ({ isVibrancyEnabled: mocks.isVibrancyEnabled }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
 
@@ -317,7 +341,36 @@ describe('window lifecycle telemetry', () => {
     expect(win.hide).toHaveBeenCalledOnce();
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
     win.emit('hide');
-    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', { action: 'hidden' });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', {
+      action: 'hidden',
+      reason: 'close_to_tray',
+      visible_duration_ms: expect.any(Number),
+    });
+  });
+
+  it("tracks 'hidden' with reason 'deactivate' on minimize", async () => {
+    const { showMainWindow } = await import('../../src/main/window');
+    showMainWindow();
+    const win = lastWindow();
+    mocks.trackDesktopEvent.mockClear();
+    win.emit('minimize');
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', {
+      action: 'hidden',
+      reason: 'deactivate',
+      visible_duration_ms: expect.any(Number),
+    });
+  });
+
+  it('keeps a plain hide reason-less', async () => {
+    const { showMainWindow } = await import('../../src/main/window');
+    showMainWindow();
+    const win = lastWindow();
+    mocks.trackDesktopEvent.mockClear();
+    win.emit('hide');
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', {
+      action: 'hidden',
+      visible_duration_ms: expect.any(Number),
+    });
   });
 
   it("tracks 'closed' on real window destruction", async () => {
@@ -325,8 +378,49 @@ describe('window lifecycle telemetry', () => {
     showMainWindow();
     mocks.trackDesktopEvent.mockClear();
     lastWindow().emit('closed');
-    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', { action: 'closed' });
-    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('window_lifecycle', { action: 'hidden' });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('window_lifecycle', {
+      action: 'closed',
+      visible_duration_ms: expect.any(Number),
+    });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith(
+      'window_lifecycle',
+      expect.objectContaining({ action: 'hidden' }),
+    );
+  });
+
+  it('reports each startup_timing phase once', async () => {
+    const { showMainWindow } = await import('../../src/main/window');
+    showMainWindow(); // createWindow: isVisible → window_shown
+    const win = lastWindow() as unknown as { webContents: { emit(event: string, ...args: unknown[]): void } };
+
+    const phases = (): string[] =>
+      mocks.trackDesktopEvent.mock.calls
+        .filter((call) => call[0] === 'startup_timing')
+        .map((call) => (call[1] as { phase: string }).phase);
+    expect(phases()).toEqual(['window_shown']);
+
+    win.webContents.emit('did-finish-load');
+    win.webContents.emit('did-finish-load');
+    expect(phases()).toEqual(['window_shown', 'renderer_loaded', 'renderer_ready']);
+
+    for (const call of mocks.trackDesktopEvent.mock.calls) {
+      if (call[0] === 'startup_timing') {
+        expect((call[1] as { duration_ms: number }).duration_ms).toEqual(expect.any(Number));
+      }
+    }
+  });
+
+  it('tracks renderer_crashed with the raw reason and exit code', async () => {
+    const { showMainWindow } = await import('../../src/main/window');
+    showMainWindow();
+    const win = lastWindow() as unknown as { webContents: { emit(event: string, ...args: unknown[]): void } };
+    mocks.trackDesktopEvent.mockClear();
+
+    win.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: -1 });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('renderer_crashed', {
+      reason: 'crashed',
+      exit_code: -1,
+    });
   });
 });
 

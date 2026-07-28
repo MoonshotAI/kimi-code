@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     destroyTray: vi.fn(),
     unregisterGlobalShortcuts: vi.fn(),
     finalizeWindowLifecycle: vi.fn(),
+    trackDesktopEvent: vi.fn(),
   };
 });
 
@@ -61,6 +62,7 @@ vi.mock('../../src/main/shortcuts', () => ({
 vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn() }));
+vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
 vi.mock('../../src/main/window-lifecycle', () => ({
   finalizeWindowLifecycle: mocks.finalizeWindowLifecycle,
 }));
@@ -128,5 +130,57 @@ describe('app second-instance routing', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
     expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
+  });
+});
+
+describe('app startup telemetry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listeners.clear();
+    mocks.app.isPackaged = true;
+  });
+
+  async function ready(): Promise<void> {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+  }
+
+  it('tracks app_launched with the normal intent and the main_ready timing', async () => {
+    await ready();
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_launched', { launch_intent: 'normal' });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_timing', {
+      phase: 'main_ready',
+      duration_ms: expect.any(Number),
+    });
+  });
+
+  it('tracks app_launched with the jump_list intent for Jump List flags', async () => {
+    const argv = process.argv;
+    process.argv = [...argv, '--new-chat'];
+    try {
+      await ready();
+    } finally {
+      process.argv = argv;
+    }
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_launched', { launch_intent: 'jump_list' });
+  });
+
+  it('tracks app_crashed only for GPU child-process exits', async () => {
+    await ready();
+    const onGone = mocks.listeners.get('child-process-gone');
+    expect(onGone).toBeTypeOf('function');
+
+    onGone?.({}, { type: 'Tab', reason: 'crashed', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('app_crashed', expect.anything());
+
+    onGone?.({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_crashed', {
+      process: 'gpu',
+      kind: 'crashed',
+      app_uptime_ms: expect.any(Number),
+    });
   });
 });

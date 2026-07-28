@@ -20,6 +20,7 @@
 import { computed, watch, type ComputedRef, type Ref } from 'vue';
 
 import { i18n } from '../i18n';
+import { setSessionIntent } from '../lib/session-intent';
 
 export interface TrayAttentionItem {
   sessionId: string;
@@ -250,6 +251,7 @@ export function useTrayAttention(client: TrayAttentionSource): void {
   createTrayAttentionReporter(bridge, attention);
   createTraySessionSelector(bridge, (sessionId) => {
     runWhenInitialized(client.initialized, () => {
+      setSessionIntent('tray');
       // Fire-and-forget: a failed/stale jump must never break the tray path.
       void client.selectSession(sessionId).catch(() => {});
     });

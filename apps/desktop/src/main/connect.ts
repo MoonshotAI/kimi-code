@@ -13,13 +13,37 @@ import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
+import { setServerMode } from './runtime-context';
 import { trackDesktopEvent } from './track';
+import type { StartupConnectResultEvent } from './telemetry-events';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
 let serverInitialization: Promise<DesktopServerHandle | null> | null = null;
 let serverCloseRequested = false;
 let serverClosePromise: Promise<void> | null = null;
+
+// Consecutive connect failures since the last success (or since launch);
+// reported as startup_connect_result.retry_count.
+let consecutiveConnectFailures = 0;
+
+/** Where a connect failure was raised: starting the embedded server, or
+    loading the renderer URL (external mode has no start stage). */
+export type ConnectFailureStage = 'server_start' | 'load_url';
+
+type ConnectFailurePhase = NonNullable<StartupConnectResultEvent['failure_phase']>;
+
+/** Heuristic failure_phase for startup_connect_result: message signals
+    (auth/timeout) win over the stage default (spawn/port vs. handshake). */
+export function classifyConnectFailure(error: unknown, stage: ConnectFailureStage): ConnectFailurePhase {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (/401|unauthorized|token/.test(message)) return 'auth';
+  if (/timeout|etimedout/.test(message)) return 'timeout';
+  if (stage === 'server_start') {
+    return /eaddrinuse|port/.test(message) ? 'port' : 'spawn';
+  }
+  return 'handshake';
+}
 
 // connect() calls are serialized through this queue: window (re)creation
 // (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
@@ -78,6 +102,7 @@ export function connect(win: BrowserWindow): Promise<void> {
 
 async function connectOnce(win: BrowserWindow): Promise<void> {
   if (serverCloseRequested) return;
+  let failureStage: ConnectFailureStage = 'load_url';
   try {
     let origin: string;
     let token: string | undefined;
@@ -87,6 +112,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     // builds always use `app://renderer`.
     const devBase = app.isPackaged ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
     const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
+    setServerMode(target.external ? 'external' : 'embedded');
     if (target.external) {
       ({ origin, token } = target);
       // Redact: KIMI_SERVER_URL may carry basic-auth userinfo, which must not
@@ -101,6 +127,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       // later retry comes back through here and starts fresh.
       let activeHandle = serverHandle;
       if (activeHandle === null) {
+        failureStage = 'server_start';
         const initialization = (async (): Promise<DesktopServerHandle | null> => {
           // The embedded server and every tool it spawns share this process's
           // env; wait for the probe (warmed up in index.ts) to fill it first.
@@ -125,6 +152,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
         } finally {
           if (serverInitialization === initialization) serverInitialization = null;
         }
+        failureStage = 'load_url';
         log.info(`[kimi-desktop] connected to ${activeHandle.origin}`);
       } else {
         log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
@@ -152,11 +180,21 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
           throw error;
         }
       }
+      consecutiveConnectFailures = 0;
+      trackDesktopEvent('startup_connect_result', { ok: true });
     }
   } catch (error) {
+    consecutiveConnectFailures += 1;
+    trackDesktopEvent('startup_connect_result', {
+      ok: false,
+      failure_phase: classifyConnectFailure(error, failureStage),
+      retry_count: consecutiveConnectFailures,
+      error_class: error instanceof Error ? error.name : 'unknown',
+    });
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[kimi-desktop] connect failed: ${message}`);
     if (!win.isDestroyed()) {
+      trackDesktopEvent('startup_failure_screen_shown', {});
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }
   }

@@ -61,6 +61,8 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let successTimer: ReturnType<typeof setTimeout> | null = null;
   let consecutivePollFailures = 0;
+  // startFlow timestamp — every stage report carries the elapsed duration.
+  let flowStartedAt = 0;
   // Guards against duplicate cancels when cancelFlow fires twice for the same
   // pending flow (the step stays 'device-code' until the daemon confirms).
   let flowCancelled = false;
@@ -78,7 +80,12 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
   function reachSuccess(dwellMs: number): void {
     stopTimers();
     step.value = 'success';
-    track('oauth_login_step', { stage: 'success', ok: true });
+    track('oauth_login_step', {
+      stage: 'success',
+      ok: true,
+      method: 'oauth',
+      duration_ms: Date.now() - flowStartedAt,
+    });
     successTimer = setTimeout(() => {
       successTimer = null;
       options.onSuccess?.();
@@ -110,7 +117,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
           stopTimers();
           pollError.value = true;
           step.value = 'error';
-          track('oauth_login_step', { stage: 'error', ok: false });
+          track('oauth_login_step', {
+            stage: 'error',
+            ok: false,
+            method: 'oauth',
+            duration_ms: Date.now() - flowStartedAt,
+            error_class: 'poll_failed',
+          });
           return;
         }
         scheduleNextPoll(intervalSec);
@@ -122,7 +135,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
       } else if (result.status === 'expired' || result.status === 'cancelled') {
         stopTimers();
         step.value = 'expired';
-        track('oauth_login_step', { stage: 'expired', ok: false });
+        track('oauth_login_step', {
+          stage: 'expired',
+          ok: false,
+          method: 'oauth',
+          duration_ms: Date.now() - flowStartedAt,
+          error_class: result.status === 'cancelled' ? 'cancelled' : 'expired',
+        });
       } else {
         // pending — keep polling
         scheduleNextPoll(intervalSec);
@@ -136,8 +155,9 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     pollError.value = false;
     consecutivePollFailures = 0;
     flowCancelled = false;
+    flowStartedAt = Date.now();
     step.value = 'starting';
-    track('oauth_login_step', { stage: 'starting' });
+    track('oauth_login_step', { stage: 'starting', method: 'oauth', duration_ms: 0 });
 
     const result = await options.onStartOAuthLogin();
     if (disposed) {
@@ -151,7 +171,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     }
     if (!result) {
       step.value = 'error';
-      track('oauth_login_step', { stage: 'error', ok: false });
+      track('oauth_login_step', {
+        stage: 'error',
+        ok: false,
+        method: 'oauth',
+        duration_ms: Date.now() - flowStartedAt,
+        error_class: 'start_failed',
+      });
       return;
     }
 
@@ -173,7 +199,11 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     };
     secondsLeft.value = result.expiresIn;
     step.value = 'device-code';
-    track('oauth_login_step', { stage: 'device-code' });
+    track('oauth_login_step', {
+      stage: 'device-code',
+      method: 'oauth',
+      duration_ms: Date.now() - flowStartedAt,
+    });
     startCountdown();
     scheduleNextPoll(result.interval);
   }
