@@ -27,6 +27,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
+  IPluginService,
   ISessionLifecycleService,
   ISkillCatalogRuntimeOptions,
 } from '@moonshot-ai/agent-core-v2';
@@ -149,6 +150,21 @@ describe('server-v2 /api/v1 skills', () => {
     );
   }
 
+  async function seedPluginSkill(pluginId: string, name: string): Promise<string> {
+    const root = await makeWorkspaceDir();
+    const dir = join(root, 'skills', name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(root, 'kimi.plugin.json'),
+      JSON.stringify({ name: pluginId, skills: './skills/' }),
+    );
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${pluginId} ${name}\n---\n\nPlugin skill body.\n`,
+    );
+    return root;
+  }
+
   describe('GET /api/v1/sessions/{sid}/skills', () => {
     it('returns 40401 for an unknown session', async () => {
       const { body } = await getJson<null>('/api/v1/sessions/nope/skills');
@@ -198,6 +214,34 @@ describe('server-v2 /api/v1 skills', () => {
       expect(docsSkill).toBeDefined();
       expect(docsSkill).toMatchObject({ source: 'builtin' });
       expect(docsSkill?.description.length).toBeGreaterThan(0);
+    });
+
+    it('lists colliding plugin skills under names that round-trip through activation', async () => {
+      const plugins = server!.core.accessor.get(IPluginService);
+      await plugins.installPlugin({ source: await seedPluginSkill('alpha-plugin', 'review') });
+      await plugins.installPlugin({ source: await seedPluginSkill('beta-plugin', 'review') });
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const { body: listed } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${id}/skills`,
+      );
+      const names = listSkillsResponseSchema
+        .parse(listed.data)
+        .skills.map((skill) => skill.name)
+        .filter((name) => name.endsWith(':review'));
+      const selected = 'beta-plugin:review';
+      expect(names).toEqual(['alpha-plugin:review', selected]);
+
+      const { body: activated } = await postJson<{
+        activated: boolean;
+        skill_name: string;
+      }>(`/api/v1/sessions/${id}/skills/${encodeURIComponent(selected)}:activate`);
+      expect(activated.code).toBe(0);
+      expect(activateSkillResultSchema.parse(activated.data)).toEqual({
+        activated: true,
+        skill_name: selected,
+      });
     });
   });
 

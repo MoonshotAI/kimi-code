@@ -51,7 +51,8 @@
  * (`packages/agent-core/src/services/skill/skill.ts`): only
  * `name`/`description`/`path`/`source` plus optional `type` and
  * `disable_model_invocation` are emitted; `isSubSkill` is intentionally
- * dropped.
+ * dropped. Plugin Skill names use their canonical `pluginId:skillName`
+ * identity so every listed name round-trips through the activation route.
  *
  * **Error mapping**:
  *   - unknown workspace id          → envelope `code: 40410 workspace.not_found`.
@@ -89,6 +90,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   applyPromptMetadataUpdate,
+  canonicalSkillName,
   configuredRoots,
   projectRoots,
   promptMetadataTextFromSkill,
@@ -389,7 +391,7 @@ type SkillElement = ReturnType<ISessionSkillCatalog['catalog']['listSkills']>[nu
 
 function toProtocolSkill(skill: SkillElement): SkillDescriptor {
   const base: SkillDescriptor = {
-    name: skill.name,
+    name: canonicalSkillName(skill),
     description: skill.description,
     path: skill.path,
     source: skill.source,

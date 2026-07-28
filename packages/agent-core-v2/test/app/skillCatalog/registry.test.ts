@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import type { SkillDefinition, SkillSource } from '#/app/skillCatalog/types';
+import {
+  canonicalSkillName,
+  type SkillDefinition,
+  type SkillSource,
+} from '#/app/skillCatalog/types';
 import { stubSkill } from './stubs';
 
 describe('InMemorySkillCatalog skill listing', () => {
@@ -90,6 +94,20 @@ describe('InMemorySkillCatalog skill listing', () => {
     expect(rendered).toContain('project version');
     expect(rendered).not.toContain('user version');
     expect(rendered).not.toContain('builtin version');
+  });
+
+  it('lists every plugin identity alongside the merged non-plugin winner', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'Alpha review', undefined, {}, { id: 'alpha' }),
+      makeSkill('review', 'extra', 'Beta review', undefined, {}, { id: 'beta' }),
+    ]);
+    registry.register(makeSkill('review', 'project', 'Project review'), { replace: true });
+
+    expect(registry.listSkills().map(canonicalSkillName)).toEqual([
+      'alpha:review',
+      'beta:review',
+      'review',
+    ]);
   });
 
   it('registerBuiltinSkill stamps non-builtin skills as builtin', () => {

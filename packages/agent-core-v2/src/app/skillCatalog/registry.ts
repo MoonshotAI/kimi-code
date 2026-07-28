@@ -128,16 +128,17 @@ export class InMemorySkillCatalog implements SkillCatalog {
   }
 
   listSkills(): readonly SkillDefinition[] {
-    return [...this.byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+    return [
+      ...[...this.byName.values()].filter((skill) => skill.plugin === undefined),
+      ...this.byPluginAndName.values(),
+    ].toSorted((a, b) => canonicalSkillName(a).localeCompare(canonicalSkillName(b)));
   }
 
   listInvocableSkills(): readonly SkillDefinition[] {
-    return this.listInvocationCandidates()
-      .filter(
-        (skill) =>
-          skill.metadata.disableModelInvocation !== true && isInlineSkillType(skill.metadata.type),
-      )
-      .toSorted((a, b) => canonicalSkillName(a).localeCompare(canonicalSkillName(b)));
+    return this.listSkills().filter(
+      (skill) =>
+        skill.metadata.disableModelInvocation !== true && isInlineSkillType(skill.metadata.type),
+    );
   }
 
   getSkillRoots(): readonly string[] {
@@ -174,13 +175,6 @@ export class InMemorySkillCatalog implements SkillCatalog {
     if (options.replace === true || !this.byPluginAndName.has(key)) {
       this.byPluginAndName.set(key, skill);
     }
-  }
-
-  private listInvocationCandidates(): readonly SkillDefinition[] {
-    return [
-      ...[...this.byName.values()].filter((skill) => skill.plugin === undefined),
-      ...this.byPluginAndName.values(),
-    ];
   }
 
   private pluginSkillsNamed(name: string): readonly SkillDefinition[] {
@@ -274,7 +268,11 @@ function renderGroupedSkills(
 }
 
 function formatFullSkill(skill: SkillDefinition): readonly string[] {
-  return [`- ${skill.name}`, `  - Path: ${skill.path}`, `  - Description: ${skill.description}`];
+  return [
+    `- ${canonicalSkillName(skill)}`,
+    `  - Path: ${skill.path}`,
+    `  - Description: ${skill.description}`,
+  ];
 }
 
 function formatModelSkill(skill: SkillDefinition): readonly string[] {
