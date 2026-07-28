@@ -7,14 +7,16 @@
  *   {
  *     "usage":  { "name": "Weekly limit", "used": 40, "limit": 1000, "resetAt": "..." },
  *     "limits": [
- *       { "detail": {"used":1, "limit":100, "name":"5h limit"}, "window": {...} },
+ *       { "detail": {"used":1, "limit":100, "name":"5h limit"}, "window": {"duration":5, "timeUnit":"HOUR"} },
  *       ...
  *     ]
  *   }
  *
  * The parser is intentionally loose because field spelling / casing
  * drifted across versions (`used` vs `remaining`, `resetAt` vs
- * `reset_at`, `duration+timeUnit` window labels, etc.).
+ * `reset_at`, `duration+timeUnit` window shapes, etc.). It normalizes the
+ * payload into a structured, camelCase domain model; presentation
+ * (labels, reset hints) is left to the consumer.
  */
 
 import { readApiErrorMessage } from './api-error';
@@ -65,11 +67,22 @@ function parseNormalizedUrl(value: string): string | undefined {
   }
 }
 
+export interface UsageWindow {
+  /** Raw window length as reported by the backend, e.g. 5. */
+  readonly duration: number;
+  /** Normalized from the backend `timeUnit` (casing / plural drift tolerated). */
+  readonly unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
 export interface UsageRow {
-  readonly label: string;
+  /** Raw backend name/title/scope, passed through for custom labels. */
+  readonly name?: string;
+  /** Rate-limit window, when it can be derived from the payload. */
+  readonly window?: UsageWindow;
   readonly used: number;
   readonly limit: number;
-  readonly resetHint?: string | undefined;
+  /** ISO timestamp at which the window resets. */
+  readonly resetAt?: string;
 }
 
 export interface BoosterWalletInfo {
@@ -146,27 +159,47 @@ export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
     return { summary: null, limits: [], extraUsage: null };
   }
   const rec = payload as Record<string, unknown>;
-  const summary = toUsageRow(rec['usage'], 'Weekly limit');
-  const limits: UsageRow[] = [];
-  const rawLimits = rec['limits'];
-  if (Array.isArray(rawLimits)) {
-    for (let idx = 0; idx < rawLimits.length; idx++) {
-      const item = rawLimits[idx] as Record<string, unknown> | undefined;
-      if (!item || typeof item !== 'object') continue;
-      const detailRaw = item['detail'];
-      const detail = isRecord(detailRaw) ? detailRaw : item;
-      const windowRaw = item['window'];
-      const window = isRecord(windowRaw) ? windowRaw : {};
-      const label = limitLabel(item, detail, window, idx);
-      const row = toUsageRow(detail, label);
-      if (row !== null) limits.push(row);
-    }
+  let summary = toUsageRow(rec['usage']);
+  // The summary row is the plan's weekly limit; the backend does not always
+  // spell that out, so synthesize the window when none was given and the row
+  // is unnamed or already says "weekly" (clients display window before name,
+  // so a "Weekly limit" name keeps its label; any other custom name means the
+  // row is not the weekly limit and is left untouched).
+  if (
+    summary !== null &&
+    summary.window === undefined &&
+    (summary.name === undefined || /weekly/i.test(summary.name))
+  ) {
+    summary = { ...summary, window: { duration: 1, unit: 'week' } };
   }
-  const extraUsage = parseBoosterWallet(rec['boosterWallet']);
-  return { summary, limits, extraUsage };
+  return {
+    summary,
+    limits: parseLimitRows(rec),
+    extraUsage: parseBoosterWallet(rec['boosterWallet']),
+  };
 }
 
-function toUsageRow(raw: unknown, defaultLabel: string): UsageRow | null {
+function parseLimitRows(rec: Record<string, unknown>): UsageRow[] {
+  const limits: UsageRow[] = [];
+  const rawLimits = rec['limits'];
+  if (!Array.isArray(rawLimits)) return limits;
+  for (const rawItem of rawLimits) {
+    if (!isRecord(rawItem)) continue;
+    const detailRaw = rawItem['detail'];
+    const detail = isRecord(detailRaw) ? detailRaw : rawItem;
+    const row = toUsageRow(detail, {
+      name: nameFrom(rawItem),
+      window: windowFrom(rawItem),
+    });
+    if (row !== null) limits.push(row);
+  }
+  return limits;
+}
+
+function toUsageRow(
+  raw: unknown,
+  extra: { readonly name?: string; readonly window?: UsageWindow } = {},
+): UsageRow | null {
   if (!isRecord(raw)) return null;
   const limit = toInt(raw['limit']);
   let used = toInt(raw['used']);
@@ -177,76 +210,69 @@ function toUsageRow(raw: unknown, defaultLabel: string): UsageRow | null {
     }
   }
   if (used === null && limit === null) return null;
-  const name =
-    typeof raw['name'] === 'string'
-      ? raw['name']
-      : typeof raw['title'] === 'string'
-        ? raw['title']
-        : defaultLabel;
-  const resetHint = resetHintFrom(raw);
   return {
-    label: name,
+    name: extra.name ?? nameFrom(raw),
+    window: extra.window ?? windowFrom(raw),
     used: used ?? 0,
     limit: limit ?? 0,
-    resetHint,
+    resetAt: resetAtFrom(raw),
   };
 }
 
-function limitLabel(
-  item: Record<string, unknown>,
-  detail: Record<string, unknown>,
-  window: Record<string, unknown>,
-  idx: number,
-): string {
-  for (const key of ['name', 'title', 'scope']) {
-    const v = item[key] ?? detail[key];
-    if (typeof v === 'string' && v.length > 0) return v;
-  }
-  const duration = toInt(window['duration'] ?? item['duration'] ?? detail['duration']);
-  const rawUnit = window['timeUnit'] ?? item['timeUnit'] ?? detail['timeUnit'];
-  const timeUnit = typeof rawUnit === 'string' ? rawUnit : '';
-  if (duration !== null) {
-    if (timeUnit.includes('MINUTE')) {
-      if (duration >= 60 && duration % 60 === 0) return `${String(duration / 60)}h limit`;
-      return `${String(duration)}m limit`;
-    }
-    if (timeUnit.includes('HOUR')) return `${String(duration)}h limit`;
-    if (timeUnit.includes('DAY')) return `${String(duration)}d limit`;
-    return `${String(duration)}s limit`;
-  }
-  return `Limit #${String(idx + 1)}`;
-}
-
-function resetHintFrom(raw: Record<string, unknown>): string | undefined {
-  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
-    const v = raw[key];
-    if (typeof v === 'string' && v.length > 0) {
-      return formatResetTime(v);
-    }
-  }
-  for (const key of ['reset_in', 'resetIn', 'ttl', 'window']) {
-    const seconds = toInt(raw[key]);
-    if (seconds !== null && seconds > 0) {
-      return `resets in ${formatDuration(seconds)}`;
+function nameFrom(...sources: readonly Record<string, unknown>[]): string | undefined {
+  for (const src of sources) {
+    for (const key of ['name', 'title', 'scope']) {
+      const v = src[key];
+      if (typeof v === 'string' && v.length > 0) return v;
     }
   }
   return undefined;
 }
 
-export function formatResetTime(val: string): string {
-  let normalised = val;
-  // ISO with nano precision → trim to ms for JS Date.
-  if (normalised.includes('.') && normalised.endsWith('Z')) {
-    const [base, frac] = normalised.slice(0, -1).split('.');
-    if (base !== undefined && frac !== undefined) {
-      normalised = `${base}.${frac.slice(0, 3)}Z`;
+function normalizeTimeUnit(raw: unknown): UsageWindow['unit'] | null {
+  if (typeof raw !== 'string') return null;
+  const unit = raw.toUpperCase();
+  if (unit.includes('MINUTE')) return 'minute';
+  if (unit.includes('HOUR')) return 'hour';
+  if (unit.includes('DAY')) return 'day';
+  if (unit.includes('WEEK')) return 'week';
+  return null;
+}
+
+function windowFrom(...sources: readonly Record<string, unknown>[]): UsageWindow | undefined {
+  for (const src of sources) {
+    const nested = src['window'];
+    const candidates = isRecord(nested) ? [nested, src] : [src];
+    for (const candidate of candidates) {
+      const duration = toInt(candidate['duration']);
+      const unit = normalizeTimeUnit(candidate['timeUnit']);
+      if (duration === null || unit === null) continue;
+      // The platform expresses sub-day windows in minutes (e.g. the 5-hour
+      // limit arrives as 300 MINUTE); fold whole hours so clients render
+      // "5h limit" rather than "300m limit".
+      if (unit === 'minute' && duration >= 60 && duration % 60 === 0) {
+        return { duration: duration / 60, unit: 'hour' };
+      }
+      return { duration, unit };
     }
   }
-  const parsed = Date.parse(normalised);
-  if (!Number.isFinite(parsed)) return `resets at ${val}`;
-  const diffSec = Math.floor((parsed - Date.now()) / 1000);
-  if (diffSec <= 0) return 'reset';
-  return `resets in ${formatDuration(diffSec)}`;
+  return undefined;
+}
+
+function resetAtFrom(raw: Record<string, unknown>): string | undefined {
+  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
+    const v = raw[key];
+    if (typeof v === 'string' && v.length > 0) {
+      return v;
+    }
+  }
+  for (const key of ['reset_in', 'resetIn', 'ttl']) {
+    const seconds = toInt(raw[key]);
+    if (seconds !== null && seconds > 0) {
+      return new Date(Date.now() + seconds * 1000).toISOString();
+    }
+  }
+  return undefined;
 }
 
 export function formatDuration(totalSeconds: number): string {

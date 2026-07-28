@@ -201,8 +201,20 @@ function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
 }
 
 type ManagedUsageDomainResult = Awaited<ReturnType<IOAuthService['getManagedUsage']>>;
-type DomainUsageRow = { label: string; used: number; limit: number; resetHint?: string };
+type DomainUsageRow = {
+  name?: string;
+  window?: { duration: number; unit: 'minute' | 'hour' | 'day' | 'week' };
+  used: number;
+  limit: number;
+  resetAt?: string;
+};
 
 function toWireUsageRow(row: DomainUsageRow): UsageRow {
-  return { label: row.label, used: row.used, limit: row.limit, reset_hint: row.resetHint };
+  return {
+    name: row.name,
+    window: row.window,
+    used: row.used,
+    limit: row.limit,
+    reset_at: row.resetAt,
+  };
 }
