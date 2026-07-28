@@ -164,6 +164,7 @@ module.exports = {
   win: {
     target: ['nsis'],
     artifactName,
+    extraResources: [{ from: 'build/icon.ico', to: 'build/icon.ico' }],
   },
 
   nsis: {

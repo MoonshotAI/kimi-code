@@ -74,11 +74,20 @@ describe('app second-instance routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listeners.clear();
+    mocks.app.isPackaged = true;
+  });
+
+  it('isolates unpackaged Windows launches from the installed shell identity', () => {
+    mocks.app.isPackaged = false;
+    main();
+
+    expect(mocks.app.setAppUserModelId).toHaveBeenCalledWith('com.kimi.code.desktop.dev');
   });
 
   it('registers immediately and replays launches received before the window is ready', async () => {
     main();
 
+    expect(mocks.app.setAppUserModelId).toHaveBeenCalledWith('com.kimi.code.desktop');
     const onSecondInstance = mocks.listeners.get('second-instance');
     expect(onSecondInstance).toBeTypeOf('function');
     onSecondInstance?.({}, ['electron.exe', '--new-chat']);

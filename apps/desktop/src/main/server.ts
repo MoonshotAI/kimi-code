@@ -1,9 +1,6 @@
-import { readFileSync } from 'node:fs';
-
 import {
   startServer,
   createServerLogger,
-  serverTokenPath,
 } from '@moonshot-ai/kap-server';
 import { bootstrapSeed, hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, readKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
@@ -24,7 +21,6 @@ import { wireDesktopTelemetry } from './telemetry';
 export interface DesktopServerHandle {
   readonly origin: string;
   readonly port: number;
-  readonly token: string | undefined;
   readonly close: () => Promise<void>;
 }
 
@@ -66,15 +62,6 @@ function desktopHostIdentity(
   return { headers, deviceId, firstLaunch };
 }
 
-function readServerToken(): string | undefined {
-  try {
-    const token = readFileSync(serverTokenPath(resolveKimiHome()), 'utf-8').trim();
-    return token.length > 0 ? token : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Start an in-process Kimi server for the desktop host.
  *
@@ -113,6 +100,9 @@ export async function startDesktopServer(
     // app://renderer) can call the loopback HTTP API. The v2 server takes the
     // origin allowlist directly (no KIMI_CODE_CORS_ORIGINS env needed).
     corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
+    // No bearer token on the embedded server; /api/v1/meta's
+    // dangerous_bypass_auth keeps the renderer's ServerAuthDialog off.
+    disableAuth: true,
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); the upstream model API reads identity from these.
     seeds: [
@@ -133,7 +123,6 @@ export async function startDesktopServer(
   return {
     origin: `http://${handle.host}:${handle.port}`,
     port: handle.port,
-    token: readServerToken(),
     close: async () => {
       await telemetry?.shutdown();
       await handle.close();

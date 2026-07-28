@@ -1,5 +1,7 @@
 // apps/kimi-web/src/types.ts
 
+import type { SessionPlan } from './api/types';
+
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
   path: string;
@@ -108,6 +110,8 @@ export interface ToolCall {
   /** Absolute path of the plan file (ExitPlanMode only) — rendered as a
    *  clickable link that opens the plan in the file preview. */
   planPath?: string;
+  /** Persisted ExitPlanMode content and final review state. */
+  plan?: SessionPlan;
 }
 
 export interface ToolMedia {

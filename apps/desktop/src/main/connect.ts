@@ -34,8 +34,10 @@ export function rendererDistRoot(): string {
     : join(app.getAppPath(), 'desktop-dist');
 }
 
-// Token used by the renderer's `credentialStore.getToken()` (Task 4.5). Read in
-// the main process from the server's token file; the renderer never touches fs.
+// Token for the external-server mode (KIMI_SERVER_URL): that server enforces
+// the persistent bearer credential, so the renderer gets it via the URL
+// fragment. The embedded server disables auth and needs no token. Read in the
+// main process; the renderer never touches fs.
 export function readServerToken(): string | undefined {
   try {
     const token = readFileSync(serverTokenPath(resolveKimiHome()), 'utf-8').trim();
@@ -127,7 +129,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       } else {
         log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
       }
-      ({ origin, token } = activeHandle);
+      ({ origin } = activeHandle);
     }
     if (!win.isDestroyed()) {
       const url = rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled());

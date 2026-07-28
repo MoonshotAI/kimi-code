@@ -8,6 +8,7 @@ import {
   trayAttentionSummary,
   trayAttentionTitle,
   trayIconPath,
+  trayOpenLabel,
   type TrayAttention,
 } from '../../src/main/tray';
 
@@ -72,6 +73,13 @@ describe('trayIconPath', () => {
     expect(
       trayIconPath({ platform: 'darwin', isPackaged: true, resourcesPath: '/res', appPath: '/repo' }),
     ).toBe(join('/res', 'build', 'trayTemplate.png'));
+  });
+});
+
+describe('trayOpenLabel', () => {
+  it('names the app explicitly in both locales', () => {
+    expect(trayOpenLabel('zh')).toBe('打开 Kimi Code');
+    expect(trayOpenLabel('en')).toBe('Open Kimi Code');
   });
 });
 

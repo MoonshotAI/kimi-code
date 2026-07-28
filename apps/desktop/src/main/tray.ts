@@ -192,7 +192,7 @@ export type TrayLocale = 'en' | 'zh';
 interface TrayStrings {
   /** Section header above the attention session entries. */
   pending: string;
-  showMainWindow: string;
+  openApp: string;
   quit: string;
   /** Fallback for an empty session title. */
   unnamedSession: string;
@@ -210,7 +210,7 @@ interface TrayStrings {
 const TRAY_STRINGS: Record<TrayLocale, TrayStrings> = {
   zh: {
     pending: '待处理',
-    showMainWindow: '显示主窗口',
+    openApp: '打开 Kimi Code',
     quit: '退出',
     unnamedSession: '未命名会话',
     moreOverflow: (rest) => `还有 ${rest} 条待处理…`,
@@ -222,7 +222,7 @@ const TRAY_STRINGS: Record<TrayLocale, TrayStrings> = {
   },
   en: {
     pending: 'Pending',
-    showMainWindow: 'Show Main Window',
+    openApp: 'Open Kimi Code',
     quit: 'Quit',
     unnamedSession: 'Untitled session',
     moreOverflow: (rest) => `${rest} more…`,
@@ -247,6 +247,10 @@ let trayLocale: TrayLocale | null = null;
 
 function effectiveTrayLocale(): TrayLocale {
   return trayLocale ?? osTrayLocale();
+}
+
+export function trayOpenLabel(locale: TrayLocale): string {
+  return TRAY_STRINGS[locale].openApp;
 }
 
 /** Per-kind breakdown line ("3 条未读 · 2 个待审批 · 1 个待回答") for the
@@ -314,7 +318,7 @@ function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: T
   }
   template.push(
     {
-      label: strings.showMainWindow,
+      label: strings.openApp,
       click: () => {
         trackDesktopEvent('tray_action', { action: 'show-window', pending_count: pendingCount });
         actions.showMainWindow();

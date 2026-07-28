@@ -13,6 +13,7 @@ export default {
     task: 'Task',
     swarm: 'Swarm',
     ask_user: 'Question',
+    plan: 'Plan',
     goal_create: 'Start Goal',
     goal_get: 'Read Goal',
     goal_budget: 'Set Goal Budget',
@@ -44,6 +45,16 @@ export default {
   output: {
     waiting: 'Waiting for output…',
     empty: 'No output',
+  },
+  plan: {
+    review: {
+      pending: 'Pending review',
+      approved: 'Approved',
+      rejected: 'Rejected',
+      cancelled: 'Cancelled',
+    },
+    selectedOption: 'Selected',
+    feedback: 'Feedback',
   },
   summary: {
     inScope: '{value} in {scope}',

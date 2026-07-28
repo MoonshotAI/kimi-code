@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { AppApprovalRequest, AppMessage, AppMessageContent } from '../../src/renderer/api/types';
+import type {
+  AppApprovalRequest,
+  AppMessage,
+  AppMessageContent,
+  SessionPlan,
+} from '../../src/renderer/api/types';
 import { messagesToTurns } from '../../src/renderer/composables/messagesToTurns';
 import { createTurnsProjector, type TurnsProjectInput } from '../../src/renderer/composables/client/turnsProjector';
 
@@ -118,6 +123,37 @@ describe('createTurnsProjector', () => {
     planReview['tool-1'] = { plan: '...', path: '/tmp/plan.md' };
     const second = projector({ messages: [u1, a1], approvals: NO_APPROVALS, planReviewByToolCallId: planReview });
     expect(second[1]?.tools?.[0]?.planPath).toBe('/tmp/plan.md');
+  });
+
+  it('rebuilds the historical tool when persisted plan details arrive', () => {
+    const u1 = message('u1', 'user', [text('plan')]);
+    const a1 = message('a1', 'assistant', [
+      { type: 'toolUse', toolCallId: 'tool-1', toolName: 'ExitPlanMode', input: '{}' },
+    ]);
+    const plans: Record<string, SessionPlan> = {};
+    const projector = createTurnsProjector();
+    const first = projector({
+      messages: [u1, a1],
+      approvals: NO_APPROVALS,
+      plansByToolCallId: plans,
+    });
+    expect(first[1]?.tools?.[0]?.plan).toBeUndefined();
+
+    plans['tool-1'] = {
+      agentId: 'main',
+      toolCallId: 'tool-1',
+      turnId: 'turn-1',
+      source: 'output',
+      plan: '# Restored plan',
+    };
+    const second = projector({
+      messages: [u1, a1],
+      approvals: NO_APPROVALS,
+      plansByToolCallId: plans,
+    });
+
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[1]?.tools?.[0]?.plan?.plan).toBe('# Restored plan');
   });
 
   it('rebuilds from the first mismatching span onward (middle removal)', () => {

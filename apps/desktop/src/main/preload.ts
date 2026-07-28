@@ -223,7 +223,6 @@ export type KimiDesktopApi = {
   getPathForFile: (file: File) => string | null;
   listOpenInApps: () => Promise<OpenInApp[]>;
   openInApp: (appId: string, path: string) => Promise<OpenInResult>;
-  getServerToken: () => Promise<string | undefined>;
   /** Fire-and-forget: persist "onboarding completed" in the main process's
    *  ui-state.json (survives dev-server port shifts; no-op semantics on web). */
   setOnboarded: () => void;
@@ -353,7 +352,6 @@ export const api: KimiDesktopApi = {
   },
   listOpenInApps: () => ipcRenderer.invoke('kimi:open-in-list'),
   openInApp: (appId, path) => ipcRenderer.invoke('kimi:open-in', appId, path),
-  getServerToken: () => ipcRenderer.invoke('kimi:get-server-token'),
   setOnboarded: () => ipcRenderer.send('kimi:set-onboarded'),
   isFullscreen: () => ipcRenderer.invoke('kimi:is-fullscreen'),
   onFullscreenChanged: (cb) => {

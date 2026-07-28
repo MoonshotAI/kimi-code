@@ -138,6 +138,27 @@ export interface WireGoalSnapshot {
   };
 }
 
+export interface WireSessionPlanReview {
+  state: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  selected_option?: string;
+  feedback?: string;
+}
+
+export interface WireSessionPlan {
+  tool_call_id: string;
+  turn_id: string;
+  source: 'interaction' | 'display' | 'output';
+  plan: string;
+  path?: string;
+  options?: Array<{ label: string; description?: string }>;
+  review?: WireSessionPlanReview;
+}
+
+export interface WireSessionPlansResponse {
+  agent_id: string;
+  plans: WireSessionPlan[];
+}
+
 // GET /sessions/{id}/warnings — session-level warnings (e.g. oversized AGENTS.md).
 export interface WireSessionWarning {
   code: string;

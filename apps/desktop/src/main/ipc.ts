@@ -2,7 +2,6 @@ import { dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 
 import { getMainWindow, showMainWindow, applyWindowVibrancy } from './window';
-import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import {
   getUpdateAutoDownload,
@@ -85,8 +84,6 @@ export function registerIpcHandlers(): void {
     }
     return result;
   });
-  // Token for the renderer's credentialStore (Task 4.5); read in main, never fs in renderer.
-  ipcMain.handle(IPC.getServerToken, () => readServerToken());
   // Initial fullscreen state for the renderer (transitions are pushed over
   // `IPC.fullscreenChanged` by window.ts); needed when the page (re)loads while
   // the window is already full-screen.

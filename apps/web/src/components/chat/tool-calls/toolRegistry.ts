@@ -11,6 +11,7 @@ import GlobTool from './GlobTool.vue';
 import GoalTool from './GoalTool.vue';
 import GrepTool from './GrepTool.vue';
 import MediaTool from './MediaTool.vue';
+import PlanTool from './PlanTool.vue';
 import ReadTool from './ReadTool.vue';
 import SwarmTool from './SwarmTool.vue';
 import TodoTool from './TodoTool.vue';
@@ -51,6 +52,8 @@ export function resolveToolRenderer(tool: ToolCall): ToolRenderer {
       return SwarmTool;
     case 'askuserquestion':
       return AskUserTool;
+    case 'exitplanmode':
+      return PlanTool;
     case 'creategoal':
     case 'getgoal':
     case 'setgoalbudget':
