@@ -616,5 +616,35 @@ describe('ToolCallDeduplicator', () => {
       const repeats = events.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
     });
+
+    it('counts identical malformed argument texts as repeats', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 2; i += 1) {
+        dedup.beginStep();
+        const callId = `c${String(i)}`;
+        dedup.registerSkipped(callId, 'Bash', {}, '{"command":');
+        await dedup.finalizeResult(callId, 'Bash', {}, errResult('Invalid args'));
+        dedup.endStep();
+      }
+      const repeats = events.filter((e) => e.event === 'tool_call_repeat');
+      expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
+    });
+
+    it('does not treat different malformed argument texts as the same call', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      const raws = ['{"command":', '{"comand":', '{"command": "ls"'];
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        const callId = `c${String(i)}`;
+        dedup.registerSkipped(callId, 'Bash', {}, raws[i]);
+        await dedup.finalizeResult(callId, 'Bash', {}, errResult('Invalid args'));
+        dedup.endStep();
+      }
+      // All three normalize to {} on parse failure, but the raw texts differ,
+      // so no repeat streak may form.
+      expect(events.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
   });
 });
