@@ -596,9 +596,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): Promise<ToolResult> {
-    // Preflight-rejected calls run the hook too: they bypassed
-    // `onBeforeExecuteTool`, and this is the only interception point every
-    // call still passes through (the repeat breaker registers them here).
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
       signal: options.signal,

@@ -5,10 +5,7 @@
  * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
  * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
  * hook to drive same-step suppression and cross-step repeat reminders, and
- * reports repeat telemetry through `telemetry`. Calls rejected in preflight
- * never reach `onBeforeExecuteTool`; the `onDidExecuteTool` hook registers
- * them late (`registerSkipped`) so the repeat breaker still counts them.
- * The mutable dedupe state
+ * reports repeat telemetry through `telemetry`. The mutable dedupe state
  * (`stepCalls`, `originalCallIndex`, `syntheticCallIds`, `callKeyByCallId`,
  * `consecutiveKey`, `consecutiveCount`, `activeTurnId`, `activeStep`) is
  * registered into `agentState` (`IAgentStateService`) and read/written
@@ -183,10 +180,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       }
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
-      // Calls rejected in preflight (e.g. invalid args) never reach
-      // onBeforeExecuteTool, so register them here — otherwise the repeat
-      // breaker cannot count them and the model can re-issue the same
-      // invalid call indefinitely.
       this.registerSkipped(
         ctx.toolCall.id,
         ctx.toolCall.name,
@@ -320,20 +313,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     return { syntheticResult: null };
   }
 
-  /**
-   * Register a call that bypassed `onBeforeExecuteTool` — e.g. args
-   * validation rejected it in preflight, so the veto event never fired.
-   * Must be called before `finalizeResult` for such calls, otherwise the
-   * repeat circuit breaker never counts rejected calls and the model can
-   * re-issue the same invalid call without ever tripping the streak.
-   * No-op when the call was already registered through the normal
-   * before-execute path.
-   *
-   * `rawArguments` is the provider's raw arguments string. Args that failed
-   * JSON parsing were normalized to `{}` by the executor, which would key
-   * every malformed-but-different attempt identically; those are keyed on
-   * the raw text so only true re-issues count as repeats.
-   */
   private registerSkipped(
     toolCallId: string,
     toolName: string,
