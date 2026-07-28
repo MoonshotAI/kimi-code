@@ -248,8 +248,6 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   const availableModels = host.state.appState.availableModels;
-  // Allow shorthand aliases like "k3" to resolve to the managed Kimi Code
-  // model "kimi-code/k3", matching what the model picker displays.
   if (availableModels[alias] === undefined && !alias.includes('/')) {
     const managedPrefix = DEFAULT_OAUTH_PROVIDER_NAME.slice('managed:'.length);
     const managedAlias = `${managedPrefix}/${alias}`;
