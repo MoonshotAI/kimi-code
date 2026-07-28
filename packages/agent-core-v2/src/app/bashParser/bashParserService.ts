@@ -11,8 +11,7 @@
 import { parse } from '@moonshot-ai/tree-sitter-bash';
 import type { SyntaxNode } from '@moonshot-ai/tree-sitter-bash';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
 
 import type { BashParseOptions, BashParseResult, BashSyntaxNode } from './bashParser';
 import { IBashParserService } from './bashParser';
@@ -44,6 +43,6 @@ registerScopedService(
   LifecycleScope.App,
   IBashParserService,
   BashParserService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'bashParser',
 );
