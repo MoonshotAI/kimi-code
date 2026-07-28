@@ -15,7 +15,7 @@ export interface UsePageTitleOptions {
 export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): void {
   const { t } = useI18n();
 
-  const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+  const SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
   const spinnerFrame = ref(0);
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -24,7 +24,7 @@ export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): vo
     spinnerFrame.value = 0;
     spinnerTimer = setInterval(() => {
       spinnerFrame.value = (spinnerFrame.value + 1) % SPINNER_FRAMES.length;
-    }, 250);
+    }, 120);
   }
 
   function stopSpinner(): void {
