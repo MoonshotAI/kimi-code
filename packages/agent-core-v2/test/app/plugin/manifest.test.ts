@@ -95,4 +95,71 @@ describe('plugin manifest parser', () => {
     const nonString = await parseManifest(dir);
     expect(nonString.manifest?.systemPrompt).toBeUndefined();
   });
+
+  it('reads the systemPromptPath file, trimming surrounding whitespace', async () => {
+    await writeFile(join(dir, 'PROMPT.md'), '\nAlways cite sources.\n', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('combines systemPrompt and systemPromptPath, inline first', async () => {
+    await writeFile(join(dir, 'PROMPT.md'), 'From file.', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: './PROMPT.md' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Inline.\n\nFrom file.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('warns on invalid systemPromptPath and keeps the inline systemPrompt', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: 42 }),
+      'utf8',
+    );
+
+    const nonString = await parseManifest(dir);
+    expect(nonString.manifest?.systemPrompt).toBe('Inline.');
+    expect(nonString.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" must be a string',
+    ]);
+
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: 'PROMPT.md' }),
+      'utf8',
+    );
+
+    const noPrefix = await parseManifest(dir);
+    expect(noPrefix.manifest?.systemPrompt).toBe('Inline.');
+    expect(noPrefix.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" path must start with "./" (got "PROMPT.md")',
+    ]);
+
+    await mkdir(join(dir, 'docs'));
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: './docs' }),
+      'utf8',
+    );
+
+    const notAFile = await parseManifest(dir);
+    expect(notAFile.manifest?.systemPrompt).toBe('Inline.');
+    expect(notAFile.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" is not a file (./docs)',
+    ]);
+  });
 });

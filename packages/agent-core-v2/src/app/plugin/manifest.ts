@@ -106,7 +106,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
   const skillInstructions =
     typeof raw['skillInstructions'] === 'string' ? raw['skillInstructions'] : undefined;
 
-  const systemPrompt = stringField(raw, 'systemPrompt');
+  const systemPrompt = await readSystemPrompt(pluginRoot, raw, diagnostics);
 
   recordUnsupportedRuntimeFields(raw, diagnostics);
 
@@ -245,6 +245,50 @@ function readSessionStart(
     return undefined;
   }
   return { skill };
+}
+
+async function readSystemPrompt(
+  pluginRoot: string,
+  raw: Record<string, unknown>,
+  diagnostics: PluginDiagnostic[],
+): Promise<string | undefined> {
+  const parts: string[] = [];
+  const inline = stringField(raw, 'systemPrompt');
+  if (inline !== undefined) parts.push(inline);
+
+  const pathValue = raw['systemPromptPath'];
+  if (pathValue !== undefined) {
+    if (typeof pathValue !== 'string') {
+      diagnostics.push({ severity: 'warn', message: '"systemPromptPath" must be a string' });
+    } else if (pathValue.trim().length > 0) {
+      const resolved = await resolvePluginPathField({
+        pluginRoot,
+        field: 'systemPromptPath',
+        value: pathValue.trim(),
+        diagnostics,
+      });
+      if (resolved !== undefined) {
+        if (!(await isFile(resolved))) {
+          diagnostics.push({
+            severity: 'warn',
+            message: `"systemPromptPath" is not a file (${pathValue})`,
+          });
+        } else {
+          try {
+            const content = (await readFile(resolved, 'utf8')).trim();
+            if (content.length > 0) parts.push(content);
+          } catch (error) {
+            diagnostics.push({
+              severity: 'warn',
+              message: `Failed to read "systemPromptPath" (${pathValue}): ${(error as Error).message}`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return parts.length === 0 ? undefined : parts.join('\n\n');
 }
 
 async function readMcpServers(
