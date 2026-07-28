@@ -10,6 +10,7 @@ function strip(text: string): string {
 
 const BREAKDOWN: ContextBreakdownData = {
   contextTokens: 28300,
+  usedTokens: 28300,
   maxContextTokens: 200000,
   systemPrompt: 2400,
   systemTools: 8000,
@@ -85,6 +86,27 @@ describe('context panel report lines', () => {
     expect(output).toContain('System prompt: 2.3k tokens');
     expect(output).not.toContain('(1.2%)');
     expect(output).toContain('Free space: unknown');
+  });
+
+  it('keeps free space consistent with the categories before the first LLM round-trip', () => {
+    const overhead =
+      BREAKDOWN.systemPrompt +
+      BREAKDOWN.systemTools +
+      BREAKDOWN.mcpTools +
+      BREAKDOWN.memoryFiles +
+      BREAKDOWN.skills;
+    const lines = buildContextReportLines({
+      model: 'k2',
+      breakdown: { ...BREAKDOWN, contextTokens: 0, usedTokens: overhead, messages: 0 },
+    }).map(strip);
+
+    const output = lines.join('\n');
+    // The header and free space follow the estimated category sum (18.1k),
+    // not the not-yet-known LLM total (0) — "100% free" would contradict the
+    // non-zero category rows.
+    expect(output).toContain('17.6k/195k tokens (9.0%)');
+    expect(output).toContain('Messages: 0 tokens (0.0%)');
+    expect(output).toContain('Free space: 178k tokens (91.0%)');
   });
 
   it('renders the error instead of the report when the breakdown fails', () => {

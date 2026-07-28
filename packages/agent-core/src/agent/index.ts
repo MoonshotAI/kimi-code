@@ -541,8 +541,10 @@ export class Agent {
    * `contextTokens` (the status-bar total) is the last LLM-reported usage and
    * therefore already covers system prompt + tool schemas + messages + the
    * last turn's output — so messages are reported as the residual after
-   * subtracting every estimated category, keeping the panel consistent with
-   * the header total instead of double-counting the overhead.
+   * subtracting every estimated category from the effective total
+   * (`usedTokens`, which falls back to the category sum before the first
+   * round-trip), keeping the panel consistent with the header instead of
+   * double-counting the overhead.
    */
   async contextBreakdownData(): Promise<ContextBreakdownData> {
     const context = this.systemPromptContextProvider === undefined
@@ -558,9 +560,15 @@ export class Agent {
     );
     const { systemTools, mcpTools, mcpServers } = this.tools.contextToolBreakdown();
     const overhead = systemPrompt + systemTools + mcpTools + memoryFiles + skills;
+    // Before the first LLM round-trip the reported total is still 0 while the
+    // system-prompt/tool overhead is real; report the larger of the two so the
+    // header, free space, and the messages residual never contradict the
+    // per-category rows.
+    const usedTokens = Math.max(this.context.tokenCount, overhead);
     const capability = this.config.modelCapabilities;
     return {
       contextTokens: this.context.tokenCount,
+      usedTokens,
       maxContextTokens: capability.max_input_tokens ?? capability.max_context_tokens ?? 0,
       systemPrompt,
       systemTools,
@@ -577,7 +585,7 @@ export class Agent {
         source: entry.source,
         tokens: estimateTokens(entry.text),
       })),
-      messages: Math.max(0, this.context.tokenCount - overhead),
+      messages: usedTokens - overhead,
     };
   }
 

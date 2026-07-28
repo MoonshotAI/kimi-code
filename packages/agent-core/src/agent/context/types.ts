@@ -145,6 +145,15 @@ export interface ContextBreakdownData {
    * messages + the last turn's output. 0 before the first LLM round-trip.
    */
   contextTokens: number;
+  /**
+   * Effective used tokens for the report header and free-space calculation:
+   * `max(contextTokens, estimated category sum)`. Before the first LLM
+   * round-trip `contextTokens` is still 0 while the system-prompt/tool
+   * overhead is real, so the raw total would contradict the per-category
+   * rows (non-zero categories against "100% free"); the effective value
+   * keeps the panel self-consistent in both states.
+   */
+  usedTokens: number;
   /** Model context-window size in tokens; 0 when unknown. */
   maxContextTokens: number;
   /**
@@ -172,10 +181,11 @@ export interface ContextBreakdownData {
    */
   skillEntries: readonly ContextBreakdownSkill[];
   /**
-   * Remainder attributed to the conversation: `contextTokens` minus every
-   * estimated category above, clamped at 0. Because `contextTokens` is the
-   * LLM-reported total, this residual also absorbs the last turn's output
-   * tokens and any estimation error of the other categories.
+   * Remainder attributed to the conversation: `usedTokens` minus every
+   * estimated category above. Because the LLM-reported total covers system
+   * prompt + tool schemas + the last turn's output, this residual also
+   * absorbs the output tokens and any estimation error of the other
+   * categories. It is 0 before the first LLM round-trip.
    */
   messages: number;
 }

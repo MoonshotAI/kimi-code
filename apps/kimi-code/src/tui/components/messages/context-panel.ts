@@ -143,13 +143,13 @@ export function buildContextReportLines(options: ContextReportOptions): string[]
   const breakdown = options.breakdown;
 
   const modelName = options.model.length > 0 ? options.model : muted('No model selected');
-  const grid = renderBlockGrid(breakdown.contextTokens, breakdown.maxContextTokens);
+  const grid = renderBlockGrid(breakdown.usedTokens, breakdown.maxContextTokens);
   const hasWindow = breakdown.maxContextTokens > 0;
   const tokenLine = hasWindow
-    ? `${value(formatTokenCount(breakdown.contextTokens))}/${value(
+    ? `${value(formatTokenCount(breakdown.usedTokens))}/${value(
         formatTokenCount(breakdown.maxContextTokens),
-      )} ${muted('tokens')} ${muted(`(${percentOf(breakdown.contextTokens, breakdown.maxContextTokens)}%)`)}`
-    : `${value(formatTokenCount(breakdown.contextTokens))} ${muted('tokens')}`;
+      )} ${muted('tokens')} ${muted(`(${percentOf(breakdown.usedTokens, breakdown.maxContextTokens)}%)`)}`
+    : `${value(formatTokenCount(breakdown.usedTokens))} ${muted('tokens')}`;
 
   // Right-align the summary text next to the first two grid rows.
   lines.push(`  ${grid[0]}   ${modelName}`);
@@ -161,7 +161,7 @@ export function buildContextReportLines(options: ContextReportOptions): string[]
   lines.push(muted('  Estimated usage by category'));
 
   const max = breakdown.maxContextTokens;
-  const freeTokens = hasWindow ? Math.max(0, max - breakdown.contextTokens) : 0;
+  const freeTokens = hasWindow ? Math.max(0, max - breakdown.usedTokens) : 0;
 
   lines.push(categoryLine('⛁', 'warning', 'System prompt', tokenValue(breakdown.systemPrompt, max)));
   lines.push(categoryLine('⛁', 'accent', 'System tools', tokenValue(breakdown.systemTools, max)));

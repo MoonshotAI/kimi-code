@@ -1572,7 +1572,8 @@ describe('strictMessages duplicate tool call ids', () => {
 
     // Messages are the residual: the LLM-reported total already covers the
     // system prompt and tool schemas, so they must not be counted twice.
-    // Before any LLM round-trip the total is 0 and the residual clamps to 0.
+    // Before any LLM round-trip the raw total is 0, so the effective total
+    // falls back to the category sum and the residual is 0.
     expect(breakdown.messages).toBe(0);
     const overhead =
       breakdown.systemPrompt +
@@ -1580,8 +1581,10 @@ describe('strictMessages duplicate tool call ids', () => {
       breakdown.mcpTools +
       breakdown.memoryFiles +
       breakdown.skills;
+    expect(breakdown.usedTokens).toBe(overhead);
     ctx.agent.context.updateTokenCount(overhead + 5000);
     const updated = await ctx.agent.contextBreakdownData();
+    expect(updated.usedTokens).toBe(overhead + 5000);
     expect(updated.messages).toBe(5000);
   });
 });
