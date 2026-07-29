@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-web: Fix line numbers overlapping code in fallback-rendered code blocks.
+web: Fix line numbers overlapping or drifting out of alignment in fallback-rendered code blocks.

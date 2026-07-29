@@ -672,15 +672,38 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-block-content pre:not(.shiki) code) {
   color: var(--color-text);
 }
-/* markstream-vue 1.0.7's scoped fallback rule does not match the generated
-   <pre> element, so line-numbered fallback blocks do not reserve space for the
-   gutter. Keep this limited to the fallback renderer; Shiki already applies
-   the same padding to its code element. */
-.md :deep(pre.markstream-pre--line-numbers.code-pre-fallback > .markstream-pre__code) {
+/* markstream-vue 1.0.7 renders its standalone fallback as the component root,
+   but scopes the corresponding styles as though the <pre> were a descendant.
+   Restore that fallback layout here; loading fallbacks already receive the
+   equivalent global markstream rule. */
+.md :deep(pre.code-pre-fallback:not(.markstream-pre--diff-preview):not([data-markstream-code-loading='1'])) {
   box-sizing: border-box;
-  min-width: 100%;
+  width: 100%;
+  margin: 0.6em 0;
+  padding: var(--markstream-code-padding-y, 8px) var(--markstream-code-padding-x, 12px);
   padding-left: var(--markstream-code-padding-left, 52px);
-  padding-right: var(--markstream-code-padding-x, 12px);
+  overflow: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text);
+  font-family: var(--markstream-code-font-family, var(--font-mono));
+  font-size: var(--vscode-editor-font-size, var(--text-sm));
+  font-weight: var(--weight-regular);
+  line-height: var(--vscode-editor-line-height, calc(var(--text-sm) * 1.65));
+}
+.md :deep(pre.code-pre-fallback.is-wrap:not(.markstream-pre--diff-preview)) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.md :deep(pre.code-pre-fallback:not(.markstream-pre--diff-preview) > .markstream-pre__code) {
+  min-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
 }
 
 /* Links — open in a new tab (markstream handles target/rel) */
