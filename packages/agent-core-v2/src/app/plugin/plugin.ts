@@ -9,8 +9,10 @@
  * did (`mcp`); explicit reloads are also announced through `onDidReload` as
  * soon as the reload commits, without waiting for `onDidChange`
  * participants. Participants are delivered and awaited one at a time, so a
- * mutation's latency grows with the number of live sessions. Bound at App
- * scope.
+ * mutation's latency grows with the number of live sessions. `waitUntil`
+ * work must never call back into plugin mutations — the new mutation queues
+ * behind the barrier its own wait feeds, deadlocking the queue; consumption
+ * reads and session-internal work are the safe kinds. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
