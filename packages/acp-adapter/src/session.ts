@@ -301,13 +301,42 @@ export class AcpSession {
    * kimi-code issue #2370).
    */
   async steer(blocks: readonly ContentBlock[]): Promise<{ outcome: string }> {
-    const parts = acpBlocksToPromptParts(blocks);
+    const sessionDir = this.session.summary?.sessionDir;
+    const track = this.track;
+    const parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
+      originalsDir:
+        sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+      maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
+      telemetry:
+        track === undefined
+          ? undefined
+          : {
+              track: (event, properties) =>
+                track(event, properties === undefined ? undefined : { ...properties }),
+            },
+    });
 
     if (this.currentTurnId === undefined) {
       return { outcome: 'noActiveTurn' };
     }
 
-    await this.session.steer(parts);
+    let newTurnStarted = false;
+    const unsub = this.session.onEvent((event) => {
+      if (event.type === 'turn.started') {
+        newTurnStarted = true;
+      }
+    });
+
+    try {
+      await this.session.steer(parts);
+    } finally {
+      unsub();
+    }
+
+    if (newTurnStarted) {
+      return { outcome: 'noActiveTurn' };
+    }
+
     return { outcome: 'injected' };
   }
 
