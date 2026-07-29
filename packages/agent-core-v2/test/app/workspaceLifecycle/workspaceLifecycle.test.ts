@@ -23,7 +23,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';

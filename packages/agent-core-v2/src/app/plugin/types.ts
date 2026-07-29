@@ -1,5 +1,5 @@
 import type { HookDefConfig } from '#/agent/externalHooks/configSection';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 

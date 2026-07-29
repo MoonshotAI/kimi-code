@@ -139,14 +139,14 @@ import {
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/agent/mcp/configSection';
-import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/agent/mcp/connection-manager';
+import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
+import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import {
   AlreadyAuthorizedError,
   McpOAuthService,
   type BeginAuthorizationResult,
-} from '@moonshot-ai/agent-core-v2/agent/mcp/oauth/service';
-import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/agent/mcp/oauth/store';
+} from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
+import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/app/mcpConfig/oauthStore';
 import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';

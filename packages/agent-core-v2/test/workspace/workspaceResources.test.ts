@@ -27,7 +27,7 @@ import {
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalogService';
 import { IAgentCatalogRuntimeOptions } from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
@@ -80,6 +80,9 @@ import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions
 import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+import { IMcpOAuthStore, McpOAuthStoreAdapter } from '#/app/mcpConfig/oauthStore';
+import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
+import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
@@ -91,7 +94,7 @@ import { IWorkspaceRootSkillSource, WorkspaceRootSkillSource } from '#/workspace
 
 import { stubLog } from '../_base/log/stubs';
 import { stubSkill } from '../app/skillCatalog/stubs';
-import { stdioFixture } from '../agent/mcp/stubs';
+import { stdioFixture } from '../mcpCore/stubs';
 
 function workspaceCatalogStub(): IWorkspaceService {
   const workspaces = new Map<string, Workspace>();
@@ -187,6 +190,20 @@ describe('workspace resource sharing (handler chain)', () => {
       WorkspaceMcpService,
       ScopeActivation.OnScopeCreated,
       'workspaceMcp',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceMcpConfigService,
+      WorkspaceMcpConfigService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceMcpConfig',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IMcpOAuthStore,
+      McpOAuthStoreAdapter,
+      ScopeActivation.OnDemand,
+      'mcpConfig',
     );
     registerScopedService(
       LifecycleScope.Workspace,

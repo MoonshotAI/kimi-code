@@ -183,6 +183,14 @@ const DOMAIN_LAYER = new Map([
   ['model', 2],
   ['sessionIndex', 2],
   ['sessionStore', 2],
+  // `mcpCore` is the scope-agnostic MCP connection core: the connection
+  // manager, the stdio/SSE/HTTP transport clients, the OAuth flow, the
+  // server-config schemas, and the `McpOAuthStore` port. It holds no file
+  // loading, no persistence implementation, and no engine-config reads —
+  // those live in the `mcpConfig` / `workspaceMcpConfig` wrappers (L5) — so
+  // its highest dependencies are `config`-adjacent L1–L2 building blocks and
+  // the kosong contract (L0).
+  ['mcpCore', 2],
   // L3 — registries & capabilities
   ['tool', 3],
   ['skill', 3],
@@ -277,12 +285,28 @@ const DOMAIN_LAYER = new Map([
   ['web', 4],
   // L5 — agent task management
   ['agentTask', 5],
+  // `mcp` is the Agent-scope MCP assembly layer: the per-agent tool mirror
+  // (`IAgentMcpService`), the `ExecutableTool` adapters and tool-result
+  // output pipeline (which reach `media`, L4), and the wire discovery
+  // records. The scope-agnostic connection core lives in `mcpCore` (L2).
   ['mcp', 5],
   // `workspaceMcp` is the Workspace-scope owner of the handler's one shared
-  // MCP connection manager (connect at build, watch-driven reload,
-  // caller-server union merge); it consumes the `mcp` domain's manager and
-  // config primitives, so it sits in L5 beside it.
+  // MCP connection manager (connect at build, change-event-driven reconcile);
+  // it consumes the `mcpCore` domain's manager and the `workspaceMcpConfig`
+  // domain's effective server set, so it sits in L5 beside them.
   ['workspaceMcp', 5],
+  // `workspaceMcpConfig` is the Workspace-scope owner of the handler's
+  // effective MCP server config: it loads and merges the mcp.json files
+  // (through the os hostFs) with the plugin contributions, watches both
+  // sources, and publishes the reconciled diff; its highest dependencies are
+  // `plugin` (L3) and the `mcpCore` domain's config schema (L2), so it sits
+  // in L5 beside the other Workspace-scope resource owners.
+  ['workspaceMcpConfig', 5],
+  // `mcpConfig` (App, L5) is the persistence wrapper over the `mcpCore`
+  // domain: it declares the `[mcp]` config section (schema + env bindings +
+  // stripEnv guard) and implements the domain's `McpOAuthStore` port over
+  // `IAtomicDocumentStore`. Same wrapper shape as `kosongConfig` over kosong.
+  ['mcpConfig', 5],
   ['cron', 5],
   // `btw` forks a single side-question sub-agent via `agentLifecycle`,
   // parallel to how the `Agent` tool spawns child agents. Agent-scope, L5.
@@ -582,7 +606,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // `tool`; the remaining upward import is a `loop` error/event helper.
   'contextMemory>agentTask',
   'llmRequester>session',
-  'loop>mcp',
   // `registerMediaTools` (media, L4) imports the `ReadMediaFileTool`
   // implementation from the `tools` domain (L7) to register it for media
   // capability agents.
@@ -599,7 +622,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // projection side references the context message type by structure only.
   'record>contextMemory',
   'plugin>externalHooks',
-  'plugin>mcp',
   'profile>session',
   'replayBuilder>agentTask',
   'replayBuilder>rpc',

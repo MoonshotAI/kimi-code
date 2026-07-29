@@ -84,14 +84,14 @@ import {
 } from '#/app/auth/configSection';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-import '#/agent/mcp/configSection';
+import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
-} from '#/agent/mcp/configSection';
+} from '#/app/mcpConfig/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';

@@ -19,7 +19,7 @@
 #   hooks                    src/agent/externalHooks/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
-#   mcp                      src/agent/mcp/configSection.ts
+#   mcp                      src/app/mcpConfig/configSection.ts
 #   mergeAllAvailableSkills  src/app/skillCatalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
@@ -167,7 +167,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # mcp
-#   owner: src/agent/mcp/configSection.ts
+#   owner: src/app/mcpConfig/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:

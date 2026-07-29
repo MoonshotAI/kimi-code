@@ -14,7 +14,7 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
-import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 
 export interface ISessionMcpHandle {
   readonly _serviceBrand: undefined;

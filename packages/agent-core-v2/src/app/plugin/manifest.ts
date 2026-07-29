@@ -2,7 +2,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { HookDefSchema, type HookDefConfig } from '#/agent/externalHooks/configSection';
-import { McpServerConfigSchema, type McpServerConfig } from '#/agent/mcp/config-schema';
+import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 
 import {
   PLUGIN_NAME_REGEX,

@@ -25,7 +25,10 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IGitService } from '#/app/git/git';
+import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -33,6 +36,8 @@ import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
 const signal = new AbortController().signal;
+
+const hostFs = new HostFileSystem();
 
 describe('AgentPermissionPolicyService chain', () => {
   let disposables: DisposableStore;
@@ -62,6 +67,7 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -199,6 +205,9 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, {
+          findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
+        });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,

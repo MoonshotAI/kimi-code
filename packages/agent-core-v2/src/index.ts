@@ -327,6 +327,15 @@ export * from '#/session/agentLifecycle/agentLifecycle';
 export * from '#/session/agentLifecycle/agentLifecycleService';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';
+import '#/app/mcpConfig/configSection';
+export {
+  MCP_SECTION,
+  McpSectionSchema,
+  type McpSection,
+} from '#/app/mcpConfig/configSection';
+export * from '#/app/mcpConfig/oauthStore';
+export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
+export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 export * from '#/workspace/workspaceMcp/workspaceMcp';
 export * from '#/workspace/workspaceMcp/workspaceMcpService';
 export * from '#/session/subagent/subagent';
@@ -520,7 +529,7 @@ export * from '#/agent/loop/loopContinuationService';
 export * from '#/agent/mcp/mcp';
 export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
-export * from '#/agent/mcp/config-schema';
+export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';

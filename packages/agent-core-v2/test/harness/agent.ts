@@ -26,7 +26,7 @@ import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';

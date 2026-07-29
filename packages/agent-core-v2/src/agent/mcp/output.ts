@@ -36,7 +36,7 @@ import {
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
 import { persistOriginalImage } from '#/agent/media/image-originals';
-import type { MCPContentBlock, MCPToolResult } from './types';
+import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 
 export interface McpOutputOptions {
   readonly originalsDir?: string;

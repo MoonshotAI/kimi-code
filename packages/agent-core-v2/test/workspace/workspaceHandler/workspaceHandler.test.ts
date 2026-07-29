@@ -27,7 +27,7 @@ import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
