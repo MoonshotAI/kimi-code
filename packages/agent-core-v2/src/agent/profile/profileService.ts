@@ -35,7 +35,9 @@
  * A restored Agent replays its persisted binding untouched; bootstrap then
  * re-converges it only against drift-free inputs — the catalog profile's
  * tool set and denylist, and the persisted plugin-sections baseline
- * (piggybacked on the `profile.bind` / `config.update` payloads) — and
+ * (piggybacked on the `profile.bind` / `config.update` payloads; sections
+ * are read live through `plugin`'s consumption plane under the shared
+ * convergence timeout) — and
  * refreshes only when one of them changed while the session was cold, so
  * quiet restores stay wire-neutral while cwd, AGENTS.md, and date drift
  * wait for the live triggers below. `refreshSystemPrompt`
@@ -60,7 +62,9 @@
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled rejection
  * would crash kap-server), while plugin changes and the Session tool-policy
- * fan-out await it across agents. Tool-policy entries that can never activate
+ * fan-out await it across agents. Refreshes serialize per Agent through a
+ * tail, so overlapping triggers cannot write prompts out of order.
+ * Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
  * `mcp__` literals) surface as `warning` events instead of silently shrinking
  * the tool set; the known-name vocabulary is the live registry plus
@@ -112,7 +116,11 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IPluginService } from '#/app/plugin/plugin';
-import { ISessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContribution';
+import {
+  ISessionPluginContributionService,
+  PLUGIN_CONVERGENCE_TIMEOUT_MS,
+} from '#/session/sessionPluginContribution/sessionPluginContribution';
+import { raceValueOutcome } from '#/_base/utils/promise';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 
@@ -232,6 +240,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
+  private refreshTail: Promise<void> = Promise.resolve();
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -515,6 +524,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async refreshSystemPrompt(): Promise<void> {
+    const run = this.refreshTail.then(() => this.doRefreshSystemPrompt());
+    this.refreshTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async doRefreshSystemPrompt(): Promise<void> {
     try {
       if (this.wire.isRestoring()) return;
       let profile = this.activeProfile;
@@ -544,6 +562,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
           });
         }
       }
+      if (context.pluginSections !== this.profileState.pluginSections) {
+        this.update({ pluginSections: context.pluginSections });
+      }
       this.cacheAgentsMdWarning(context);
       this.publishAgentsMdWarning();
     } catch (error) {
@@ -568,8 +589,21 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const sliceChanged =
         !sameToolSet(profile.tools, this.wire.getModel(ActiveToolsModel) as ActiveToolsState) ||
         !sameStringList(profile.disallowedTools ?? [], this.profileState.disallowedTools ?? []);
-      const sectionsChanged =
-        (await this.resolvePluginSections()) !== (this.profileState.pluginSections ?? '');
+      const sectionsRead = await raceValueOutcome(
+        this.resolvePluginSections(),
+        PLUGIN_CONVERGENCE_TIMEOUT_MS,
+      );
+      if (sectionsRead === 'timeout') {
+        this.eventBus.publish({
+          type: 'warning',
+          message:
+            'Restored prompt convergence timed out reading plugin sections; ' +
+            'skipping the check (a pending plugin change still reaches this agent live).',
+          code: 'system-prompt-refresh-failed',
+        });
+        return;
+      }
+      const sectionsChanged = sectionsRead.value !== (this.profileState.pluginSections ?? '');
       if (sliceChanged || sectionsChanged) {
         await this.refreshSystemPrompt();
       }

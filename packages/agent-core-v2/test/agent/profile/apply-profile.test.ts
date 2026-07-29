@@ -259,6 +259,31 @@ describe('AgentProfileService.applyProfile', () => {
     converge.dispose();
   });
 
+  it('lands the plugin-sections baseline without changing a plugin-free custom prompt', async () => {
+    const constantProfile: ResolvedAgentProfile = {
+      name: 'constant-profile',
+      systemPrompt: () => 'constant prompt',
+      tools: [],
+    };
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { profile: svc } = buildContext(
+      appService(IPluginService, pluginStub(sections)),
+      pluginConvergenceService(converge),
+    );
+    await svc.applyProfile(constantProfile);
+    expect(svc.data().pluginSections).toBe('<!-- From: plugin demo -->\nV1');
+
+    sections.value = [{ pluginId: 'demo', content: 'V2' }];
+    await converge.fireAsync({}, new AbortController().signal);
+
+    expect(svc.data().systemPrompt).toBe('constant prompt');
+    expect(svc.data().pluginSections).toBe('<!-- From: plugin demo -->\nV2');
+    converge.dispose();
+  });
+
   it('anchors the rendered timestamp at the first render and reuses it across refreshes', async () => {
     const nowProfile: ResolvedAgentProfile = {
       name: 'now-profile',

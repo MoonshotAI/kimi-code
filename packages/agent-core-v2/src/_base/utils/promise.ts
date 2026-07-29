@@ -43,3 +43,15 @@ export async function raceOutcome(
     expiry.clear();
   }
 }
+
+export async function raceValueOutcome<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+): Promise<{ readonly value: T } | 'timeout'> {
+  const expiry = timeoutOutcome(timeoutMs, 'timeout' as const);
+  try {
+    return await Promise.race([work.then((value) => ({ value }) as const), expiry]);
+  } finally {
+    expiry.clear();
+  }
+}

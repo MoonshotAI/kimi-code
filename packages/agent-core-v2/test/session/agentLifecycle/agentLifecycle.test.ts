@@ -833,6 +833,90 @@ describe('AgentLifecycleService', () => {
     );
   });
 
+  it('does not block agent creation on a hung plugin read past the gate timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      ix.stub(IPluginService, {
+        ...pluginServiceStub,
+        enabledSystemPrompts: () => new Promise<never>(() => {}),
+      } as unknown as IPluginService);
+      ix.stub(ISessionMcpService, {
+        _serviceBrand: undefined,
+        ensureMcpReady: () => Promise.resolve(),
+        connectionManager: () => ({
+          list: () => [],
+          onStatusChange: () => () => {},
+          waitForInitialLoad: () => Promise.resolve(),
+          initialLoadDurationMs: () => 0,
+        }),
+      } as unknown as ISessionMcpService);
+      const devProfile = {
+        name: 'dev',
+        tools: ['Read'],
+        systemPrompt: () => 'same prompt',
+      };
+      ix.stub(ISessionAgentProfileCatalog, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        onDidChange: Event.None,
+        get: (name: string) => (name === 'dev' ? devProfile : undefined),
+        getDefault: () => devProfile,
+        list: () => [devProfile],
+        load: () => Promise.resolve(),
+        reload: () => Promise.resolve(),
+      } as unknown as ISessionAgentProfileCatalog);
+      ix.stub(IAppendLogStore, recordingAppendLog([
+        createWireMetadataRecord(1),
+        {
+          type: 'profile.bind',
+          time: 2,
+          profileName: 'dev',
+          thinkingEffort: 'off',
+          systemPrompt: 'same prompt',
+          activeToolNames: ['Read'],
+          disallowedTools: [],
+          pluginSections: '',
+        },
+      ]).store);
+      ix.stub(IHostEnvironment, {
+        _serviceBrand: undefined,
+        osKind: 'Linux',
+        osArch: 'x64',
+        osVersion: 'test',
+        shellName: 'bash',
+        shellPath: '/bin/bash',
+        pathClass: 'posix',
+        homeDir: '/tmp/kimi-agentLifecycle-home',
+        ready: Promise.resolve(),
+      });
+      ix.stub(IHostIdentity, {
+        _serviceBrand: undefined,
+        productName: 'Kimi Code CLI',
+        replyStyleGuide: 'Reply clearly.',
+      });
+      ix.stub(IHostFileSystem, {
+        _serviceBrand: undefined,
+        stat: async () => { throw new Error('not found'); },
+        lstat: async () => { throw new Error('not found'); },
+        readdir: async () => [],
+      } as unknown as IHostFileSystem);
+      const svc = ix.get(IAgentLifecycleService);
+
+      let created = false;
+      const pending = svc.create({ agentId: 'main' }).then((handle) => {
+        created = true;
+        return handle;
+      });
+      await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
+      const handle = await pending;
+
+      expect(created).toBe(true);
+      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('same prompt');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('joins an in-flight plugin convergence and refreshes a restored agent after it', async () => {
     let releaseConverge!: () => void;
     const converging = new Promise<void>((resolve) => {
