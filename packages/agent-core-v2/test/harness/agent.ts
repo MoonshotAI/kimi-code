@@ -381,7 +381,7 @@ export interface TestAgentOptions {
   | Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>
   | undefined;
   readonly initialConfig?: Partial<KimiConfig> | undefined;
-  readonly initialActiveToolNames?: readonly string[] | undefined;
+  readonly initialActiveToolNames?: readonly string[];
   readonly autoConfigure?: boolean | undefined;
   readonly cwd?: string | undefined;
   readonly [key: string]: unknown;
