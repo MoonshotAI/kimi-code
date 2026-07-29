@@ -658,7 +658,11 @@ function copyDiff(code: string, idx: number) {
   overflow-x: auto;
   font: var(--text-sm)/1.65 var(--font-mono);
 }
-.md :deep(.code-block-container pre code) {
+.md :deep(.code-block-container pre code),
+/* Bare markstream fallback pres (rendered without .code-block-container) nest
+   <code> deeper than `pre > code`, so the inline-chip rule above would shrink
+   it and desync the line-number overlay from the code lines. */
+.md :deep(pre[data-markstream-pre] code) {
   font: inherit;
   color: var(--color-text);
   background: none;
