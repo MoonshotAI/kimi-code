@@ -29,6 +29,8 @@ import { listenWithPortRetry, type RunningServer, startServer } from '../src/sta
 import { getServerVersion } from '../src/version';
 import { authedFetch } from './helpers/auth';
 
+const EXPIRED_TELEMETRY_DEADLINE_MAX_CLOSE_MS = 1_500;
+
 describe('server-v2 boot', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -228,6 +230,33 @@ describe('server-v2 boot', () => {
     server = undefined;
 
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
+    expect(await listLiveServerInstances(home)).toEqual([]);
+  });
+
+  it('passes an expired host telemetry deadline to owned engine telemetry', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-telemetry-deadline-'));
+    const auth = {
+      _serviceBrand: undefined,
+      getCachedAccessToken: () => new Promise<undefined>(() => {}),
+    } as unknown as IOAuthToolkit;
+
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      telemetry: true,
+      seeds: [[IOAuthToolkit, auth]],
+    });
+    server.core.accessor.get(ITelemetryService).track('server_probe');
+
+    const closeStartedAt = Date.now();
+    await server.close({ telemetryDeadlineMs: Date.now() });
+    server = undefined;
+
+    expect(Date.now() - closeStartedAt).toBeLessThan(
+      EXPIRED_TELEMETRY_DEADLINE_MAX_CLOSE_MS,
+    );
     expect(await listLiveServerInstances(home)).toEqual([]);
   });
 });
