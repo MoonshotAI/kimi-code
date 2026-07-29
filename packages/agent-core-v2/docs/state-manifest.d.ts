@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 28 keys · Agent: 68 keys)
+// Index (Session: 28 keys · Agent: 72 keys)
 //   Session
 //     cron.inFlight                             src/session/cron/sessionCronServiceImpl.ts
 //     cron.lastSeenAt                           src/session/cron/sessionCronServiceImpl.ts
@@ -94,6 +94,10 @@
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/videoResolverService.ts
+//     modelFailover.activeTurnId                      src/agent/modelFailover/modelFailoverService.ts
+//     modelFailover.emittedWarnings                   src/agent/modelFailover/modelFailoverService.ts
+//     modelFailover.nextFallbackIndex                 src/agent/modelFailover/modelFailoverService.ts
+//     modelFailover.switchesInTurn                    src/agent/modelFailover/modelFailoverService.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
 //     plan.wasActive                                  src/agent/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
@@ -1010,7 +1014,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2671": undefined;
+    readonly "__@mediaStripSnapshotBrand@2723": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
@@ -1082,6 +1086,11 @@ export interface AgentStateSnapshot {
       id?: string;
     };
   }>;
+  // src/agent/modelFailover/modelFailoverService.ts
+  'modelFailover.activeTurnId': number | undefined;
+  'modelFailover.emittedWarnings': Set<string>;
+  'modelFailover.nextFallbackIndex': number;
+  'modelFailover.switchesInTurn': number;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
   // src/agent/plan/injection/planModeInjection.ts

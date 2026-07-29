@@ -693,6 +693,18 @@ export function reduceAppEvent(
       break;
     }
 
+    case 'taskTextReset': {
+      const sid = event.sessionId;
+      const list = next.tasksBySession[sid] ?? [];
+      next.tasksBySession[sid] = list.map((task) =>
+        task.id === event.taskId ? { ...task, text: undefined } : task,
+      );
+      break;
+    }
+
+    case 'agentStreamReset':
+      break;
+
     // -------------------------------------------------------------------------
     case 'taskCompleted': {
       const sid = event.sessionId;

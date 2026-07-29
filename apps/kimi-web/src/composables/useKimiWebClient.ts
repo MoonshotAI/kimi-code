@@ -908,6 +908,8 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
       }
     } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
       sideChat.finishSideChatAgent(agentId, parentId);
+    } else if (appEvent.type === 'agentStreamReset' && appEvent.agentId === agentId) {
+      sideChat.resetSideChatAssistantText(agentId);
     } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
       sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
     } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {

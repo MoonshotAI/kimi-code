@@ -142,6 +142,12 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     });
   }
 
+  function resetSideChatAssistantText(agentId: string): void {
+    updateSideChatMessages(agentId, (messages) =>
+      messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages,
+    );
+  }
+
   function finishSideChatAgent(agentId: string, sessionId: string, outputPreview?: string): void {
     rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
     if (!outputPreview) return;
@@ -281,6 +287,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     sideChatRunning,
     sideChatTurns,
     appendSideChatAssistantText,
+    resetSideChatAssistantText,
     finishSideChatAgent,
     openSideChat,
     openSideChatOn,

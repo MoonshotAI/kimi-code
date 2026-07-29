@@ -7,7 +7,7 @@
  * a client that upgrades gets a full reset snapshot.
  *
  * Content-bearing ops gated below 'block':
- *  - step.upsert / frame.upsert (step & frame detail)
+ *  - step.upsert / frame.upsert / frame.remove (step & frame detail)
  * Everything else (turn headers, markers, taskrefs, tasks, interactions,
  * prompts, meta, removals, resets) flows at 'turn' and up. `off` admits
  * nothing.
@@ -32,6 +32,7 @@ function admits(grade: TranscriptGrade, op: TranscriptOperation): boolean {
       return GRADE_RANK[grade] >= GRADE_RANK.delta;
     case 'step.upsert':
     case 'frame.upsert':
+    case 'frame.remove':
       return GRADE_RANK[grade] >= GRADE_RANK.block;
     default:
       return true;

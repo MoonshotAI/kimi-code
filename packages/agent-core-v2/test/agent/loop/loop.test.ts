@@ -225,6 +225,71 @@ describe('Agent loop', () => {
     );
   });
 
+  it('continues to a later matching error handler when an earlier handler declines recovery', async () => {
+    profile.update({ activeToolNames: [] });
+    const handledBy: string[] = [];
+
+    loop.registerLoopErrorHandler({
+      id: 'test-decline-generate-error',
+      match: () => true,
+      handle: async () => {
+        handledBy.push('declined');
+        return false;
+      },
+    });
+    loop.registerLoopErrorHandler({
+      id: 'test-recover-after-decline',
+      match: () => true,
+      handle: async (hookCtx) => {
+        handledBy.push('recovered');
+        ctx.mockNextResponse({ type: 'text', text: 'Recovered later.' });
+        if (hookCtx.failedDriver === undefined) return false;
+        hookCtx.retry(hookCtx.failedDriver, { at: 'head' });
+        return true;
+      },
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(handledBy).toEqual(['declined', 'recovered']);
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
+  it('stops dispatching error handlers after the first successful recovery', async () => {
+    profile.update({ activeToolNames: [] });
+    let laterHandlerCalled = false;
+
+    loop.registerLoopErrorHandler({
+      id: 'test-first-successful-recovery',
+      match: () => true,
+      handle: async (hookCtx) => {
+        ctx.mockNextResponse({ type: 'text', text: 'Recovered first.' });
+        if (hookCtx.failedDriver === undefined) return false;
+        hookCtx.retry(hookCtx.failedDriver, { at: 'head' });
+        return true;
+      },
+    });
+    loop.registerLoopErrorHandler({
+      id: 'test-must-not-run-after-recovery',
+      match: () => true,
+      handle: async () => {
+        laterHandlerCalled = true;
+        return false;
+      },
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(laterHandlerCalled).toBe(false);
+  });
+
   it('reports an untyped LLM error message without an internal-code prefix', async () => {
     profile.update({ activeToolNames: [] });
 
@@ -1070,6 +1135,7 @@ function createTimingRequester(): IAgentLLMRequesterService {
   const requester: IAgentLLMRequesterService = {
     _serviceBrand: undefined,
     prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
+    invalidateTurnConfig: () => {},
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

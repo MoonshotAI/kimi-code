@@ -74,6 +74,8 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyStepUpsert(state, op.turnId, op.step);
     case 'frame.upsert':
       return applyFrameUpsert(state, op);
+    case 'frame.remove':
+      return applyFrameRemove(state, op);
     case 'append':
       return applyAppend(state, op);
     case 'marker.upsert':
@@ -252,6 +254,7 @@ function stepEquals(step: TranscriptStep, header: StepHeader): boolean {
     step.finishReason === header.finishReason &&
     step.timing === header.timing &&
     step.retry === header.retry &&
+    step.failover === header.failover &&
     step.endReason === header.endReason &&
     step.endMessage === header.endMessage
   );
@@ -284,6 +287,33 @@ function applyFrameUpsert(
     : insertTurn(state.items, nextTurn);
   return {
     state: { ...state, items },
+    changed: true,
+  };
+}
+
+function applyFrameRemove(
+  state: AgentState,
+  op: Extract<TranscriptOperation, { op: 'frame.remove' }>,
+): ApplyResult {
+  const turn = getTurn(state, op.turnId);
+  const step = turn?.steps.find((entry) => entry.stepId === op.stepId);
+  if (turn === undefined || step === undefined) return { state, changed: false };
+  if (!step.frames.some((frame) => frame.frameId === op.frameId)) {
+    return { state, changed: false };
+  }
+  const nextStep: TranscriptStep = {
+    ...step,
+    frames: step.frames.filter((frame) => frame.frameId !== op.frameId),
+  };
+  const nextTurn: TranscriptTurn = {
+    ...turn,
+    steps: turn.steps.map((entry) => (entry.stepId === op.stepId ? nextStep : entry)),
+  };
+  return {
+    state: {
+      ...state,
+      items: replaceTurn(state.items, op.turnId, () => nextTurn),
+    },
     changed: true,
   };
 }

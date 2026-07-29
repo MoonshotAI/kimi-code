@@ -57,6 +57,14 @@ export interface FrameUpsertOp {
   readonly frame: TranscriptFrame;
 }
 
+/** Remove an abandoned frame from one step; idempotent when already absent. */
+export interface FrameRemoveOp {
+  readonly op: 'frame.remove';
+  readonly turnId: TurnId;
+  readonly stepId: StepId;
+  readonly frameId: FrameId;
+}
+
 export type AppendTarget =
   | { readonly type: 'frame'; readonly turnId: TurnId; readonly stepId: StepId; readonly frameId: FrameId }
   | { readonly type: 'task'; readonly taskId: TaskId };
@@ -146,6 +154,7 @@ export type TranscriptOperation =
   | TurnUpsertOp
   | StepUpsertOp
   | FrameUpsertOp
+  | FrameRemoveOp
   | AppendOp
   | MarkerUpsertOp
   | TaskRefUpsertOp

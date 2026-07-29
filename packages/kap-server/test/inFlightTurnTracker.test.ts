@@ -1,5 +1,8 @@
 /**
- * `InFlightTurnTracker` — volatile accumulation + delta offsets.
+ * Scenario: volatile main-turn state is accumulated between snapshots.
+ * Responsibilities: stream offsets, running tools, step resets, and terminal
+ * cleanup. The pure tracker is wired directly. Run with
+ * `pnpm --filter @moonshot-ai/kap-server exec vitest run test/inFlightTurnTracker.test.ts`.
  */
 
 import type { Event } from '../src/transport/ws/v1/events';
@@ -47,6 +50,34 @@ describe('InFlightTurnTracker', () => {
     t.apply(SID, ev({ type: 'turn.ended', turnId: 1 }));
     expect(t.get(SID)).toBeNull();
   });
+
+  it.each(['turn.step.retrying', 'turn.step.failover'])(
+    'clears abandoned volatile content when %s arrives',
+    (type) => {
+      const tracker = new InFlightTurnTracker();
+      tracker.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
+      tracker.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'partial' }));
+      tracker.apply(SID, ev({ type: 'thinking.delta', turnId: 1, delta: 'draft' }));
+      tracker.apply(
+        SID,
+        ev({
+          type: 'tool.call.started',
+          turnId: 1,
+          toolCallId: 'call-1',
+          name: 'Read',
+          args: {},
+        }),
+      );
+
+      tracker.apply(SID, ev({ type, turnId: 1, step: 1 }));
+
+      expect(tracker.get(SID)).toMatchObject({
+        assistant_text: '',
+        thinking_text: '',
+        running_tools: [],
+      });
+    },
+  );
 
   it('ignores non-main agents', () => {
     const t = new InFlightTurnTracker();

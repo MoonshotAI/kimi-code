@@ -15,7 +15,10 @@
  * `<video path>` tag) so the internal reference never reaches the wire. When a
  * model is configured, `prepareTurnConfig` snapshots the
  * model, effective thinking effort, and system prompt at the turn boundary
- * so loop telemetry and every request in that turn share one configuration.
+ * so loop telemetry and every request in that turn share one configuration;
+ * `invalidateTurnConfig` discards that snapshot and provider-specific
+ * recovery projections when an explicit runtime model transition must take
+ * effect inside the same turn.
  * Forwards streamed `part` events to the caller's `onPart`
  * handler, records `usage` through `IAgentUsageService`, resolves to an
  * `AgentLLMRequestFinish` on the `finish` event, logs the request lifecycle
@@ -223,6 +226,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (!this.profile.hasProvider()) return undefined;
     const config = this.getOrCreateTurnConfig(turnId);
     return { thinkingEffort: config.resolved.thinkingLevel };
+  }
+
+  invalidateTurnConfig(turnId: number): void {
+    this.turnConfigs.delete(turnId);
+    this.mediaDegradedTurns.delete(turnId);
+    this.mediaStrippedTurns.delete(turnId);
   }
 
   async request(

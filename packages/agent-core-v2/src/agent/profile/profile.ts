@@ -126,6 +126,8 @@ export interface IAgentProfileService {
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
+  validateModelBinding(model: string, thinking?: string): ProfileSetModelResult;
+  setModelBinding(model: string, thinking?: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;

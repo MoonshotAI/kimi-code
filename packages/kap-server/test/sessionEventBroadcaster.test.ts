@@ -1,5 +1,9 @@
 /**
- * `SessionEventBroadcaster` — seq stamping, volatile vs durable, fan-out, replay.
+ * Scenario: session events fan out across legacy and transcript-aware WebSocket
+ * clients. Responsibilities: sequence stamping, durability, replay,
+ * suppression, and global delivery. Real broadcaster logic uses in-memory
+ * lifecycle/target boundaries. Run with
+ * `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessionEventBroadcaster.test.ts`.
  */
 
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -2287,6 +2291,21 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' }));
+      main.bus.emit(
+        agentEvent('turn.step.failover', {
+          turnId: 1,
+          step: 1,
+          fromModel: 'secondary-model',
+          toModel: 'primary-model',
+          fromProvider: 'secondary-provider',
+          toProvider: 'primary-provider',
+          fromEffort: 'high',
+          toEffort: 'high',
+          reason: 'retry_exhausted',
+          switchIndex: 1,
+          maxSwitches: 1,
+        }),
+      );
       main.bus.emit(agentEvent('tool.result', { turnId: 1, toolCallId: 'tc-1', output: 'ok' }));
       await bc.getCursor('s1');
 
@@ -2299,6 +2318,7 @@ describe('SessionEventBroadcaster', () => {
       expect(gradedTypes).not.toContain('turn.started');
       expect(gradedTypes).not.toContain('turn.step.started');
       expect(gradedTypes).not.toContain('assistant.delta');
+      expect(gradedTypes).not.toContain('turn.step.failover');
       expect(gradedTypes).not.toContain('tool.result');
       expect(gradedTypes).not.toContain('agent.status.updated');
 
@@ -2308,6 +2328,7 @@ describe('SessionEventBroadcaster', () => {
       expect(legacyTypes).toContain('turn.started');
       expect(legacyTypes).toContain('turn.step.started');
       expect(legacyTypes).toContain('assistant.delta');
+      expect(legacyTypes).toContain('turn.step.failover');
       expect(legacyTypes).toContain('tool.result');
       expect(transcriptEnvelopes(legacy.envelopes)).toHaveLength(0);
     });

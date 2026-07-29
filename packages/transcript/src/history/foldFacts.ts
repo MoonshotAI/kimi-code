@@ -329,6 +329,10 @@ export function foldWireRecordFacts(
         pushMarker('plan.revision', record);
         break;
       }
+      case 'model.failover': {
+        pushMarker('model.failover', record);
+        break;
+      }
       case 'swarm_mode.enter': {
         swarmActive = true;
         pushMarker('swarm.enter', record);

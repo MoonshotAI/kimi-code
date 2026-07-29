@@ -1,4 +1,8 @@
-// apps/kimi-web/test/side-chat.test.ts
+/**
+ * Scenario: side-channel chat preserves parent runtime controls and manages
+ * its isolated optimistic transcript. The real composable uses a mocked daemon
+ * boundary. Run with `pnpm --filter @moonshot-ai/kimi-web test`.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { useSideChat } from '../src/composables/client/useSideChat';
@@ -138,5 +142,42 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       'sess_1',
       expect.objectContaining({ model: 'kimi-code', thinking: 'low' }),
     );
+  });
+});
+
+describe('useSideChat — recovery reset', () => {
+  it('removes the abandoned assistant message when a model replay starts', () => {
+    const state = createState();
+    state.sideChatMessagesByAgent = {
+      agent_btw_1: [
+        {
+          id: 'user-1',
+          sessionId: 'sess_1',
+          role: 'user',
+          content: [{ type: 'text', text: 'question' }],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'assistant-1',
+          sessionId: 'sess_1',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'abandoned partial' }],
+          createdAt: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    };
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg-opt',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      resolveThinkingForPrompt: async () => undefined,
+    });
+
+    sideChat.resetSideChatAssistantText('agent_btw_1');
+
+    expect(state.sideChatMessagesByAgent['agent_btw_1']).toEqual([
+      expect.objectContaining({ id: 'user-1' }),
+    ]);
   });
 });

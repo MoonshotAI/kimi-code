@@ -79,14 +79,15 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 // Persisted record types introduced after the v1 vocabulary: the task
 // lifecycle journal (the restore seed for ghosts and the cold transcript
 // fold), the interaction request/resolution journal, and the plan revision
-// reference journal. Replay tolerates unknown record types (skip + warn), so
-// older readers degrade gracefully.
+// reference journal, and runtime model failover audit records. Replay tolerates
+// unknown record types (skip + warn), so older readers degrade gracefully.
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'model.failover',
 ]);
 
 describe('v1 wire vocabulary', () => {

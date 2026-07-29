@@ -18,9 +18,10 @@
  *   - Step headers carry the LLM accounting: `turn.step.completed` fills
  *     `usage` (the wire `TokenUsage` verbatim), `finishReason`
  *     (`finishReason ?? rawFinishReason ?? providerFinishReason`) and the
- *     full `timing` breakdown; `turn.step.retrying` sets `retry` on the still
- *     'running' step (the terminal upsert carries no `retry`, which clears
- *     it); `turn.step.interrupted` fills `endReason` / `endMessage`.
+ *     full `timing` breakdown; `turn.step.retrying` sets `retry` and
+ *     `turn.step.failover` sets `failover` on the still-running failed step.
+ *     Both discard abandoned streamed frames before the same driver is
+ *     replayed; `turn.step.interrupted` fills `endReason` / `endMessage`.
  *   - `turn.ended` fills the turn header's `durationMs` / `error` plus the
  *     accumulated `usage`: the projector sums this turn's step usages
  *     (`inputTokens = inputOther + inputCacheCreation`,
@@ -219,6 +220,8 @@ export class AgentTranscriptProjector {
         return this.onStepFinished(event);
       case 'turn.step.retrying':
         return this.onStepRetrying(event);
+      case 'turn.step.failover':
+        return this.onStepFailover(event);
       case 'assistant.delta':
         return this.onTextDelta(event.turnId, 'assistant', event.delta);
       case 'thinking.delta':
@@ -500,6 +503,7 @@ export class AgentTranscriptProjector {
     const ops: TranscriptOperation[] = [];
     const turnId = `t${event.turnId}`;
     const stepId = `${turnId}.${event.step}`;
+    this.discardStepFrames(turnId, stepId, ops);
     const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
     this.currentStep = {
       kind: 'step',
@@ -516,6 +520,47 @@ export class AgentTranscriptProjector {
         errorName: event.errorName,
         errorMessage: event.errorMessage,
         statusCode: event.statusCode,
+      },
+    };
+    ops.push({ op: 'step.upsert', turnId, step: this.currentStep });
+    return ops;
+  }
+
+  private onStepFailover(event: {
+    turnId: number;
+    step: number;
+    fromModel: string;
+    toModel: string;
+    fromProvider: string;
+    toProvider: string;
+    fromEffort: string;
+    toEffort: string;
+    reason: 'retry_exhausted' | 'quota_exhausted';
+    switchIndex: number;
+    maxSwitches: number;
+  }): TranscriptOperation[] {
+    const ops: TranscriptOperation[] = [];
+    const turnId = `t${event.turnId}`;
+    const stepId = `${turnId}.${event.step}`;
+    this.discardStepFrames(turnId, stepId, ops);
+    const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
+    this.currentStep = {
+      kind: 'step',
+      stepId,
+      turnId,
+      ordinal: event.step,
+      state: 'running',
+      startedAt: prev?.startedAt,
+      failover: {
+        fromModel: event.fromModel,
+        toModel: event.toModel,
+        fromProvider: event.fromProvider,
+        toProvider: event.toProvider,
+        fromEffort: event.fromEffort,
+        toEffort: event.toEffort,
+        reason: event.reason,
+        switchIndex: event.switchIndex,
+        maxSwitches: event.maxSwitches,
       },
     };
     ops.push({ op: 'step.upsert', turnId, step: this.currentStep });
@@ -621,6 +666,32 @@ export class AgentTranscriptProjector {
     }
     this.openText = undefined;
     this.openThinking = undefined;
+  }
+
+  private discardStepFrames(turnId: string, stepId: string, ops: TranscriptOperation[]): void {
+    const frameIds = new Set<string>();
+    for (const open of [this.openText, this.openThinking]) {
+      if (open !== undefined && this.currentStep?.stepId === stepId) {
+        frameIds.add(open.frameId);
+      }
+    }
+    for (const [toolCallId, record] of this.toolFrames) {
+      if (record.turnId !== turnId || record.stepId !== stepId) continue;
+      frameIds.add(record.frame.frameId);
+      this.toolFrames.delete(toolCallId);
+    }
+    for (const frame of this.lookups?.stepFrames?.(turnId, stepId) ?? []) {
+      if (frame.kind === 'text' || frame.kind === 'thinking' || frame.kind === 'tool') {
+        frameIds.add(frame.frameId);
+      }
+    }
+    for (const frameId of frameIds) {
+      ops.push({ op: 'frame.remove', turnId, stepId, frameId });
+    }
+    if (this.currentStep?.stepId === stepId) {
+      this.openText = undefined;
+      this.openThinking = undefined;
+    }
   }
 
   /**

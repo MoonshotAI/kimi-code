@@ -1,3 +1,10 @@
+/**
+ * Scenario: projected daemon events reduce into immutable web application
+ * state. Responsibilities include messages, sessions, tasks, streaming, and
+ * recovery resets. The real pure reducer is used directly. Run with
+ * `pnpm --filter @moonshot-ai/kimi-web test`.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
 import type { AppMessage, AppSession, AppTask } from '../src/api/types';
@@ -427,6 +434,30 @@ describe('reduceAppEvent taskProgress', () => {
     expect(task?.text).toBe('Hello, world!');
     // Text chunks must not pollute the line-based progress output.
     expect(task?.outputLines ?? []).toHaveLength(0);
+  });
+
+  it('clears abandoned subagent text when taskTextReset arrives', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        s1: [
+          {
+            ...makeSubagentTask('t1', 's1'),
+            text: 'abandoned partial',
+            outputLines: ['Calling Read'],
+          },
+        ],
+      },
+    };
+
+    const next = reduceAppEvent(
+      state,
+      { type: 'taskTextReset', sessionId: 's1', taskId: 't1' },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.tasksBySession['s1']?.[0]?.text).toBeUndefined();
+    expect(next.tasksBySession['s1']?.[0]?.outputLines).toEqual(['Calling Read']);
   });
 
   it('preserves accumulated text across a taskCreated replacement', () => {

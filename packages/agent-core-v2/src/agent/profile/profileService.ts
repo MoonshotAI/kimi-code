@@ -375,6 +375,49 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     };
   }
 
+  async setModelBinding(alias: string, thinking?: string): Promise<ProfileSetModelResult> {
+    const result = this.validateModelBinding(alias, thinking);
+    const model = this.modelCatalog.get(alias);
+    const previousModel = this.modelAlias;
+    const previousEffort = this.thinkingLevel;
+    if (this.profileName === undefined) {
+      await this.bind({
+        profile: DEFAULT_AGENT_PROFILE_NAME,
+        model: alias,
+        thinking,
+        strictThinking: thinking !== undefined,
+      });
+    } else {
+      this.update({
+        modelAlias: alias,
+        thinkingLevel: this.resolveThinkingEffort(thinking, model),
+      });
+    }
+    if (this.modelAlias !== previousModel) {
+      this.telemetry.track2('model_switch', { model: alias });
+    }
+    const effort = this.thinkingLevel;
+    if (effort !== previousEffort) {
+      this.telemetry.track2('thinking_toggle', {
+        enabled: effort !== 'off',
+        effort,
+        from: previousEffort,
+      });
+    }
+    return result;
+  }
+
+  validateModelBinding(alias: string, thinking?: string): ProfileSetModelResult {
+    const model = this.modelCatalog.get(alias);
+    if (thinking !== undefined) {
+      this.assertThinkingEffortSupported(thinking, model, alias);
+    }
+    return {
+      model: alias,
+      providerName: model.providerName,
+    };
+  }
+
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
     this.assertThinkingEffortSupported(level, this.tryResolveRawModel(), this.modelAlias ?? '');

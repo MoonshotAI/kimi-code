@@ -1,3 +1,10 @@
+/**
+ * Scenario: transcript contract layers preserve granularity, pagination,
+ * history folding, validation, and view dispatch semantics. The suite uses
+ * only the package's pure public helpers. Run with
+ * `pnpm --filter @moonshot-ai/transcript test`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granularity/filterOps';
@@ -80,6 +87,19 @@ describe('granularity', () => {
       'prompt.upsert',
       'meta.merge',
     ]);
+  });
+
+  it('frame removal follows frame detail granularity', () => {
+    const removal: TranscriptOperation = {
+      op: 'frame.remove',
+      turnId: 't1',
+      stepId: 't1.1',
+      frameId: 't1.1.f1',
+    };
+
+    expect(filterOpsForGrade('turn', [removal])).toEqual([]);
+    expect(filterOpsForGrade('block', [removal])).toEqual([removal]);
+    expect(filterOpsForGrade('delta', [removal])).toEqual([removal]);
   });
 
   it('delta admits everything', () => {
@@ -260,6 +280,7 @@ describe('contract schemas', () => {
       turnOp(1),
       stepOp,
       frameOp,
+      { op: 'frame.remove', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' },
       appendOp,
       { op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'goal' } },
       { op: 'taskref.upsert', item: { kind: 'taskref', refId: 'r1', taskId: 'task1' } },
@@ -348,6 +369,17 @@ describe('contract schemas', () => {
             llmClientConsumeMs: 950,
           },
           retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, errorName: 'RateLimit', errorMessage: 'slow down', statusCode: 429 },
+          failover: {
+            fromModel: 'secondary-model',
+            toModel: 'primary-model',
+            fromProvider: 'secondary-provider',
+            toProvider: 'primary-provider',
+            fromEffort: 'high',
+            toEffort: 'high',
+            reason: 'retry_exhausted',
+            switchIndex: 1,
+            maxSwitches: 1,
+          },
           endReason: 'aborted',
           endMessage: 'user pressed escape',
         },
@@ -849,6 +881,44 @@ describe('foldWireRecordFacts (cold facts)', () => {
       base,
     );
     expect(reentered.meta.modes).toEqual({ plan: {} });
+  });
+
+  it('folds persisted model failover records into an audit marker', () => {
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'model.failover',
+          turnId: 3,
+          step: 2,
+          fromModel: 'secondary-model',
+          toModel: 'primary-model',
+          fromProvider: 'secondary-provider',
+          toProvider: 'primary-provider',
+          fromEffort: 'high',
+          toEffort: 'high',
+          reason: 'retry_exhausted',
+          switchIndex: 1,
+          maxSwitches: 1,
+          time: 2000,
+        },
+      ],
+      baseWithMarker(),
+    );
+
+    expect(folded.items).toContainEqual(
+      expect.objectContaining({
+        kind: 'marker',
+        marker: 'model.failover',
+        payload: expect.objectContaining({
+          turnId: 3,
+          step: 2,
+          fromModel: 'secondary-model',
+          toModel: 'primary-model',
+          reason: 'retry_exhausted',
+        }),
+        at: new Date(2000).toISOString(),
+      }),
+    );
   });
 
   it('folds task records into task entities and timeline taskrefs', () => {

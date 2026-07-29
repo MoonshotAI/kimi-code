@@ -245,6 +245,29 @@ describe('LLMRequester service migration coverage', () => {
       expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
       expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
     });
+
+    it('rebuilds the same-turn model snapshot after explicit invalidation', async () => {
+      const turnId = 7;
+      expect(llmRequester.prepareTurnConfig(turnId)).toEqual({ thinkingEffort: 'off' });
+      ctx.configureRuntimeModel({
+        type: 'openai',
+        model: 'fallback-model',
+        apiKey: 'YOUR_API_KEY',
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'before invalidation' });
+      await llmRequester.request({ source: { type: 'turn', turnId } });
+      expect(wireEvents(ctx, 'llm.request').at(-1)?.args).toMatchObject({
+        modelAlias: 'mock-model',
+      });
+
+      llmRequester.invalidateTurnConfig(turnId);
+      ctx.mockNextResponse({ type: 'text', text: 'after invalidation' });
+      await llmRequester.request({ source: { type: 'turn', turnId } });
+      expect(wireEvents(ctx, 'llm.request').at(-1)?.args).toMatchObject({
+        modelAlias: 'fallback-model',
+      });
+    });
   });
 
   describe('tool-call deltas', () => {

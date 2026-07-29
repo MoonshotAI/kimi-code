@@ -46,6 +46,11 @@ import {
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
+  MODEL_FAILOVER_SECTION,
+  resolveModelFailoverBinding,
+  type ModelFailoverConfig,
+} from '#/agent/modelFailover/configSection';
+import {
   MODELS_SECTION,
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
@@ -1535,6 +1540,115 @@ describe('subagent config section', () => {
       { details: { model: 'provider/other' } },
     );
     expect(wrapSubagentModelError(unrelated, 'provider/secondary', 'provider/main')).toBe(unrelated);
+  });
+});
+
+describe('subagentFailover config section', () => {
+  async function createConfig(toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('validates an ordered fallback route and rejects invalid trigger controls', () => {
+    const registry = new ConfigRegistry();
+
+    expect(
+      registry.validate(MODEL_FAILOVER_SECTION, {
+        fallbacks: [
+          { model: 'secondary', effort: 'high' },
+          { model: 'primary', effort: 'high' },
+        ],
+        on: ['retry_exhausted', 'quota_exhausted'],
+        maxSwitchesPerTurn: 2,
+      }),
+    ).toEqual({
+      fallbacks: [
+        { model: 'secondary', effort: 'high' },
+        { model: 'primary', effort: 'high' },
+      ],
+      on: ['retry_exhausted', 'quota_exhausted'],
+      maxSwitchesPerTurn: 2,
+    });
+    expect(() =>
+      registry.validate(MODEL_FAILOVER_SECTION, {
+        fallbacks: [{ model: '' }],
+      }),
+    ).toThrow();
+    expect(() =>
+      registry.validate(MODEL_FAILOVER_SECTION, {
+        fallbacks: [],
+        on: ['authentication'],
+      }),
+    ).toThrow();
+    expect(() =>
+      registry.validate(MODEL_FAILOVER_SECTION, {
+        fallbacks: [],
+        maxSwitchesPerTurn: -1,
+      }),
+    ).toThrow();
+  });
+
+  it('reads snake-case TOML and resolves primary and secondary symbolic bindings', async () => {
+    const { config, disposables } = await createConfig(`
+default_model = "provider/primary"
+
+[secondary_model]
+model = "provider/secondary"
+default_effort = "medium"
+
+[subagent_failover]
+on = ["retry_exhausted", "quota_exhausted"]
+max_switches_per_turn = 2
+
+[[subagent_failover.fallbacks]]
+model = "secondary"
+effort = "high"
+
+[[subagent_failover.fallbacks]]
+model = "primary"
+`);
+
+    const section = config.get<ModelFailoverConfig>(MODEL_FAILOVER_SECTION);
+    expect(section).toEqual({
+      fallbacks: [{ model: 'secondary', effort: 'high' }, { model: 'primary' }],
+      on: ['retry_exhausted', 'quota_exhausted'],
+      maxSwitchesPerTurn: 2,
+    });
+    expect(resolveModelFailoverBinding(section.fallbacks[0]!, config)).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      effort: 'high',
+    });
+    expect(resolveModelFailoverBinding(section.fallbacks[1]!, config)).toEqual({
+      model: 'provider/primary',
+      effort: undefined,
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses a fail-closed empty route when the section is absent', async () => {
+    const { config, disposables } = await createConfig();
+
+    expect(config.get<ModelFailoverConfig>(MODEL_FAILOVER_SECTION)).toEqual({
+      fallbacks: [],
+      on: ['retry_exhausted', 'quota_exhausted'],
+      maxSwitchesPerTurn: 1,
+    });
+
+    disposables.dispose();
   });
 });
 

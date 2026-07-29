@@ -1,6 +1,8 @@
 /**
  * Web daemon projector contract for transcript isolation, task progress, and
- * client-visible error projection.
+ * client-visible error projection. The real pure projector is used directly.
+ * Run with `pnpm --filter @moonshot-ai/kimi-web exec vitest run
+ * test/agent-event-projector.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -9,6 +11,15 @@ import { classifyFrame, createAgentProjector, subagentProgressText } from '../sr
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
     expect(subagentProgressText('turn.step.started', {})).toBeNull();
+  });
+
+  it('summarizes a model failover with both aliases', () => {
+    expect(
+      subagentProgressText('turn.step.failover', {
+        fromModel: 'secondary-model',
+        toModel: 'primary-model',
+      }),
+    ).toBe('Model failover: secondary-model → primary-model');
   });
 
   it('summarizes a read tool call with its path', () => {
@@ -63,6 +74,59 @@ describe('subagent streaming text', () => {
     const projector = createAgentProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
+  });
+
+  it('resets abandoned subagent text when failover starts', () => {
+    const projector = createAgentProjector();
+    projector.project('assistant.delta', { agentId: 'sub-1', delta: 'partial' }, 's1');
+
+    const events = projector.project(
+      'turn.step.failover',
+      {
+        agentId: 'sub-1',
+        turnId: 1,
+        step: 1,
+        fromModel: 'secondary-model',
+        toModel: 'primary-model',
+      },
+      's1',
+    );
+
+    expect(events).toContainEqual({
+      type: 'taskTextReset',
+      sessionId: 's1',
+      taskId: 'sub-1',
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskProgress',
+        taskId: 'sub-1',
+        outputChunk: 'Model failover: secondary-model → primary-model',
+      }),
+    );
+  });
+
+  it('resets a side-channel stream when failover starts', () => {
+    const projector = createAgentProjector();
+    projector.markSideChannelAgent('side-1');
+
+    expect(
+      projector.project(
+        'turn.step.failover',
+        {
+          agentId: 'side-1',
+          turnId: 1,
+          step: 1,
+        },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'agentStreamReset',
+        sessionId: 's1',
+        agentId: 'side-1',
+      },
+    ]);
   });
 });
 

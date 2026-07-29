@@ -1368,6 +1368,7 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'turn.step.completed',
   'turn.step.interrupted',
   'turn.step.retrying',
+  'turn.step.failover',
   'assistant.delta',
   'thinking.delta',
   'tool.call.delta',

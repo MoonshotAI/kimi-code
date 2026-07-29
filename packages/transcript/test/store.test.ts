@@ -1,3 +1,10 @@
+/**
+ * Scenario: transcript operations converge into an agent-scoped materialized
+ * store. Responsibilities include parent synthesis, idempotent upsert/removal,
+ * offset-safe append, global entities, and snapshots. All collaborators are
+ * the real pure reducers. Run with `pnpm --filter @moonshot-ai/transcript test`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { AgentTranscript } from '#/store/agentTranscript';
@@ -68,6 +75,32 @@ describe('AgentTranscript', () => {
     if (turn?.kind !== 'turn') return;
     expect(turn.steps).toHaveLength(1);
     expect(turn.steps[0]?.frames.map((f) => f.kind)).toEqual(['tool']);
+  });
+
+  it('removes an abandoned frame when addressed twice, the second removal is absorbed', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply(toolFrame('running'));
+
+    const first = tx.apply([
+      {
+        op: 'frame.remove',
+        turnId: 't1',
+        stepId: 't1.1',
+        frameId: 't1.1.call_1',
+      },
+    ]);
+    const second = tx.apply([
+      {
+        op: 'frame.remove',
+        turnId: 't1',
+        stepId: 't1.1',
+        frameId: 't1.1.call_1',
+      },
+    ]);
+
+    expect(first.accepted).toHaveLength(1);
+    expect(second.accepted).toEqual([]);
+    expect(tx.getTurn('t1')?.steps[0]?.frames).toEqual([]);
   });
 
   it('auto-vivifies missing parents so any op order stays self-consistent', () => {

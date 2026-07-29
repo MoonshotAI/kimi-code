@@ -60,6 +60,7 @@ import type {
   ToolListUpdatedReason,
 } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpService';
 import type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
+import type { TurnStepFailoverEvent } from '@moonshot-ai/agent-core-v2/agent/modelFailover/modelFailoverOps';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/agent/profile/profileService';
 import type { PluginCommandActivatedEvent } from '@moonshot-ai/agent-core-v2/agent/rpc/rpcService';
@@ -686,6 +687,22 @@ export const turnStepRetryingEventSchema = z.object({
   statusCode: z.number().optional(),
 }) satisfies z.ZodType<TurnStepRetryingEvent>;
 
+export const turnStepFailoverEventSchema = z.object({
+  type: z.literal('turn.step.failover'),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  fromModel: z.string(),
+  toModel: z.string(),
+  fromProvider: z.string(),
+  toProvider: z.string(),
+  fromEffort: z.string(),
+  toEffort: z.string(),
+  reason: z.enum(['retry_exhausted', 'quota_exhausted']),
+  switchIndex: z.number(),
+  maxSwitches: z.number(),
+}) satisfies z.ZodType<TurnStepFailoverEvent>;
+
 export const turnStepInterruptedEventSchema = z.object({
   type: z.literal('turn.step.interrupted'),
   turnId: z.number(),
@@ -929,6 +946,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   turnStepStartedEventSchema,
   turnStepCompletedEventSchema,
   turnStepRetryingEventSchema,
+  turnStepFailoverEventSchema,
   turnStepInterruptedEventSchema,
   assistantDeltaEventSchema,
   hookResultEventSchema,

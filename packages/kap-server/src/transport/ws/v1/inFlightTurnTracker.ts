@@ -76,6 +76,15 @@ export class InFlightTurnTracker {
         turn.thinkingText = '';
         return {};
       }
+      case 'turn.step.retrying':
+      case 'turn.step.failover': {
+        const turn = this.bySession.get(sessionId);
+        if (!turn || turn.turnId !== event.turnId) return {};
+        turn.assistantText = '';
+        turn.thinkingText = '';
+        turn.tools.clear();
+        return {};
+      }
       case 'assistant.delta': {
         const turn = this.bySession.get(sessionId);
         if (!turn || turn.turnId !== event.turnId) return {};

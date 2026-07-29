@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (22 sections · 3 overlay(s))
+# Index (23 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -28,6 +28,7 @@
 #   secondaryModel           src/app/kosongConfig/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   subagentFailover         src/agent/modelFailover/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
@@ -351,6 +352,17 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+
+# ##########################################################################
+# subagentFailover (config.toml: subagent_failover)
+#   owner: src/agent/modelFailover/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[subagent_failover]
+fallbacks = []
+on = ["retry_exhausted", "quota_exhausted"]
+max_switches_per_turn = 1
 
 # ##########################################################################
 # task

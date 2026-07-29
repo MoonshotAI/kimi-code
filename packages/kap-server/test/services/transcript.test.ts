@@ -543,6 +543,85 @@ describe('AgentTranscriptProjector', () => {
     expect(step().retry).toBeUndefined();
   });
 
+  it('records the model transition when turn.step.failover arrives, the failed step stays recoverable', () => {
+    const projector = new AgentTranscriptProjector('subagent-1');
+    const tx = new AgentTranscript('subagent-1');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task-1' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.step.failover',
+        turnId: 1,
+        step: 1,
+        fromModel: 'secondary-model',
+        toModel: 'primary-model',
+        fromProvider: 'secondary-provider',
+        toProvider: 'primary-provider',
+        fromEffort: 'high',
+        toEffort: 'high',
+        reason: 'retry_exhausted',
+        switchIndex: 1,
+        maxSwitches: 1,
+      }),
+    );
+
+    expect(turnOps('t1', tx.getItems()).steps[0]).toMatchObject({
+      state: 'running',
+      failover: {
+        fromModel: 'secondary-model',
+        toModel: 'primary-model',
+        fromProvider: 'secondary-provider',
+        toProvider: 'primary-provider',
+        fromEffort: 'high',
+        toEffort: 'high',
+        reason: 'retry_exhausted',
+        switchIndex: 1,
+        maxSwitches: 1,
+      },
+    });
+  });
+
+  it('removes streamed frames when turn.step.failover arrives, the replay starts cleanly', () => {
+    const projector = new AgentTranscriptProjector('subagent-1');
+    const tx = new AgentTranscript('subagent-1');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task-1' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'abandoned text' }));
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call-1',
+        name: 'Read',
+        args: { path: 'src/example.ts' },
+      }),
+    );
+    expect(turnOps('t1', tx.getItems()).steps[0]?.frames).toHaveLength(2);
+
+    feed(
+      ev({
+        type: 'turn.step.failover',
+        turnId: 1,
+        step: 1,
+        fromModel: 'secondary-model',
+        toModel: 'primary-model',
+        fromProvider: 'secondary-provider',
+        toProvider: 'primary-provider',
+        fromEffort: 'high',
+        toEffort: 'high',
+        reason: 'quota_exhausted',
+        switchIndex: 1,
+        maxSwitches: 1,
+      }),
+    );
+
+    expect(turnOps('t1', tx.getItems()).steps[0]?.frames).toEqual([]);
+  });
+
   it('fills durationMs / error / accumulated step usage on turn.ended', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

@@ -460,6 +460,8 @@ export type AppEvent =
        */
       kind?: 'line' | 'text';
     }
+  | { type: 'taskTextReset'; sessionId: string; taskId: string }
+  | { type: 'agentStreamReset'; sessionId: string; agentId: string }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
   // Prompt-level lifecycle (distinct from turn-level): a prompt that never
   // produced a turn — blocked by a pre-submit hook, or aborted while queued —

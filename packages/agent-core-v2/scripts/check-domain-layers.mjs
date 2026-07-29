@@ -196,6 +196,7 @@ const DOMAIN_LAYER = new Map([
   ['fullCompaction', 4],
   ['loop', 4],
   ['stepRetry', 4],
+  ['modelFailover', 4],
   ['media', 4],
   // `edit` spans two scopes: the App-scope `IFileEditService` capability (pure
   // TextModel / EditService + os-backed read/write over the L1 hostFs bridge)

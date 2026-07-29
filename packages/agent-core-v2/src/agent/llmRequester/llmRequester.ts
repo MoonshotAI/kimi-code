@@ -58,6 +58,7 @@ export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
+  invalidateTurnConfig(turnId: number): void;
 
   request(
     overrides?: AgentLLMRequestOverrides,

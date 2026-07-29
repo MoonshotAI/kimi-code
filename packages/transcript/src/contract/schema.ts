@@ -83,6 +83,18 @@ export const stepRetrySchema = z.object({
   statusCode: z.number().optional(),
 });
 
+export const stepFailoverSchema = z.object({
+  fromModel: z.string(),
+  toModel: z.string(),
+  fromProvider: z.string(),
+  toProvider: z.string(),
+  fromEffort: z.string(),
+  toEffort: z.string(),
+  reason: z.enum(['retry_exhausted', 'quota_exhausted']),
+  switchIndex: z.number().int().positive(),
+  maxSwitches: z.number().int().positive(),
+});
+
 export const turnStateSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']);
 export const stepStateSchema = z.enum(['running', 'completed', 'interrupted', 'failed']);
 
@@ -171,6 +183,7 @@ export const transcriptStepSchema = z.object({
   finishReason: z.string().optional(),
   timing: stepTimingSchema.optional(),
   retry: stepRetrySchema.optional(),
+  failover: stepFailoverSchema.optional(),
   endReason: z.string().optional(),
   endMessage: z.string().optional(),
 });
@@ -414,6 +427,12 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     turnId: turnIdSchema,
     stepId: stepIdSchema,
     frame: transcriptFrameSchema,
+  }),
+  z.object({
+    op: z.literal('frame.remove'),
+    turnId: turnIdSchema,
+    stepId: stepIdSchema,
+    frameId: frameIdSchema,
   }),
   z.object({
     op: z.literal('append'),

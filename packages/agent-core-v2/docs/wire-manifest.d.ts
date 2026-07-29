@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (44 record types)
+// Index (45 record types)
 //   config.update                      profile              persisted  src/agent/profile/profileOps.ts
 //   context_size.measured              contextSize          transient  src/agent/contextSize/contextSizeOps.ts
 //   context.append_loop_event          contextMemory        persisted  src/agent/contextMemory/contextOps.ts
@@ -44,6 +44,7 @@
 //   llm.request                        llm.requestTrace     persisted  src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace     persisted  src/agent/llmRequester/llmRequestOps.ts
 //   mcp.tools_discovered               mcp.discovery        persisted  src/agent/mcp/mcpDiscoveryOps.ts
+//   model.failover                     modelFailover        persisted  src/agent/modelFailover/modelFailoverOps.ts
 //   permission.record_approval_result  permissionRules      persisted  src/agent/permissionRules/permissionRulesOps.ts
 //   permission.rules.add               permissionRules      transient  src/agent/permissionRules/permissionRulesOps.ts
 //   permission.set_mode                permissionMode       persisted  src/agent/permissionMode/permissionModeOps.ts
@@ -366,6 +367,26 @@ interface McpToolsDiscoveredPayload {
 }
 
 /**
+ * model: modelFailover · persisted · toEvent
+ * owner: src/agent/modelFailover/modelFailoverOps.ts
+ */
+interface ModelFailoverPayload {
+  _name: 'model.failover';
+  turnId: number;
+  step: number;
+  stepId?: string;
+  fromModel: string;
+  toModel: string;
+  fromProvider: string;
+  toProvider: string;
+  fromEffort: string;
+  toEffort: string;
+  reason: 'retry_exhausted' | 'quota_exhausted';
+  switchIndex: number;
+  maxSwitches: number;
+}
+
+/**
  * model: permissionRules · persisted
  * owner: src/agent/permissionRules/permissionRulesOps.ts
  * payload type: PermissionApprovalResultRecord
@@ -637,6 +658,7 @@ interface WirePayloadMap {
   "llm.request": LlmRequestPayload;
   "llm.tools_snapshot": LlmToolsSnapshotPayload;
   "mcp.tools_discovered": McpToolsDiscoveredPayload;
+  "model.failover": ModelFailoverPayload;
   "permission.record_approval_result": PermissionRecordApprovalResultPayload;
   "permission.rules.add": PermissionRulesAddPayload;
   "permission.set_mode": PermissionSetModePayload;

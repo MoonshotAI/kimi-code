@@ -19,11 +19,13 @@
  * assistant message enqueues nothing, so the queue empties and the turn
  * completes), and orchestrators (`prompt`, `goal`, `externalHooks`, `task`)
  * steer the turn by enqueueing further requests. A failed step is dispatched
- * to the registered error handlers (first match wins); a handler that claims
- * and catches the error has already enqueued the turn's continuation itself —
- * `stepRetry` re-enqueues the failed driver after backoff, `fullCompaction`
- * compacts and re-enqueues it — so the loop only learns caught-or-not, while
- * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
+ * to the registered error handlers in order until one both matches and
+ * recovers it; a matching handler may decline so a later recovery policy can
+ * take over. A handler that catches the error has already enqueued the turn's
+ * continuation itself — `stepRetry` re-enqueues the failed driver after
+ * backoff, `fullCompaction` compacts and re-enqueues it — so the loop only
+ * learns caught-or-not, while an unclaimed or uncaught error fails the turn.
+ * Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
  * reads the step budget from `config`. The plain-data loop state
  * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
@@ -760,17 +762,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
       },
     };
-    const handler = this.errorHandlers.find((entry) => entry.match(context));
-    if (handler === undefined) return undefined;
-    try {
-      if (await handler.handle(context)) {
-        runtime.current = undefined;
-        return { type: 'continue' };
+    for (const handler of this.errorHandlers) {
+      if (!handler.match(context)) continue;
+      try {
+        if (await handler.handle(context)) {
+          runtime.current = undefined;
+          return { type: 'continue' };
+        }
+      } catch (handlerError) {
+        return this.handleLoopCancellation(runtime, handlerError) ?? this.failLoopStep(runtime, handlerError);
       }
-      return undefined;
-    } catch (handlerError) {
-      return this.handleLoopCancellation(runtime, handlerError) ?? this.failLoopStep(runtime, handlerError);
     }
+    return undefined;
   }
 
   private failLoopStep(runtime: LoopRuntime, error: unknown): LoopErrorDisposition {

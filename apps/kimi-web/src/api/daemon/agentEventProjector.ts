@@ -46,6 +46,7 @@ const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'turn.step.started',
   'turn.step.completed',
   'turn.step.retrying',
+  'turn.step.failover',
   'turn.step.interrupted',
   'turn.ended',
   'thinking.delta',
@@ -225,6 +226,12 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
   // "Started a step" fires on every step and adds no information — the phase
   // badge already shows the subagent is working, so skip it to cut the noise.
   if (rawType === 'turn.step.started') return null;
+  if (rawType === 'turn.step.failover') {
+    const fromModel = stringField(payload, 'fromModel');
+    const toModel = stringField(payload, 'toModel');
+    if (fromModel && toModel) return `Model failover: ${fromModel} → ${toModel}`;
+    return 'Model failover';
+  }
   if (rawType === 'tool.use' || rawType === 'tool.call.started') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? 'tool';
     const label = toolLabel(cleanToolName(name));
@@ -281,6 +288,32 @@ function projectSubagentProgress(
   // agentDelta events; don't pollute the main task output with generic step
   // placeholders like "Started a step".
   if (sideChannelAgents.has(subagentId) && rawType === 'turn.step.started') return [];
+
+  if (rawType === 'turn.step.retrying' || rawType === 'turn.step.failover') {
+    if (sideChannelAgents.has(subagentId)) {
+      return [{ type: 'agentStreamReset', sessionId, agentId: subagentId }];
+    }
+    const previous = state.subagentMeta.get(subagentId);
+    const task = patchSubagent(state, sessionId, subagentId, {
+      status: 'running',
+      subagentPhase: 'working',
+      startedAt: previous?.startedAt ?? new Date().toISOString(),
+    });
+    const out: AppEvent[] = [];
+    if (task) out.push({ type: 'taskCreated', sessionId, task });
+    out.push({ type: 'taskTextReset', sessionId, taskId: subagentId });
+    const text = subagentProgressText(rawType, payload);
+    if (text !== null) {
+      out.push({
+        type: 'taskProgress',
+        sessionId,
+        taskId: subagentId,
+        outputChunk: text,
+        stream: 'stdout',
+      });
+    }
+    return out;
+  }
 
   // The subagent's own streamed text: forward each delta as a `text`-kind
   // progress chunk so the reducer concatenates it into `AppTask.text`, letting
@@ -1052,7 +1085,8 @@ export function createAgentProjector(): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
-      case 'turn.step.retrying': {
+      case 'turn.step.retrying':
+      case 'turn.step.failover': {
         // The step's stream restarts from offset 0. Reuse the abandoned
         // bubble instead of stacking a new one: strip its streamed parts and
         // keep the id in retryReuseMsgId so the retried step.started refills
@@ -1445,6 +1479,7 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'turn.step.started',
   'turn.step.completed',
   'turn.step.retrying',
+  'turn.step.failover',
   'turn.step.interrupted',
   'turn.ended',
   'thinking.delta',

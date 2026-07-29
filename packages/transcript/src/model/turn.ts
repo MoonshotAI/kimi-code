@@ -69,6 +69,19 @@ export interface StepRetry {
   readonly statusCode?: number;
 }
 
+/** A runtime model switch that will replay this failed step on a fallback. */
+export interface StepFailover {
+  readonly fromModel: string;
+  readonly toModel: string;
+  readonly fromProvider: string;
+  readonly toProvider: string;
+  readonly fromEffort: string;
+  readonly toEffort: string;
+  readonly reason: 'retry_exhausted' | 'quota_exhausted';
+  readonly switchIndex: number;
+  readonly maxSwitches: number;
+}
+
 export interface TranscriptTurn {
   readonly kind: 'turn';
   readonly turnId: TurnId;
@@ -108,6 +121,7 @@ export interface TranscriptStep {
   readonly finishReason?: string;
   readonly timing?: StepTiming;
   readonly retry?: StepRetry;
+  readonly failover?: StepFailover;
   /** `turn.step.interrupted` reason / message. */
   readonly endReason?: string;
   readonly endMessage?: string;
