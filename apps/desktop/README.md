@@ -30,18 +30,22 @@ Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls O
 
 - `src/main/index.ts` — 主进程入口，只做引导：先装 `log.ts` 的日志与崩溃守卫，注册
   `app://` 特权 scheme（必须在 `app` ready 前，不能等异步步骤），fire-and-forget 启动
-  `shell-env.ts` 的 shell env 探测（GUI 启动只有 launchd 最小 env），最后动态
+  `shell-env.ts` 的 shell env 探测（GUI 启动只有 launchd 最小 env；探测合并时 `KIMI_*`
+  默认继承、仅黑名单屏蔽，清单见 `shell-env.ts`），最后动态
   `import('./app')`（静态 import 会让整个依赖树先于守卫加载，加载期崩溃无日志）。
 - `src/main/app.ts` — 主进程编排：注册 IPC、生命周期事件、`whenReady` 后起窗口。
-- `src/main/log.ts` — 主进程文件日志（`~/.kimi-code/logs/kimi-code-desktop.log`，按大小轮转保留
+- `src/main/log.ts` — 主进程文件日志（`<home>/logs/kimi-code-desktop.log`，`<home>` 默认
+  `~/.kimi-code`、跟随 `KIMI_CODE_HOME`——启动时先按当时环境解析，shell env 探测导入
+  `KIMI_CODE_HOME` 后重定向到新 home——按大小轮转保留
   一个 `.1` 存档）+ `uncaughtException` / `unhandledRejection` 守卫（已知无害的 undici
   流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。renderer 诊断
   经 `kimi:renderer-log` 通道由 `renderer-log.ts` 校验/脱敏/限流后写入同一文件（`[renderer]`
   前缀）；renderer 侧统一入口是 `src/renderer/lib/log.ts`（console 镜像 + 桥转发，web 无桥
   退化为纯 console），`debug/trace.ts` 的 window error/unhandledrejection 也走它落盘。session
   导出时 renderer 带 `desktop: true` 标记，server 自行把该日志文件打进 zip（`logs/kimi-desktop.log`）。
-- `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；内嵌 server 启动前
-  await shell env 探测结果补全 `process.env`；`rendererDistRoot()`、外部 server 模式的 token
+- `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；启动内嵌 server 或
+  读取外部 server 模式的 token 前都要先 await shell env 探测结果补全 `process.env`
+  （探测可能是 `KIMI_CODE_HOME` 的来源，token 在其下）；`rendererDistRoot()`、外部 server 模式的 token
   读取、server 日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
 - `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。

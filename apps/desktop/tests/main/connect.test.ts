@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   errorHtml: vi.fn(() => '<error>'),
   isOnboarded: vi.fn(() => false),
   isVibrancyEnabled: vi.fn(() => true),
+  readFileSync: vi.fn((): string => {
+    throw new Error('ENOENT');
+  }),
   trackDesktopEvent: vi.fn(),
 }));
 
@@ -28,6 +31,12 @@ vi.mock('electron', () => ({
 }));
 vi.mock('@moonshot-ai/kap-server', () => ({
   serverTokenPath: () => '/tmp/kimi-test/server.token',
+}));
+// connect.ts's only readFileSync use is readServerToken; spy on it to assert
+// the probe is awaited before the token read.
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  readFileSync: mocks.readFileSync,
 }));
 vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   resolveKimiHome: () => '/tmp/kimi-test',
@@ -253,6 +262,21 @@ describe('connect', () => {
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', undefined, undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
+  });
+
+  it('awaits the probe before reading the external server token', async () => {
+    // The probe may be what imports KIMI_CODE_HOME; the token lives under it.
+    const { connect } = await importConnect();
+    process.env['KIMI_SERVER_URL'] = 'http://127.0.0.1:58627';
+    mocks.readFileSync.mockReturnValue('tok\n');
+
+    await connect(fakeWindow() as unknown as BrowserWindow);
+
+    expect(mocks.readFileSync).toHaveBeenCalledWith('/tmp/kimi-test/server.token', 'utf-8');
+    expect(mocks.startShellEnvProbe.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.readFileSync.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', 'tok', undefined, false, true);
   });
 
   it('tracks embedded_renderer_load_result after the embedded server starts', async () => {

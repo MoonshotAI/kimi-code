@@ -2,16 +2,14 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 
-import { log } from './log';
+import { defaultMainLogPath, initMainLogging, log } from './log';
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 type Env = Record<string, string | undefined>;
 
-// `KIMI_*` configures the CLI (API key, debug flags); the desktop app has its
-// own auth and settings and must not inherit them silently. The rest is
-// terminal-session noise interactive shells export.
+// Terminal-session noise interactive shells export.
 const DENY_EXACT = new Set([
   'PWD',
   'OLDPWD',
@@ -29,10 +27,43 @@ const DENY_EXACT = new Set([
   'HISTSIZE',
   'SAVEHIST',
 ]);
-const DENY_PREFIX = [/^KIMI_/, /^ZSH_/, /^ITERM_/, /^BASH_FUNC_/, /^__CF/];
+const DENY_PREFIX = [/^ZSH_/, /^ITERM_/, /^BASH_FUNC_/, /^__CF/];
+
+// `KIMI_*` configures the embedded core; the desktop inherits it by default
+// and blocks only the blacklist below. KIMI_CODE_BASE_URL /
+// KIMI_CODE_OAUTH_HOST / KIMI_OAUTH_HOST are deliberately allowed despite the
+// shape (endpoint overrides for environment switching).
+const DENY_KIMI_EXACT = new Set([
+  // Secrets and request-header injection.
+  'KIMI_CODE_PASSWORD',
+  'KIMI_CODE_CUSTOM_HEADERS',
+  // Endpoint overrides outside the managed-account flow.
+  'KIMI_BASE_URL',
+  'KIMI_WEB_SEARCH_BASE_URL',
+  'KIMI_WEB_FETCH_BASE_URL',
+  // Embedded-server defenses.
+  'KIMI_CODE_CORS_ORIGINS',
+  'KIMI_CODE_ALLOWED_HOSTS',
+  'KIMI_CODE_DISABLE_HOST_CHECK',
+  'KIMI_DISABLE_OAUTH_LOCK',
+  // Desktop dev switches: per-launch explicit, never from a shell profile.
+  'KIMI_SERVER_URL',
+  'KIMI_RENDERER_DEV_URL',
+  'KIMI_DESKTOP_NO_SHELL_ENV',
+  // Internal parent→child plumbing.
+  'KIMI_PLUGIN_ROOT',
+  'KIMI_WSL_CLIPBOARD_IMAGE_PATH',
+]);
+// KIMI_MODEL_* synthesizes a provider and hijacks the default model;
+// *_API_KEY covers present and future credential variables.
+const DENY_KIMI_PATTERN = [/^KIMI_MODEL_/, /_API_KEY$/];
 
 function isDenied(key: string): boolean {
-  return DENY_EXACT.has(key) || DENY_PREFIX.some((re) => re.test(key));
+  if (DENY_EXACT.has(key) || DENY_PREFIX.some((re) => re.test(key))) return true;
+  if (key.startsWith('KIMI_')) {
+    return DENY_KIMI_EXACT.has(key) || DENY_KIMI_PATTERN.some((re) => re.test(key));
+  }
+  return false;
 }
 
 /**
@@ -195,7 +226,15 @@ async function resolveShellEnv(): Promise<void> {
     // Injected for the dump; must not leak into the merge below.
     delete shellEnv['ELECTRON_RUN_AS_NODE'];
     delete shellEnv['ELECTRON_NO_ATTACH_CONSOLE'];
+    delete shellEnv['KIMI_PROBE_BIN'];
     const applied = mergeShellEnv(process.env, shellEnv);
+    if (applied.includes('KIMI_CODE_HOME')) {
+      // initMainLogging resolved the log path at startup, before the probe
+      // ran; follow the imported home so the server-side session export
+      // (which packs <home>/logs/kimi-code-desktop.log) keeps finding it.
+      initMainLogging();
+      log.info(`main log re-targeted to ${defaultMainLogPath()}`);
+    }
     log.info(`shell env probe (${shell}) imported ${applied.length}: ${applied.join(', ')}`);
   } catch (error) {
     log.warn(`shell env probe failed: ${error instanceof Error ? error.message : String(error)}`);

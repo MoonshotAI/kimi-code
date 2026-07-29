@@ -59,17 +59,83 @@ describe('mergeShellEnv', () => {
     expect(applied).toEqual(['GH_TOKEN']);
   });
 
-  it('never imports KIMI_* (desktop has its own auth/settings)', () => {
+  it('imports power-user KIMI_* config (home, endpoints, flags, logging)', () => {
+    const target: Record<string, string | undefined> = {};
+    const applied = mergeShellEnv(target, {
+      KIMI_CODE_HOME: '/Users/x/.kimi-code-2',
+      KIMI_CODE_OAUTH_HOST: 'https://auth-test.example.com',
+      KIMI_OAUTH_HOST: 'https://auth-test.example.com',
+      KIMI_CODE_BASE_URL: 'https://api-test.example.com/coding/v1',
+      KIMI_CODE_EXPERIMENTAL_FLAG: '1',
+      KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1',
+      KIMI_LOG_LEVEL: 'debug',
+      KIMI_CODE_DEBUG: '1',
+      KIMI_DISABLE_TELEMETRY: '1',
+    });
+    expect(applied).toEqual([
+      'KIMI_CODE_HOME',
+      'KIMI_CODE_OAUTH_HOST',
+      'KIMI_OAUTH_HOST',
+      'KIMI_CODE_BASE_URL',
+      'KIMI_CODE_EXPERIMENTAL_FLAG',
+      'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
+      'KIMI_LOG_LEVEL',
+      'KIMI_CODE_DEBUG',
+      'KIMI_DISABLE_TELEMETRY',
+    ]);
+    expect(target['KIMI_CODE_HOME']).toBe('/Users/x/.kimi-code-2');
+  });
+
+  it('blacklists KIMI_* secrets and out-of-band endpoint overrides', () => {
     const target: Record<string, string | undefined> = {};
     const applied = mergeShellEnv(target, {
       KIMI_API_KEY: 'sk',
-      KIMI_CODE_DEBUG: '1',
-      UNRELATED: 'yes',
+      KIMI_WEB_SEARCH_API_KEY: 'sk',
+      KIMI_FUTURE_API_KEY: 'sk',
+      KIMI_CODE_PASSWORD: 'pw',
+      KIMI_CODE_CUSTOM_HEADERS: 'X: y',
+      KIMI_BASE_URL: 'https://relay.example.com',
+      KIMI_WEB_SEARCH_BASE_URL: 'https://relay.example.com',
+      KIMI_WEB_FETCH_BASE_URL: 'https://relay.example.com',
     });
-    expect(target['KIMI_API_KEY']).toBeUndefined();
-    expect(target['KIMI_CODE_DEBUG']).toBeUndefined();
-    expect(target['UNRELATED']).toBe('yes');
-    expect(applied).toEqual(['UNRELATED']);
+    expect(applied).toEqual([]);
+    expect(Object.keys(target)).toEqual([]);
+  });
+
+  it('blacklists the KIMI_MODEL_* provider-hijack family', () => {
+    const target: Record<string, string | undefined> = {};
+    const applied = mergeShellEnv(target, {
+      KIMI_MODEL_NAME: 'other-model',
+      KIMI_MODEL_API_KEY: 'sk',
+      KIMI_MODEL_BASE_URL: 'https://relay.example.com',
+      KIMI_MODEL_TEMPERATURE: '0.5',
+    });
+    expect(applied).toEqual([]);
+    expect(Object.keys(target)).toEqual([]);
+  });
+
+  it('blacklists server defenses, dev switches, and internal plumbing', () => {
+    const target: Record<string, string | undefined> = {};
+    const applied = mergeShellEnv(target, {
+      KIMI_CODE_CORS_ORIGINS: 'https://evil.example.com',
+      KIMI_CODE_ALLOWED_HOSTS: 'evil.example.com',
+      KIMI_CODE_DISABLE_HOST_CHECK: '1',
+      KIMI_DISABLE_OAUTH_LOCK: '1',
+      KIMI_SERVER_URL: 'http://127.0.0.1:1',
+      KIMI_RENDERER_DEV_URL: 'http://127.0.0.1:5174',
+      KIMI_DESKTOP_NO_SHELL_ENV: '1',
+      KIMI_PLUGIN_ROOT: '/tmp/plugin',
+      KIMI_WSL_CLIPBOARD_IMAGE_PATH: '/tmp/img',
+    });
+    expect(applied).toEqual([]);
+    expect(Object.keys(target)).toEqual([]);
+  });
+
+  it('still imports non-KIMI *_API_KEY secrets for tools and MCP servers', () => {
+    const target: Record<string, string | undefined> = {};
+    const applied = mergeShellEnv(target, { OPENAI_API_KEY: 'sk', TAVILY_API_KEY: 'tv' });
+    expect(applied).toEqual(['OPENAI_API_KEY', 'TAVILY_API_KEY']);
+    expect(target['OPENAI_API_KEY']).toBe('sk');
   });
 
   it('filters terminal-session noise', () => {

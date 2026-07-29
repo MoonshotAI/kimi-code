@@ -119,6 +119,11 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     // allow that origin through the embedded server's CORS allowlist. Packaged
     // builds always use `app://renderer`.
     const devBase = app.isPackaged ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
+    // Wait for the shell env probe (warmed up in index.ts) before anything
+    // resolves KIMI_CODE_HOME — the probe may be what imports it:
+    // readServerToken reads <home>/server.token, and the embedded server plus
+    // every tool it spawns share this process's env.
+    await startShellEnvProbe();
     const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
     if (target.external) {
       ({ origin, token } = target);
@@ -136,9 +141,8 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       if (activeHandle === null) {
         failureStage = 'server_start';
         const initialization = (async (): Promise<DesktopServerHandle | null> => {
-          // The embedded server and every tool it spawns share this process's
-          // env; wait for the probe (warmed up in index.ts) to fill it first.
-          await startShellEnvProbe();
+          // The probe already ran at connectOnce entry; re-check the close
+          // request here so a quit during startup never starts the server.
           if (serverCloseRequested) return null;
           const handle = await startDesktopServer({
             // No static fallback in HMR dev: the renderer comes from the Vite dev
