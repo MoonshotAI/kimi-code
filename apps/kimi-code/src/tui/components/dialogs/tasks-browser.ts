@@ -37,6 +37,7 @@ export interface TasksBrowserProps {
   readonly filter: TasksFilter;
   readonly selectedTaskId: string | undefined;
   readonly tailOutput: string | undefined;
+  readonly tailError?: string;
   readonly tailLoading: boolean;
   readonly flashMessage: string | undefined;
   readonly onSelect: (taskId: string) => void;
@@ -590,13 +591,16 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     let body: string;
     if (this.props.tailLoading) body = '[loading…]';
+    else if (this.props.tailError !== undefined)
+      body = `Preview unavailable: ${this.props.tailError} (press R to retry)`;
     else if (this.props.tailOutput === undefined || this.props.tailOutput.length === 0)
       body = '[no output captured]';
     else body = this.props.tailOutput;
 
     const rawLines = body.split('\n');
     const tailLines = rawLines.slice(-innerHeight);
-    const styled = tailLines.map((line) => currentTheme.fg('textDim', line));
+    const color = this.props.tailError === undefined ? 'textDim' : 'error';
+    const styled = tailLines.map((line) => currentTheme.fg(color, line));
     while (styled.length < innerHeight) styled.push('');
     return this.renderFrame('Preview Output', styled, width, height);
   }
