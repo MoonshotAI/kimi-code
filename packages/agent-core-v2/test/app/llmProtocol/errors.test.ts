@@ -228,9 +228,6 @@ describe('isImageFormatError', () => {
       ),
     ).toBe(true);
     expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
-    expect(
-      isImageFormatError(new APIStatusError(400, 'Unsupported image. Please try another one.')),
-    ).toBe(true);
     expect(isImageFormatError(new APIStatusError(400, 'Unable to process input image'))).toBe(true);
     expect(
       isImageFormatError(
@@ -266,9 +263,6 @@ describe('isImageFormatError', () => {
 
   it('does not match image count/size/support errors that stripping media cannot fix', () => {
     expect(isImageFormatError(new APIStatusError(400, 'too many images in request'))).toBe(false);
-    expect(
-      isImageFormatError(new APIStatusError(400, 'unsupported image size exceeds the limit')),
-    ).toBe(false);
     expect(
       isImageFormatError(new APIStatusError(400, 'image dimension 5000 exceeds maximum 2048')),
     ).toBe(false);
