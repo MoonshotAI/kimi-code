@@ -3,13 +3,8 @@
  * and tail-preserving truncation used by the chat view's audit panel.
  */
 
+import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { describe, expect, it } from 'vitest';
-
-import {
-  EMPTY_AGENT_STATE,
-  type AgentState,
-  type TranscriptTurn,
-} from '@moonshot-ai/transcript';
 
 import { diffValue, type DiffNode } from './diff';
 import { serializeState } from './serialize';
@@ -17,7 +12,14 @@ import { AuditTrail, AUDIT_TRAIL_MAX_ENTRIES } from './trail';
 import { tailTrunc } from './truncate';
 
 function turnItem(n: number): TranscriptTurn {
-  return { kind: 'turn', turnId: `t${n}`, ordinal: n, state: 'completed', origin: { kind: 'user' }, steps: [] };
+  return {
+    kind: 'turn',
+    turnId: `t${n}`,
+    ordinal: n,
+    state: 'completed',
+    origin: { kind: 'user' },
+    steps: [],
+  };
 }
 
 function stateWith(items: readonly TranscriptTurn[]): AgentState {
@@ -35,12 +37,19 @@ describe('diffValue', () => {
   });
 
   it('marks added, removed, and modified object keys', () => {
-    const node = diffValue({ keep: 1, gone: 'x', changed: 'a' }, { keep: 1, fresh: true, changed: 'b' });
+    const node = diffValue(
+      { keep: 1, gone: 'x', changed: 'a' },
+      { keep: 1, fresh: true, changed: 'b' },
+    );
     expect(node.status).toBe('modified');
     expect(node.children?.get('keep')?.status).toBe('unchanged');
     expect(node.children?.get('fresh')?.status).toBe('added');
     expect(node.children?.get('gone')).toMatchObject({ status: 'removed', prev: 'x' });
-    expect(node.children?.get('changed')).toMatchObject({ status: 'modified', prev: 'a', value: 'b' });
+    expect(node.children?.get('changed')).toMatchObject({
+      status: 'modified',
+      prev: 'a',
+      value: 'b',
+    });
   });
 
   it('matches entity arrays by id instead of index', () => {
@@ -70,7 +79,7 @@ describe('diffValue', () => {
       [step('t1.1', 'completed'), step('t1.2', 'completed')],
       [step('t1.1', 'completed'), step('t1.2', 'running')],
     );
-    expect([...node.children?.keys() ?? []]).toEqual(['t1.1', 't1.2']);
+    expect([...(node.children?.keys() ?? [])]).toEqual(['t1.1', 't1.2']);
     expect(node.children?.get('t1.1')?.status).toBe('unchanged');
     expect(node.children?.get('t1.2')?.status).toBe('modified');
   });
@@ -124,8 +133,14 @@ describe('serializeState', () => {
     const state: AgentState = {
       ...EMPTY_AGENT_STATE,
       tasks: new Map([
-        ['b-task', { taskId: 'b-task', kind: 'shell', state: 'running', detached: false, outputTail: '' }],
-        ['a-task', { taskId: 'a-task', kind: 'tool', state: 'completed', detached: false, outputTail: '' }],
+        [
+          'b-task',
+          { taskId: 'b-task', kind: 'shell', state: 'running', detached: false, outputTail: '' },
+        ],
+        [
+          'a-task',
+          { taskId: 'a-task', kind: 'tool', state: 'completed', detached: false, outputTail: '' },
+        ],
       ]),
       pendingInteractions: new Set(['z', 'a']),
     };
@@ -188,7 +203,9 @@ describe('AuditTrail', () => {
     expect(entries[1]!.state).toBe(s2);
     expect(entries[1]).toMatchObject({ delivery: 'live', envelopeAt: '2026-01-01T00:00:00Z' });
     expect(entries[2]).toMatchObject({ event: 'prompt', detail: 'hello' });
-    expect(entries.every((entry) => typeof entry.at === 'string' && entry.at.length > 0)).toBe(true);
+    expect(entries.every((entry) => typeof entry.at === 'string' && entry.at.length > 0)).toBe(
+      true,
+    );
     expect(entries.every((entry) => entry.summary.length > 0)).toBe(true);
   });
 

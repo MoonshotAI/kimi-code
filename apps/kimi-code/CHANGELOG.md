@@ -1,5 +1,45 @@
 # @moonshot-ai/kimi-code
 
+## 0.30.0
+
+### Minor Changes
+
+- [#2255](https://github.com/MoonshotAI/kimi-code/pull/2255) [`67dd031`](https://github.com/MoonshotAI/kimi-code/commit/67dd03149f36be91a0c081e70d8a2d721b0f1c64) Thanks [@he-yufeng](https://github.com/he-yufeng)! - Add a customizable footer status line, configured via `[status_line]` in `tui.toml`.
+
+### Patch Changes
+
+- [#2313](https://github.com/MoonshotAI/kimi-code/pull/2313) [`de0ba9d`](https://github.com/MoonshotAI/kimi-code/commit/de0ba9d0654273ff6b028a7a561983ebee4e723e) Thanks [@starquakee](https://github.com/starquakee)! - Stop the turn after repeated invalid tool calls instead of retrying indefinitely.
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a quota note after installing official plugins that bill against plan quota (such as Kimi Datasource).
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a notice when an official plugin used in the session has an update available. Run /plugins to install it.
+
+- [#1857](https://github.com/MoonshotAI/kimi-code/pull/1857) [`cdbd33c`](https://github.com/MoonshotAI/kimi-code/commit/cdbd33c13c7f5cd4c49ec112ee4313b3938a7752) Thanks [@vinlee19](https://github.com/vinlee19)! - Fail fast when account quota or balance is exhausted instead of silently retrying for ~3 minutes.
+
+- [#2294](https://github.com/MoonshotAI/kimi-code/pull/2294) [`425cfdf`](https://github.com/MoonshotAI/kimi-code/commit/425cfdf53f0fd3b01527f5fba87acff68f49f368) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix garbled line numbers in code blocks.
+
+- [#2312](https://github.com/MoonshotAI/kimi-code/pull/2312) [`d03a488`](https://github.com/MoonshotAI/kimi-code/commit/d03a4886fdf7c35014c10079a3d417aeb0447d9a) Thanks [@sailist](https://github.com/sailist)! - Remove the 50 MB size limit on file uploads to the built-in server.
+
+## 0.29.2
+
+### Patch Changes
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Hold per-agent runtime state of the experimental engine in the agent-scope state container, so it is observable in one place and disposed with the agent; state snapshots collapse class instances to name markers so resource graphs cannot exhaust memory during export.
+
+- [#2119](https://github.com/MoonshotAI/kimi-code/pull/2119) [`f06eb5c`](https://github.com/MoonshotAI/kimi-code/commit/f06eb5c60e0a4e51162d1854dda1db41892b457c) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Allow hosts to defer registered user-tool schemas until needed. Set `disclosure: "deferred"` when registering a tool.
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Instantiate every registered service eagerly at scope creation on the experimental engine, following the dependency graph automatically, and drop the hand-maintained lists that resolved side-effect services one by one at startup.
+
+- [#2120](https://github.com/MoonshotAI/kimi-code/pull/2120) [`0d00a07`](https://github.com/MoonshotAI/kimi-code/commit/0d00a07c02e334ca904077b2ea8c56cf58b44586) Thanks [@yicun](https://github.com/yicun)! - web: Fix copying selected chat text over plain HTTP from replacing the clipboard with an event placeholder.
+
+- [#2210](https://github.com/MoonshotAI/kimi-code/pull/2210) [`0cef160`](https://github.com/MoonshotAI/kimi-code/commit/0cef160c4b900a3d78212cd5da4b80d335ea0b6f) Thanks [@chengluyu](https://github.com/chengluyu)! - Fix goal pursuit being interrupted when a goal turn reaches the per-turn step limit (`loop_control.max_steps_per_turn`); the limit now splits goal work into more continuation turns instead of pausing the goal.
+
+- [#2153](https://github.com/MoonshotAI/kimi-code/pull/2153) [`c497af6`](https://github.com/MoonshotAI/kimi-code/commit/c497af60e6cd20aab05e590f98a28fb15dd3491d) Thanks [@chengluyu](https://github.com/chengluyu)! - Fix messages sent while a goal is running being rejected with a "Cannot launch a new turn while another turn is active" error; they are now steered into the active goal turn instead of being dropped.
+
+- [#2192](https://github.com/MoonshotAI/kimi-code/pull/2192) [`7799bd7`](https://github.com/MoonshotAI/kimi-code/commit/7799bd7346aaee11ec2b6d6883e1e4fe5ab10717) Thanks [@sailist](https://github.com/sailist)! - Hold per-session runtime state of the experimental engine in the session-scope state container, so it is observable in one place and disposed with the session.
+
+- [#2055](https://github.com/MoonshotAI/kimi-code/pull/2055) [`d40d0d3`](https://github.com/MoonshotAI/kimi-code/commit/d40d0d305d2866cb5ab8696e559e0813b5f92201) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix /undo to restore conversation history, todo lists, plan mode, and task notifications consistently.
+
 ## 0.29.1
 
 ### Patch Changes

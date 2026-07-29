@@ -32,6 +32,7 @@ export type { ProviderConfig, ProviderType } from './providers';
 // kwargs, `thinking.keep` extra body).
 export { KimiChatProvider } from './providers/kimi';
 export type { ExtraBody, GenerationKwargs, KimiOptions, ThinkingConfig } from './providers/kimi';
+export { classifyKimiQuotaError } from './providers/kimi-errors';
 
 // Model capability matrix
 export { isUnknownCapability, UNKNOWN_CAPABILITY } from './capability';
@@ -70,6 +71,7 @@ export {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,

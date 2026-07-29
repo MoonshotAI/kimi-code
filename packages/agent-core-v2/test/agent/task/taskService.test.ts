@@ -152,6 +152,7 @@ describe('AgentTaskService', () => {
       read: async () => undefined,
       readStream: async function* () {},
       write: async () => {},
+      writeStream: async () => {},
       append: async () => {},
       list: async () => [],
       delete: async () => {},
@@ -802,6 +803,7 @@ describe('AgentTaskService', () => {
       read: async () => undefined,
       readStream: async function* () {},
       write: async () => {},
+      writeStream: async () => {},
       append: async (_scope: string, _key: string, chunk: Uint8Array) => {
         persistedChars += chunk.byteLength;
       },

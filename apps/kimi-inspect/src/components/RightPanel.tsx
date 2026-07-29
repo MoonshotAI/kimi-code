@@ -13,13 +13,12 @@
  * switches.
  */
 
+import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
 import { useState } from 'react';
 
-import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
-
+import type { AuditTrail } from '../audit/trail';
 import { useConnection } from '../connection';
 import { Badge } from '../ui';
-import type { AuditTrail } from '../audit/trail';
 import { AuditPanel } from './audit/AuditPanel';
 import { Inspector } from './Inspector';
 import { StateCard } from './StateCard';

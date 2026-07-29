@@ -17,20 +17,19 @@
  * There is no live event push; the queries refresh on a slow poll.
  */
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
-
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import {
   IModelCatalog,
   type ModelCatalogItem,
   type ModelPingResult,
   type ProviderCatalogItem,
 } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 
 import { useConnection } from '../connection';
 import { ActionButton, Badge, ErrorLine, JsonTree, JsonView, errorMessage } from '../ui';
@@ -207,9 +206,7 @@ export function ModelCatalogView({
           ))}
         </div>
         <div className="flex-1" />
-        <ActionButton
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['modelCatalog'] })}
-        >
+        <ActionButton onClick={() => queryClient.invalidateQueries({ queryKey: ['modelCatalog'] })}>
           Refresh
         </ActionButton>
       </div>
@@ -220,17 +217,17 @@ export function ModelCatalogView({
       ) : null}
       {loading ? <div className="px-4 py-2 text-[11px] text-neutral-600">loading…</div> : null}
       {!loading && flatEntries.length === 0 ? (
-        <div className="px-4 py-2 text-[11px] text-neutral-600">no providers or models configured</div>
+        <div className="px-4 py-2 text-[11px] text-neutral-600">
+          no providers or models configured
+        </div>
       ) : null}
       <div className="flex min-h-0 flex-1">
         {/* left: the model list */}
-        <div ref={listRef} className="relative w-72 shrink-0 overflow-y-auto border-r border-neutral-800">
-          <LeftList
-            entries={flatEntries}
-            activeId={activeId}
-            onJump={jumpTo}
-            itemRefs={itemRefs}
-          />
+        <div
+          ref={listRef}
+          className="relative w-72 shrink-0 overflow-y-auto border-r border-neutral-800"
+        >
+          <LeftList entries={flatEntries} activeId={activeId} onJump={jumpTo} itemRefs={itemRefs} />
         </div>
         {/* center: one god object per model */}
         <div
@@ -334,7 +331,9 @@ function LeftList({
               </div>
               {entry.item.display_name !== undefined &&
               entry.item.display_name !== entry.item.model ? (
-                <div className="truncate text-[10px] text-neutral-600">{entry.item.display_name}</div>
+                <div className="truncate text-[10px] text-neutral-600">
+                  {entry.item.display_name}
+                </div>
               ) : null}
             </div>
           </div>
@@ -369,7 +368,8 @@ function ModelSection({
     refetchInterval: 15_000,
   });
   const [ping, setPing] = useState<
-    { readonly status: 'idle' | 'running' } | { readonly status: 'done'; readonly result: ModelPingResult }
+    | { readonly status: 'idle' | 'running' }
+    | { readonly status: 'done'; readonly result: ModelPingResult }
   >({ status: 'idle' });
   const [creating, setCreating] = useState(false);
   const [sessionError, setSessionError] = useState<unknown>(null);

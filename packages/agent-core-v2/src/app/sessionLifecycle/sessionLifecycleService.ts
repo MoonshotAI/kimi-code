@@ -7,10 +7,9 @@
  * close/archive — archiving flags the session's `sessionMetadata`, removes
  * its `agentLifecycle` agents, restoring clears the archived flag, and
  * broadcasts through `event`; session start and resume failures are reported
- * through `telemetry`. Because hosts bind their telemetry context only after
- * create()/resume() returns, the created-session announcement binds the
- * session id into telemetry context before emitting `session_started`, and the
- * resume-failure path does the same before `session_load_failed`.
+ * through `telemetry`. Each Session scope receives a telemetry view bound to
+ * its session id, while failures before a scope is available use an ephemeral
+ * context view.
  * Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
@@ -206,7 +205,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       LifecycleScope.Session,
       opts.sessionId,
       {
-        extra: [...sessionContextSeed(ctx)],
+        extra: [
+          ...sessionContextSeed(ctx),
+          [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
+        ],
       },
     ) as ISessionScopeHandle;
     if (additionalDirs.length > 0) {
@@ -250,8 +252,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
     this._onDidCreateSession.fire(event);
-    this.telemetry.setContext({ sessionId: event.sessionId });
-    this.telemetry.track2('session_started', { resumed: event.source === 'resume' });
+    event.handle.accessor
+      .get(ITelemetryService)
+      .track2('session_started', { resumed: event.source === 'resume' });
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
@@ -266,10 +269,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (live !== undefined) return Promise.resolve(live);
     const promise = this.doResume(sessionId)
       .catch((error: unknown) => {
-        this.telemetry.setContext({ sessionId });
-        this.telemetry.track2('session_load_failed', {
-          reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
-        });
+        this.telemetry
+          .withContext({ sessionId })
+          .track2('session_load_failed', {
+            reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
+          });
         throw error;
       })
       .finally(() => this.resuming.delete(sessionId));

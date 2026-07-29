@@ -47,11 +47,7 @@ export interface TranscriptFrameMeta {
 
 export interface TranscriptWsHandlers {
   /** Incremental L2 op batch for the agent (the only data frame consumed). */
-  onOps: (
-    agentId: string,
-    ops: readonly TranscriptOperation[],
-    meta?: TranscriptFrameMeta,
-  ) => void;
+  onOps: (agentId: string, ops: readonly TranscriptOperation[], meta?: TranscriptFrameMeta) => void;
   /**
    * Baseline snapshot frame. The chat consumer deliberately ignores these
    * (full state is REST-sourced) — the handler exists for observers such as
@@ -213,11 +209,7 @@ export class TranscriptWs {
         // The subscribe_v2 ack: the server has attached the transcript stream
         // by now — reconcile once per socket (ops emitted between the REST
         // page load and this point are missed; the consumer refreshes).
-        if (
-          !this.subscribeV2Acked &&
-          frame.id !== undefined &&
-          frame.id === this.subscribeV2Id
-        ) {
+        if (!this.subscribeV2Acked && frame.id !== undefined && frame.id === this.subscribeV2Id) {
           this.subscribeV2Acked = true;
           this.handlers.onReconnected();
         }

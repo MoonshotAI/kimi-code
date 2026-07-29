@@ -13,10 +13,9 @@
  * log — was removed server-side, so there is no live push to render.
  */
 
+import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
@@ -40,7 +39,11 @@ export function Inspector({
 
   const meta = useQuery({
     queryKey: ['sessionMeta', sessionId],
-    queryFn: () => klient.session(sessionId as string).service(ISessionMetadata).read(),
+    queryFn: () =>
+      klient
+        .session(sessionId as string)
+        .service(ISessionMetadata)
+        .read(),
     enabled: sessionId !== null && ready,
   });
 
@@ -76,11 +79,13 @@ export function Inspector({
   // session that isn't selected/ready.
   const proxyFor = useMemo(() => {
     return (name: string): AnyService | null => {
-      return serviceByName<AnyService>(klient, name, {
-        scope: 'agent',
-        sessionId: sessionId !== null && ready ? sessionId : undefined,
-        agentId: effectiveAgent,
-      }) ?? null;
+      return (
+        serviceByName<AnyService>(klient, name, {
+          scope: 'agent',
+          sessionId: sessionId !== null && ready ? sessionId : undefined,
+          agentId: effectiveAgent,
+        }) ?? null
+      );
     };
   }, [klient, sessionId, effectiveAgent, ready]);
 
@@ -107,11 +112,15 @@ export function Inspector({
           </select>
           {stoppedAgents.has(effectiveAgent) ? (
             <div className="mt-1 text-[10px] text-neutral-600">
-              this agent is not materialized in the running server (e.g. created before a
-              restart) — calls will fail; its persisted records remain on disk
+              this agent is not materialized in the running server (e.g. created before a restart) —
+              calls will fail; its persisted records remain on disk
             </div>
           ) : null}
-          {meta.isError ? <div className="mt-1"><ErrorLine error={meta.error} /></div> : null}
+          {meta.isError ? (
+            <div className="mt-1">
+              <ErrorLine error={meta.error} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -222,7 +231,9 @@ function PlanEntryView({ entry }: { entry: TranscriptPlanInfo }) {
   return (
     <div className="mt-2">
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-[10px] text-neutral-400 select-all">{entry.toolCallId}</span>
+        <span className="font-mono text-[10px] text-neutral-400 select-all">
+          {entry.toolCallId}
+        </span>
         <Badge tone="neutral">{entry.source}</Badge>
         {review !== undefined ? (
           <Badge

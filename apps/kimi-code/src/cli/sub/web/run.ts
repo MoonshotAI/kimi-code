@@ -8,6 +8,7 @@
  * `startServer`).
  */
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
@@ -266,6 +267,12 @@ async function runServerInProcess(
   // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
   // this runner consumes.
   const logger = createServerLogger({ level: options.logLevel });
+  const webAssetsDir = serverWebAssetsDir();
+  if (webAssetsDir === undefined) {
+    logger.info(
+      'dev mode: web assets not built; starting the API server without the web UI',
+    );
+  }
   const v2 = await startServer({
     host: options.host,
     port: options.port,
@@ -280,11 +287,15 @@ async function runServerInProcess(
     allowRemoteTerminals: options.allowRemoteTerminals,
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
+    // Attach the engine's cloud telemetry appender (still gated by the config
+    // `telemetry` toggle). Complements the v1 client registered above, which
+    // only covers host-level events.
+    telemetry: true,
     // Seed the CLI's Kimi identity headers so the engine's outbound
     // requests (model, WebSearch, FetchURL) carry the same User-Agent +
     // X-Msh-* identity as direct CLI runs.
     seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
-    webAssetsDir: serverWebAssetsDir(),
+    webAssetsDir,
   });
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
@@ -311,8 +322,23 @@ async function runServerInProcess(
   });
 }
 
-function serverWebAssetsDir(): string {
-  return resolveServerWebAssetsDir();
+/**
+ * Resolve the web assets directory passed to kap-server. In dev mode
+ * (`KIMI_CODE_DEV_SERVER=1`, set by the repo's `dev:server` / `dev:kap-server*`
+ * scripts) a missing `dist-web` build is tolerated: the server starts API-only
+ * and the web UI is expected to come from the kimi-web Vite dev server.
+ * Outside dev mode the directory is always returned and kap-server keeps
+ * failing fast when the assets are missing.
+ */
+export function serverWebAssetsDir(
+  env: NodeJS.ProcessEnv = process.env,
+  nativeWebAssetsDir: string | null = getNativeWebAssetsDir(),
+): string | undefined {
+  const dir = resolveServerWebAssetsDir(nativeWebAssetsDir);
+  if (env['KIMI_CODE_DEV_SERVER'] === '1' && !existsSync(join(dir, 'index.html'))) {
+    return undefined;
+  }
+  return dir;
 }
 
 export function resolveServerWebAssetsDir(

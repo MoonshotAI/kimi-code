@@ -517,6 +517,60 @@ describe('sessionExport', () => {
     );
   });
 
+  it('includes the desktop app log when given', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_desktop_log');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const desktopLogPath = join(tmp, 'logs', 'kimi-code-desktop.log');
+    await mkdir(join(tmp, 'logs'), { recursive: true });
+    const desktopLog = '2026-07-27T00:00:00.000Z INFO  [renderer] hello\n';
+    await writeFile(desktopLogPath, desktopLog, 'utf-8');
+    const outputPath = join(tmp, 'desktop-log.zip');
+
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: 'ses_desktop_log',
+        outputPath,
+        version: '1.0.0-test',
+      },
+      summary: {
+        id: 'ses_desktop_log',
+        sessionDir,
+      },
+      desktopLogPath,
+    });
+
+    expect(result.entries).toContain('logs/kimi-desktop.log');
+    expect(result.manifest.desktopLogPath).toBe('logs/kimi-desktop.log');
+    await expect(readZipEntry(outputPath, 'logs/kimi-desktop.log')).resolves.toEqual(
+      Buffer.from(desktopLog, 'utf8'),
+    );
+  });
+
+  it('skips a missing desktop app log silently', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_desktop_log_missing');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: 'ses_desktop_log_missing',
+        outputPath: join(tmp, 'desktop-log-missing.zip'),
+        version: '1.0.0-test',
+      },
+      summary: {
+        id: 'ses_desktop_log_missing',
+        sessionDir,
+      },
+      desktopLogPath: join(tmp, 'logs', 'does-not-exist.log'),
+    });
+
+    expect(result.entries).not.toContain('logs/kimi-desktop.log');
+    expect(result.manifest.desktopLogPath).toBeUndefined();
+  });
+
   it('rejects when a collected file disappears before it can be archived', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     const removedPath = join(tmp, 'removed-state.json');

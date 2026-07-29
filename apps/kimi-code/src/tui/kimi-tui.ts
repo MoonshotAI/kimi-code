@@ -232,6 +232,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
+    statusLine: input.tuiConfig.statusLine,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
