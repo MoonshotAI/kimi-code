@@ -1,5 +1,59 @@
 # kimi-code-app
 
+## 0.0.12
+
+### Patch Changes
+
+- [#138](https://github.com/MoonshotAI/kimi-code-app/pull/138) [`1825bec`](https://github.com/MoonshotAI/kimi-code-app/commit/1825bec3ed322da312b51361d605c896c3c0331b) - 会话图标选择器新增聊天气泡、警灯、工具箱等 20 个常用 emoji，均可按中英文关键词搜索。
+
+- [#142](https://github.com/MoonshotAI/kimi-code-app/pull/142) [`28c2780`](https://github.com/MoonshotAI/kimi-code-app/commit/28c2780188a3224573756913ddb68665e9ee3b88) - 附件过多时输入框的附件列表限高滚动：新增附件自动滚动到可见位置，并显示附件总数。
+
+- [#142](https://github.com/MoonshotAI/kimi-code-app/pull/142) [`28c2780`](https://github.com/MoonshotAI/kimi-code-app/commit/28c2780188a3224573756913ddb68665e9ee3b88) - 输入框中的附件支持一键清空。
+
+- [#128](https://github.com/MoonshotAI/kimi-code-app/pull/128) [`949f00f`](https://github.com/MoonshotAI/kimi-code-app/commit/949f00fdb470a44908d27bb5f6c0802b278686f0) - 移除了内置服务器的访问令牌校验，启动时不再可能弹出要求输入服务器密码的对话框。
+
+- [#132](https://github.com/MoonshotAI/kimi-code-app/pull/132) [`9a5e75b`](https://github.com/MoonshotAI/kimi-code-app/commit/9a5e75ba3d54687048e58d8b151a1a04e24cd15a) - 新增内置终端。
+
+- [#142](https://github.com/MoonshotAI/kimi-code-app/pull/142) [`28c2780`](https://github.com/MoonshotAI/kimi-code-app/commit/28c2780188a3224573756913ddb68665e9ee3b88) - 修复附件预览右上角关闭按钮点不动的问题，预览支持按 Esc 关闭。
+
+- [#130](https://github.com/MoonshotAI/kimi-code-app/pull/130) [`170784e`](https://github.com/MoonshotAI/kimi-code-app/commit/170784e30b9b3f829cb1b2ba51be138f889df7b9) - 修复查找栏当前匹配项的高亮描边偏移、不能完整包裹高亮区域的问题。
+
+- [#135](https://github.com/MoonshotAI/kimi-code-app/pull/135) [`266a14d`](https://github.com/MoonshotAI/kimi-code-app/commit/266a14d449e1274a6326fc259eac94426fcbadb2) - 修复排队中的长消息显示为空白气泡的问题。
+
+- [#136](https://github.com/MoonshotAI/kimi-code-app/pull/136) [`7feb33b`](https://github.com/MoonshotAI/kimi-code-app/commit/7feb33b6d4779f588019405697e34964508d0475) - 修复 Windows 任务栏错误显示 Electron 图标和名称的问题。
+
+- [#113](https://github.com/MoonshotAI/kimi-code-app/pull/113) [`10f5f88`](https://github.com/MoonshotAI/kimi-code-app/commit/10f5f88fc4592ddd13592c48eefaea4027cddbdf) - 修复行内数学公式（$…$）无法渲染的问题。
+
+- [#126](https://github.com/MoonshotAI/kimi-code-app/pull/126) [`b05e7a3`](https://github.com/MoonshotAI/kimi-code-app/commit/b05e7a3b3fd5a1e5c73c90c9b39bdcc0fde65fff) - 修复置顶会话行上状态徽章的提示和整行提示会同时弹出的问题。
+
+- [#144](https://github.com/MoonshotAI/kimi-code-app/pull/144) [`7a1fd22`](https://github.com/MoonshotAI/kimi-code-app/commit/7a1fd229fd410ace774921276013a3d4a35ee0d8) - 图片附件预览改为从缩略图位置平滑放大打开，支持滚轮缩放查看细节。
+
+- [#137](https://github.com/MoonshotAI/kimi-code-app/pull/137) [`d434457`](https://github.com/MoonshotAI/kimi-code-app/commit/d434457110402b5a24abd0bb905f5414ba4e6d35) - 修复子 Agent 详情中的操作卡顿、错误跳转、通知及运行状态显示问题。
+
+- [#136](https://github.com/MoonshotAI/kimi-code-app/pull/136) [`7feb33b`](https://github.com/MoonshotAI/kimi-code-app/commit/7feb33b6d4779f588019405697e34964508d0475) - 将托盘菜单入口更名为“打开 Kimi Code”。
+
+- [#127](https://github.com/MoonshotAI/kimi-code-app/pull/127) [`2a60c73`](https://github.com/MoonshotAI/kimi-code-app/commit/2a60c735485d900f7211a8d5a3466e71e0a5414c) - 历史会话中的计划现在会显示完整正文、评审状态、所选方案和反馈。
+
+- [#137](https://github.com/MoonshotAI/kimi-code-app/pull/137) [`d434457`](https://github.com/MoonshotAI/kimi-code-app/commit/d434457110402b5a24abd0bb905f5414ba4e6d35) - 子 Agent 和 Swarm 详情支持按需恢复完整消息流，并减少流式更新时的卡顿。
+
+- [#126](https://github.com/MoonshotAI/kimi-code-app/pull/126) [`b05e7a3`](https://github.com/MoonshotAI/kimi-code-app/commit/b05e7a3b3fd5a1e5c73c90c9b39bdcc0fde65fff) - 修复鼠标悬停在带状态徽章的会话行时标题被遮住一截的问题。
+
+- [#137](https://github.com/MoonshotAI/kimi-code-app/pull/137) [`d434457`](https://github.com/MoonshotAI/kimi-code-app/commit/d434457110402b5a24abd0bb905f5414ba4e6d35) - 修复打开子 Agent 详情面板时页面卡顿的问题。
+
+- [#140](https://github.com/MoonshotAI/kimi-code-app/pull/140) [`484ad78`](https://github.com/MoonshotAI/kimi-code-app/commit/484ad78c83e34aa98035d3b85d903ff41e1965a0) - 重构用量显示逻辑
+
+- [#143](https://github.com/MoonshotAI/kimi-code-app/pull/143) [`57037ca`](https://github.com/MoonshotAI/kimi-code-app/commit/57037cac8bc03b6652ef7a8be97fd3763bc7f71b) - 修复鼠标快速划过对话目录时目录闪烁展开的问题。
+
+- [#101](https://github.com/MoonshotAI/kimi-code-app/pull/101) [`7d96d40`](https://github.com/MoonshotAI/kimi-code-app/commit/7d96d40cfb81cd25f88a0fe4050d9193bc8ff86e) - 对话每轮回复结束后展示本轮修改的文件汇总，可展开查看每个文件的增删行数。
+
+- [#142](https://github.com/MoonshotAI/kimi-code-app/pull/142) [`28c2780`](https://github.com/MoonshotAI/kimi-code-app/commit/28c2780188a3224573756913ddb68665e9ee3b88) - 统一输入框与已发送消息中附件的样式：图片和视频显示为缩略图、文件显示为胶囊，待发送附件列表收进输入框内。
+
+- [#141](https://github.com/MoonshotAI/kimi-code-app/pull/141) [`56a37f6`](https://github.com/MoonshotAI/kimi-code-app/commit/56a37f6e51b63b91232577bb22b6504d74ea7a58) - 统一界面中文件与工具调用数量的数字显示。
+
+- [#139](https://github.com/MoonshotAI/kimi-code-app/pull/139) [`7538b76`](https://github.com/MoonshotAI/kimi-code-app/commit/7538b7627bd1744ef92764b4cfc3ecb996f653b5) - 优化下载更新弹窗
+
+- [`a8eef0e`](https://github.com/MoonshotAI/kimi-code-app/commit/a8eef0eda2f260dc2b2f1e05b7b65ec3bdecd578) - 更新弹窗加宽，更新内容较多时改为在内容区内滚动，不再把弹窗撑得很长。
+
 ## 0.0.11
 
 ### Patch Changes

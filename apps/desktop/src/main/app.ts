@@ -11,6 +11,7 @@ import { initDockIcon } from './dock-icon';
 import { buildMenu } from './menu';
 import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
+import { killAllTerminals } from './terminal';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
 import { trackDesktopEvent } from './track';
@@ -73,6 +74,7 @@ export function main(): void {
     for (const cleanup of [
       finalizeWindowLifecycle,
       stopShellEnvProbe,
+      killAllTerminals,
       destroyTray,
       unregisterGlobalShortcuts,
       closeServerHandle,

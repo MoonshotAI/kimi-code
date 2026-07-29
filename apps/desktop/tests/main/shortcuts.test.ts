@@ -228,4 +228,27 @@ describe('global summon-app shortcut', () => {
     expect(setGlobalShortcut(DEFAULT_BINDING)).toBe(false);
     expect(trackDesktopEvent).toHaveBeenCalledWith('global_shortcut_register_failed', { reason: 'conflicted' });
   });
+
+  it('suspends the registration while the terminal is focused, resumes on blur', async () => {
+    const { setGlobalShortcut, setGlobalShortcutTerminalFocus } = await importShortcuts();
+    register.mockReturnValue(true);
+    setGlobalShortcut(DEFAULT_BINDING);
+    setGlobalShortcutTerminalFocus(true);
+    expect(unregister).toHaveBeenCalledWith(DEFAULT_ACCEL);
+    setGlobalShortcutTerminalFocus(false);
+    expect(register).toHaveBeenCalledTimes(2);
+  });
+
+  it('a recording resume does not re-activate while the terminal still holds the suspension', async () => {
+    const { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } =
+      await importShortcuts();
+    register.mockReturnValue(true);
+    setGlobalShortcut(DEFAULT_BINDING);
+    setGlobalShortcutTerminalFocus(true);
+    setGlobalShortcutSuspended(true);
+    setGlobalShortcutSuspended(false); // recording lifts, terminal still focused
+    expect(register).toHaveBeenCalledTimes(1); // no re-register yet
+    setGlobalShortcutTerminalFocus(false);
+    expect(register).toHaveBeenCalledTimes(2);
+  });
 });

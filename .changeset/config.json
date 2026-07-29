@@ -1,5 +1,8 @@
 {
-  "changelog": ["@changesets/changelog-github", { "repo": "MoonshotAI/kimi-code-app" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    { "repo": "MoonshotAI/kimi-code-app", "disableThanks": true }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],

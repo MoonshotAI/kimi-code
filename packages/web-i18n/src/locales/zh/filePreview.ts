@@ -30,6 +30,7 @@ export default {
     unsupportedPath: '不支持预览 URL 或远程路径',
     outsideWorkspace: '只能预览当前 workspace 内的文件',
     isDirectory: '请选择具体文件，而不是目录',
+    notFound: '文件不存在或已被移动',
     loadFailed: '无法读取这个文件',
   },
 } as const;

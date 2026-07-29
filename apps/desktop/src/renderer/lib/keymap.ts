@@ -71,6 +71,7 @@ const SHORTCUT_ACTION_DEFINITIONS: Record<
   openFolder: { scope: 'global', labelKey: 'shortcuts.actions.openFolder.label', descKey: 'shortcuts.actions.openFolder.desc', defaultBinding: 'mod+o' },
   openInDefaultApp: { scope: 'global', labelKey: 'shortcuts.actions.openInDefaultApp.label', descKey: 'shortcuts.actions.openInDefaultApp.desc', defaultBinding: 'alt+mod+o', requiresSession: true },
   openSettings: { scope: 'global', labelKey: 'shortcuts.actions.openSettings.label', descKey: 'shortcuts.actions.openSettings.desc', defaultBinding: 'mod+,' },
+  toggleTerminal: { scope: 'global', labelKey: 'shortcuts.actions.toggleTerminal.label', descKey: 'shortcuts.actions.toggleTerminal.desc', defaultBinding: 'ctrl+`' },
   // Composer (textarea-scoped). Steer (Ctrl/Cmd+S) and interrupt (Escape)
   // stay hardcoded in Composer.vue / ConversationPane.vue by decision —
   // they are NOT customizable and must not appear here.
@@ -356,7 +357,12 @@ export function isValidBinding(binding: string, scope: ShortcutScope): boolean {
  *  bindings as app-wide menu accelerators via useShortcuts). Their reach is
  *  NOT limited to the renderer's scoped dispatcher, so conflict detection
  *  treats them as crossing every scope (in both directions). */
-export const MENU_SYNCED_ACTIONS: readonly ShortcutActionId[] = ['openSettings', 'newSession', 'openFolder'];
+export const MENU_SYNCED_ACTIONS: readonly ShortcutActionId[] = [
+  'openSettings',
+  'newSession',
+  'openFolder',
+  'toggleTerminal',
+];
 
 /** Actions the main process registers as OS-level global shortcuts
  *  (main/shortcuts.ts globalShortcut). Like menu accelerators, the OS

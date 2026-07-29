@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick, ref } from 'vue';
 
 import { useResizable } from './useResizable';
 
@@ -93,6 +94,17 @@ describe('useResizable', () => {
     expect(useResizable(OPTIONS).width.value).toBe(480);
     store.set('k', '10');
     expect(useResizable(OPTIONS).width.value).toBe(170);
+  });
+
+  it('clamps the committed width when a reactive cap shrinks', async () => {
+    const cap = ref(480);
+    const r = useResizable({ ...OPTIONS, max: cap });
+    r.setWidth(400);
+    expect(r.width.value).toBe(400);
+    cap.value = 300;
+    await nextTick();
+    expect(r.width.value).toBe(300);
+    expect(store.get('k')).toBe('300');
   });
 
   it('coalesces a burst of pointermove events into one update per frame', () => {

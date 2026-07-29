@@ -7,6 +7,7 @@ export const APP_ACTION_IDS = [
   'openFolder',
   'openInDefaultApp',
   'openSettings',
+  'toggleTerminal',
 ] as const;
 
 export type AppActionId = (typeof APP_ACTION_IDS)[number];

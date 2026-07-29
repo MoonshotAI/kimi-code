@@ -130,6 +130,7 @@ function autosize(): void {
         :approvals="[]"
         :turn-active="running"
         :working="sending || running"
+        :turn-files-interactive="false"
       />
       <div v-if="showLoading" class="sc-loading">
         <WorkingIndicator :label="t('conversation.requesting')" />

@@ -102,6 +102,8 @@ import {
 
 import { createTurnsProjector } from './client/turnsProjector';
 import { latestTodos } from './latestTodos';
+// Desktop-only: WS deletion events tear down native terminal PTYs below.
+import { useNativeTerminal, nativeTerminalDraftKey } from './useNativeTerminal';
 import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
 import type { SwarmGroup, SwarmMember } from './swarmGroups';
 import type {
@@ -995,6 +997,12 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // cleanup lives here too.
   if (event.type === 'sessionDeleted') {
     unpinSession(event.sessionId);
+    // Same teardown for its terminal bucket (bypasses the App.vue callbacks).
+    useNativeTerminal().destroySession(event.sessionId);
+  }
+  // A remote ARCHIVE arrives as sessionUpdated — same terminal teardown.
+  if (event.type === 'sessionUpdated' && event.session.archived === true) {
+    useNativeTerminal().destroySession(event.session.id);
   }
 }
 
@@ -1209,6 +1217,19 @@ function connectEventsIfNeeded(): void {
         appEvent.type === 'workspaceUpdated' ||
         appEvent.type === 'workspaceDeleted'
       ) {
+        if (appEvent.type === 'workspaceDeleted') {
+          // Desktop-only: mirror the App.vue confirm-delete terminal cleanup.
+          const terminals = useNativeTerminal();
+          for (const session of rawState.sessions) {
+            if (
+              session.workspaceId === appEvent.workspaceId ||
+              session.cwd === appEvent.root
+            ) {
+              terminals.destroySession(session.id);
+            }
+          }
+          terminals.destroySession(nativeTerminalDraftKey(appEvent.workspaceId));
+        }
         workspaceState.applyWorkspaceEvent(appEvent);
         return;
       }
@@ -3261,6 +3282,7 @@ export function useKimiWebClient() {
     // File system actions
     listDir: workspaceState.listDir,
     readFileContent: workspaceState.readFileContent,
+    readHostFileContent: workspaceState.readHostFileContent,
     getFileDownloadUrl: workspaceState.getFileDownloadUrl,
     openWorkspaceFile: workspaceState.openWorkspaceFile,
     openInApp: workspaceState.openInApp,

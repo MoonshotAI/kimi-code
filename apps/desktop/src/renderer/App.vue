@@ -10,6 +10,7 @@ import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
+import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
@@ -49,12 +50,15 @@ import { stripSkillPrefix } from './lib/slashCommands';
 import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop, isWindowsDesktop } from './lib/desktopFlag';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
+import TerminalPanel from './components/terminal/TerminalPanel.vue';
+import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
 import { selectContentsOf } from './lib/transcriptSelectAll';
 import { useFullscreen } from './composables/useFullscreen';
+import { useNativeTerminal, nativeTerminalDraftKey } from './composables/useNativeTerminal';
 import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
 import { useJumpList } from './composables/useJumpList';
 import { useVibrancy } from './composables/useVibrancy';
-import { matchShortcutAction } from './composables/useShortcuts';
+import { matchShortcutAction, terminalPassesChordToPty } from './composables/useShortcuts';
 import { shortcutActionById } from './lib/keymap';
 import {
   canOpenInNative,
@@ -111,6 +115,66 @@ const isFullscreen = useFullscreen();
 // Frosted-sidebar (vibrancy) preference — paints the root chain / .app /
 // sidebar transparent only while on; layout keeps keying off macos-desktop.
 const { vibrancy } = useVibrancy();
+
+// Native embedded terminal (desktop-only; inert no-op on web): per-session
+// buckets in a module singleton shared with the ⌃` dispatcher and the View
+// menu action (design: docs/plans/2026-07-27-desktop-native-terminal.md).
+const terminalStore = useNativeTerminal();
+const terminalOpen = terminalStore.open;
+// Mount the panel lazily on first open, then keep it mounted — an unmounted
+// xterm loses its scrollback.
+const terminalEverOpened = ref(terminalOpen.value);
+watch(terminalOpen, (isOpen) => {
+  if (isOpen) terminalEverOpened.value = true;
+});
+// New tabs spawn in the visible workspace (daemon cwd as fallback).
+const terminalCwd = computed(
+  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
+);
+// The draft's first action creates a session IN PLACE: it inherits the draft
+// bucket's terminals. Migration anchors to the id RETURNED by the creation call.
+function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
+  return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
+}
+
+function migrateDraftTerminals(fromKey: string, createdId: string | null): void {
+  if (createdId !== null) {
+    terminalStore.migrateDraftTo(fromKey, createdId);
+  }
+}
+
+// `/goal`, `/btw` and the side-chat toggle create the first session INSIDE
+// the client — they need the same draft-bucket migration.
+async function runSessionCreatingAction(run: () => Promise<string | null>): Promise<void> {
+  const workspaceId = client.activeWorkspaceId.value;
+  if (client.activeSessionId.value || !workspaceId) {
+    void run();
+    return;
+  }
+  const draftKey = terminalBucketKey('', workspaceId);
+  migrateDraftTerminals(draftKey, await run());
+}
+
+// The composer goal UI emits createGoal directly — route it through the same
+// draft-bucket migration as the `/goal <objective>` slash path.
+function handleCreateGoal(objective: string): void {
+  void runSessionCreatingAction(() => client.createGoal(objective));
+}
+
+// Follow the visible session (and the draft's workspace): each session owns
+// its terminal bucket. Snap the panel height on switches (no-anim).
+const terminalSwitching = ref(false);
+watch(
+  () => [client.activeSessionId.value, client.activeWorkspaceId.value] as const,
+  ([sessionId, workspaceId]) => {
+    terminalStore.switchSession(terminalBucketKey(sessionId, workspaceId));
+    terminalSwitching.value = true;
+    void nextTick(() => {
+      terminalSwitching.value = false;
+    });
+  },
+  { immediate: true },
+);
 
 // Push the global pending-attention totals (unread sessions + awaiting
 // approvals + awaiting questions) to the native tray: macOS menu-bar count +
@@ -230,6 +294,7 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', syncAppHeight);
   window.visualViewport?.addEventListener('scroll', syncAppHeight);
   window.addEventListener('resize', syncAppHeight);
+  window.addEventListener('resize', onTerminalWindowResize);
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
@@ -282,6 +347,7 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener('resize', syncAppHeight);
   window.visualViewport?.removeEventListener('scroll', syncAppHeight);
   window.removeEventListener('resize', syncAppHeight);
+  window.removeEventListener('resize', onTerminalWindowResize);
   if (appHeightRaf) {
     cancelAnimationFrame(appHeightRaf);
     appHeightRaf = 0;
@@ -296,6 +362,9 @@ onUnmounted(() => {
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  // Inside the terminal, Esc is program input (vim/less/fzf) — never let the
+  // global panel-close path consume it.
+  if (e.target instanceof HTMLElement && e.target.closest('.terminal-host') !== null) return;
   // A modal dialog open on top of the side panel owns Escape — leave the event
   // alone so the dialog can close itself instead of the panel behind it.
   if (anyOverlayOpen.value) return;
@@ -319,6 +388,7 @@ const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
   'open-settings': 'openSettings',
   'new-chat': 'newSession',
   'open-folder': 'openFolder',
+  'toggle-terminal': 'toggleTerminal',
 };
 
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
@@ -371,7 +441,14 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'archiveSession': {
       // The shortcut archives immediately (no confirm dialog) by design.
       const sid = client.activeSessionId.value;
-      if (sid) void client.archiveSession(sid);
+      if (sid) {
+        void client.archiveSession(sid).then(() => {
+          // Same terminal cleanup as the confirm-dialog archive path.
+          if (!client.sessionsForView.value.some((s) => s.id === sid)) {
+            terminalStore.destroySession(sid);
+          }
+        });
+      }
       break;
     }
     case 'toggleSideChat':
@@ -379,7 +456,7 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       if (client.sideChatVisible.value) {
         closeSideChat();
       } else {
-        void openSideChatTab();
+        void runSessionCreatingAction(() => openSideChatTab());
       }
       break;
     case 'openFolder':
@@ -387,6 +464,15 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       break;
     case 'openInDefaultApp':
       void openWorkspaceInDefaultApp();
+      break;
+    case 'toggleTerminal':
+      // The panel never renders in the mobile layout (only reachable at
+      // extreme zoom on desktop) — toggling there would spawn an invisible
+      // PTY and persist a misleading open state. No bridge (web / old shell)
+      // gets the same no-op as the button entries.
+      if (!isMobile.value && terminalStore.available) {
+        terminalStore.toggle(terminalCwd.value ?? undefined);
+      }
       break;
   }
 }
@@ -422,6 +508,15 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   if (e.repeat) return;
   const id = matchShortcutAction(e, 'global');
   if (id === null || !isAppActionId(id)) return;
+  // A chord the terminal captured (menu-suspension pass-through, see
+  // useShortcuts) must not also fire its global action from the bubble.
+  if (
+    e.target instanceof HTMLElement &&
+    e.target.closest('.terminal-host') !== null &&
+    terminalPassesChordToPty(e, id)
+  ) {
+    return;
+  }
   // Session-scoped actions (archive / side chat / open-in) only fire with an
   // active chat — never on the new-chat draft or onboarding pages.
   const action = shortcutActionById(id);
@@ -515,6 +610,9 @@ const {
   openDiffDetail,
   closeDiffDetail,
   selectDiffFile,
+  turnDiffChange,
+  openTurnDiff,
+  closeTurnDiff,
   btwVisible,
   openSideChatTab,
   closeSideChat,
@@ -540,6 +638,34 @@ watch(
   ([el, w]) => el?.style.setProperty('--preview-w', `${w}px`),
   { immediate: true },
 );
+
+// Terminal panel height: --terminal-h is owned imperatively for the same
+// reason as --preview-w above (a bound style would clobber the live drag).
+const TERMINAL_HEIGHT_KEY = 'kimi-web.terminal-panel-height';
+const TERMINAL_DEFAULT_HEIGHT = 260;
+const TERMINAL_MIN = 120;
+// Reactive viewport height so the 60% cap tracks window resizes in both
+// directions (a one-time innerHeight read would go stale).
+const viewportHeight = ref(window.innerHeight);
+const terminalMax = computed(() => Math.max(TERMINAL_MIN, Math.round(viewportHeight.value * 0.6)));
+const terminalHeight = ref(TERMINAL_DEFAULT_HEIGHT);
+const terminalDragging = ref(false);
+const terminalPanelEl = ref<HTMLElement | null>(null);
+function applyTerminalHeightLive(height: number): void {
+  terminalPanelEl.value?.style.setProperty('--terminal-h', `${height}px`);
+}
+watch(
+  [terminalPanelEl, terminalHeight],
+  ([el, h]) => el?.style.setProperty('--terminal-h', `${h}px`),
+  { immediate: true },
+);
+function onTerminalWindowResize(): void {
+  viewportHeight.value = window.innerHeight;
+  const clamped = Math.min(terminalMax.value, terminalHeight.value);
+  if (clamped !== terminalHeight.value) {
+    terminalHeight.value = clamped;
+  }
+}
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
@@ -647,17 +773,28 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // operation settles. Both client calls toast their own errors and never
 // reject.
 async function confirmArchiveSession(id: string): Promise<void> {
-  await confirm({
+  const confirmed = await confirm({
     title: t('sidebar.archive'),
     message: t('sidebar.archiveConfirm'),
     variant: 'danger',
     action: () => client.archiveSession(id),
   });
+  // Only destroy terminals once the session is really gone (sessionsForView
+  // excludes archived entries).
+  if (!confirmed) return;
+  if (client.sessionsForView.value.some((s) => s.id === id)) return;
+  terminalStore.destroySession(id);
 }
 
 async function confirmDeleteWorkspace(id: string): Promise<void> {
-  const name = client.workspacesView.value.find((w) => w.id === id)?.name ?? id;
-  await confirm({
+  const workspace = client.workspacesView.value.find((w) => w.id === id);
+  const name = workspace?.name ?? id;
+  // Legacy sessions may lack workspaceId — match the workspace root too.
+  const root = workspace?.root;
+  const sessionIds = client.sessions.value
+    .filter((s) => s.workspaceId === id || (root !== undefined && s.cwd === root))
+    .map((s) => s.id);
+  const confirmed = await confirm({
     title: t('sidebar.removeWorkspace'),
     message: t('workspace.removeWorkspaceConfirm', { name }),
     variant: 'danger',
@@ -666,6 +803,13 @@ async function confirmDeleteWorkspace(id: string): Promise<void> {
       track('workspace_removed', { workspace_count: client.workspacesView.value.length });
     },
   });
+  if (!confirmed) return;
+  if (client.workspacesView.value.some((w) => w.id === id)) return;
+  for (const sessionId of sessionIds) {
+    terminalStore.destroySession(sessionId);
+  }
+  // …and the no-session draft bucket keyed to this workspace.
+  terminalStore.destroySession(terminalBucketKey('', id));
 }
 
 async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
@@ -825,7 +969,7 @@ async function handleCommand(cmd: string): Promise<void> {
     if (arg === 'pause' || arg === 'resume' || arg === 'cancel') client.controlGoal(arg);
     else if (arg) {
       if (!(await passCommandGates(cmd))) return;
-      void client.createGoal(arg);
+      void runSessionCreatingAction(() => client.createGoal(arg));
     }
     else client.toggleGoalMode();
     return;
@@ -840,7 +984,7 @@ async function handleCommand(cmd: string): Promise<void> {
       closeSideChat();
     } else {
       if (arg && !(await passCommandGates(cmd))) return;
-      void openSideChatTab(arg || undefined);
+      void runSessionCreatingAction(() => openSideChatTab(arg || undefined));
     }
     return;
   }
@@ -895,7 +1039,13 @@ async function handleCommand(cmd: string): Promise<void> {
       if (!name) break;
       if (!(await passCommandGates(cmd))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
-        void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args);
+        const draftKey = terminalBucketKey('', client.activeWorkspaceId.value);
+        const createdId = await client.startSessionAndActivateSkill(
+          client.activeWorkspaceId.value,
+          name,
+          args,
+        );
+        migrateDraftTerminals(draftKey, createdId);
       } else {
         void client.activateSkill(name, args);
       }
@@ -922,7 +1072,13 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
   if (!(await passAuthGate(payload.text, payload.attachments))) return;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
-    await client.startSessionAndSendPrompt(wsId, payload.text, payload.attachments);
+    const draftKey = terminalBucketKey('', wsId);
+    const createdId = await client.startSessionAndSendPrompt(
+      wsId,
+      payload.text,
+      payload.attachments,
+    );
+    migrateDraftTerminals(draftKey, createdId);
     return;
   }
   if (!client.activeSessionId.value && !wsId) {
@@ -987,6 +1143,9 @@ async function addWorkspace(root: string): Promise<boolean> {
   if (!added) return false;
   track('workspace_added', { workspace_count: client.workspacesView.value.length });
   showAddWorkspace.value = false;
+  // The no-workspace draft bucket's PTYs run in the fallback cwd, not the
+  // just-added folder — discard them.
+  terminalStore.destroySession(terminalBucketKey('', null));
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
   const wsId = client.activeWorkspaceId.value;
@@ -1275,7 +1434,7 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @toggle-goal="client.toggleGoalMode()"
-      @create-goal="client.createGoal($event)"
+      @create-goal="handleCreateGoal"
       @control-goal="client.controlGoal($event)"
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
@@ -1287,6 +1446,7 @@ function openPr(url: string): void {
       @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
+      @open-turn-diff="openTurnDiff($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
@@ -1412,7 +1572,42 @@ function openPr(url: string): void {
         @open-external="openPreviewInEditor"
         @reveal="revealPreviewFile"
       />
+      <TurnDiffPanel
+        v-else-if="detailTarget === 'turn-diff' && turnDiffChange"
+        :change="turnDiffChange"
+        :cwd="client.status.value.cwd"
+        closable
+        @close="closeTurnDiff"
+        @open-file="openFilePreview({ path: $event, allowHostRead: true })"
+      />
     </aside>
+
+    <!-- Desktop-only native terminal: permanent bottom grid row (design:
+         docs/plans/2026-07-27-desktop-native-terminal.md). Kept mounted after
+         first open — unmounting would lose xterm scrollback. -->
+    <section
+      v-if="terminalEverOpened"
+      ref="terminalPanelEl"
+      class="terminal-panel"
+      :class="{ open: terminalOpen, 'no-anim': terminalDragging || terminalSwitching }"
+      role="region"
+      :aria-label="t('terminal.panelAria')"
+      :aria-hidden="!terminalOpen"
+      :inert="!terminalOpen"
+    >
+      <TerminalResizeHandle
+        v-if="terminalOpen"
+        :storage-key="TERMINAL_HEIGHT_KEY"
+        :default-height="TERMINAL_DEFAULT_HEIGHT"
+        :min="TERMINAL_MIN"
+        :max="terminalMax"
+        :aria-label="t('terminal.resizeAria')"
+        :apply-live="applyTerminalHeightLive"
+        @update:height="terminalHeight = $event"
+        @update:dragging="terminalDragging = $event"
+      />
+      <TerminalPanel :cwd="terminalCwd" />
+    </section>
 
     <!-- Model Picker overlay -->
     <ModelPicker
@@ -1601,6 +1796,10 @@ function openPr(url: string): void {
      new template. Every column is pinned explicitly (grid-column 1–5) so a
      display:none handle can't shift auto-placement. */
   grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
+  /* Row 1: the whole app chrome (sidebar / conversation / right panel).
+     Row 2: the bottom terminal panel (auto = follows its own height, 0 when
+     collapsed) — desktop-only, see .terminal-panel. */
+  grid-template-rows: minmax(0, 1fr) auto;
   background: var(--bg);
   color: var(--color-text);
   overflow: hidden;
@@ -1625,11 +1824,14 @@ function openPr(url: string): void {
 }
 
 /* Pin every desktop grid child to its track so auto-placement can never
-   reshuffle columns when a handle is display:none (v-show/v-if). */
-.app > .side { grid-column: 1; }
-.side-handle { grid-column: 2; }
-.app:not(.mobile) > .con { grid-column: 3; }
-.preview-handle { grid-column: 4; }
+   reshuffle columns when a handle is display:none (v-show/v-if). The sidebar
+   and the right panel span BOTH rows — the terminal panel only takes the
+   conversation column's bottom slot (VS Code layout: panel sits under the
+   editor, side chrome keeps full height). */
+.app > .side { grid-column: 1; grid-row: 1 / -1; }
+.side-handle { grid-column: 2; grid-row: 1 / -1; }
+.app:not(.mobile) > .con { grid-column: 3; grid-row: 1; }
+.preview-handle { grid-column: 4; grid-row: 1 / -1; }
 
 /* Sidebar toggle — floating button pinned to the top-left corner. On macOS
    desktop it is resident (rendered in both states beside the traffic lights);
@@ -1708,6 +1910,7 @@ function openPr(url: string): void {
 .global-preview {
   --preview-w: 460px;
   grid-column: 5;
+  grid-row: 1 / -1;
   min-width: 0;
   min-height: 0;
   width: 0;
@@ -1730,6 +1933,41 @@ function openPr(url: string): void {
   width: auto;
   transition: none;
   border-top: 0.5px solid var(--color-text);
+}
+
+/* The bottom terminal panel row (desktop-only): same 0 ↔ var(--terminal-h)
+   transition mechanism as the right aside. It occupies ONLY the conversation
+   column's bottom slot — the sidebar and right panel span both rows above.
+   --terminal-h lives on this element (set inline), scoping drag-time style
+   recalculation to the panel subtree. */
+.terminal-panel {
+  --terminal-h: 260px;
+  grid-column: 3;
+  grid-row: 2;
+  min-height: 0;
+  height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  border-top: 0.5px solid transparent;
+  overflow: hidden;
+  transition: height var(--duration-slow) var(--ease-in-out);
+}
+.terminal-panel.open {
+  height: var(--terminal-h);
+  border-top-color: var(--color-line);
+}
+.terminal-panel.no-anim {
+  transition: none;
+}
+.terminal-panel > .tp {
+  flex: 1;
+  min-height: 0;
+}
+/* The mobile layout has no terminal panel (its toggle is a no-op there) —
+   hide rather than unmount so xterm scrollback survives a viewport dip. */
+.app.mobile .terminal-panel {
+  display: none;
 }
 </style>
 

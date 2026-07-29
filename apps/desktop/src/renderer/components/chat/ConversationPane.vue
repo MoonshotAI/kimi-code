@@ -13,15 +13,17 @@ import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
-import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
 import { isFindKeyEvent } from '../../lib/transcriptSearch';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
+import type { TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
 
@@ -136,6 +138,7 @@ const emit = defineEmits<{
   login: [];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
+  openTurnDiff: [change: TurnFileChange];
   openCompaction: [target: { turnId: string }];
   openAgent: [toolCallId: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
@@ -1875,6 +1878,11 @@ function selectAllRegion(target: EventTarget | null): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  // The desktop native terminal owns these chords while focused (vim/less/
+  // fzf/tmux input); no .terminal-host exists on web — a no-op there.
+  if (event.target instanceof Element && event.target.closest('.terminal-host') !== null) {
+    return;
+  }
   // Escape is owned by whatever sits above the conversation: a modal layer
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier
@@ -2042,6 +2050,16 @@ function onAbortOutcome(aborted: boolean): void {
   maybeFireAutoUndo();
 }
 
+// Native terminal toggle for the empty-composer state (desktop-only fork):
+// no ChatHeader renders there, so the panel's entry floats top-right instead.
+const terminalStore = useNativeTerminal();
+const showEmptyTerminalToggle = computed(
+  () => !props.mobile && terminalStore.available && props.turns.length === 0 && !props.sessionLoading,
+);
+function toggleTerminalPanel(): void {
+  terminalStore.toggle(props.workspaceRoot);
+}
+
 defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion });
 </script>
 
@@ -2083,6 +2101,18 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
       class="empty-drag"
       :class="{ 'macos-desktop': isMacosDesktop }"
     />
+    <!-- Empty-composer terminal entry (desktop-only fork): with no ChatHeader
+         rendered, the panel toggle floats top-right instead. Must come AFTER
+         the .empty-drag band so its no-drag hole subtracts as usual. -->
+    <IconButton
+      v-if="showEmptyTerminalToggle"
+      class="empty-terminal-btn"
+      :class="{ open: terminalStore.open.value }"
+      :label="t('terminal.toggle')"
+      @click="toggleTerminalPanel"
+    >
+      <Icon name="terminal" size="sm" />
+    </IconButton>
 
     <!-- Conversation outline: right edge rail of vertical bars (one per user
          query); hover to expand a labeled panel. -->
@@ -2241,6 +2271,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               ref="chatPaneRef"
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
+              :cwd="status.cwd"
               :approvals="approvals"
               :questions="questions"
               :turn-active="turnActive"
@@ -2256,6 +2287,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               :interrupted-turn-id="interruptedTurnId"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
+              @open-turn-diff="emit('openTurnDiff', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
@@ -2395,6 +2427,22 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
 .empty-drag.macos-desktop {
   -webkit-app-region: drag;
 }
+
+/* Floating terminal toggle for the empty-composer state (desktop-only): same
+   icon-button geometry and open-state language as the ChatHeader control it
+   stands in for; top-right, mirroring the floating sidebar toggle's slot. */
+.empty-terminal-btn {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+  z-index: var(--z-sticky);
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-sm);
+  -webkit-app-region: no-drag;
+}
+.empty-terminal-btn :deep(svg) { width: var(--p-ic-sm); height: var(--p-ic-sm); }
+.empty-terminal-btn.open { background: var(--color-well); color: var(--color-text); }
 
 .panes {
   flex: 1;

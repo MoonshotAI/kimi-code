@@ -3,6 +3,19 @@ import { onMounted, onUnmounted } from 'vue';
 import { ICON_GROUPS } from '../lib/icons';
 import { Icon } from '@moonshot-ai/web-ui';
 import WorkingIndicator from '../components/chat/WorkingIndicator.vue';
+import TurnFilesSummary from '../components/chat/TurnFilesSummary.vue';
+import type { TurnFileChange } from '../components/chatTurnRendering';
+
+// A fixed sample for the §04 turn-files summary stage: a complete-stats file, a
+// Write (unknowable overwrite), and a fourth row collapsed behind "more files".
+const turnFilesDemo: TurnFileChange[] = [
+  { path: '/repo/apps/web/src/components/chat/TurnFilesSummary.vue', added: 19, removed: 4, hasWrite: false, statsIncomplete: false, diff: null },
+  { path: '/repo/apps/web/src/composables/useFilePreview.ts', added: 8, removed: 1, hasWrite: false, statsIncomplete: false, diff: null },
+  { path: '/repo/apps/web/src/components/chatTurnRendering.ts', added: 0, removed: 0, hasWrite: true, statsIncomplete: true, diff: null },
+  { path: '/repo/apps/web/src/lib/toolDiff.ts', added: 3, removed: 2, hasWrite: false, statsIncomplete: false, diff: null },
+];
+const turnFilesDemoCwd = '/repo';
+function noopOpenFile(): void {}
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -1272,7 +1285,17 @@ onUnmounted(() => {
               <li>Status keeps the shared vocabulary: running (pulsing accent dot) / done (green ✓) / failed (red ✗), at the line's right edge. <b>Only two types keep a full card</b>: <code>Question</code> and <code>Approval</code> — they genuinely need the user's attention. The Swarm composite keeps one quiet card (raised surface, 0.5px hairline, large radius) for its phase overview + member accordion.</li>
               <li><b>A task notification is a status card, not a quiet line</b> (<code>NotificationCard.vue</code>): the hidden <code>&lt;notification&gt;</code> injections (background-task / sub-agent settlement) render where they landed in the turn — a 28px status chip + title/sub head tinted with the toast status token pairs (completed → success, failed / timed_out / lost → danger, killed → warning, else neutral surface), expanding in place to the fields, the body, an output-file row (copy path) and the raw payload. ≥2 CONSECUTIVE notifications merge into one neutral group card (count + per-item status dots + compact rows, each expanding on its own). Notifications break the activity run but are never turn boundaries, and they <b>never fold</b> — a notification is an event worth noticing, not process noise, so it punches out of the turn fold and renders right after the fold row, in order.</li>
               <li><b>A goal-continuation turn carries a provenance row</b>: the hidden <code>goal_continuation</code> trigger (goal mode's self-driven next turn — a turn boundary, unlike task notifications) never renders its machine prompt; instead the assistant turn it opens shows one faint 12px line flush with the stream's left edge — the <code>target</code> glyph shared with the Goal tool (this turn belongs to the goal) + a localized label — ABOVE the turn's content and OUTSIDE the turn fold, so the row survives as the turn's provenance after settling. The marker lands with the trigger (before the first assistant block), and while the newest exchange is a goal-continuation turn the undo affordances (edit-and-resend, Esc undo) are suppressed — rewinding would drop the hidden trigger while refilling the older user text.</li>
+              <li><b>A settled turn's file changes are one summary card</b> (<code>TurnFilesSummary.vue</code>): between the turn's final text and its footer, a §03 <code>Card</code> (hairline border, no shadow — NOT the quiet tool line, the artifacts are worth a discrete object) lists every file the turn's Edit / Write calls touched. The head reads "N files changed" with the aggregate <code>+A −D</code> and the mini diffbar; the aggregate hides whenever any row's stats are incomplete (a Write or an underivable edit makes the total a lower bound, never presented as exact). Each row is one clickable workspace-relative path (short and self-locating; a file outside the cwd stays absolute) with its per-file <code>+A −D</code> at the right edge. The row's action keys on the tool kind, and the stats tell it apart: a <b>Write</b> has no per-file count (its diff is underivable) and opens the whole file in the preview; an <b>Edit / MultiEdit</b> carries its <code>+A −D</code> and opens that file's <b>turn diff</b> in the right-side detail layer (<code>TurnDiffPanel.vue</code> — the turn's own X→Y change, not the git diff), whose header keeps an open-file action. The first three files show inline; the rest collapse behind a "N more files" ghost-button row in the card's foot. Where nothing handles the row action (the BTW side chat), the card renders its file rows as plain text instead of links.</li>
             </ul>
+
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Turn files summary · a real TurnFilesSummary (fixed sample)</span></div>
+              <div class="stage p col">
+                <div style="max-width:560px;width:100%">
+                  <TurnFilesSummary :changes="turnFilesDemo" :cwd="turnFilesDemoCwd" @open-diff="noopOpenFile" @open-file="noopOpenFile" />
+                </div>
+              </div>
+            </div>
 
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Tool Call · quiet lines (expand on demand)</span></div>
@@ -1444,7 +1467,7 @@ onUnmounted(() => {
             </p>
 
             <h3 class="sub">Layout grid</h3>
-            <p>On desktop it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent <code>auto</code> track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles.</p>
+            <p>On web it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent <code>auto</code> track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles. (The desktop app adds a second row for its terminal panel — desktop-only, see below.)</p>
             <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">App.vue · .app</span></div><pre>grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
     /*         sidebar ↑    ↑handle  ↑conversation  ↑handle ↑right panel (auto) */</pre></div>
             <table class="dt">
@@ -1551,6 +1574,15 @@ onUnmounted(() => {
               <li>Panel head: bold mono title + optional muted subtitle + middle slot (Badge / control / path) + close IconButton on the right.</li>
               <li>When opened, the panel width snaps from <code>0 → var(--preview-w)</code> with no animation, squeezing the conversation column in a single layout.</li>
               <li>At ≤640px the panel becomes a full-screen overlay (<code>position:fixed; inset:0</code>).</li>
+            </ul>
+
+            <h3 class="sub">Bottom terminal panel (desktop-only)</h3>
+            <p>The native terminal (<code>components/terminal/</code>) sits in the conversation column's own bottom grid slot — the sidebar and the right panel span BOTH rows and keep full height (the VS Code layout: the panel belongs to the editor area, not to the whole window). Its height transitions <code>0 ↔ var(--terminal-h)</code> (260px default, 120 min, 60% viewport max; persisted), squeezing the conversation column above instead of overlaying it. The panel mounts lazily on first open and then stays mounted so xterm scrollback survives a collapse.</p>
+            <ul class="clean">
+              <li>Resize: a horizontal twin of the ResizeHandle (4px strip over the 0.5px top hairline, <code>row-resize</code> mid-range, <code>n/s-resize</code> at the limits, same neutral f2/f3 ramp, never accent). The shared <code>useResizable</code> hook owns it via <code>axis: 'y'</code>; the height var is written imperatively during a drag (same no-Vue-rerender rule as <code>--preview-w</code>).</li>
+              <li>Toolbar (32px, 0.5px bottom hairline): tab strip on the left — each tab is a compact <code>radius-sm</code> pill (leading terminal glyph, muted while exited + shell label + hover close affordance), the active tab uses <code>--color-selected</code>, hover <code>--color-hover</code>; a "+" action appends a tab. Tabs follow the §08 tablist keyboard model (roving tabindex, ←/→/Home/End), the close affordance is its own button (no nested interactives), and the height separator is keyboard-operable (↑/↓ in steps, value exposed). Trailing actions: restart (only while the active tab exited) and a collapse chevron. Collapsing sets <code>inert</code> on the region — the xterm instances and their scrollback stay mounted but leave the tab order.</li>
+              <li>The xterm canvas cannot resolve CSS variables either, so its palette is resolved from the live <code>--color-*</code> tokens at runtime (re-read on scheme flips; the ANSI hues the status ramp doesn't cover use dedicated <code>--color-term-magenta/cyan</code> tokens); the font is the app JetBrains Mono stack sized off the content token scale. While focused, the panel owns every key except the registered app shortcuts (chat-level Esc / find / select-all chords stay inert inside it).</li>
+              <li>Entries: the chat header's terminal IconButton (right of Open in, lit while the panel is open) — on the empty-composer state, where no chat header renders, the same button floats at the conversation's top-right instead — plus <code>ctrl+`</code> (⌃` on macOS — VS Code's binding; ⌘` stays free for the OS window switcher — customizable in the shortcut registry), and the View menu's Toggle Terminal item. New tabs spawn in the visible workspace root. Terminal state is per session: switching sessions swaps the visible bucket while the others keep their PTYs and xterm views alive (scrollback survives a round trip; the ten most recent sessions are kept, LRU). The panel never renders on mobile / web.</li>
             </ul>
 
             <div class="callout info"><span class="ico">i</span><div>

@@ -28,7 +28,7 @@ function normalizeForwardSlashes(path: string): string {
   return path.replaceAll(/\/{2,}/g, '/');
 }
 
-function isWindowsPath(path: string): boolean {
+export function isWindowsPath(path: string): boolean {
   return WINDOWS_DRIVE.test(path) || path.startsWith('\\\\') || path.startsWith('//');
 }
 

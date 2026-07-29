@@ -1243,26 +1243,34 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * Create a session and immediately submit the first prompt.
    * This is the unified path when there is no active session (e.g. after
    * clicking "+" or in an empty workspace).
+   * Returns the created session id (null when nothing was created) so callers
+   * can anchor follow-up state to the exact session.
    */
   async function startSessionAndSendPrompt(
     workspaceId: string,
     text: string,
     attachments?: PromptAttachment[],
-  ): Promise<void> {
+  ): Promise<string | null> {
     // Guard the whole "create draft session + submit first prompt" flow: the
     // session id doesn't exist until `createDraftSession` resolves, so the
     // per-session in-flight guard can't cover this window. A
     // second Enter / send-button click in that window would otherwise fire a
     // concurrent first POST for the same new session and trip the daemon's
     // `turn.agent_busy` race.
-    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return null;
     startingFirstPromptWorkspaces.add(workspaceId);
+    let createdId: string | null = null;
     try {
       const sid = await createDraftSession(workspaceId);
-      if (!sid) return;
+      if (!sid) return null;
+      createdId = sid;
       await submitPromptInternal(sid, text, attachments);
+      return sid;
     } catch (err) {
+      // The session may already exist (and be selected) when the failure
+      // came after creation — callers still anchor to it.
       pushOperationFailure('startSessionAndSendPrompt', err);
+      return createdId;
     } finally {
       startingFirstPromptWorkspaces.delete(workspaceId);
     }
@@ -1280,15 +1288,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     workspaceId: string,
     skillName: string,
     args?: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     // Same reentry window as startSessionAndSendPrompt (see the guard there):
     // draft-session creation selects the new session before the activation,
     // so concurrent first actions must be dropped here.
-    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return null;
     startingFirstPromptWorkspaces.add(workspaceId);
+    let createdId: string | null = null;
     try {
       const sid = await createDraftSession(workspaceId);
-      if (!sid) return;
+      if (!sid) return null;
+      createdId = sid;
       // Unlike a plain prompt, skill activation only carries `args`, so the
       // daemon never sees the prompt-time controls the user may have changed on
       // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
@@ -1321,10 +1331,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       );
       // The persist surfaces its own failure; activating at a stale profile
       // effort is worse than not activating (the finally still re-arms below).
-      if (!persisted) return;
+      // The session itself exists either way — return it regardless.
+      if (!persisted) return sid;
       await modelProvider.activateSkill(skillName, args, sid);
+      return sid;
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
+      return createdId;
     } finally {
       startingFirstPromptWorkspaces.delete(workspaceId);
     }
@@ -1342,16 +1355,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function startSessionAndOpenSideChat(
     workspaceId: string,
     prompt?: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     // Same reentry window as startSessionAndSendPrompt (see the guard there).
-    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return null;
     startingFirstPromptWorkspaces.add(workspaceId);
+    let createdId: string | null = null;
     try {
       const sid = await createDraftSession(workspaceId);
-      if (!sid) return;
+      if (!sid) return null;
+      createdId = sid;
       await sideChat.openSideChatOn(sid, prompt);
+      return sid;
     } catch (err) {
       pushOperationFailure('startSessionAndOpenSideChat', err);
+      return createdId;
     } finally {
       startingFirstPromptWorkspaces.delete(workspaceId);
     }
@@ -2337,22 +2354,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     setGoalMode(!current);
   }
 
-  /** Create a goal by sending its objective to the session profile, then submit it as a prompt. */
-  async function createGoal(objective: string): Promise<void> {
+  /** Create a goal by sending its objective to the session profile, then submit it as a prompt.
+   *  Returns the id of the session this call created (null when it used the
+   *  active session or created none) so callers can anchor follow-up state. */
+  async function createGoal(objective: string): Promise<string | null> {
     const trimmed = objective.trim();
-    if (!trimmed) return;
+    if (!trimmed) return null;
     if (rawState.permission === 'manual') {
       const ok = await confirm({
         title: t('workspace.goalStartTitle'),
         message: t('workspace.goalStartConfirm', { objective: trimmed }),
         variant: 'primary',
       });
-      if (!ok) return;
+      if (!ok) return null;
     }
     // Empty-composer heal: `/goal <objective>` from the new-session screen
     // would otherwise silently clear and run nothing. Create the session first
     // (same path as the first prompt / a new-session skill), then target it.
     let sid = rawState.activeSessionId;
+    let createdId: string | null = null;
     if (!sid) {
       // Use the same fallback as the client-wide computed activeWorkspaceId
       // (raw value if it exists, else the first sidebar-visible workspace). On a
@@ -2366,24 +2386,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         raw && workspacesView.value.some((w) => w.id === raw)
           ? raw
           : (workspacesView.value[0]?.id ?? null);
-      if (!wsId) return;
+      if (!wsId) return null;
       // App.vue invokes createGoal fire-and-forget, so a rejection here would
       // otherwise surface as an unhandled rejection instead of an operation
       // failure. Mirror the other draft-session paths (skill / BTW / first
       // prompt) which wrap createDraftSession.
       try {
         sid = (await createDraftSession(wsId)) ?? undefined;
+        createdId = sid ?? null;
       } catch (err) {
         pushOperationFailure('createGoal', err);
-        return;
+        return null;
       }
-      if (!sid) return;
+      if (!sid) return null;
     }
     try {
       await getKimiWebApi().updateSession(sid, { goalObjective: trimmed });
     } catch (err) {
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
-      return;
+      return createdId;
     }
     // The goal objective is set explicitly above. If goal mode was staged on the
     // draft (e.g. the user ran bare `/goal`, then `/goal <objective>`),
@@ -2409,6 +2430,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } else {
       await submitPromptInternal(sid, trimmed);
     }
+    return createdId;
   }
 
   /** Send a one-shot goal control action (pause/resume/cancel). */
@@ -2857,6 +2879,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // Absolute-path read via the daemon's global fs:content — no workspace prefix
+  // gate, so a file the turn touched outside the active cwd (e.g. a worktree)
+  // opens too. Throws on daemon not-found so the preview can show the real cause.
+  async function readHostFileContent(path: string) {
+    return getKimiWebApi().readHostFileContent(path);
+  }
+
   // Matches the daemon's FS_READ_MAX_BYTES. Without an explicit length the
   // protocol defaults to 1MiB and silently truncates — half a PNG decodes as a
   // broken image, which is worse than falling back to the original src.
@@ -3029,6 +3058,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     undo,
     listDir,
     readFileContent,
+    readHostFileContent,
     getFileDownloadUrl,
     openWorkspaceFile,
     openInApp,

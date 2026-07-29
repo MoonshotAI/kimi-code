@@ -5,13 +5,30 @@
 import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi } from '../api';
+import { isDaemonApiError } from '../api/errors';
+import { pathRelativeTo } from '../lib/pathRelativeTo';
 import type { FileData, FilePreviewRequest, ToolMedia } from '../types';
 import type { useKimiWebClient } from './useKimiWebClient';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
 
+// Daemon FS_PATH_NOT_FOUND (see kap-server protocol/error-codes): the global
+// fs:content reports a genuinely-absent absolute path with this code.
+const FS_PATH_NOT_FOUND = 40409;
+
+function isNotFoundError(err: unknown): boolean {
+  return isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND;
+}
+
+// A tool-reported absolute path: POSIX (`/x`), a Windows drive (`C:\x`/`C:/x`),
+// or a UNC share (`\\host\x`). The daemon's global fs:content takes these as-is;
+// anything else is workspace-relative and stays on the session fs:read path.
+function isAbsoluteToolPath(path: string): boolean {
+  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\');
+}
+
 /** Which occupant currently owns the shared right-side detail layer. */
-export type DetailTarget = 'file' | 'diff' | 'compaction' | 'agent' | 'btw';
+export type DetailTarget = 'file' | 'diff' | 'turn-diff' | 'compaction' | 'agent' | 'btw';
 
 export interface UseFilePreviewOptions {
   client: KimiWebClient;
@@ -47,10 +64,24 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
     const path = previewNormalizedPath.value;
     return path ? client.getFileDownloadUrl(path) : null;
   });
-  const previewExternalActions = computed(() => previewTarget.value !== null);
+  // Open-in-editor / reveal go through the session-relative fs:open/:reveal, so
+  // they only work for a file inside the workspace (previewNormalizedPath set);
+  // hide them for a genuinely-external absolute path those endpoints can't serve.
+  const previewExternalActions = computed(
+    () => previewTarget.value !== null && previewNormalizedPath.value !== null,
+  );
 
   function trimTrailingSlash(path: string): string {
     return path.length > 1 ? path.replace(/\/+$/, '') : path;
+  }
+
+  // The workspace-relative form of an in-cwd absolute path, or null when the
+  // file lives outside the active workspace (no servable download URL then).
+  function workspaceRelativePath(absPath: string): string | null {
+    const relative = pathRelativeTo(absPath, client.status.value.cwd);
+    if (relative === null || relative.split(/[\\/]+/).includes('..')) return null;
+    const rel = normalizeRelativePath(relative);
+    return rel || null;
   }
 
   function normalizeRelativePath(path: string): string {
@@ -98,13 +129,17 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   }
 
   async function openFilePreview(target: FilePreviewRequest): Promise<void> {
-    // Clicking the link for the already-open file toggles the panel closed.
+    // Clicking the link for the already-open file toggles the panel closed. The
+    // identity includes allowHostRead: a chat link that failed outsideWorkspace
+    // (no opt-in) and the summary's trusted open of the SAME path are different
+    // requests — the trusted one must read, not toggle the error panel shut.
     const current = previewTarget.value;
     if (
       detailTarget.value === 'file' &&
       current &&
       current.path === target.path &&
-      current.line === target.line
+      current.line === target.line &&
+      (current.allowHostRead ?? false) === (target.allowHostRead ?? false)
     ) {
       closeFilePreview();
       return;
@@ -133,6 +168,60 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
         size: target.content.length,
       };
       return;
+    }
+
+    // An opted-in (allowHostRead) parent-relative path ("../shared/x.ts") has
+    // no absolute form yet — resolve it against the cwd so the absolute-path
+    // branch below can read it via fs:content; a non-opted-in one stays
+    // confined (normalizePreviewPath rejects the "..").
+    if (
+      target.allowHostRead &&
+      !isAbsoluteToolPath(target.path) &&
+      target.path.split(/[\\/]+/).includes('..')
+    ) {
+      const cwd = trimTrailingSlash(client.status.value.cwd);
+      if (cwd) target = { ...target, path: `${cwd}/${target.path}` };
+    }
+
+    // Absolute path. An in-workspace file relativizes and falls through to the
+    // session path below (which also serves its download URL / open / reveal).
+    // A genuinely-external file reads via the daemon's global fs:content ONLY
+    // when the caller opted in (allowHostRead — the turn's file-change summary,
+    // whose paths the agent touched); an ordinary chat / Markdown link to an
+    // outside path stays confined (outsideWorkspace).
+    if (isAbsoluteToolPath(target.path)) {
+      const relPath = workspaceRelativePath(target.path);
+      if (relPath !== null) {
+        target = { ...target, path: relPath };
+      } else if (!target.allowHostRead) {
+        previewLoading.value = false;
+        previewError.value = t('filePreview.errors.outsideWorkspace');
+        return;
+      } else {
+        try {
+          const result = await client.readHostFileContent(target.path);
+          if (requestSeq !== previewRequestSeq) return;
+          previewNormalizedPath.value = null;
+          previewFile.value = {
+            path: target.path,
+            content: result.content,
+            encoding: result.encoding,
+            mime: result.mime,
+            isBinary: result.isBinary,
+            size: result.size,
+          };
+        } catch (err) {
+          if (requestSeq !== previewRequestSeq) return;
+          previewError.value = isNotFoundError(err)
+            ? t('filePreview.errors.notFound')
+            : err instanceof Error
+              ? err.message
+              : t('filePreview.errors.loadFailed');
+        } finally {
+          if (requestSeq === previewRequestSeq) previewLoading.value = false;
+        }
+        return;
+      }
     }
 
     const normalized = normalizePreviewPath(target.path);

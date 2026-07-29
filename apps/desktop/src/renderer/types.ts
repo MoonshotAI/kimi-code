@@ -195,6 +195,12 @@ export interface FilePreviewRequest {
    *  daemon read — used for files the daemon can't serve (e.g. plan files
    *  living outside the workspace root). */
   content?: string;
+  /** Permit reading an OUT-of-workspace absolute path via the daemon's global
+   *  fs:content. Only trusted callers (the turn's file-change summary, whose
+   *  paths the agent itself touched) set this — ordinary chat / Markdown file
+   *  links stay confined to the workspace. In-workspace absolute paths are
+   *  unaffected either way. */
+  allowHostRead?: boolean;
 }
 
 /** Metadata carried by a cron fire — shared by a standalone cron turn and by a
@@ -355,7 +361,7 @@ export interface ConversationStatus {
 
 /** Kind of the global right-side detail layer. Only one detail is visible at a
  *  time; opening a new one closes the previous. */
-export type DetailTarget = 'file' | 'diff' | 'compaction' | 'agent' | 'btw';
+export type DetailTarget = 'file' | 'diff' | 'turn-diff' | 'compaction' | 'agent' | 'btw';
 
 export interface ActivationBadges {
   plan: boolean;

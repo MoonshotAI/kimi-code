@@ -64,6 +64,11 @@ Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls O
   接线后回放；退出时 `app.ts` 的 before-quit 屏障只等待 `telemetry.shutdown()`（自带 3s 上限）
   完成最终 flush——不等待整个 server close（那才是曾经的 quit 卡顿源）。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。
+- `src/main/terminal.ts` — 内置终端（desktop 专属）：主进程 `node-pty` 直接托管 PTY（不经内嵌
+  server），`kimi:terminal-*` IPC 六通道；shell 解析 POSIX `$SHELL` / Windows
+  pwsh→powershell→cmd，GUI 启动缺 locale 时补 `LANG`；before-quit 与 renderer 重载时全清。
+  renderer 侧 `src/renderer/composables/useNativeTerminal.ts` + `src/renderer/components/terminal/`
+  底部面板（⌃\` 切换），均为 desktop 专属文件。
 - `src/main/preload.ts` — contextIsolation 下的白名单 IPC（主题、菜单/快捷键转发等）。
 - `src/renderer/` — web UI 副本（构建源）。`components/KimiMascot.vue`、`lib/riveInputs.ts`
   与 `assets/mascot/` 是 desktop 专属的小蓝 mascot 组件（原桌宠功能已移除，组件暂未接入

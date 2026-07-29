@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  app: { getLocale: vi.fn(() => 'en') },
   dialog: {
     showOpenDialog: mocks.showOpenDialog,
     showSaveDialog: mocks.showSaveDialog,
@@ -38,6 +39,7 @@ vi.mock('../../src/main/window', () => ({
   getMainWindow: vi.fn(() => null),
   showMainWindow: mocks.showMainWindow,
   applyWindowVibrancy: mocks.applyWindowVibrancy,
+  sendToRenderer: vi.fn(),
 }));
 vi.mock('../../src/main/connect', () => ({ readServerToken: vi.fn() }));
 vi.mock('../../src/main/open-in', () => ({
@@ -68,10 +70,18 @@ vi.mock('../../src/main/menu', () => ({
   setMenuLocale: vi.fn(),
   setMenuShortcuts: vi.fn(),
   setMenuSuspended: vi.fn(),
+  setTerminalMenuFocus: vi.fn(),
+  onTerminalMenuFocus: vi.fn(),
 }));
 vi.mock('../../src/main/shortcuts', () => ({
   setGlobalShortcut: mocks.setGlobalShortcut,
   setGlobalShortcutSuspended: vi.fn(() => true),
+  setGlobalShortcutTerminalFocus: vi.fn(),
+}));
+vi.mock('../../src/main/shell-env', () => ({ startShellEnvProbe: vi.fn() }));
+vi.mock('../../src/main/terminal', () => ({
+  getTerminalManager: vi.fn(),
+  initTerminalManager: vi.fn(),
 }));
 vi.mock('../../src/main/ui-state', () => ({
   isVibrancyEnabled: vi.fn(() => true),

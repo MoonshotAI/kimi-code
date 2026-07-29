@@ -25,8 +25,15 @@ import { trackDesktopEvent } from './track';
 
 let currentBinding: string | null = null;
 let registeredAccelerator: string | null = null;
-let suspended = false;
+let recordingSuspended = false;
+let terminalSuspended = false;
 let deferredBinding: string | null | undefined = undefined;
+
+// Two independent suspensions (shortcut recording, terminal focus) — either
+// one holds the registration down; it only comes back once BOTH lift.
+function isSuspended(): boolean {
+  return recordingSuspended || terminalSuspended;
+}
 
 function deactivate(): void {
   if (registeredAccelerator !== null) {
@@ -71,7 +78,7 @@ function activate(binding: string): boolean {
  *  deferred to the next resume while suspended — the resume then reports the
  *  outcome), so the renderer can flag bindings that will never fire. */
 export function setGlobalShortcut(binding: string | null): boolean {
-  if (suspended) {
+  if (isSuspended()) {
     deferredBinding = binding;
     return true;
   }
@@ -87,22 +94,9 @@ export function setGlobalShortcut(binding: string | null): boolean {
   return false;
 }
 
-/** Suspend (true) or resume (false) the global shortcut while the settings
- *  panel records a shortcut — the live OS-level combo would otherwise be
- *  consumed by the system and never reach the recorder. Resume tries the
- *  deferred push when one arrived mid-recording, otherwise the committed
- *  binding, and reports whether the requested binding went live: false means
- *  the OS refused it (the committed binding was restored instead, so the
- *  panel can roll its override back). */
-export function setGlobalShortcutSuspended(nextSuspended: boolean): boolean {
-  if (suspended === nextSuspended) {
-    return true;
-  }
-  suspended = nextSuspended;
-  if (suspended) {
-    deactivate();
-    return true;
-  }
+/** Re-activate once a suspension lifts — but only when BOTH are off. */
+function resumeIfUnsuspended(): boolean {
+  if (isSuspended()) return true;
   const binding = deferredBinding !== undefined ? deferredBinding : currentBinding;
   deferredBinding = undefined;
   if (binding === null) {
@@ -119,6 +113,38 @@ export function setGlobalShortcutSuspended(nextSuspended: boolean): boolean {
     void activate(currentBinding);
   }
   return false;
+}
+
+/** Suspend (true) or resume (false) the global shortcut while the settings
+ *  panel records a shortcut — the live OS-level combo would otherwise be
+ *  consumed by the system and never reach the recorder. Resume tries the
+ *  deferred push when one arrived mid-recording, otherwise the committed
+ *  binding, and reports whether the requested binding went live: false means
+ *  the OS refused it (the committed binding was restored instead, so the
+ *  panel can roll its override back). */
+export function setGlobalShortcutSuspended(nextSuspended: boolean): boolean {
+  if (recordingSuspended === nextSuspended) {
+    return true;
+  }
+  recordingSuspended = nextSuspended;
+  if (recordingSuspended) {
+    deactivate();
+    return true;
+  }
+  return resumeIfUnsuspended();
+}
+
+/** Terminal xterm focus: an OS-registered summon chord would be eaten by the
+ *  system before the PTY ever sees it, so it suspends alongside the menu
+ *  accelerators (wired via the menu.ts terminal-focus hook in ipc.ts). */
+export function setGlobalShortcutTerminalFocus(focused: boolean): void {
+  if (terminalSuspended === focused) return;
+  terminalSuspended = focused;
+  if (terminalSuspended) {
+    deactivate();
+    return;
+  }
+  void resumeIfUnsuspended();
 }
 
 export function unregisterGlobalShortcuts(): void {

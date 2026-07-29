@@ -29,6 +29,7 @@ export const IPC = {
   locale: 'kimi:locale',
   menuShortcut: 'kimi:menu-shortcut',
   menuSuspend: 'kimi:menu-suspend',
+  menuTerminalFocus: 'kimi:menu-terminal-focus',
   globalShortcut: 'kimi:global-shortcut',
   globalShortcutSuspend: 'kimi:global-shortcut-suspend',
   setOnboarded: 'kimi:set-onboarded',
@@ -39,6 +40,12 @@ export const IPC = {
   jumpList: 'kimi:jump-list',
   launchAction: 'kimi:launch-action',
   track: 'kimi:track',
+  terminalCreate: 'kimi:terminal-create',
+  terminalInput: 'kimi:terminal-input',
+  terminalResize: 'kimi:terminal-resize',
+  terminalClose: 'kimi:terminal-close',
+  terminalOutput: 'kimi:terminal-output',
+  terminalExit: 'kimi:terminal-exit',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -63,4 +70,6 @@ export type RendererEventChannel =
   | typeof IPC.updateStatus
   | typeof IPC.traySelectSession
   | typeof IPC.launchAction
-  | typeof IPC.osAppearanceChanged;
+  | typeof IPC.osAppearanceChanged
+  | typeof IPC.terminalOutput
+  | typeof IPC.terminalExit;
