@@ -4,7 +4,6 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { abortable, userCancellationReason } from '#/_base/utils/abort';
 import type {
   AgentTask,
   AgentTaskInfo,
@@ -113,10 +112,6 @@ function outputSnapshot(
 interface FakeTaskEntry {
   info: AgentTaskInfo;
   output: AgentTaskOutputSnapshot;
-  wait?: (
-    timeoutMs: number | undefined,
-    signal: AbortSignal | undefined,
-  ) => Promise<void>;
 }
 
 class FakeTaskService implements IAgentTaskService {
@@ -131,12 +126,8 @@ class FakeTaskService implements IAgentTaskService {
   add(
     info: AgentTaskInfo,
     output: AgentTaskOutputSnapshot = outputSnapshot(),
-    wait?: (
-      timeoutMs: number | undefined,
-      signal: AbortSignal | undefined,
-    ) => Promise<void>,
   ): string {
-    this.entries.set(info.taskId, { info, output, wait });
+    this.entries.set(info.taskId, { info, output });
     return info.taskId;
   }
 
@@ -232,12 +223,10 @@ class FakeTaskService implements IAgentTaskService {
   async wait(
     taskId: string,
     timeoutMs?: number,
-    signal?: AbortSignal,
+    _signal?: AbortSignal,
   ): Promise<AgentTaskInfo | undefined> {
     this.waitCalls.push({ taskId, timeoutMs });
-    const entry = this.entries.get(taskId);
-    await entry?.wait?.(timeoutMs, signal);
-    return entry?.info;
+    return this.entries.get(taskId)?.info;
   }
 
   async waitForForegroundRelease(
@@ -392,22 +381,18 @@ describe('TaskOutputTool', () => {
 
     expect(tool.name).toBe('TaskOutput');
     expect(TaskOutputInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);
-    expect(
-      TaskOutputInputSchema.safeParse({ task_id: 'bash-1', block: true, timeout: 0 }).success,
-    ).toBe(true);
-    expect(
-      TaskOutputInputSchema.safeParse({ task_id: 'bash-1', timeout: 3601 }).success,
-    ).toBe(false);
     expect(tool.parameters).toMatchObject({
       type: 'object',
       additionalProperties: false,
       required: ['task_id'],
       properties: {
         task_id: { type: 'string' },
-        block: { type: 'boolean' },
-        timeout: { type: 'integer' },
       },
     });
+    // The blocking wait was removed — the schema must not re-grow a
+    // block/timeout escape hatch.
+    expect(JSON.stringify(tool.parameters)).not.toContain('"block"');
+    expect(JSON.stringify(tool.parameters)).not.toContain('"timeout"');
   });
 
   it('returns error for unknown task', async () => {
@@ -464,7 +449,7 @@ describe('TaskOutputTool', () => {
 
     const result = await executeTool(
       new TaskOutputTool(tasks),
-      context('task_output_persisted', { task_id: taskId, block: true }),
+      context('task_output_persisted', { task_id: taskId }),
     );
     const output = outputString(result);
 
@@ -511,54 +496,22 @@ describe('TaskOutputTool', () => {
     expect(tasks.waitCalls).toEqual([]);
   });
 
-  it('returns timeout for block=true when a running task does not finish', async () => {
+  it('never waits for a running task, even if a stale client passes block', async () => {
     const tasks = new FakeTaskService();
     const taskId = tasks.add(processTask({ taskId: 'bash-running4' }));
 
     const result = await executeTool(
       new TaskOutputTool(tasks),
-      context('task_output_timeout', { task_id: taskId, block: true, timeout: 1 }),
+      // `block`/`timeout` are gone from the schema; a caller that still sends
+      // them is silently treated as a plain non-blocking snapshot.
+      context('task_output_not_ready', { task_id: taskId, block: true, timeout: 1 }),
     );
     const output = outputString(result);
 
     expect(result.isError ?? false).toBe(false);
-    expect(output).toContain('retrieval_status: timeout');
+    expect(output).toContain('retrieval_status: not_ready');
     expect(output).toContain('status: running');
-    expect(output).toContain('next_step:');
-    expect(output).toContain('Do not block on it again');
-    expect(tasks.waitCalls).toEqual([{ taskId, timeoutMs: 1_000 }]);
-  });
-
-  it('cancels a blocking read when the tool execution signal aborts', async () => {
-    const tasks = new FakeTaskService();
-    let markWaitStarted: () => void = () => {};
-    const waitStarted = new Promise<void>((resolve) => {
-      markWaitStarted = resolve;
-    });
-    const taskId = tasks.add(
-      processTask({ taskId: 'bash-cancel01' }),
-      outputSnapshot(),
-      (_timeoutMs, waitSignal) => {
-        markWaitStarted();
-        if (waitSignal === undefined) throw new Error('Missing tool execution signal.');
-        return abortable(new Promise<void>(() => {}), waitSignal);
-      },
-    );
-    const controller = new AbortController();
-    const execution = executeTool(
-      new TaskOutputTool(tasks),
-      context(
-        'task_output_cancelled',
-        { task_id: taskId, block: true, timeout: 60 },
-        controller.signal,
-      ),
-    );
-    await waitStarted;
-    const reason = userCancellationReason();
-
-    controller.abort(reason);
-
-    await expect(execution).rejects.toBe(reason);
+    expect(tasks.waitCalls).toEqual([]);
   });
 
   it('surfaces timeout terminal metadata', async () => {
@@ -573,7 +526,7 @@ describe('TaskOutputTool', () => {
 
     const result = await executeTool(
       new TaskOutputTool(tasks),
-      context('task_output_timed_out', { task_id: taskId, block: true }),
+      context('task_output_timed_out', { task_id: taskId }),
     );
     const output = outputString(result);
 
@@ -791,11 +744,13 @@ describe('task tool descriptions', () => {
     expectModelFacingParity(new TaskStopTool(tasks), new V1TaskStopTool({} as never));
   });
 
-  it('TaskOutput description mentions background tasks, block, output_path, and Read', () => {
+  it('TaskOutput description documents non-blocking snapshots, output_path, and Read', () => {
     const description = new TaskOutputTool(tasks).description;
 
     expect(description).toMatch(/background/i);
-    expect(description).toMatch(/block/);
+    expect(description).toMatch(/non-blocking/);
+    // The blocking wait was removed — the description must not reference it.
+    expect(description).not.toContain('block=');
     expect(description).toMatch(/output_path/);
     expect(description).toMatch(/Read/);
     expect(description).toContain('run that task in the foreground instead');
