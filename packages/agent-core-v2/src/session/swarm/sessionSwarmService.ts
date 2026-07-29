@@ -30,6 +30,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
+import { getProfileOrReload } from '#/session/sessionAgentProfileCatalog/getOrReload';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -143,8 +144,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
-    await this.catalog.ready;
-    const profile = this.catalog.get(options.profileName);
+    const profile = await getProfileOrReload(this.catalog, options.profileName);
     if (profile === undefined) {
       throw new Error(`Unknown agent type: "${options.profileName}"`);
     }

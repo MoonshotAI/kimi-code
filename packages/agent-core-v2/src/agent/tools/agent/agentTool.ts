@@ -61,6 +61,7 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { getProfileOrReload } from '#/session/sessionAgentProfileCatalog/getOrReload';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
@@ -255,7 +256,7 @@ export class SubagentTool implements ISubagentTool {
       if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
         throw new Error(subagentTypeNotAllowedMessage(requestedProfileName, allowlist));
       }
-      const profile = this.catalog.get(requestedProfileName);
+      const profile = await getProfileOrReload(this.catalog, requestedProfileName);
       if (profile === undefined) {
         throw new Error(`Unknown agent type: "${requestedProfileName}"`);
       }
