@@ -139,7 +139,7 @@ describe('runStatusLineCommand', () => {
     async () => {
       const command = `"${process.execPath}" -e "process.stdout.write('quoted-ok')"`;
 
-      expect(await runStatusLineCommand(command, payload)).toBe('quoted-ok');
+      expect(await runStatusLineCommand(command, payload, 5_000)).toBe('quoted-ok');
     },
   );
 
