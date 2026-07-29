@@ -1530,7 +1530,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
 
 <style scoped>
 .con {
-  --read-max: 760px;
+  /* The reading column follows the pane width — no fixed max-width cap, so
+     wide windows don't leave empty margins on both sides. */
+  --read-max: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
