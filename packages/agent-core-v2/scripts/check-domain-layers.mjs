@@ -112,6 +112,11 @@ const DOMAIN_LAYER = new Map([
   // hands it to each session) with no IO, so it sits in L1 beside
   // `sessionContext`.
   ['sessionInstructions', 1],
+  // `workspaceInfo` is the Session-scope seeded workspace-directory data
+  // contract (`ISessionWorkspaceInfo`): a pure data + change-event injection
+  // contract (the Workspace-scope `workspaceDirs` impl hands it to each
+  // session) with no IO, so it sits in L1 beside `sessionInstructions`.
+  ['workspaceInfo', 1],
   ['protocol', 1],
   ['hooks', 1],
   // `task` is the managed-concurrent-execution primitive (run + defer).
@@ -172,6 +177,11 @@ const DOMAIN_LAYER = new Map([
   // sit in L3 beside them.
   ['workspaceSkillCatalog', 3],
   ['workspaceAgentProfileCatalog', 3],
+  // `workspaceDirs` is the Workspace-scope owner of the handler's shared
+  // additional-directory set (local.toml load + append, caller-dir union,
+  // fs-watch refresh); its highest dependency is `projectLocalConfig` (L2),
+  // so it sits in L3 beside the other Workspace-scope resource owners.
+  ['workspaceDirs', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
   ['toolApproval', 3],

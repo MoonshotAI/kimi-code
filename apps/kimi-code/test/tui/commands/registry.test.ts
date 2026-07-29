@@ -3,6 +3,7 @@ import {
   findBuiltInSlashCommand,
   parseSlashInput,
   resolveSlashCommandAvailability,
+  addDirArgumentCompletions,
   sortSlashCommands,
   swarmArgumentCompletions,
   type KimiSlashCommand,
@@ -73,6 +74,27 @@ describe('built-in slash command registry', () => {
     expect(values('Ship feature X')).toBeNull();
   });
 
+  it('offers add-dir list and directory argument completions', () => {
+    const values = (prefix: string): string[] | null => {
+      const items = addDirArgumentCompletions(prefix);
+      return items === null ? null : items.map((item) => item.value);
+    };
+
+    expect(values('')).toEqual(['list']);
+    expect(values('L')).toEqual(['list']);
+    expect(values('list')).toBeNull();
+    const directoryCompletions = values('/') ?? [];
+    expect(directoryCompletions.length).toBeGreaterThan(0);
+    expect(directoryCompletions.every((value) => value.startsWith('/') && value.endsWith('/'))).toBe(true);
+    expect(directoryCompletions.some((value) => value.startsWith('/.'))).toBe(false);
+    expect(values('/.')).toBeNull();
+    const homeCompletions = values('~/') ?? [];
+    expect(homeCompletions.length).toBeGreaterThan(0);
+    expect(homeCompletions.every((value) => value.startsWith('~/') && value.endsWith('/'))).toBe(true);
+    expect(homeCompletions.some((value) => value.startsWith('~/.'))).toBe(false);
+    expect(homeCompletions.some((value) => value.startsWith('~/sers/'))).toBe(false);
+  });
+
   it('defaults commands without explicit availability to idle-only', () => {
     const command: KimiSlashCommand = {
       name: 'example',
@@ -126,6 +148,7 @@ describe('built-in slash command registry', () => {
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(
       expect.arrayContaining([
+        'add-dir',
         'compact',
         'btw',
         'editor',

@@ -25,6 +25,7 @@ import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceServic
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -1207,6 +1208,12 @@ export class AgentTestContext {
               ready: Promise.resolve(),
               connectionManager: new McpConnectionManager(),
             } satisfies ISessionMcpHandle);
+            reg.defineInstance(ISessionWorkspaceInfo, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              additionalDirs: [],
+              onDidChange: Event.None as Event<void>,
+            } satisfies ISessionWorkspaceInfo);
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,

@@ -13,12 +13,15 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import type { Hooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IEventService } from '#/app/event/event';
 import {
   IAgentLifecycleService,
@@ -27,6 +30,8 @@ import {
 import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -61,6 +66,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 function bootstrapStub(): IBootstrapService {
   return {
@@ -476,6 +482,13 @@ describe('WorkspaceHandlerService', () => {
       'workspaceHandler',
     );
     registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceDirs,
+      WorkspaceDirsService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceDirs',
+    );
+    registerScopedService(
       LifecycleScope.Session,
       ISessionExternalHooksService,
       NoopSessionExternalHooksService,
@@ -527,6 +540,11 @@ describe('WorkspaceHandlerService', () => {
         getSecondaryModelWarning: () => undefined,
       } as ISessionSecondaryModelWarningService),
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
+      stubPair(IHostFsWatchService, {
+        _serviceBrand: undefined,
+        watch: () => ({ onDidChange: Event.None, dispose: () => {} }),
+      } as unknown as IHostFsWatchService),
+      stubPair(ILogService, stubLog()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),
       ...extra,

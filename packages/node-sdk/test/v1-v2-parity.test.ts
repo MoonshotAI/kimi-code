@@ -1516,6 +1516,59 @@ describe('v1↔v2 session lifecycle parity', () => {
       await closeSessionPair(pair);
     }
   });
+
+  it('addAdditionalDir returns the same result for persist and non-persist', async () => {
+    const pair = await makeSessionParityPair();
+    const persistedDir = await makeTempDir('kimi-sdk-parity-extra-persisted-');
+    const sessionOnlyDir = await makeTempDir('kimi-sdk-parity-extra-session-');
+    try {
+      await createOnBoth(pair, { id: 'session_parity_adddir' });
+      // Both engines read and write the SAME workspace local config (shared
+      // workDir), so same-file mutations stay sequential — v1's write is not
+      // serialized against v2's read (same lesson as the plugin manager).
+      const v1Persisted = await pair.v1.addAdditionalDir({
+        id: 'session_parity_adddir',
+        path: persistedDir,
+        persist: true,
+      });
+      const v2Persisted = await pair.v2.addAdditionalDir({
+        id: 'session_parity_adddir',
+        path: persistedDir,
+        persist: true,
+      });
+      expect(v2Persisted).toEqual(v1Persisted);
+      expect(v1Persisted).toMatchObject({
+        additionalDirs: [persistedDir],
+        projectRoot: pair.workDir,
+        configPath: join(pair.workDir, '.kimi-code', 'local.toml'),
+        persisted: true,
+      });
+      const v1SessionOnly = await pair.v1.addAdditionalDir({
+        id: 'session_parity_adddir',
+        path: sessionOnlyDir,
+        persist: false,
+      });
+      const v2SessionOnly = await pair.v2.addAdditionalDir({
+        id: 'session_parity_adddir',
+        path: sessionOnlyDir,
+        persist: false,
+      });
+      expect(v2SessionOnly).toEqual(v1SessionOnly);
+      expect(v1SessionOnly).toMatchObject({
+        additionalDirs: [persistedDir, sessionOnlyDir],
+        persisted: false,
+      });
+      // v1 requires the active session on both engines.
+      await expect(
+        pair.v1.addAdditionalDir({ id: 'session_missing', path: persistedDir, persist: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      await expect(
+        pair.v2.addAdditionalDir({ id: 'session_missing', path: persistedDir, persist: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+    } finally {
+      await closeSessionPair(pair);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
+  AddAdditionalDirInput,
+  AddAdditionalDirResult,
   BackgroundTaskInfo,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -368,6 +370,11 @@ export abstract class SDKRpcClientBase {
   async getSessionWarnings(input: SessionIdRpcInput) {
     const rpc = await this.getRpc();
     return rpc.getSessionWarnings({ sessionId: input.sessionId });
+  }
+
+  async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
+    const rpc = await this.getRpc();
+    return rpc.addAdditionalDir({ sessionId: input.id, path: input.path, persist: input.persist });
   }
 
   async startBtw(input: SessionIdRpcInput): Promise<string> {

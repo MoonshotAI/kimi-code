@@ -16,8 +16,12 @@
  * Every Session scope is also seeded with the handler's shared workspace
  * resources as pure-data read views (the injection contracts):
  * `sessionSkillCatalogData` / `sessionAgentProfileCatalogData` (the merged
- * catalogs), `sessionInstructionsProvider` (the AGENTS.md snapshot), and
- * `sessionMcpHandle` (the one shared MCP connection manager) — discovery,
+ * catalogs), `sessionInstructionsProvider` (the AGENTS.md snapshot),
+ * `sessionMcpHandle` (the one shared MCP connection manager), and
+ * `sessionWorkspaceInfo` (the shared additional-directory set — caller
+ * `additionalDirs` options union into it at materialization; the
+ * `workspaceDirs` service owns persistence and the `local.toml` watch) —
+ * discovery,
  * watching and connecting all live on the Workspace-scope services; session
  * consumers read the seeds and refresh off their change events.
  * Materializes the session's initial metadata on
@@ -78,7 +82,6 @@ import {
   ISessionIndex,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
-import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { createHooks } from '#/hooks';
@@ -93,6 +96,7 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionAgentProfileCatalogDataSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
 import { sessionInstructionsProviderSeed } from '#/session/sessionInstructions/instructionsProvider';
+import { sessionWorkspaceInfoSeed } from '#/session/workspaceInfo/workspaceInfo';
 import {
   ISessionLifecycleHooks,
   sessionLifecycleHooksSeed,
@@ -109,6 +113,7 @@ import {
 } from '#/wire/record';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
@@ -155,8 +160,6 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
-    @IProjectLocalConfigService
-    private readonly projectLocalConfig: IProjectLocalConfigService,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceSkillCatalog private readonly skillCatalog: IWorkspaceSkillCatalog,
@@ -164,6 +167,7 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     private readonly agentProfileCatalog: IWorkspaceAgentProfileCatalog,
     @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
+    @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
   ) {
     super();
   }
@@ -213,12 +217,14 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    const localWorkspaceDirs = await this.projectLocalConfig.readAdditionalDirs(opts.workDir);
-    const callerAdditionalDirs = await this.projectLocalConfig.resolveAdditionalDirs(
-      opts.workDir,
-      opts.additionalDirs ?? [],
-    );
-    const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
+    // Caller-provided dirs join the handler's SHARED in-memory set (union
+    // across all sessions of this workspace, §6.1) — the workspace dirs
+    // service owns the local.toml set and its watch; sessions read the
+    // combined view through the `ISessionWorkspaceInfo` seed below. Await
+    // the initial local.toml load first so the ctx snapshot and the seed
+    // both start from the assembled set.
+    await this.workspaceDirs.ready;
+    await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
       _serviceBrand: undefined,
       sessionId: opts.sessionId,
@@ -226,7 +232,7 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
       sessionDir,
       metaScope,
       cwd: opts.workDir,
-      additionalDirs,
+      additionalDirs: this.workspaceDirs.additionalDirs,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
@@ -252,6 +258,7 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
           ...sessionAgentProfileCatalogDataSeed(this.agentProfileCatalog.sessionData()),
           ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
           ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
+          ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
         ],
       },
     ) as ISessionScopeHandle;

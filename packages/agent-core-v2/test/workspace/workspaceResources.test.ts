@@ -77,6 +77,8 @@ import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions
 import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalogService';
 import { ExplicitFileSkillSource, IExplicitFileSkillSource } from '#/workspace/workspaceSkillCatalog/explicitFileSkillSource';
@@ -175,6 +177,13 @@ describe('workspace resource sharing (handler chain)', () => {
       WorkspaceMcpService,
       ScopeActivation.OnScopeCreated,
       'workspaceMcp',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceDirs,
+      WorkspaceDirsService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceDirs',
     );
     registerScopedService(LifecycleScope.Session, ISessionSkillCatalog, SessionSkillCatalogService, ScopeActivation.OnScopeCreated, 'sessionSkillCatalog');
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');

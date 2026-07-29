@@ -3,11 +3,12 @@
  *
  * Defines the `ISessionContext` carrying the session's identity, storage
  * addressing (`sessionId`, `workspaceId`, `sessionDir`, `metaScope`), the
- * session's working directory (`cwd`) and additional workspace directories
- * (`additionalDirs`) — both frozen at session creation — and a `scope(subKey?)`
+ * session's working directory (`cwd`) — frozen at session creation — the
+ * materialization-time snapshot of the handler's additional workspace
+ * directories (`additionalDirs`), and a `scope(subKey?)`
  * helper that returns the session's persistence scope (or a child under it,
  * e.g. `scope('agents/main/cron')`). Seeded into the Session scope by
- * `sessionLifecycle` when the session is created.
+ * `workspaceHandler` when the session is created.
  *
  * `cwd` is the default root the `process` runner spawns in and the seed the
  * `workspaceContext` derives its read-only `workDir` / `additionalDirs` from.
@@ -26,10 +27,11 @@ export interface ISessionContext {
   readonly metaScope: string;
   readonly cwd: string;
   /**
-   * Extra directories beyond `cwd` the session may touch, computed by the
-   * handler at materialization (workspace-local `.kimi-code/local.toml` set
-   * plus caller-provided dirs) and frozen for the session's lifetime. The
-   * workspace-level add-dir surface reuses this seed channel.
+   * Extra directories beyond `cwd` the session may touch — a snapshot of the
+   * handler-shared set (`workspaceDirs`: project-local `.kimi-code/local.toml`
+   * ∪ caller-provided dirs) taken at materialization. Live updates reach
+   * consumers through the `ISessionWorkspaceInfo` seed; this field stays the
+   * creation-time snapshot.
    */
   readonly additionalDirs?: readonly string[];
   scope(subKey?: string): string;

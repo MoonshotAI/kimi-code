@@ -27,12 +27,12 @@
  *   every read behind its own initial load, so there is no ready trap here.
  * - `listSessions` / `createSession` / `renameSession` / `forkSession` /
  *   `closeSession` / `resumeSession` / `reloadSession` /
- *   `updateSessionMetadata` → the session lifecycle
+ *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
  *   `IWorkspaceLifecycleService` / handler chain / session-scope services through
  *   {@link engineAccessor} where it does not (explicit session ids, resume,
- *   fork ids). The v1 `SessionSummary` / `SessionMeta`
+ *   fork ids, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
  *   shapes are restored by the pure mapping layer in
  *   `src/v2/session-mapper.ts`. `deleteSession` stays `not_implemented` —
  *   the v2 engine has no session-deletion capability anywhere (tracked in
@@ -196,6 +196,7 @@ import {
   ITelemetryService,
   IWorkspaceAliases,
   hostRequestHeadersSeed,
+  IWorkspaceDirs,
   IWorkspaceHandlerService,
   IWorkspaceLifecycleService,
   closeSessionById,
@@ -253,6 +254,8 @@ import {
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
+  AddAdditionalDirInput,
+  AddAdditionalDirResult,
   BackgroundTaskInfo,
   CompactOptions,
   ConfigDiagnostics,
@@ -1058,7 +1061,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     // v1 re-resolves caller-provided additional dirs on every resume and
     // merges them over the workspace-local set; the engine's resume options
-    // do the same while the session scope is materialized. Unlike v1, the v2
+    // union them into the handler's shared in-memory set while the session
+    // scope is materialized. Unlike v1, the v2
     // engine has no caller `mcpServers` channel on create/resume (caller
     // servers are an ACP-side concern to be designed separately).
     const handle = await resumeSessionById(this.engineAccessor, input.id, {
@@ -1121,6 +1125,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const current = await this.klient.session(input.sessionId).get();
     const custom = { ...current.custom, ...input.metadata };
     await this.klient.session(input.sessionId).update({ custom });
+  }
+
+  /**
+   * Through the session's handler (`IWorkspaceDirs`, workspace scope) — the
+   * workspace-level add-dir surface: `persist: true` (default) appends to the
+   * project-local `.kimi-code/local.toml`, `persist: false` joins the
+   * handler's shared in-memory set. The set is shared by every session of
+   * the workspace (a v1 `persist: false` dir was session-scoped and written
+   * into session metadata to survive a resume; the v2 handler keeps it for
+   * every session of the workspace until the process exits). Returns the
+   * same `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
+   */
+  override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
+    const handle = this.requireLiveSession(input.id);
+    return handle.accessor
+      .get(IWorkspaceDirs)
+      .addDir({ path: input.path, persist: input.persist });
   }
 
   /**

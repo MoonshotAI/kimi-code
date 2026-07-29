@@ -7,6 +7,8 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -14,6 +16,7 @@ import { IEventService } from '#/app/event/event';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -27,6 +30,8 @@ import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/worksp
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { Error2, ErrorCodes } from '#/errors';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
@@ -34,6 +39,7 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -247,6 +253,13 @@ describe('WorkspaceLifecycleService', () => {
       'workspaceHandler',
     );
     registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceDirs,
+      WorkspaceDirsService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceDirs',
+    );
+    registerScopedService(
       LifecycleScope.App,
       IHostFileSystem,
       HostFileSystem,
@@ -305,6 +318,11 @@ describe('WorkspaceLifecycleService', () => {
           Promise.resolve([...dirs]),
         appendAdditionalDir: () => Promise.reject(new Error('not implemented')),
       } satisfies IProjectLocalConfigService),
+      stubPair(IHostFsWatchService, {
+        _serviceBrand: undefined,
+        watch: () => ({ onDidChange: Event.None, dispose: () => {} }),
+      } as unknown as IHostFsWatchService),
+      stubPair(ILogService, stubLog()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, {
         _serviceBrand: undefined,

@@ -31,6 +31,11 @@ export type { SessionCloseReason, SessionCreateSource };
 export interface CreateSessionOptions {
   readonly sessionId?: string;
   readonly workDir: string;
+  /**
+   * Caller-provided additional workspace directories, resolved against
+   * `workDir` and unioned into the handler's SHARED in-memory set (every
+   * session of this workspace sees them; never persisted).
+   */
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;
 }
@@ -45,8 +50,8 @@ export interface ForkSessionOptions {
 export interface ResumeSessionOptions {
   /**
    * Caller-provided additional workspace directories, re-resolved against the
-   * session workDir and merged over the workspace-local set for the resumed
-   * session's lifetime.
+   * session workDir and unioned into the handler's shared in-memory set (same
+   * semantics as `CreateSessionOptions.additionalDirs`).
    */
   readonly additionalDirs?: readonly string[];
 }

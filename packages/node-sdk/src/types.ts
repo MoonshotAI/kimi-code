@@ -155,6 +155,18 @@ export interface ReloadSessionInput extends ResumeSessionInput {
   readonly forcePluginSessionStartReminder?: boolean;
 }
 
+export interface AddAdditionalDirInput {
+  readonly id: string;
+  readonly path: string;
+  readonly persist: boolean;
+}
+
+export interface AddAdditionalDirOptions {
+  /** When true, share the directory through workspace local config. When false,
+   * keep it scoped to this session while still restoring it on session resume. */
+  readonly persist: boolean;
+}
+
 export interface ForkSessionInput {
   readonly id: string;
   readonly forkId?: string;
@@ -258,6 +270,13 @@ export interface SessionSummary {
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
+}
+
+export interface AddAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly persisted: boolean;
 }
 
 export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;
