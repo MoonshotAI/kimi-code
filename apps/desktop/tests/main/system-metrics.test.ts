@@ -247,4 +247,22 @@ describe('desktop system metrics collector', () => {
     await vi.advanceTimersByTimeAsync(300_000);
     expect(trackMock.trackDesktopEvent).toHaveBeenCalledOnce();
   });
+
+  it('includes session_count from the provider and omits it when absent or failing', async () => {
+    startDesktopSystemMetrics({ sessionCount: () => Promise.resolve(7) });
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(lastSample()['session_count']).toBe(7);
+
+    stopDesktopSystemMetrics();
+    startDesktopSystemMetrics({
+      sessionCount: () => Promise.reject(new Error('core gone')),
+    });
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(lastSample()['session_count']).toBeUndefined();
+
+    stopDesktopSystemMetrics();
+    startDesktopSystemMetrics();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(lastSample()['session_count']).toBeUndefined();
+  });
 });

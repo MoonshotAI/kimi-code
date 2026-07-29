@@ -175,6 +175,8 @@ export interface SystemMetricsEvent {
   renderer_js_heap_total_bytes?: number;
   renderer_js_heap_limit_bytes?: number;
   window_count: number;
+  // Absent in external-server mode (no embedded core to query).
+  session_count?: number;
 }
 
 export interface DesktopEventPayloads {

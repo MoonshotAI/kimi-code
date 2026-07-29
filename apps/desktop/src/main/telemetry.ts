@@ -10,6 +10,8 @@ import {
   type Scope,
   type TelemetryProperties,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
@@ -142,7 +144,12 @@ export async function wireDesktopTelemetry(
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});
-    startDesktopSystemMetrics();
+    startDesktopSystemMetrics({
+      sessionCount: async () => {
+        const workspaces = await core.accessor.get(IWorkspaceService).list();
+        return core.accessor.get(ISessionIndex).countActive(workspaces.map((w) => w.id));
+      },
+    });
     if (identity.firstLaunch) {
       telemetry.track2('first_launch');
     }

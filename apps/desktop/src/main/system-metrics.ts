@@ -102,9 +102,17 @@ let previousCpuUsage: NodeJS.CpuUsage | null = null;
 let previousHrtime: bigint | null = null;
 let processStartedAtSeconds = 0;
 let sampleInFlight = false;
+let sessionCountProvider: (() => Promise<number>) | null = null;
 
-export function startDesktopSystemMetrics(): void {
+export interface DesktopSystemMetricsOptions {
+  // Embedded mode only: session count from the in-process core (external
+  // server mode has no core to ask and simply omits the field).
+  sessionCount?: () => Promise<number>;
+}
+
+export function startDesktopSystemMetrics(options: DesktopSystemMetricsOptions = {}): void {
   if (intervalTimer !== null) return;
+  sessionCountProvider = options.sessionCount ?? null;
   previousCpuUsage = process.cpuUsage();
   previousHrtime = process.hrtime.bigint();
   processStartedAtSeconds = Math.floor(Date.now() / 1000 - process.uptime());
@@ -128,6 +136,7 @@ export function stopDesktopSystemMetrics(): void {
     clearInterval(intervalTimer);
     intervalTimer = null;
   }
+  sessionCountProvider = null;
 }
 
 async function sampleSafely(): Promise<void> {
@@ -174,6 +183,9 @@ async function sample(): Promise<void> {
   const constrainedMemory = getConstrainedMemoryBytes();
   if (constrainedMemory !== undefined) properties.constrained_memory_bytes = constrainedMemory;
 
+  const sessionCount = await readSessionCount();
+  if (sessionCount !== undefined) properties.session_count = sessionCount;
+
   const jsHeap = await readRendererJsHeap();
   if (jsHeap !== null) {
     properties.renderer_js_heap_used_bytes = jsHeap.used;
@@ -187,6 +199,16 @@ interface RendererJsHeap {
   used: number;
   total: number;
   limit: number;
+}
+
+async function readSessionCount(): Promise<number | undefined> {
+  if (sessionCountProvider === null) return undefined;
+  try {
+    const value = await sessionCountProvider();
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readRendererJsHeap(): Promise<RendererJsHeap | null> {

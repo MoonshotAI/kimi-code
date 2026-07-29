@@ -158,7 +158,7 @@ describe('wireDesktopTelemetry', () => {
     expect(telemetryService.setAppender).toHaveBeenCalledWith(appender);
     expect(appender.startPeriodicFlush).toHaveBeenCalledOnce();
     expect(appender.retryDiskEvents).toHaveBeenCalledOnce();
-    expect(systemMetricsMock.start).toHaveBeenCalledOnce();
+    expect(systemMetricsMock.start).toHaveBeenCalledWith({ sessionCount: expect.any(Function) });
     expect(telemetryService.track2).not.toHaveBeenCalledWith('first_launch');
   });
 
