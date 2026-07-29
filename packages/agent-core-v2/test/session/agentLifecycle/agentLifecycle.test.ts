@@ -330,7 +330,6 @@ describe('AgentLifecycleService', () => {
       onDidChange: Event.None,
       load: () => Promise.resolve(),
       reload: () => Promise.resolve(),
-      reloadSource: () => Promise.resolve(),
     } as unknown as ISessionSkillCatalog);
     ix.stub(ISessionToolPolicy, {
       _serviceBrand: undefined,

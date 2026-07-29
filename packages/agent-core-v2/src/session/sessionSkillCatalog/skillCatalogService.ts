@@ -112,7 +112,7 @@ export class SessionSkillCatalogService
     this.remerge();
   }
 
-  async reloadSource(id: string): Promise<void> {
+  private async reloadSource(id: string): Promise<void> {
     const s = this.sources.find((x) => x.id === id);
     if (!s) return;
     await this.loadSource(s, true);

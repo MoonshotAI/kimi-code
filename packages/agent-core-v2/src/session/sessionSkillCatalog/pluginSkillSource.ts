@@ -4,14 +4,14 @@
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
  * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5
  * (above builtin, below extra / user / workspace, so project, user and extra
- * skills win name collisions). The source is a pure pull producer: reloads
- * are driven and awaited by `sessionPluginContribution`, the Session-level
- * convergence point for plugin changes, so a plugin mutation resolves only
- * after the catalog — and then every live Agent prompt — has converged.
- * Bound at Session scope.
+ * skills win name collisions). Re-emits `plugin.onDidReload` as `onDidChange`
+ * so the sink re-pulls plugin skills when plugins reload; install / enable /
+ * remove mutations deliberately do not refresh the session catalog — those
+ * take effect on the next explicit reload. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
@@ -31,7 +31,12 @@ export class PluginSkillSource implements IPluginSkillSource {
 
   readonly id = PLUGIN_SKILL_SOURCE_ID;
   readonly priority = SKILL_SOURCE_PRIORITY.plugin;
-  readonly onDidChange = undefined;
+  readonly onDidChange: Event<void> = (listener, thisArg, disposables) =>
+    this.plugins.onDidReload(
+      () => listener.call(thisArg, undefined as void),
+      undefined,
+      disposables,
+    );
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,

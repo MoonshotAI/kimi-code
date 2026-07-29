@@ -668,7 +668,6 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
-        reloadSource: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -693,7 +692,6 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
-        reloadSource: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -714,7 +712,6 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
-        reloadSource: async () => {},
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);

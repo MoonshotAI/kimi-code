@@ -21,10 +21,10 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
-import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
+import type { ReloadSummary } from '#/app/plugin/types';
 import { IProviderService } from '#/kosong/provider/provider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
@@ -43,10 +43,6 @@ import { ExplicitFileSkillSource, IExplicitFileSkillSource } from '#/session/ses
 import { ExtraFileSkillSource, IExtraFileSkillSource } from '#/session/sessionSkillCatalog/extraFileSkillSource';
 import { IWorkspaceFileSkillSource, WorkspaceFileSkillSource } from '#/session/sessionSkillCatalog/workspaceFileSkillSource';
 import { IPluginSkillSource, PluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
-import {
-  ISessionPluginContributionService,
-} from '#/session/sessionPluginContribution/sessionPluginContribution';
-import { SessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContributionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -57,18 +53,6 @@ import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 
 const bootstrapStub = stubBootstrap('/home');
-
-const noopLog = {
-  _serviceBrand: undefined,
-  level: 'off',
-  setLevel: () => {},
-  flush: async () => {},
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  child: () => noopLog,
-} as unknown as ILogService;
 
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
@@ -117,11 +101,12 @@ function configStub(): IConfigService & {
 
 function pluginStub(
   skillRoots: readonly SkillRoot[] = [],
+  reloadEmitter?: Emitter<ReloadSummary>,
 ): IPluginService {
   return {
     _serviceBrand: undefined,
     onDidChange: Event.None as IPluginService['onDidChange'],
-    onDidReload: () => ({ dispose: () => {} }),
+    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
@@ -170,6 +155,7 @@ function makeHost(
   ws: ISessionWorkspaceContext,
   pluginRoots: readonly SkillRoot[] = [],
   explicitDirs?: readonly string[],
+  pluginReloadEmitter?: Emitter<ReloadSummary>,
 ) {
   const config = configStub();
   const runtimeOptions = {
@@ -181,7 +167,7 @@ function makeHost(
     stubPair(IBootstrapService, bootstrapStub),
     stubPair(IConfigService, config),
     stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
-    stubPair(IPluginService, pluginStub(pluginRoots)),
+    stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
   return { host, session, config };
@@ -567,18 +553,19 @@ describe('SessionSkillCatalogService', () => {
     });
   });
 
-  it('fires onDidChange with the plugin source id when the plugin source is reloaded', async () => {
+  it('fires onDidChange with the plugin source id after a plugin reload re-pulls plugin skills', async () => {
     const store = new InMemorySkillDiscovery();
     store.setPluginSkills([
       stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
     ]);
+    const reloadEmitter = new Emitter<ReloadSummary>();
     const pluginRoot: SkillRoot = {
       path: '/plugins/demo/skills',
       source: 'extra',
       plugin: { id: 'demo' },
     };
     const { stub: ws } = workspaceStub('/work');
-    const { host, session } = makeHost(store, ws, [pluginRoot]);
+    const { host, session } = makeHost(store, ws, [pluginRoot], undefined, reloadEmitter);
 
     try {
       const catalog = session.accessor.get(ISessionSkillCatalog);
@@ -591,11 +578,12 @@ describe('SessionSkillCatalogService', () => {
           resolve(sourceId);
         });
       });
-      await catalog.reloadSource('plugin');
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
 
       await expect(refreshed).resolves.toBe('plugin');
     } finally {
       host.dispose();
+      reloadEmitter.dispose();
     }
   });
 
@@ -680,6 +668,45 @@ describe('SessionSkillCatalogService', () => {
     }
   });
 
+  it('binds thisArg when forwarding plugin reloads through the plugin skill source', async () => {
+    const reloadEmitter = new Emitter<ReloadSummary>();
+    const pluginService = pluginStub([], reloadEmitter);
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(ISkillCatalogRuntimeOptions, {
+        _serviceBrand: undefined,
+      } as unknown as ISkillCatalogRuntimeOptions),
+      stubPair(IPluginService, pluginService),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [
+      stubPair(ISessionWorkspaceContext, ws),
+    ]);
+
+    try {
+      const source = session.accessor.get(IPluginSkillSource);
+      void source.id;
+      const receiver = { tag: 'receiver' };
+      const seen: unknown[] = [];
+      const subscription = source.onDidChange?.(
+        function (this: unknown) {
+          seen.push(this);
+        },
+        receiver,
+      );
+
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+
+      expect(seen).toEqual([receiver]);
+      subscription?.dispose();
+    } finally {
+      host.dispose();
+      reloadEmitter.dispose();
+    }
+  });
+
   it('keeps non-plugin skills working and recovers plugin skills after a corrupt installed.json is fixed and reloaded', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'plugin-home-'));
     await mkdir(join(homeDir, 'plugins'), { recursive: true });
@@ -703,16 +730,10 @@ describe('SessionSkillCatalogService', () => {
     store.setPluginSkills([
       stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
     ]);
-    registerScopedService(
-      LifecycleScope.Session,
-      ISessionPluginContributionService,
-      SessionPluginContributionService,
-    );
     const host = createScopedTestHost([
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
-      stubPair(ILogService, noopLog),
       stubPair(ISkillCatalogRuntimeOptions, {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),

@@ -89,7 +89,6 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
-      reloadSource: async () => {},
     };
     ix.set(ISessionSkillCatalog, skillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
@@ -128,7 +127,6 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
-      reloadSource: async () => {},
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
@@ -183,7 +181,6 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
-      reloadSource: async () => {},
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
   });

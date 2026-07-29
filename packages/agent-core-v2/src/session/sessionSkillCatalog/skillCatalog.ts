@@ -19,7 +19,6 @@ export interface ISessionSkillCatalog {
   readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
-  reloadSource(id: string): Promise<void>;
 }
 
 export interface ISkillCatalogSink {
