@@ -2,11 +2,15 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type {
-  IBootstrapService,
-  ILogService,
+import {
+  bootstrap,
   ISessionIndex,
-  SessionSummary,
+  logSeed,
+  resolveLoggingConfig,
+  type IBootstrapService,
+  type ILogService,
+  type ScopeSeed,
+  type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   GlobalSearchError,
   GlobalSearchService,
+  IGlobalSearchService,
   drainGlobalSearchDisposals,
   type LiveTranscriptSource,
 } from '../../src/search/searchService';
@@ -143,6 +148,30 @@ describe('GlobalSearchService', () => {
     services.push(service);
     return service;
   }
+
+  it('does not start indexing until an App scope first resolves the service', async () => {
+    let listCalls = 0;
+    const index = makeSessionIndex(async () => {
+      listCalls++;
+      return { items: [], nextCursor: undefined };
+    });
+    const seeds: ScopeSeed = [
+      ...logSeed(resolveLoggingConfig({ homeDir: home!, env: {} })),
+      [ISessionIndex, index],
+    ];
+    const { app } = bootstrap({ homeDir: home! }, seeds);
+
+    try {
+      expect(listCalls).toBe(0);
+      const first = app.accessor.get(IGlobalSearchService);
+      expect(listCalls).toBe(1);
+      expect(app.accessor.get(IGlobalSearchService)).toBe(first);
+    } finally {
+      await new Promise((resolve) => setImmediate(resolve));
+      app.dispose();
+      await drainGlobalSearchDisposals();
+    }
+  });
 
   it('indexes user and assistant text and finds Chinese and English terms', async () => {
     const s1 = summary('s1', '搜索重构讨论', T1);

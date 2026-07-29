@@ -26,9 +26,11 @@
  *
  * Registration: this module is side-effect-imported by `start.ts` BEFORE
  * `bootstrap()` runs, so the module-level `registerScopedService` below lands
- * in the DI registry in time and the service is instantiated (App scope,
- * OnScopeCreated) with the rest — which also exposes it on the `/api/v1/debug`
- * reflection surface as `globalSearch` with zero extra code.
+ * in the DI registry in time. The service is App-scoped but OnDemand: the
+ * server explicitly resolves it after bootstrap, while other App scopes do
+ * not start the cross-session indexer merely because this module was loaded.
+ * Registration still exposes it on the `/api/v1/debug` reflection surface as
+ * `globalSearch` with zero extra code.
  */
 
 import { createHash } from 'node:crypto';
@@ -510,8 +512,9 @@ export class GlobalSearchService implements IGlobalSearchService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
   ) {
-    // App-scope OnScopeCreated activation: kick the first full sync off in the
-    // background so server bootstrap never blocks on indexing.
+    // App-scope OnDemand activation: once the server explicitly resolves this
+    // service, kick the first full sync off in the background so server
+    // bootstrap never blocks on indexing.
     this.kickBackgroundSync();
   }
 
@@ -1442,6 +1445,6 @@ registerScopedService(
   LifecycleScope.App,
   IGlobalSearchService,
   GlobalSearchService,
-  ScopeActivation.OnScopeCreated,
+  ScopeActivation.OnDemand,
   'globalSearch',
 );
