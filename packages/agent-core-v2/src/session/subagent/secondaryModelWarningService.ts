@@ -79,11 +79,6 @@ export class SessionSecondaryModelWarningService
   recheckSecondaryModelWarning(): SecondaryModelWarning | undefined {
     const previous = this.warning;
     this.warning = this.computeWarning();
-    // Republish only a CHANGED warning: the initial check already published
-    // the cached one, and a cleared warning has no event of its own — the
-    // pull path simply stops returning it. When no main agent exists yet the
-    // publish is skipped entirely; the upcoming initial check computes the
-    // same state and publishes it once.
     const changed =
       previous?.code !== this.warning?.code || previous?.message !== this.warning?.message;
     if (changed && this.warning !== undefined) {

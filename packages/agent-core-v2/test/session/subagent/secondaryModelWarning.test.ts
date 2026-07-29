@@ -219,7 +219,6 @@ describe('SessionSecondaryModelWarningService', () => {
     expect(svc.getSecondaryModelWarning()).toEqual(warning);
     expect(published).toEqual([{ type: 'warning', code: warning?.code, message: warning?.message }]);
 
-    // Unchanged recompute: the cache is replaced but nothing republishes.
     expect(svc.recheckSecondaryModelWarning()).toEqual(warning);
     expect(published).toHaveLength(1);
   });
@@ -240,7 +239,6 @@ describe('SessionSecondaryModelWarningService', () => {
     expect(svc.recheckSecondaryModelWarning()?.code).toBe(SECONDARY_MODEL_INVALID_WARNING_CODE);
     await config.replace(SECONDARY_MODEL_SECTION, undefined);
     expect(svc.recheckSecondaryModelWarning()).toBeUndefined();
-    // A cleared warning has no event of its own: one publish per broken spell.
     expect(published).toHaveLength(2);
   });
 

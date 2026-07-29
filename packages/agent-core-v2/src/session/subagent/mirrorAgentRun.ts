@@ -109,12 +109,6 @@ export function emitAgentRunSpawned(
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
   });
-  // Re-affirm the target's model binding right after the spawn announcement:
-  // the model slice of `agent.status.updated` otherwise rides only the
-  // bind-time emission, which precedes `subagent.spawned` and is dropped by
-  // clients that key child events off the spawn — leaving the subagent card
-  // without a model until the first usage/context slice lands (a single-step
-  // run emits none until it ends).
   requester.accessor
     .get(IAgentLifecycleService)
     ?.get(targetAgentId)

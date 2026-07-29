@@ -160,9 +160,6 @@ describe('SessionInitService', () => {
         callerAgentId: 'main',
       }),
     );
-    // The model slice is re-affirmed right after the spawn announcement, so
-    // clients that key child events off `subagent.spawned` still receive it
-    // even when the run's first usage/context slice only lands at completion.
     expect(republishStatus).toHaveBeenCalledTimes(1);
     const eventTypes = events.map((event) => (event as { type?: string }).type);
     const spawnedIndex = eventTypes.indexOf('subagent.spawned');

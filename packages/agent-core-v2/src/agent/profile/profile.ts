@@ -10,7 +10,9 @@
  * state, so the effort is validated against the model's supported efforts and
  * the bind rejects up front when unsupported — internal spawns pass inherited
  * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn.
+ * model's support list clamps instead of breaking the spawn. The profile
+ * contract also owns live status re-publication for consumers that attach to
+ * an agent after its initial model binding.
  */
 
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -127,12 +129,6 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
-  /**
-   * Re-publish the current model/thinking slice of `agent.status.updated` on
-   * demand. The slice otherwise rides only the bind-time emission, which
-   * consumers that key an agent's events off a later announcement (e.g.
-   * `subagent.spawned`) have already dropped — see `emitAgentRunSpawned`.
-   */
   republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
