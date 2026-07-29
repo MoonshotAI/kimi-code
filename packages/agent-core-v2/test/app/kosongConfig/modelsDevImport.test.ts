@@ -80,6 +80,20 @@ const CATALOG = {
       },
     },
   },
+  'anthropic-gateway': {
+    id: 'anthropic-gateway',
+    name: 'Anthropic Gateway',
+    // No `type` and no anthropic token in id/npm: the wire is declared solely
+    // by the `/anthropic` endpoint path.
+    api: 'https://api.example.test/anthropic',
+    models: {
+      'gw-anthropic': {
+        id: 'gw-anthropic',
+        limit: { context: 200000 },
+        modalities: { input: ['text'], output: ['text'] },
+      },
+    },
+  },
 } as const;
 
 const REGISTRY_URL = 'https://internal.example/api.json';
@@ -230,6 +244,22 @@ describe('IModelsDevImportService', () => {
     });
     expect(config.get('defaultProvider')).toBe('kimi');
     expect(config.get('defaultModel')).toBe('k2');
+  });
+
+  it('imports an entry whose /anthropic endpoint path declares it as an anthropic provider', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({ providers: {}, models: {} });
+
+    const item = await imports.getModelsDevProvider('anthropic-gateway');
+    expect(item).toMatchObject({ wire_type: 'anthropic', guessed: false, needs_base_url: false });
+
+    await imports.importModelsDevProvider({ catalogId: 'anthropic-gateway', apiKey: 'sk-test' });
+    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['anthropic-gateway']).toMatchObject({
+      type: 'anthropic',
+      baseUrl: 'https://api.example.test/anthropic',
+      apiKey: 'sk-test',
+    });
   });
 
   it('seeds default_model from the first imported model only when none is configured', async () => {
