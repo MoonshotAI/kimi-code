@@ -1,12 +1,12 @@
 /**
- * `sessionFs` domain — shared ripgrep (`rg`) binary locator.
+ * `workspaceFs` domain — shared ripgrep (`rg`) binary locator.
  *
- * Single place that decides which `rg` the Glob and Grep paths run. The lookup
- * mirrors v1's `ensureRgPath` intent (bundled-or-system, graceful degradation)
- * but is driven through a caller-supplied {@link RgProbe} so it works against
- * whatever execution environment the caller has — Glob probes through the
- * session `ISessionProcessRunner`, Grep through the shared runner as well.
- * Both run `rg --version` and treat exit code 0 as "available".
+ * Single place that decides which `rg` the fs search/grep paths run. The
+ * lookup mirrors v1's `ensureRgPath` intent (bundled-or-system, graceful
+ * degradation) but is driven through a caller-supplied {@link RgProbe} so it
+ * works against whatever execution environment the caller has — the fs
+ * surface probes through the handler-shared `ISessionProcessRunner`, running
+ * `rg --version` and treating exit code 0 as "available".
  *
  * Lookup order (first hit wins):
  *   1. System `rg` on the execution-environment PATH (`rg --version`).

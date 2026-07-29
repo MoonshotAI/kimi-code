@@ -7,7 +7,7 @@ import {
   matchesAnyGlob,
   rgPath,
   stripTrailingNewline,
-} from '#/session/sessionFs/fsSearch';
+} from '#/workspace/workspaceFs/fsSearch';
 
 describe('computeFuzzyScore', () => {
   it('returns 0 for an empty query', () => {

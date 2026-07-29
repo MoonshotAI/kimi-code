@@ -66,8 +66,11 @@ import { SessionSkillCatalogService } from '#/session/sessionSkillCatalog/skillC
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
 import { WorkspaceAgentProfileCatalogService } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalogService';
 import { ExplicitFileAgentSource, IExplicitFileAgentSource } from '#/workspace/workspaceAgentProfileCatalog/explicitFileAgentSource';
@@ -142,6 +145,13 @@ describe('workspace resource sharing (handler chain)', () => {
       WorkspaceHandlerService,
       ScopeActivation.OnScopeCreated,
       'workspaceHandler',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceToolPolicy,
+      WorkspaceToolPolicyService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceToolPolicy',
     );
     registerScopedService(
       LifecycleScope.Workspace,
@@ -299,6 +309,10 @@ describe('workspace resource sharing (handler chain)', () => {
         disabledTools: () => [],
         setDisabledTools: () => Promise.resolve(),
       } as unknown as ISessionToolPolicy),
+      stubPair(ISessionProcessRunner, {
+        _serviceBrand: undefined,
+        exec: () => Promise.reject(new Error('process exec is not supported in this test')),
+      } satisfies ISessionProcessRunner),
       stubPair(IAgentLifecycleService, {
         _serviceBrand: undefined,
         onDidCreate: () => ({ dispose: () => {} }),

@@ -2,7 +2,8 @@
  * `toolActivation` domain (L4) — `IAgentToolActivationService` implementation.
  *
  * Iterates the `toolRegistry` contribution table and, for each entry allowed
- * by the bound Profile's tool policy (`profile`), resolves the Agent-scope
+ * by the workspace os-level veto (the seeded `sessionToolPolicyGate`) AND
+ * the bound Profile's tool policy (`profile`), resolves the Agent-scope
  * service through the container — nothing constructs the tool before this
  * `accessor.get` — and registers the real instance into the runtime
  * registry.
@@ -30,6 +31,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 
 import { IAgentToolActivationService } from './toolActivation';
 
@@ -40,6 +42,7 @@ export class AgentToolActivationService extends Disposable implements IAgentTool
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
@@ -53,10 +56,15 @@ export class AgentToolActivationService extends Disposable implements IAgentTool
   activate(): Promise<void> {
     const data = this.profile.data();
     const policy = { tools: data.activeToolNames, disallowedTools: data.disallowedTools };
+    const workspaceVeto = { disallowedTools: this.toolPolicyGate.disabledTools };
     this.instantiationService.invokeFunction((accessor) => {
       for (const { id, options } of getAgentToolContributions()) {
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
+        // The workspace (os-level) veto outranks the profile: a disabled tool
+        // never activates, so it never reaches the registry (and therefore
+        // the schema) at all.
+        if (!isToolActive(workspaceVeto, options.name, source)) continue;
         if (!isToolActive(policy, options.name, source)) continue;
         if (options.when !== undefined && !options.when(accessor)) continue;
         const tool = accessor.get(id);

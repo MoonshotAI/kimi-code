@@ -3,17 +3,20 @@
  *
  * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
  * so existing v1 clients keep working against server-v2. Backed by the v2
- * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
- * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema comes from the engine's own
- * `sessionFs` domain contract (`agent-core-v2`).
+ * Workspace-scoped `IWorkspaceFsService` (`agent-core-v2/src/workspace/workspaceFs`):
+ * the route resolves the session from the URL, then dispatches `fs:<action>`
+ * to the matching `IWorkspaceFsService` method — the session's accessor
+ * resolves it from its parent Workspace scope (the handler), which is the
+ * "session → handler → workspace fs" chain (chdir is gone, so the handler
+ * root is the one fixed fs root). The wire schema comes from the engine's own
+ * `workspaceFs` domain contract (`agent-core-v2`).
  */
 
 import { createReadStream } from 'node:fs';
 
 import {
   ErrorCodes,
-  ISessionFsService,
+  IWorkspaceFsService,
   getLiveSessionById,
   resumeSessionById,
   isError2,
@@ -31,7 +34,7 @@ import {
   fsSearchRequestSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -100,12 +103,14 @@ const FS_ACTIONS = [
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-function resolveFs(core: Scope, sessionId: string): ISessionFsService {
+function resolveFs(core: Scope, sessionId: string): IWorkspaceFsService {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
-  return session.accessor.get(ISessionFsService);
+  // The fs service lives on the session's parent Workspace scope (the
+  // handler): one instance per workspace, pinned to the handler root.
+  return session.accessor.get(IWorkspaceFsService);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -260,7 +265,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      let resolved: Awaited<ReturnType<ISessionFsService['resolveDownload']>>;
+      let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       try {
         resolved = await resolveFs(core, session_id).resolveDownload(relPath);
       } catch (err) {
@@ -333,7 +338,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 }
 
 // ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call ISessionFsService, wrap result.
+// Action handlers — thin adapters: parse body, call IWorkspaceFsService, wrap result.
 // ---------------------------------------------------------------------------
 
 type Req = { id: string; body: unknown };

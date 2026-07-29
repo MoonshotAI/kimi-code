@@ -58,6 +58,7 @@ import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/pr
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -67,6 +68,8 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
@@ -196,6 +199,13 @@ describe('workspace add-dir (handler chain)', () => {
     );
     registerScopedService(
       LifecycleScope.Workspace,
+      IWorkspaceToolPolicy,
+      WorkspaceToolPolicyService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceToolPolicy',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
       IWorkspaceDirs,
       WorkspaceDirsService,
       ScopeActivation.OnScopeCreated,
@@ -318,6 +328,10 @@ describe('workspace add-dir (handler chain)', () => {
         disabledTools: () => [],
         setDisabledTools: () => Promise.resolve(),
       } as unknown as ISessionToolPolicy),
+      stubPair(ISessionProcessRunner, {
+        _serviceBrand: undefined,
+        exec: () => Promise.reject(new Error('process exec is not supported in this test')),
+      } satisfies ISessionProcessRunner),
       stubPair(IAgentLifecycleService, {
         _serviceBrand: undefined,
         onDidCreate: () => ({ dispose: () => {} }),

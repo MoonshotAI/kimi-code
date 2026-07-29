@@ -44,6 +44,8 @@ import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLif
 import { resumeSessionById } from '#/app/workspaceLifecycle/sessionLookup';
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import {
@@ -52,6 +54,7 @@ import {
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -483,6 +486,13 @@ describe('WorkspaceHandlerService', () => {
     );
     registerScopedService(
       LifecycleScope.Workspace,
+      IWorkspaceToolPolicy,
+      WorkspaceToolPolicyService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceToolPolicy',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
       IWorkspaceDirs,
       WorkspaceDirsService,
       ScopeActivation.OnScopeCreated,
@@ -524,6 +534,10 @@ describe('WorkspaceHandlerService', () => {
       stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(IWorkspaceSkillCatalog, workspaceSkillCatalogStub()),
       stubPair(ISessionToolPolicy, sessionToolPolicyStub()),
+      stubPair(ISessionProcessRunner, {
+        _serviceBrand: undefined,
+        exec: () => Promise.reject(new Error('process exec is not supported in this test')),
+      } satisfies ISessionProcessRunner),
       stubPair(IWorkspaceAgentProfileCatalog, workspaceAgentProfileCatalogStub()),
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),

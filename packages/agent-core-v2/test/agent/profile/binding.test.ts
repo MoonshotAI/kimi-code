@@ -19,6 +19,7 @@ import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore 
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
 import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/tool/toolContract';
 
@@ -804,6 +805,57 @@ describe('AgentToolPolicyService executor enforcement', () => {
       output: `Tool "${probe.name}" is disabled by the active tool policy`,
     });
     expect(probe.calls).toBe(0);
+  });
+
+  // Phase-4 behavior contract: the workspace (os-level) veto — seeded as
+  // `ISessionToolPolicyGate` — blocks direct execution just like the classic
+  // layers, and it wins over every one of them.
+  it('blocks a direct builtin call through the workspace tool-policy gate', async () => {
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: ['PolicyProbe'],
+        onDidChange: Event.None as Event<void>,
+      } satisfies ISessionToolPolicyGate),
+    );
+    await ctx.get(IAgentProfileService).bind({
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      model: MOCK_MODEL,
+    });
+    const probe = new PolicyProbeTool('PolicyProbe');
+    ctx.get(IAgentToolRegistryService).register(probe);
+
+    const result = await executeDirectToolCall(ctx, 'PolicyProbe');
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Tool "PolicyProbe" is disabled by the active tool policy',
+    });
+    expect(probe.calls).toBe(0);
+  });
+
+  // The prompt projection goes through the same workspace veto: a profile
+  // whose prompt renders `skillActive` must see the Skill tool as inactive
+  // when the gate disables it (profileService's `isToolActiveForProfile`).
+  it('applies the workspace gate in the prompt projection (skillActive)', async () => {
+    registerAgentProfile({
+      name: 'gate-skill-active',
+      tools: ['Read', 'Skill'],
+      systemPrompt: (context) => `skill-active:${String(context.skillActive)}`,
+    });
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: ['Skill'],
+        onDidChange: Event.None as Event<void>,
+      } satisfies ISessionToolPolicyGate),
+    );
+    const profileService = ctx.get(IAgentProfileService);
+    await profileService.bind({ profile: 'gate-skill-active', model: MOCK_MODEL });
+
+    expect(profileService.data().systemPrompt).toBe('skill-active:false');
   });
 
   it('does not reject select_tools, the policy-gated disclosure loading entry', async () => {

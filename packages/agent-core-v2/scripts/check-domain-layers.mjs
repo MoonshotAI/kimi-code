@@ -152,8 +152,28 @@ const DOMAIN_LAYER = new Map([
   ['file', 2],
   ['config', 2],
   ['projectLocalConfig', 2],
-  ['sessionFs', 2],
+  // `process` is the Session-scope process-runner CONTRACT
+  // (`ISessionProcessRunner`); the implementation moved to the Workspace
+  // scope (`workspaceProcess`) but the contract stays in the session domain
+  // so Session/Agent consumers keep importing it without crossing the
+  // Workspace-tier import ban.
   ['process', 2],
+  // `workspaceProcess` is the Workspace-scope `ISessionProcessRunner`
+  // implementation (default cwd = handler root); it consumes the `process`
+  // contract (L2) and the os process bridge (L1).
+  ['workspaceProcess', 2],
+  // `workspaceGit` is the Workspace-scope git facade pinned to the handler
+  // root over the App-scope `git` service (L1).
+  ['workspaceGit', 2],
+  // `workspaceToolPolicy` is the Workspace-scope owner of the os-level tool
+  // veto set (runtime capabilities keyed off the handler's os backend); it
+  // hands every session the `sessionToolPolicyGate` seed contract (L1).
+  ['workspaceToolPolicy', 2],
+  // `sessionToolPolicyGate` is the Session-scope seeded workspace tool-veto
+  // contract (`ISessionToolPolicyGate`): a pure data + change-event
+  // injection contract (the Workspace-scope `workspaceToolPolicy` impl hands
+  // it to each session) with no IO, so it sits in L1 beside `workspaceInfo`.
+  ['sessionToolPolicyGate', 1],
   ['workspace', 2],
   ['workspaceAliases', 2],
   ['workspaceSessions', 2],
@@ -182,6 +202,11 @@ const DOMAIN_LAYER = new Map([
   // fs-watch refresh); its highest dependency is `projectLocalConfig` (L2),
   // so it sits in L3 beside the other Workspace-scope resource owners.
   ['workspaceDirs', 3],
+  // `workspaceFs` is the Workspace-scope fs surface (list/read/search/grep/
+  // git status/diff) plus the shared fs-watch fan-out; its highest
+  // dependency is `workspaceDirs` (L3 — the additional-dir set used for
+  // path confinement), so it sits in L3 beside it.
+  ['workspaceFs', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
   ['toolApproval', 3],
@@ -589,7 +614,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   'filestore>persistence/backends',
   'process>os/backends',
   'terminal>os/backends',
-  'sessionFs>os/backends',
   'blobStore>persistence/backends',
   // `sessionIndex` (L2) reads the `persistence_minidb_readmodel` experimental
   // flag (L3) to switch session listings between the legacy N+1 disk read and

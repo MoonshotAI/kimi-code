@@ -58,6 +58,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
@@ -329,6 +330,11 @@ describe('AgentLifecycleService', () => {
       disabledTools: () => [],
       setDisabledTools: () => Promise.resolve(),
     } as unknown as ISessionToolPolicy);
+    ix.stub(ISessionToolPolicyGate, {
+      _serviceBrand: undefined,
+      disabledTools: [],
+      onDidChange: Event.None as Event<void>,
+    } satisfies ISessionToolPolicyGate);
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
       _serviceBrand: undefined,

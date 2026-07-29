@@ -13,27 +13,48 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { ISessionFsService } from '#/session/sessionFs/fs';
-import { SessionFsService } from '#/session/sessionFs/fsService';
+import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
+import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
-import { ISessionStateService } from '#/session/state/sessionState';
-import { SessionStateService } from '#/session/state/sessionStateService';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
 const WORK_DIR = '/repo';
 
-function stubWorkspace(): ISessionWorkspaceContext {
+function stubWorkspaceContext(): IWorkspaceContext {
   return {
     _serviceBrand: undefined,
-    workDir: WORK_DIR,
+    workspaceId: 'w',
+    cwd: WORK_DIR,
+    source: 'local',
+    meta: { id: 'w', root: WORK_DIR, name: 'proj', createdAt: 1, lastOpenedAt: 1 },
+    persistenceScope: 'sessions/w',
+    osBackendId: 'local',
+    persistenceBackendId: 'local',
+  };
+}
+
+function stubWorkspaceDirs(): IWorkspaceDirs {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
     additionalDirs: [],
-    resolve: (rel) => (isAbsolute(rel) ? rel : resolve(WORK_DIR, rel)),
-    isWithin: (abs) => {
-      const r = relative(WORK_DIR, abs);
-      return r === '' || (!r.startsWith('..') && !isAbsolute(r));
+    onDidChange: () => ({ dispose: () => {} }),
+    addDir: () => Promise.reject(new Error('not supported in tests')),
+    mergeAdditionalDirs: () => Promise.resolve(),
+    sessionInfo: () => {
+      throw new Error('not supported in tests');
     },
-    assertAllowed: (abs) => abs,
+  };
+}
+
+function workspaceGitStub(git: IGitService): IWorkspaceGitService {
+  return {
+    _serviceBrand: undefined,
+    status: (filter) => git.status(WORK_DIR, filter),
+    diff: (rel, abs) => git.diff(WORK_DIR, rel, abs),
   };
 }
 
@@ -295,18 +316,11 @@ function telemetryStub(events: Array<{ event: string; properties: Record<string,
 beforeEach(() => {
   _clearScopedRegistryForTests();
   registerScopedService(
-    LifecycleScope.Session,
-    ISessionStateService,
-    SessionStateService,
-    ScopeActivation.OnScopeCreated,
-    'state',
-  );
-  registerScopedService(
-    LifecycleScope.Session,
-    ISessionFsService,
-    SessionFsService,
+    LifecycleScope.Workspace,
+    IWorkspaceFsService,
+    WorkspaceFsService,
     ScopeActivation.OnDemand,
-    'sessionFs',
+    'workspaceFs',
   );
 });
 
@@ -341,21 +355,22 @@ function makeSession(
   symlinks: readonly string[] = [],
   runner?: ISessionProcessRunner,
   symlinkTargets: Record<string, string> = {},
-): ISessionFsService {
+): IWorkspaceFsService {
   host = createScopedTestHost();
-  const session = host.child(LifecycleScope.Session, 's1', [
-    stubPair(ISessionWorkspaceContext, stubWorkspace()),
+  const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    stubPair(IWorkspaceContext, stubWorkspaceContext()),
+    stubPair(IWorkspaceDirs, stubWorkspaceDirs()),
     stubPair(IHostFileSystem, fakeFs(files, symlinks, symlinkTargets)),
     stubPair(ISessionProcessRunner, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
-    stubPair(IGitService, git),
+    stubPair(IWorkspaceGitService, workspaceGitStub(git)),
   ]);
-  return session.accessor.get(ISessionFsService);
+  return workspace.accessor.get(IWorkspaceFsService);
 }
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
-describe('SessionFsService.gitStatus', () => {
+describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IGitService with the session cwd and a confined filter', async () => {
     const calls: Array<{ cwd: string; filter: ReadonlySet<string> | undefined }> = [];
     const git: IGitService = {
@@ -397,7 +412,7 @@ describe('SessionFsService.gitStatus', () => {
   });
 });
 
-describe('SessionFsService.diff', () => {
+describe('WorkspaceFsService.diff', () => {
   it('delegates to IGitService with confined rel and abs paths', async () => {
     const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
     const git: IGitService = {
@@ -434,7 +449,7 @@ describe('SessionFsService.diff', () => {
   });
 });
 
-describe('SessionFsService.search', () => {
+describe('WorkspaceFsService.search', () => {
   it('finds files by fuzzy query and respects the result cap', async () => {
     const fs = makeSession(
       { 'src/foo.ts': '', 'src/bar.ts': '', 'README.md': '' },
@@ -462,7 +477,7 @@ describe('SessionFsService.search', () => {
   });
 });
 
-describe('SessionFsService.grep', () => {
+describe('WorkspaceFsService.grep', () => {
   it('falls back to the node implementation when rg is unavailable', async () => {
     const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const fs = makeSession(
@@ -577,7 +592,7 @@ describe('SessionFsService.grep', () => {
   });
 });
 
-describe('SessionFsService.list', () => {
+describe('WorkspaceFsService.list', () => {
   it('lists files and directories with kinds', async () => {
     const fs = makeSession(
       { 'src/a.ts': '', 'src/sub/b.ts': '', 'README.md': '' },
@@ -630,7 +645,7 @@ describe('SessionFsService.list', () => {
   });
 });
 
-describe('SessionFsService.read', () => {
+describe('WorkspaceFsService.read', () => {
   it('reads utf-8 content with metadata', async () => {
     const fs = makeSession({ 'src/a.ts': 'hello\nworld\n' }, emptyHandler);
     const result = await fs.read({
@@ -678,7 +693,7 @@ describe('SessionFsService.read', () => {
   });
 });
 
-describe('SessionFsService.stat', () => {
+describe('WorkspaceFsService.stat', () => {
   it('returns a file entry with mime', async () => {
     const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler);
     const entry = await fs.stat({ path: 'src/a.ts' });
@@ -694,7 +709,7 @@ describe('SessionFsService.stat', () => {
   });
 });
 
-describe('SessionFsService.statMany', () => {
+describe('WorkspaceFsService.statMany', () => {
   it('returns null per missing path and entries for present ones', async () => {
     const fs = makeSession({ 'a.txt': 'hi' }, emptyHandler);
     const result = await fs.statMany({ paths: ['a.txt', 'missing.txt'] });
@@ -703,7 +718,7 @@ describe('SessionFsService.statMany', () => {
   });
 });
 
-describe('SessionFsService.listMany', () => {
+describe('WorkspaceFsService.listMany', () => {
   it('returns results per path and partial_errors for failures', async () => {
     const fs = makeSession({ 'a.txt': '' }, emptyHandler);
     const result = await fs.listMany({
@@ -720,7 +735,7 @@ describe('SessionFsService.listMany', () => {
   });
 });
 
-describe('SessionFsService.mkdir', () => {
+describe('WorkspaceFsService.mkdir', () => {
   it('creates a directory and returns its entry', async () => {
     const fs = makeSession({}, emptyHandler);
     const entry = await fs.mkdir({ path: 'newdir', recursive: false });
@@ -736,7 +751,7 @@ describe('SessionFsService.mkdir', () => {
   });
 });
 
-describe('SessionFsService.resolvePath', () => {
+describe('WorkspaceFsService.resolvePath', () => {
   it('returns absolute, relative, and isDirectory', async () => {
     const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
     const res = await fs.resolvePath('src/a.ts');
@@ -746,7 +761,7 @@ describe('SessionFsService.resolvePath', () => {
   });
 });
 
-describe('SessionFsService.resolveDownload', () => {
+describe('WorkspaceFsService.resolveDownload', () => {
   it('returns size, etag, mime, modifiedAt', async () => {
     const fs = makeSession({ 'a.txt': 'hello' }, emptyHandler);
     const res = await fs.resolveDownload('a.txt');
@@ -762,10 +777,10 @@ describe('SessionFsService.resolveDownload', () => {
   });
 });
 
-describe('SessionFsService symlink confinement', () => {
+describe('WorkspaceFsService symlink confinement', () => {
   const escapeTargets = { docs: '/outside' };
 
-  function escapeSession(): ISessionFsService {
+  function escapeSession(): IWorkspaceFsService {
     return makeSession(
       { 'src/a.ts': '' },
       emptyHandler,

@@ -1,13 +1,14 @@
 /**
- * `sessionFs` domain (L2) — wire-shaped filesystem operations.
+ * `workspaceFs` domain (L3) — wire-shaped filesystem operations.
  *
- * Defines the `ISessionFsService` that backs the fs REST surface: content search,
- * content grep, and git status/diff, together with the zod DTO schemas the
- * transports validate against. It orchestrates the os `IHostFileSystem`
- * (file IO, resolved against the workspace root) plus `ISessionProcessRunner`
- * (for `rg` / `git` / `gh`). Git status/diff DTOs live in the `git` domain.
- * Session-scoped — the scope itself is the session, so no `sessionId` is
- * threaded through.
+ * Defines the `IWorkspaceFsService` that backs the fs REST surface: content
+ * search, content grep, and git status/diff, together with the zod DTO
+ * schemas the transports validate against. It orchestrates the os
+ * `IHostFileSystem` (file IO, resolved against the workspace root) plus the
+ * handler-shared `ISessionProcessRunner` (for `rg`). Git status/diff DTOs
+ * live in the `git` domain. Workspace-scoped — one instance per handler,
+ * pinned to the handler root (chdir is gone, so the root never changes); the
+ * edge resolves it through any live session of the workspace.
  */
 
 import { z } from 'zod';
@@ -231,7 +232,7 @@ export interface FsDownloadResolved {
   readonly modifiedAt: Date;
 }
 
-export interface ISessionFsService {
+export interface IWorkspaceFsService {
   readonly _serviceBrand: undefined;
 
   list(req: FsListRequest): Promise<FsListResponse>;
@@ -248,5 +249,5 @@ export interface ISessionFsService {
   resolveDownload(relPath: string): Promise<FsDownloadResolved>;
 }
 
-export const ISessionFsService: ServiceIdentifier<ISessionFsService> =
-  createDecorator<ISessionFsService>('sessionFsService');
+export const IWorkspaceFsService: ServiceIdentifier<IWorkspaceFsService> =
+  createDecorator<IWorkspaceFsService>('workspaceFsService');

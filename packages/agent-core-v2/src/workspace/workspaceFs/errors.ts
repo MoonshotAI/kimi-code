@@ -1,5 +1,5 @@
 /**
- * `sessionFs` domain error codes.
+ * `workspaceFs` domain error codes.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

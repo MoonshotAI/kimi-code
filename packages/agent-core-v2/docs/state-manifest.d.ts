@@ -21,7 +21,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 25 keys · Agent: 68 keys)
+// Index (Session: 18 keys · Agent: 68 keys)
 //   Session
 //     cron.inFlight                      src/session/cron/sessionCronServiceImpl.ts
 //     cron.lastSeenAt                    src/session/cron/sessionCronServiceImpl.ts
@@ -34,13 +34,6 @@
 //     interaction.recentlyResolved       src/session/interaction/interactionService.ts
 //     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
 //     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
-//     sessionFs.realRootsCache           src/session/sessionFs/fsService.ts
-//     sessionFs.rgResolution             src/session/sessionFs/fsService.ts
-//     sessionFsWatch.gitignoreLoaded     src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.pending             src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.rawCount            src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.truncated           src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.watched             src/session/sessionFs/fsWatchService.ts
 //     sessionLog.rootLevel               src/session/sessionLog/sessionLogService.ts
 //     sessionMetadata.data               src/session/sessionMetadata/sessionMetadataService.ts
 //     sessionSkillCatalog.contributions  src/session/sessionSkillCatalog/skillCatalogService.ts
@@ -172,27 +165,6 @@ export interface SessionStateSnapshot {
     background: number;
     lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   }>;
-  // src/session/sessionFs/fsService.ts
-  'sessionFs.realRootsCache': {
-    readonly key: string;
-    readonly roots: readonly string[];
-  } | undefined;
-  'sessionFs.rgResolution': /* RgResolution — packages/agent-core-v2/src/session/sessionFs/rgLocator.ts */ {
-    readonly path: string;
-    readonly source: /* RgResolutionSource — packages/agent-core-v2/src/session/sessionFs/rgLocator.ts */ 'system-path' | 'share-bin-cached';
-  } | null | undefined;
-  // src/session/sessionFs/fsWatchService.ts
-  'sessionFsWatch.gitignoreLoaded': boolean;
-  'sessionFsWatch.pending': /* FsChangeEntry — packages/agent-core-v2/src/session/sessionFs/fsWatch.ts */ {
-    path: string;
-    change: /* FsChangeAction — packages/agent-core-v2/src/session/sessionFs/fsWatch.ts */ 'created' | 'modified' | 'deleted';
-    kind: /* FsChangeKind — packages/agent-core-v2/src/session/sessionFs/fsWatch.ts */ 'file' | 'directory' | 'symlink';
-    size_delta?: number;
-    etag?: string;
-  }[];
-  'sessionFsWatch.rawCount': number;
-  'sessionFsWatch.truncated': boolean;
-  'sessionFsWatch.watched': Set<string>;
   // src/session/sessionLog/sessionLogService.ts
   'sessionLog.rootLevel': /* LogLevelState — packages/agent-core-v2/src/_base/log/logService.ts */ {
     level: /* LogLevel — packages/agent-core-v2/src/_base/log/log.ts */ 'info' | 'off' | 'error' | 'warn' | 'debug';
@@ -772,7 +744,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2441": undefined;
+    readonly "__@mediaStripSnapshotBrand@2263": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {

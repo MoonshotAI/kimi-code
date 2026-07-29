@@ -17,11 +17,11 @@
  * resources as pure-data read views (the injection contracts):
  * `sessionSkillCatalogData` / `sessionAgentProfileCatalogData` (the merged
  * catalogs), `sessionInstructionsProvider` (the AGENTS.md snapshot),
- * `sessionMcpHandle` (the one shared MCP connection manager), and
+ * `sessionMcpHandle` (the one shared MCP connection manager),
  * `sessionWorkspaceInfo` (the shared additional-directory set — caller
  * `additionalDirs` options union into it at materialization; the
- * `workspaceDirs` service owns persistence and the `local.toml` watch) —
- * discovery,
+ * `workspaceDirs` service owns persistence and the `local.toml` watch), and
+ * `sessionToolPolicyGate` (the workspace's os-level tool veto) — discovery,
  * watching and connecting all live on the Workspace-scope services; session
  * consumers read the seeds and refresh off their change events.
  * Materializes the session's initial metadata on
@@ -103,8 +103,10 @@ import {
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { sessionSkillCatalogDataSeed } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { sessionToolPolicyGateSeed } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
 import {
   AGENT_WIRE_RECORD_KEY,
@@ -117,6 +119,7 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './addressing';
 import {
@@ -168,6 +171,8 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
+    @IWorkspaceToolPolicy private readonly toolPolicy: IWorkspaceToolPolicy,
+    @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
   ) {
     super();
   }
@@ -259,6 +264,11 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
           ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
           ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
           ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
+          ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
+          // The handler-shared Workspace-scope process runner shadows the
+          // Session-scope default registration in every session of this
+          // workspace (same seed pattern as the contracts above).
+          [ISessionProcessRunner, this.processRunner],
         ],
       },
     ) as ISessionScopeHandle;

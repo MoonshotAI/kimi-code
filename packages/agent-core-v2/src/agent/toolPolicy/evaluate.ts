@@ -3,8 +3,9 @@
  *
  * Applies allowlists and denylists with builtin/MCP matching semantics shared
  * by Agent authorization, profile prompt construction, and child-agent setup.
- * `isToolActiveComposed` intersects the three policy layers (profile, global
- * `[tools]` config, Session denylist) so every consumer evaluates the same
+ * `isToolActiveComposed` intersects the policy layers (workspace os-level
+ * veto, profile, global `[tools]` config, Session denylist — the workspace
+ * veto first, outranking the rest) so every consumer evaluates the same
  * combination instead of re-implementing it. An empty/absent global `enabled`
  * list means unconstrained — an explicit empty list must never disable
  * everything.
@@ -58,6 +59,12 @@ export interface GlobalToolsPolicy {
 }
 
 export interface ToolPolicyLayers {
+  /**
+   * The workspace (os-level) veto: tools the runtime / workspace disables.
+   * Evaluated FIRST — it outranks every other layer, so a workspace-disabled
+   * tool is inactive no matter what profile, config, or session layers say.
+   */
+  readonly workspaceDisabledTools?: readonly string[];
   readonly profile: ToolActivationPolicy;
   readonly global?: GlobalToolsPolicy;
   readonly sessionDisabledTools?: readonly string[];
@@ -69,6 +76,7 @@ export function isToolActiveComposed(
   source: ToolSource = 'builtin',
 ): boolean {
   return (
+    isToolActive({ disallowedTools: layers.workspaceDisabledTools }, name, source) &&
     isToolActive(layers.profile, name, source) &&
     isToolActive(
       {

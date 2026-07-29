@@ -26,6 +26,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -38,6 +39,8 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
@@ -120,6 +123,10 @@ function sessionStubs(): ReturnType<typeof stubPair>[] {
       disabledTools: () => [],
       setDisabledTools: () => Promise.resolve(),
     } satisfies ISessionToolPolicy),
+    stubPair(ISessionProcessRunner, {
+      _serviceBrand: undefined,
+      exec: () => Promise.reject(new Error('process exec is not supported in this test')),
+    } satisfies ISessionProcessRunner),
     stubPair(IWorkspaceSkillCatalog, (() => {
       const catalog = {
         getSkill: () => undefined,
@@ -251,6 +258,13 @@ describe('WorkspaceLifecycleService', () => {
       WorkspaceHandlerService,
       ScopeActivation.OnScopeCreated,
       'workspaceHandler',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceToolPolicy,
+      WorkspaceToolPolicyService,
+      ScopeActivation.OnScopeCreated,
+      'workspaceToolPolicy',
     );
     registerScopedService(
       LifecycleScope.Workspace,

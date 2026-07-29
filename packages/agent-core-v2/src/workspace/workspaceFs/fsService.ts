@@ -1,23 +1,25 @@
 /**
- * `sessionFs` domain (L2) — `ISessionFsService` implementation.
+ * `workspaceFs` domain (L3) — `IWorkspaceFsService` implementation.
  *
  * Backs the fs REST surface (search / grep / git status / git diff) by
  * orchestrating the os `IHostFileSystem` (file IO, resolved against the
- * workspace root), `ISessionProcessRunner` (`rg`), and `IGitService` (git
- * root and execution environment come from the scope, so no `sessionId` is
- * threaded through. Git operations are delegated to the App-scoped
- * `IGitService`; this service only confines paths and computes repo-relative
- * paths before calling it.
+ * workspace root), the handler-shared `ISessionProcessRunner` (`rg`), and
+ * `IWorkspaceGitService` (git status/diff bound to the handler root; this
+ * service only confines paths and computes repo-relative paths before
+ * calling it).
  *
- * Path confinement applies the lexical `ISessionWorkspaceContext.isWithin`
- * check first, then re-verifies the candidate through `IHostFileSystem.realpath`
- * (resolving the longest existing prefix, so not-yet-created paths still work):
- * a symlink inside the workspace must not steer fs actions to files outside it.
- * The plain-data state (`rgResolution`, `realRootsCache`) is registered into
- * `sessionState` (`ISessionStateService`) and read/written through it.
+ * Path confinement applies a lexical within-workspace check first (the
+ * handler root plus the `workspaceDirs` additional-dir set, mirroring the
+ * Session-scope `workspaceContext` view semantics), then re-verifies the
+ * candidate through `IHostFileSystem.realpath` (resolving the longest
+ * existing prefix, so not-yet-created paths still work): a symlink inside
+ * the workspace must not steer fs actions to files outside it. The small
+ * caches (`rgResolution`, `realRootsCache`) are plain per-handler fields.
+ * Bound at Workspace scope — one instance per handler, shared by every
+ * session of the workspace.
  */
 
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import {
   type FsDiffRequest,
@@ -63,7 +65,6 @@ const FsWireErrorCode = {
 import ignore, { type Ignore } from 'ignore';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
 import {
   buildEtag,
   countLines,
@@ -73,14 +74,14 @@ import {
   guessMime,
 } from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
-import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
-import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
-import { type FsDownloadResolved, type FsPathResolved, ISessionFsService } from './fs';
+import { type FsDownloadResolved, type FsPathResolved, IWorkspaceFsService } from './fs';
 import { readStream, runCommand } from './fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
 import {
@@ -103,41 +104,43 @@ const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
 const HIDDEN_NAME_RE = /^\./;
 const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
 
-export const sessionFsRgResolutionKey = defineState<RgResolution | null | undefined>(
-  'sessionFs.rgResolution',
-  () => undefined,
-);
-export const sessionFsRealRootsCacheKey = defineState<
-  { readonly key: string; readonly roots: readonly string[] } | undefined
->('sessionFs.realRootsCache', () => undefined);
-
-export class SessionFsService implements ISessionFsService {
+export class WorkspaceFsService implements IWorkspaceFsService {
   declare readonly _serviceBrand: undefined;
 
   private readonly gitignoreCache = new Map<string, Ignore>();
+  private rgResolution: RgResolution | null | undefined = undefined;
+  private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined =
+    undefined;
+  private readonly workDir: string;
 
   constructor(
-    @ISessionStateService private readonly states: ISessionStateService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IWorkspaceContext workspace: IWorkspaceContext,
+    @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IGitService private readonly git: IGitService,
+    @IWorkspaceGitService private readonly git: IWorkspaceGitService,
   ) {
-    this.states.register(sessionFsRgResolutionKey);
-    this.states.register(sessionFsRealRootsCacheKey);
+    this.workDir = resolve(workspace.cwd);
   }
 
-  private get rgResolution(): RgResolution | null | undefined {
-    return this.states.get(sessionFsRgResolutionKey);
+  private resolvePathInput(rel: string): string {
+    return isAbsolute(rel) ? resolve(rel) : resolve(this.workDir, rel);
   }
 
-  private set rgResolution(value: RgResolution | null | undefined) {
-    this.states.set(sessionFsRgResolutionKey, value);
+  private isWithinWorkspace(absPath: string): boolean {
+    const target = resolve(absPath);
+    if (target === this.workDir) return true;
+    const rel = relative(this.workDir, target);
+    if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true;
+    return this.workspaceDirs.additionalDirs.some((dir) => {
+      const r = relative(resolve(dir), target);
+      return r === '' || (!r.startsWith('..') && !isAbsolute(r));
+    });
   }
 
   private absOf(rel: string): string {
-    return rel === '' || rel === '.' ? this.workspace.workDir : join(this.workspace.workDir, rel);
+    return rel === '' || rel === '.' ? this.workDir : join(this.workDir, rel);
   }
 
   async list(req: FsListRequest): Promise<FsListResponse> {
@@ -341,7 +344,7 @@ export class SessionFsService implements ISessionFsService {
     } catch (err) {
       throw mapFsError(err, req.path);
     }
-    const name = rel === '.' ? basename(this.workspace.workDir) : basename(abs);
+    const name = rel === '.' ? basename(this.workDir) : basename(abs);
     return buildFsEntry(rel, name, st, true);
   }
 
@@ -358,7 +361,7 @@ export class SessionFsService implements ISessionFsService {
       resolved.map(async ({ raw, rel, abs }) => {
         try {
           const st = await this.hostFs.lstat(abs);
-          const name = rel === '.' ? basename(this.workspace.workDir) : basename(abs);
+          const name = rel === '.' ? basename(this.workDir) : basename(abs);
           entries[raw] = buildFsEntry(rel, name, st, false);
         } catch {
           entries[raw] = null;
@@ -482,8 +485,6 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse> {
-    const cwd = this.workspace.workDir;
-
     let filter: Set<string> | undefined;
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
@@ -492,13 +493,12 @@ export class SessionFsService implements ISessionFsService {
       }
     }
 
-    return this.git.status(cwd, filter);
+    return this.git.status(filter);
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
-    const cwd = this.workspace.workDir;
     const abs = await this.resolveWithin(req.path);
-    return this.git.diff(cwd, this.toRel(abs), abs);
+    return this.git.diff(this.toRel(abs), abs);
   }
 
   private async grepWithRg(
@@ -528,7 +528,7 @@ export class SessionFsService implements ISessionFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const proc = await this.runner.exec([rgPath, ...args], { cwd: this.workspace.workDir });
+    const proc = await this.runner.exec([rgPath, ...args], { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
     let killed = false;
@@ -688,13 +688,13 @@ export class SessionFsService implements ISessionFsService {
   }
 
   private async matcher(): Promise<Ignore | undefined> {
-    const cwd = this.workspace.workDir;
+    const cwd = this.workDir;
     const cached = this.gitignoreCache.get(cwd);
     if (cached !== undefined) return cached;
     const ig = ignore();
     ig.add('.git/');
     try {
-      const contents = await this.hostFs.readText(join(this.workspace.workDir, '.gitignore'));
+      const contents = await this.hostFs.readText(join(this.workDir, '.gitignore'));
       ig.add(contents);
     } catch {
     }
@@ -705,7 +705,7 @@ export class SessionFsService implements ISessionFsService {
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
     const probe: RgProbe = {
-      exec: (args) => runCommand(this.runner, args, { cwd: this.workspace.workDir }),
+      exec: (args) => runCommand(this.runner, args, { cwd: this.workDir }),
     };
     try {
       this.rgResolution = await ensureRgPath(probe);
@@ -715,20 +715,8 @@ export class SessionFsService implements ISessionFsService {
     return this.rgResolution;
   }
 
-  private get realRootsCache():
-    | { readonly key: string; readonly roots: readonly string[] }
-    | undefined {
-    return this.states.get(sessionFsRealRootsCacheKey);
-  }
-
-  private set realRootsCache(
-    value: { readonly key: string; readonly roots: readonly string[] } | undefined,
-  ) {
-    this.states.set(sessionFsRealRootsCacheKey, value);
-  }
-
   private async realRoots(): Promise<readonly string[]> {
-    const dirs = [this.workspace.workDir, ...this.workspace.additionalDirs];
+    const dirs = [this.workDir, ...this.workspaceDirs.additionalDirs.map((d) => resolve(d))];
     const key = dirs.join('\n');
     if (this.realRootsCache?.key === key) return this.realRootsCache.roots;
     const roots: string[] = [];
@@ -778,8 +766,8 @@ export class SessionFsService implements ISessionFsService {
         details: { path: inputPath, reason: 'dotdot_segment' },
       });
     }
-    const abs = this.workspace.resolve(inputPath);
-    if (!this.workspace.isWithin(abs)) {
+    const abs = this.resolvePathInput(inputPath);
+    if (!this.isWithinWorkspace(abs)) {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
@@ -797,7 +785,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   private toRel(abs: string): string {
-    const cwd = this.workspace.workDir;
+    const cwd = this.workDir;
     if (abs === cwd) return '.';
     const rel = relative(cwd, abs);
     if (rel === '') return '.';
@@ -1027,9 +1015,9 @@ function toWireError(err: unknown): { code: number; msg: string } {
 }
 
 registerScopedService(
-  LifecycleScope.Session,
-  ISessionFsService,
-  SessionFsService,
+  LifecycleScope.Workspace,
+  IWorkspaceFsService,
+  WorkspaceFsService,
   ScopeActivation.OnScopeCreated,
-  'sessionFs',
+  'workspaceFs',
 );
