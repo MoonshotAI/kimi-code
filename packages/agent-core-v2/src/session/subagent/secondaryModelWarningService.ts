@@ -9,8 +9,10 @@
  * `supportEfforts` (what the derived entry will carry) — on failure, caches a
  * warning and publishes it as a `warning` event on the main agent's
  * `eventBus`, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). Never throws: a broken secondary model
- * demotes to a notice here, with spawn-time resolution
+ * (`GET /sessions/{id}/warnings`). `recheckSecondaryModelWarning` recomputes
+ * the cache after a mid-session `[secondary_model]` change, re-publishing
+ * only when the warning actually changed. Never throws: a broken secondary
+ * model demotes to a notice here, with spawn-time resolution
  * (`resolveSubagentBinding` + `wrapSubagentModelError`) staying as the
  * backstop. Bound at Session scope.
  */
@@ -71,6 +73,24 @@ export class SessionSecondaryModelWarningService
   }
 
   getSecondaryModelWarning(): SecondaryModelWarning | undefined {
+    return this.warning;
+  }
+
+  recheckSecondaryModelWarning(): SecondaryModelWarning | undefined {
+    const previous = this.warning;
+    this.warning = this.computeWarning();
+    const changed =
+      previous?.code !== this.warning?.code || previous?.message !== this.warning?.message;
+    if (changed && this.warning !== undefined) {
+      this.agentLifecycle
+        .get(MAIN_AGENT_ID)
+        ?.accessor.get(IEventBus)
+        .publish({
+          type: 'warning',
+          code: this.warning.code,
+          message: this.warning.message,
+        });
+    }
     return this.warning;
   }
 

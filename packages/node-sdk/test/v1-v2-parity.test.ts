@@ -388,6 +388,10 @@ function projectResumedAgents(
  *   model, where v2's bind requires a model and deliberately leaves the
  *   agent unbound (the same model-less gap the getStatus parity pins). With
  *   a configured model both bind the same profile and compare in full.
+ * - `config.subagentNames`: v1's config snapshot carries the bound profile's
+ *   delegatable subagent roster (custom agent files are a v1-engine feature);
+ *   v2's resumed agent state has no equivalent field. Engine-owned profile
+ *   data, not resume data.
  * - `context.tokenCount`: the KNOWN_DIFFS.getContext divergence (v1's running
  *   estimate vs v2's provider-measured prefix) — the history compares in
  *   full, the count only in the empty state.
@@ -415,6 +419,7 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
   const config = projected['config'] as Record<string, unknown>;
   delete config['provider'];
   delete config['systemPrompt'];
+  delete config['subagentNames'];
   const modelLess = config['modelAlias'] === undefined;
   if (modelLess) {
     delete config['profileName'];
@@ -603,6 +608,35 @@ api_key = "fixture-api-key"
 
 [thinking]
 enabled = "not-a-boolean"
+`;
+
+/**
+ * Secondary-model parity fixture: one resolvable model and the experiment
+ * enabled, no `[secondary_model]` recipe — the apply cases persist the recipe
+ * through `setConfig` mid-test.
+ */
+const SECONDARY_MODEL_CONFIG_TOML = `
+default_provider = "fixture-provider"
+default_model = "fixture-model"
+
+[providers.fixture-provider]
+type = "kimi"
+api_key = "fixture-api-key"
+base_url = "https://example.com/v1"
+
+[models.fixture-model]
+provider = "fixture-provider"
+model = "kimi-for-coding"
+max_context_size = 262144
+
+[experimental]
+secondary-model = true
+`;
+
+/** Same fixture with a dangling `[secondary_model]` pointer baked in. */
+const SECONDARY_MODEL_BROKEN_CONFIG_TOML = `${SECONDARY_MODEL_CONFIG_TOML}
+[secondary_model]
+model = "missing-model"
 `;
 
 function expectConfigParity(v1Config: KimiConfig, v2Config: KimiConfig): void {
@@ -1123,10 +1157,14 @@ interface SessionParityPair {
   readonly workDir: string;
 }
 
-async function makeSessionParityPair(): Promise<SessionParityPair> {
+async function makeSessionParityPair(configToml?: string): Promise<SessionParityPair> {
   const v1HomeDir = await makeTempDir('kimi-sdk-parity-v1-home-');
   const v2HomeDir = await makeTempDir('kimi-sdk-parity-v2-home-');
   const workDir = await makeTempDir('kimi-sdk-parity-work-');
+  if (configToml !== undefined) {
+    await writeFile(join(v1HomeDir, 'config.toml'), configToml, 'utf-8');
+    await writeFile(join(v2HomeDir, 'config.toml'), configToml, 'utf-8');
+  }
   return {
     v1: new SDKRpcClient({ homeDir: v1HomeDir, identity: TEST_IDENTITY }),
     v2: new SDKRpcClientV2({ homeDir: v2HomeDir, identity: TEST_IDENTITY }),
@@ -2577,6 +2615,96 @@ describe('v1↔v2 agent interaction parity', () => {
       await expect(pair.v2.getSessionWarnings({ sessionId: 'session_missing' })).rejects.toMatchObject(
         { code: ErrorCodes.SESSION_NOT_FOUND },
       );
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  });
+
+  it('applyPersistedSecondaryModel validates, applies, and refreshes warnings identically', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionParityPair(SECONDARY_MODEL_CONFIG_TOML);
+    try {
+      await createOnBoth(pair, { id: 'session_parity_secondary_apply' });
+      const input = { sessionId: 'session_parity_secondary_apply' } as const;
+      const applyError = (client: SDKRpcClient | SDKRpcClientV2) =>
+        client.applyPersistedSecondaryModel(input).then(
+          () => undefined,
+          (error: unknown) => error as Error,
+        );
+
+      // No recipe persisted yet: both reject with v1's persist-first error.
+      const [v1NoRecipe, v2NoRecipe] = await Promise.all([
+        applyError(pair.v1),
+        applyError(pair.v2),
+      ]);
+      expect(v1NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      expect(v2NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      expect(v2NoRecipe?.message).toBe(v1NoRecipe?.message);
+
+      // A dangling recipe: both reject, pointing at [secondary_model].
+      await Promise.all([
+        pair.v1.setConfig({ secondaryModel: { model: 'missing-model' } }),
+        pair.v2.setConfig({ secondaryModel: { model: 'missing-model' } }),
+      ]);
+      const [v1Broken, v2Broken] = await Promise.all([
+        applyError(pair.v1),
+        applyError(pair.v2),
+      ]);
+      expect(v1Broken).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      expect(v2Broken).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      expect(v1Broken?.message).toContain('[secondary_model].model');
+      expect(v2Broken?.message).toContain('[secondary_model].model');
+
+      // A valid recipe: both apply cleanly. The warnings pull converges on
+      // empty — v1's snapshot never held the broken recipe (its apply
+      // validates before mutating), v2's live-config warning cache is
+      // refreshed by the successful apply.
+      await Promise.all([
+        pair.v1.setConfig({ secondaryModel: { model: 'fixture-model' } }),
+        pair.v2.setConfig({ secondaryModel: { model: 'fixture-model' } }),
+      ]);
+      await Promise.all([
+        pair.v1.applyPersistedSecondaryModel(input),
+        pair.v2.applyPersistedSecondaryModel(input),
+      ]);
+      const [v1Warnings, v2Warnings] = await Promise.all([
+        pair.v1.getSessionWarnings(input),
+        pair.v2.getSessionWarnings(input),
+      ]);
+      expect(v2Warnings).toEqual(v1Warnings);
+      expect(v1Warnings).toEqual([]);
+
+      await expect(
+        pair.v1.applyPersistedSecondaryModel({ sessionId: 'session_missing' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      await expect(
+        pair.v2.applyPersistedSecondaryModel({ sessionId: 'session_missing' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  });
+
+  it('getSessionWarnings flags a creation-time broken secondary recipe on both engines', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionParityPair(SECONDARY_MODEL_BROKEN_CONFIG_TOML);
+    try {
+      await createOnBoth(pair, { id: 'session_parity_secondary_broken' });
+      const input = { sessionId: 'session_parity_secondary_broken' } as const;
+      const [v1Warnings, v2Warnings] = await Promise.all([
+        pair.v1.getSessionWarnings(input),
+        pair.v2.getSessionWarnings(input),
+      ]);
+      // The message wording is engine-specific; the code + severity are the
+      // shared contract.
+      const codes = (warnings: readonly { code: string; severity: string }[]) =>
+        warnings.map(({ code, severity }) => ({ code, severity }));
+      expect(codes(v2Warnings)).toEqual(codes(v1Warnings));
+      expect(codes(v1Warnings)).toEqual([
+        { code: 'secondary-model-invalid', severity: 'warning' },
+      ]);
     } finally {
       await closeSessionPair(pair);
       restoreEnv();
