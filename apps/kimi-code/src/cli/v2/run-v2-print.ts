@@ -119,6 +119,10 @@ import {
   raceWithTimeout,
   requireConfiguredModel,
 } from '../run-prompt';
+import {
+  createTelemetryShutdownDeadline,
+  formatTelemetryShutdownWarning,
+} from '../telemetry-shutdown';
 import { createKimiCodeHostIdentity } from '../version';
 
 import { resolveOutputFormat } from '../options';
@@ -226,16 +230,27 @@ export async function runV2Print(
         // A termination signal can arrive mid-turn: cancel turns and wait for idle agents first.
         await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
+        const telemetryDeadline = createTelemetryShutdownDeadline(
+          CLI_SHUTDOWN_TIMEOUT_MS,
+          (error) => {
+            stderr.write(formatTelemetryShutdownWarning(error));
+          },
+        );
+        const service = telemetryService;
         try {
           // Concurrent so the phases' allowances cannot sum past PROMPT_CLEANUP_TIMEOUT_MS.
           await Promise.all([
             // The turn's tail records reach the journal only via the wire's
             // async persist queue; process.exit must not cut off that queue.
             raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
-            telemetryService !== undefined
-              ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
+            service !== undefined
+              ? telemetryDeadline.run((remainingMs) =>
+                  raceWithTimeout(service.shutdown(), remainingMs),
+                )
               : Promise.resolve(),
-            shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
+            telemetryDeadline.run((remainingMs) =>
+              shutdownTelemetry({ timeoutMs: remainingMs }),
+            ),
           ]);
           app.dispose();
         } finally {
