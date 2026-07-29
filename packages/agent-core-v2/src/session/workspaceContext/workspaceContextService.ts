@@ -2,10 +2,11 @@
  * `workspaceContext` domain (L1) — `ISessionWorkspaceContext` implementation.
  *
  * Holds the session work directory and additional dirs, resolves relative
- * paths, and checks whether a path falls within the workspace. The plain-data
- * state (`workDir`, `additionalDirs`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. Bound at Session
- * scope.
+ * paths, and checks whether a path falls within the workspace. Both are frozen
+ * at construction from the `sessionContext` seed (`cwd` / `additionalDirs`) —
+ * the context is read-only for the session's lifetime. The plain-data state
+ * (`workDir`, `additionalDirs`) is registered into `sessionState`
+ * (`ISessionStateService`) and read through it. Bound at Session scope.
  */
 
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -32,23 +33,18 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
   ) {
     this.states.register(workspaceContextWorkDirKey);
     this.states.register(workspaceContextAdditionalDirsKey);
-    this.setWorkDir(ctx.cwd);
+    this.states.set(workspaceContextWorkDirKey, resolve(ctx.cwd));
+    this.states.set(workspaceContextAdditionalDirsKey, [
+      ...new Set((ctx.additionalDirs ?? []).map((d) => resolve(d))),
+    ]);
   }
 
   private get _workDir(): string {
     return this.states.get(workspaceContextWorkDirKey);
   }
 
-  private set _workDir(value: string) {
-    this.states.set(workspaceContextWorkDirKey, value);
-  }
-
   private get _additionalDirs(): string[] {
     return this.states.get(workspaceContextAdditionalDirsKey);
-  }
-
-  private set _additionalDirs(value: string[]) {
-    this.states.set(workspaceContextAdditionalDirsKey, value);
   }
 
   get workDir(): string {
@@ -57,14 +53,6 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
 
   get additionalDirs(): readonly string[] {
     return this._additionalDirs;
-  }
-
-  setWorkDir(workDir: string): void {
-    this._workDir = resolve(workDir);
-  }
-
-  setAdditionalDirs(dirs: readonly string[]): void {
-    this._additionalDirs = [...new Set(dirs.map((d) => resolve(d)))];
   }
 
   resolve(rel: string): string {
@@ -88,16 +76,6 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
       throw new Error(`Path outside workspace (${op}): ${target}`);
     }
     return target;
-  }
-
-  addAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    if (!this._additionalDirs.includes(d)) this._additionalDirs.push(d);
-  }
-
-  removeAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    this._additionalDirs = this._additionalDirs.filter((x) => x !== d);
   }
 }
 

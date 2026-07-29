@@ -3,7 +3,9 @@
  *
  * Defines the `ISessionWorkspaceContext` used by the Agent side to resolve relative
  * paths against the session work directory and to enforce that file/process
- * operations stay within the workspace (plus any additional dirs). Pure
+ * operations stay within the workspace (plus any additional dirs). The view is
+ * read-only: `workDir` / `additionalDirs` are fixed at session creation (seeded
+ * from `ISessionContext`) and never change for the session's lifetime. Pure
  * configuration + boundary — it performs no IO. Session-scoped.
  */
 
@@ -16,13 +18,9 @@ export interface ISessionWorkspaceContext {
 
   readonly workDir: string;
   readonly additionalDirs: readonly string[];
-  setWorkDir(workDir: string): void;
-  setAdditionalDirs(dirs: readonly string[]): void;
   resolve(rel: string): string;
   isWithin(absPath: string): boolean;
   assertAllowed(absPath: string, op: PathAccessOperation): string;
-  addAdditionalDir(dir: string): void;
-  removeAdditionalDir(dir: string): void;
 }
 
 export const ISessionWorkspaceContext: ServiceIdentifier<ISessionWorkspaceContext> =

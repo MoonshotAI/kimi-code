@@ -18,10 +18,11 @@
  * `modelCapabilities` is intentionally NOT in the Model — it is
  * derived live from `IModelCatalog` so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
- * reference-equality gate stays quiet. The `chdir` side effect and the
- * `agent.status.updated` emission are NOT part of `apply`: they run after
+ * reference-equality gate stays quiet. The `agent.status.updated` emission is
+ * NOT part of `apply`: it runs after
  * `wire.dispatch` on the live path only, so `wire.replay` rebuilds the Model
- * silently.
+ * silently. `cwd` is creation-fixed: it enters the Model through `profile.bind`
+ * and no later Op may change it.
  *
  * Also declares `ActiveToolsModel` (`readonly string[] | undefined`, initial
  * `undefined` = every tool active), the `tools.set_active_tools` whole-set
@@ -80,7 +81,6 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
 
 export const configUpdate = ProfileModel.defineOp('config.update', {
   schema: z.object({
-    cwd: z.string().optional(),
     modelAlias: z.string().optional(),
     profileName: z.string().optional(),
     thinkingEffort: z.custom<ThinkingEffort>().optional(),
@@ -90,9 +90,6 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
   }),
   apply: (s, p) => {
     let next: ProfileModelState | undefined;
-    if (p.cwd !== undefined && p.cwd !== s.cwd) {
-      next = { ...(next ?? s), cwd: p.cwd };
-    }
     if (p.modelAlias !== undefined && p.modelAlias !== s.modelAlias) {
       next = { ...(next ?? s), modelAlias: p.modelAlias };
     }

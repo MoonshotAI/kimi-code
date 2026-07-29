@@ -27,11 +27,6 @@ const SLASH_COMMANDS: SlashCommandInfo[] = [
     description: "Toggle Auto mode (fully autonomous; the agent will not ask questions)",
   },
   { name: "plan", aliases: [], description: "Toggle plan mode. Usage: /plan [on|off|view|clear]" },
-  {
-    name: "add-dir",
-    aliases: [],
-    description: "Add a directory to the workspace. Usage: /add-dir <path>",
-  },
   { name: "export", aliases: [], description: "Export current session context to a markdown file" },
   { name: "import", aliases: [], description: "Import context from a file or session ID" },
 ];

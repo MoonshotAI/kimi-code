@@ -240,18 +240,11 @@ const DOMAIN_LAYER = new Map([
   ['sessionActivity', 6],
   ['session', 6],
   ['terminal', 6],
-  // `workspaceCommand` orchestrates session-level workspace mutations
-  // (`addAdditionalDir`): it reaches through `agentLifecycle` (L6) to the
-  // `main` agent's `contextMemory` (L4) to mirror the action's stdout, and
-  // delegates project-local config persistence to `projectLocalConfig` (L2).
-  // Its highest real dependency is `agentLifecycle`, so it sits in L6 beside
-  // the other coordination domains.
-  ['workspaceCommand', 6],
   // `sessionInit` runs the `/init` command: it reaches through `agentLifecycle`
   // (L6) to spawn the `coder` sub-agent and to the `main` agent's `profile`
   // (L4) / `systemReminder` (L4) / `wireRecord` (L4), and reloads `AGENTS.md`
   // through `profile` (L4). Its highest real dependency is `agentLifecycle`,
-  // so it sits in L6 beside `workspaceCommand`.
+  // so it sits in L6 beside the other coordination domains.
   ['sessionInit', 6],
   // L7 — boundary
   ['approval', 7],

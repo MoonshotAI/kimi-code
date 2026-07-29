@@ -73,7 +73,6 @@
  */
 interface ConfigUpdatePayload {
   _name: 'config.update';
-  cwd?: string;
   modelAlias?: string;
   profileName?: string;
   /** ThinkingEffort */

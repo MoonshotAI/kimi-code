@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 28 keys · Agent: 67 keys)
+// Index (Session: 27 keys · Agent: 68 keys)
 //   Session
 //     cron.inFlight                             src/session/cron/sessionCronServiceImpl.ts
 //     cron.lastSeenAt                           src/session/cron/sessionCronServiceImpl.ts
@@ -50,7 +50,6 @@
 //     sessionSkillCatalog.contributions         src/session/sessionSkillCatalog/skillCatalogService.ts
 //     sessionSkillCatalog.merged                src/session/sessionSkillCatalog/skillCatalogService.ts
 //     sessionToolPolicy.state                   src/session/sessionToolPolicy/sessionToolPolicyService.ts
-//     workspaceCommand.pendingMainInjections    src/session/workspaceCommand/workspaceCommandService.ts
 //     workspaceContext.additionalDirs           src/session/workspaceContext/workspaceContextService.ts
 //     workspaceContext.workDir                  src/session/workspaceContext/workspaceContextService.ts
 //   Agent
@@ -63,6 +62,8 @@
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     contextSize.lastEmittedTokens                   src/agent/contextSize/contextSizeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
+//     faultInjection.armed                            src/agent/faultInjection/faultInjectionService.ts
+//     faultInjection.fired                            src/agent/faultInjection/faultInjectionService.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
@@ -96,7 +97,6 @@
 //     plan.wasActive                                  src/agent/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
 //     profile.agentsMdWarning                         src/agent/profile/profileService.ts
-//     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     prompt.launching                                src/agent/prompt/promptService.ts
@@ -199,7 +199,6 @@ export interface SessionStateSnapshot {
           readonly now?: string;
           readonly skills?: string;
           readonly skillActive?: boolean;
-          readonly pluginSections?: string;
           readonly productName?: string;
           readonly replyStyleGuide?: string;
           [key: string]: unknown;
@@ -266,7 +265,6 @@ export interface SessionStateSnapshot {
       readonly now?: string;
       readonly skills?: string;
       readonly skillActive?: boolean;
-      readonly pluginSections?: string;
       readonly productName?: string;
       readonly replyStyleGuide?: string;
       [key: string]: unknown;
@@ -588,112 +586,6 @@ export interface SessionStateSnapshot {
   'sessionToolPolicy.state': /* SessionToolPolicyState — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicyService.ts */ {
     readonly disabledTools: readonly string[];
   };
-  // src/session/workspaceCommand/workspaceCommandService.ts
-  'workspaceCommand.pendingMainInjections': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-    readonly role: /* Role — packages/agent-core-v2/src/kosong/contract/message.ts */ 'user' | 'system' | 'assistant' | 'tool';
-    readonly name?: string;
-    readonly content: (/* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'text';
-      text: string;
-    } | /* ThinkPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'think';
-      think: string;
-      encrypted?: string;
-    } | /* ImageURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'image_url';
-      imageUrl: {
-        url: string;
-        id?: string;
-      };
-    } | /* AudioURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'audio_url';
-      audioUrl: {
-        url: string;
-        id?: string;
-      };
-    } | /* VideoURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'video_url';
-      videoUrl: {
-        url: string;
-        id?: string;
-      };
-    })[];
-    readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'function';
-      id: string;
-      name: string;
-      arguments: string | null;
-      extras?: Record<string, unknown>;
-      _streamIndex?: string | number;
-    }[];
-    readonly toolCallId?: string;
-    readonly partial?: boolean;
-    readonly tools?: readonly /* Tool — packages/agent-core-v2/src/kosong/contract/tool.ts */ {
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-      deferred?: true;
-    }[];
-  } & {
-    readonly id?: string;
-    readonly providerMessageId?: string;
-    readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'user';
-    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'skill_activation';
-      readonly activationId: string;
-      readonly skillName: string;
-      readonly skillArgs?: string;
-      readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
-      readonly skillType?: string;
-      readonly skillPath?: string;
-      readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'plugin_command';
-      readonly activationId: string;
-      readonly pluginId: string;
-      readonly commandName: string;
-      readonly commandArgs?: string;
-      readonly trigger: 'user-slash';
-    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'injection';
-      readonly variant: string;
-      readonly ownerPromptId?: string;
-    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'shell_command';
-      readonly phase: 'input' | 'output';
-      readonly isError?: boolean;
-    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'compaction_summary';
-    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'system_trigger';
-      readonly name: string;
-    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'task';
-      readonly taskId: string;
-      readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-      readonly notificationId: string;
-    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'cron_job';
-      readonly jobId: string;
-      readonly cron: string;
-      readonly recurring: boolean;
-      readonly coalescedCount: number;
-      readonly stale: boolean;
-    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'cron_missed';
-      readonly count: number;
-    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'hook_result';
-      readonly event: string;
-      readonly blocked?: boolean;
-    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'retry';
-      readonly trigger?: string;
-    };
-    readonly isError?: boolean;
-    readonly note?: string;
-  })[];
   // src/session/workspaceContext/workspaceContextService.ts
   'workspaceContext.additionalDirs': string[];
   'workspaceContext.workDir': string;
@@ -768,7 +660,7 @@ export interface AgentStateSnapshot {
         readonly trigger?: string;
       };
       readonly phase: /* TurnPhase — packages/agent-core-v2/src/agent/activityView/activityView.ts */ 'running' | 'streaming' | 'tool_call' | 'retrying';
-      readonly stream?: 'assistant' | 'tool_call' | 'thinking';
+      readonly stream?: 'tool_call' | 'assistant' | 'thinking';
       readonly step: number;
       readonly ending: boolean;
       readonly endingReason?: 'error' | 'aborted' | 'max_steps';
@@ -813,7 +705,7 @@ export interface AgentStateSnapshot {
   'activityView.lifecycle': /* ActivityViewLifecycle — packages/agent-core-v2/src/agent/activityView/activityView.ts */ 'ready' | 'disposed';
   'activityView.turn': /* MutableTurn — packages/agent-core-v2/src/agent/activityView/activityViewService.ts */ {
     phase: /* TurnPhase — packages/agent-core-v2/src/agent/activityView/activityView.ts */ 'running' | 'streaming' | 'tool_call' | 'retrying';
-    stream: 'assistant' | 'tool_call' | 'thinking' | undefined;
+    stream: 'tool_call' | 'assistant' | 'thinking' | undefined;
     step: number;
     ending: boolean;
     endingReason: 'error' | 'aborted' | 'max_steps' | undefined;
@@ -948,7 +840,7 @@ export interface AgentStateSnapshot {
         readonly trigger?: string;
       };
       readonly phase: /* TurnPhase — packages/agent-core-v2/src/agent/activityView/activityView.ts */ 'running' | 'streaming' | 'tool_call' | 'retrying';
-      readonly stream?: 'assistant' | 'tool_call' | 'thinking';
+      readonly stream?: 'tool_call' | 'assistant' | 'thinking';
       readonly step: number;
       readonly ending: boolean;
       readonly endingReason?: 'error' | 'aborted' | 'max_steps';
@@ -981,6 +873,9 @@ export interface AgentStateSnapshot {
   'contextSize.lastEmittedTokens': number;
   // src/agent/externalHooks/externalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
+  // src/agent/faultInjection/faultInjectionService.ts
+  'faultInjection.armed': 'request-too-large' | 'image-format' | undefined;
+  'faultInjection.fired': (/* FaultKind — packages/agent-core-v2/src/agent/faultInjection/faultInjection.ts */ 'request-too-large' | 'image-format')[];
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
   'fullCompaction.compactionCountInTurn': number;
@@ -1008,7 +903,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2656": undefined;
+    readonly "__@mediaStripSnapshotBrand@2594": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
@@ -1087,7 +982,6 @@ export interface AgentStateSnapshot {
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
-  'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
   'profile.emittedToolPatternWarnings': Set<string>;
   // src/agent/prompt/promptService.ts

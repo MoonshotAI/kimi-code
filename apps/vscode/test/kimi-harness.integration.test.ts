@@ -371,7 +371,6 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "yolo",
       "auto",
       "plan",
-      "add-dir",
       "export",
       "import",
       "skill:review",
@@ -1088,20 +1087,6 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await expect(runSlash(runtime, "/plan off")).resolves.toBe(true);
     await expect(runtime.session.getStatus()).resolves.toMatchObject({ planMode: false });
     expect(rig.provider.requests).toHaveLength(0);
-  });
-
-  it("keeps a slash-added directory after VS Code closes and resumes the session", async () => {
-    const rig = await createRuntimeRig();
-    const additionalDir = join(rig.workDir, "directory with spaces");
-    await mkdir(additionalDir);
-    const runtime = await openRuntimeSession(rig);
-
-    await expect(runSlash(runtime, `/add-dir "${additionalDir}"`)).resolves.toBe(true);
-    const sessionId = runtime.id;
-    await rig.runtime.detachView("view-1");
-    const resumed = await openRuntimeSession(rig, sessionId);
-
-    expect(resumed.session.summary?.additionalDirs).toContain(additionalDir);
   });
 
   it("rejects an invalid plan subcommand without leaving the runtime busy", async () => {

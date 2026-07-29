@@ -80,7 +80,6 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import {
   AGENT_WIRE_RECORD_KEY,
@@ -92,6 +91,7 @@ import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,
   type ForkSessionOptions,
+  type ResumeSessionOptions,
   type SessionArchivedEvent,
   type SessionClosedEvent,
   type SessionCreatedEvent,
@@ -183,6 +183,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, opts.sessionId);
     const metaScope = sessionScope;
+    const localWorkspaceDirs = await this.projectLocalConfig.readAdditionalDirs(opts.workDir);
+    const callerAdditionalDirs = await this.projectLocalConfig.resolveAdditionalDirs(
+      opts.workDir,
+      opts.additionalDirs ?? [],
+    );
+    const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     const ctx: ISessionContext = {
       _serviceBrand: undefined,
       sessionId: opts.sessionId,
@@ -190,15 +196,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       metaScope,
       cwd: opts.workDir,
+      additionalDirs,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const localWorkspaceDirs = await this.projectLocalConfig.readAdditionalDirs(opts.workDir);
-    const callerAdditionalDirs = await this.projectLocalConfig.resolveAdditionalDirs(
-      opts.workDir,
-      opts.additionalDirs ?? [],
-    );
-    const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
@@ -211,9 +212,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         ],
       },
     ) as ISessionScopeHandle;
-    if (additionalDirs.length > 0) {
-      handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
-    }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -262,12 +260,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return this.sessions.get(sessionId);
   }
 
-  resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+  resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
-    const promise = this.doResume(sessionId)
+    const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
         this.telemetry
           .withContext({ sessionId })
@@ -281,7 +279,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return promise;
   }
 
-  private async doResume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+  private async doResume(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return live;
 
@@ -296,6 +297,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionId,
       workDir,
       workspaceId: summary.workspaceId,
+      additionalDirs: opts?.additionalDirs,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.get(MAIN_AGENT_ID) === undefined) {

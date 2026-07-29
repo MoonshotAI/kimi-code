@@ -104,7 +104,6 @@ describe('AgentProfileService.applyProfile', () => {
   it('refreshes the active profile system prompt exactly without resetting active tools', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
-    svc.update({ cwd: workDir });
     await svc.applyProfile(exactProfile);
     svc.update({ activeToolNames: ['Read'] });
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');

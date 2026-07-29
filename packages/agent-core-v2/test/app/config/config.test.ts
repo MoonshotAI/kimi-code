@@ -239,11 +239,13 @@ describe('Agent config', () => {
         created_at: 1,
       },
       {
-        type: 'config.update',
+        type: 'profile.bind',
         cwd: '/restored-cwd',
         modelAlias: 'restored-model',
         profileName: 'restored-profile',
+        thinkingEffort: 'off',
         systemPrompt: 'Restored prompt.',
+        disallowedTools: [],
       },
       {
         type: 'tools.set_active_tools',
@@ -260,7 +262,7 @@ describe('Agent config', () => {
     });
   });
 
-  it('config.update with cwd initializes builtin tools', async () => {
+  it('config.update initializes builtin tools', async () => {
     const tools = await ctx.rpc.getTools({});
 
     expect(toolNames(tools)).toEqual(

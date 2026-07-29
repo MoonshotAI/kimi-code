@@ -2,8 +2,8 @@
  * `sessionLifecycle` domain (L6) — creates and tracks sessions at the process root.
  *
  * Defines the public contract of session lifecycle: the `CreateSessionOptions`,
- * `ForkSessionOptions`, `CreateChildSessionOptions`, and the
- * `ISessionLifecycleService` used to create sessions (`create`), look up the
+ * `ForkSessionOptions`, `CreateChildSessionOptions`, `ResumeSessionOptions`,
+ * and the `ISessionLifecycleService` used to create sessions (`create`), look up the
  * live ones (`get` / `list`), close them (`close`), archive/restore them,
  * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
  * lifecycle transitions through ordered hook slots plus
@@ -34,6 +34,15 @@ export interface ForkSessionOptions {
   readonly newSessionId?: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
+}
+
+export interface ResumeSessionOptions {
+  /**
+   * Caller-provided additional workspace directories, re-resolved against the
+   * session workDir and merged over the workspace-local set for the resumed
+   * session's lifetime.
+   */
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface CreateChildSessionOptions {
@@ -89,7 +98,7 @@ export interface ISessionLifecycleService {
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
-  resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
+  resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;

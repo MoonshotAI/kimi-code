@@ -59,7 +59,7 @@ describe('AgentPermissionPolicyService chain', () => {
           rules: () => rules,
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
-        reg.defineInstance(ISessionWorkspaceContext, workspace);
+        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
@@ -196,7 +196,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
-        reg.defineInstance(ISessionWorkspaceContext, workspace);
+        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
@@ -475,31 +475,25 @@ function stringArg(
   return typeof value === 'string' ? value : fallback;
 }
 
-function workspaceStub(initialWorkDir: string): ISessionWorkspaceContext {
-  let workDir = initialWorkDir;
+function workspaceStub(initialWorkDir: string): {
+  readonly stub: ISessionWorkspaceContext;
+  addAdditionalDir(dir: string): void;
+} {
   let additionalDirs: string[] = [];
-  return {
+  const stub: ISessionWorkspaceContext = {
     _serviceBrand: undefined,
-    get workDir() {
-      return workDir;
-    },
+    workDir: initialWorkDir,
     get additionalDirs() {
       return additionalDirs;
-    },
-    setWorkDir: (nextWorkDir) => {
-      workDir = nextWorkDir;
-    },
-    setAdditionalDirs: (dirs) => {
-      additionalDirs = [...dirs];
     },
     resolve: (path) => path,
     isWithin: () => true,
     assertAllowed: (path) => path,
+  };
+  return {
+    stub,
     addAdditionalDir: (dir) => {
       if (!additionalDirs.includes(dir)) additionalDirs = [...additionalDirs, dir];
-    },
-    removeAdditionalDir: (dir) => {
-      additionalDirs = additionalDirs.filter((candidate) => candidate !== dir);
     },
   };
 }

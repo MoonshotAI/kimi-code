@@ -137,15 +137,9 @@ function workspaceStub(workDir: string): {
       return current;
     },
     additionalDirs: [] as readonly string[],
-    setWorkDir: (dir: string) => {
-      current = dir;
-    },
-    setAdditionalDirs: () => {},
     resolve: (rel: string) => rel,
     isWithin: () => true,
     assertAllowed: (p: string) => p,
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
   } satisfies ISessionWorkspaceContext;
   return { stub, setWorkDir: (dir) => { current = dir; } };
 }

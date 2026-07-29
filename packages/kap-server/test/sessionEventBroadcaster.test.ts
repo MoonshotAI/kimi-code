@@ -18,6 +18,7 @@ import type {
 import {
   ContextSizeModel,
   IAgentActivityView,
+  LifecycleScope,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -112,7 +113,7 @@ class FakeEventBus {
 }
 
 class FakeAgentHandle {
-  readonly kind = 2;
+  readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
   readonly accessor;
   private readonly services = new Map<unknown, unknown>();
@@ -371,7 +372,7 @@ function makeCore(
                 return undefined;
               },
             };
-            return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
+            return { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} };
           },
         };
       }

@@ -334,31 +334,22 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     replay.ix.dispose();
   });
 
-  it('chdir and emitStatusUpdated run live-only and are silent during replay', async () => {
-    let chdirCalls = 0;
+  it('emitStatusUpdated runs live-only and is silent during replay', async () => {
     let statusEmits = 0;
     svc.configure({
-      chdir: () => {
-        chdirCalls += 1;
-      },
       emitStatusUpdated: () => {
         statusEmits += 1;
       },
     });
 
-    svc.update({ cwd: '/work', profileName: DEFAULT_AGENT_PROFILE_NAME });
-    expect(chdirCalls).toBe(1);
+    svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
     expect(statusEmits).toBe(1);
 
     const records = await readRecords();
 
     const host = buildHost('profile-replay');
-    let replayChdir = 0;
     let replayEmits = 0;
     host.svc.configure({
-      chdir: () => {
-        replayChdir += 1;
-      },
       emitStatusUpdated: () => {
         replayEmits += 1;
       },
@@ -370,9 +361,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       testWireScope(SCOPE, 'profile-replay'),
       records,
     );
-    expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
-    expect(replayChdir).toBe(0);
     expect(replayEmits).toBe(0);
 
     const written: WireRecord[] = [];

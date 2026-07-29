@@ -19,41 +19,21 @@ import {
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
-const toPosix = (path: string): string => path.replaceAll('\\', '/');
 
 afterEach(async () => {
   await removeTempDirs(tempDirs);
 });
 
 describe('Session context', () => {
-  it('restores a session-only additional directory after close and resume', async () => {
-    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-home-');
-    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-work-');
-    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-dir-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
-
-    try {
-      const session = await harness.createSession({ id: 'ses_additional_resume', workDir });
-      await session.addAdditionalDir(additionalDir, { persist: false });
-      await session.close();
-
-      const resumed = await harness.resumeSession({ id: 'ses_additional_resume' });
-
-      expect(resumed.summary?.additionalDirs).toEqual([toPosix(additionalDir)]);
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('clears context without replacing the session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-work-');
-    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-context-additional-');
+    await writeTestConfig(homeDir, 200_000);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_clear', workDir });
-      await session.addAdditionalDir(additionalDir, { persist: false });
+      await session.importContext('Earlier context to clear.', "file 'notes.md'");
       await expect(session.getContext()).resolves.toMatchObject({
         history: [{ role: 'user' }],
       });

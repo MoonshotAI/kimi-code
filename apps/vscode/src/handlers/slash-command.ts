@@ -22,7 +22,6 @@ const HOST_COMMANDS = new Set([
   "auto",
   "afk",
   "plan",
-  "add-dir",
   "export",
   "import",
 ]);
@@ -91,9 +90,6 @@ export async function runHostSlashCommand(
           break;
         case "plan":
           await runPlanCommand(runtime, command.args, emit);
-          break;
-        case "add-dir":
-          await runAddDirCommand(runtime, command.args, emit);
           break;
         case "export":
           await exportContext(runtime, command.args, emit);
@@ -165,23 +161,6 @@ async function runPlanCommand(
   emit(plan?.path
     ? `Plan mode ON. Plan file: ${plan.path}`
     : "Plan mode ON.");
-}
-
-async function runAddDirCommand(
-  runtime: SessionRuntime,
-  args: string,
-  emit: (text: string) => void,
-): Promise<void> {
-  const input = stripMatchingQuotes(args.trim());
-  if (!input || input.toLowerCase() === "list") {
-    const dirs = runtime.session.summary?.additionalDirs ?? [];
-    emit(dirs.length === 0
-      ? "No additional directories. Usage: /add-dir <path>"
-      : ["Additional directories:", ...dirs.map((path) => `  - ${path}`)].join("\n"));
-    return;
-  }
-  const result = await runtime.session.addAdditionalDir(input, { persist: false });
-  emit(`Added directory to workspace: ${result.additionalDirs.at(-1) ?? input}`);
 }
 
 async function exportContext(

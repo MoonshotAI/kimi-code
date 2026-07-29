@@ -33,16 +33,12 @@ function stubWorkspace(): ISessionWorkspaceContext {
     _serviceBrand: undefined,
     workDir: WORK_DIR,
     additionalDirs: [],
-    setWorkDir: () => {},
-    setAdditionalDirs: () => {},
     resolve: (rel) => (isAbsolute(rel) ? rel : resolve(WORK_DIR, rel)),
     isWithin: (abs) => {
       const r = relative(WORK_DIR, abs);
       return r === '' || (!r.startsWith('..') && !isAbsolute(r));
     },
     assertAllowed: (abs) => abs,
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
   };
 }
 

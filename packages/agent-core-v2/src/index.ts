@@ -356,8 +356,6 @@ export * from '#/app/gateway/gatewayService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
-export * from '#/session/workspaceCommand/workspaceCommand';
-export * from '#/session/workspaceCommand/workspaceCommandService';
 export * from '#/app/projectLocalConfig/projectLocalConfig';
 export * from '#/app/workspace/workspace';
 export * from '#/app/workspace/workspaceService';

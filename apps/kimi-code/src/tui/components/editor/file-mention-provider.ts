@@ -176,8 +176,8 @@ export class FileMentionProvider implements AutocompleteProvider {
 
     // In bash mode `/` is a path separator, not a slash command. Skip slash
     // command argument handling so an absolute path that happens to start with
-    // a command name (e.g. `/add-dir/...`) completes inside the path instead of
-    // returning the command's argument completions.
+    // a command name completes inside the path instead of returning the
+    // command's argument completions.
     if (this.getInputMode() !== 'bash') {
       const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
       if (slashArgumentSuggestions !== null) {
@@ -190,9 +190,9 @@ export class FileMentionProvider implements AutocompleteProvider {
       if (inner === null || this.getInputMode() !== 'bash') {
         return inner;
       }
-      // In bash mode `/` is a path separator; hide dot-prefixed entries to
-      // match the `/add-dir` directory completer (registry.ts skips any name
-      // starting with `.`). Ordinary prompt-mode path completion is left as-is.
+      // In bash mode `/` is a path separator; hide dot-prefixed entries
+      // (hidden files) from the path completer. Ordinary prompt-mode path
+      // completion is left as-is.
       return { ...inner, items: inner.items.filter((item) => !isDotPrefixedEntry(item)) };
     } catch {
       return null;
@@ -247,9 +247,9 @@ function isExecutableFd(fdPath: string): boolean {
 }
 
 /**
- * Match the `/add-dir` directory completer, which skips every entry whose name
- * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
- * the entry basename, with a trailing `/` for directories.
+ * Skip every entry whose name starts with `.` (hidden files). pi-tui's path
+ * completer sets `label` to the entry basename, with a trailing `/` for
+ * directories.
  */
 function isDotPrefixedEntry(item: AutocompleteItem): boolean {
   const name = item.label.endsWith('/') ? item.label.slice(0, -1) : item.label;

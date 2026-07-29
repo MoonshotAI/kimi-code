@@ -238,7 +238,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const servicesByAgentId = new Map(options.handleServices);
   const handle = (agentId: string): IAgentScopeHandle => ({
     id: agentId,
-    kind: 2,
+    kind: LifecycleScope.Agent,
     accessor: {
       get: (serviceId) => {
         const service = servicesByAgentId.get(agentId)?.get(serviceId);

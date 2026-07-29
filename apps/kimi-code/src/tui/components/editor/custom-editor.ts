@@ -553,7 +553,7 @@ export class CustomEditor extends Editor {
     };
 
     // Reopen path / argument completion right after a `/` is typed
-    // (e.g. `/add-dir /` or an `@dir/` mention).
+    // (e.g. a slash-command path argument or an `@dir/` mention).
     if (textBeforeCursor.endsWith('/')) {
       const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
       if (isAtMention) {
@@ -562,7 +562,7 @@ export class CustomEditor extends Editor {
         // In bash mode `/` is a path separator, not a slash command. A bare
         // leading `/` is already handled by the tryTriggerAutocomplete shadow
         // in the constructor; this branch covers the inline case (e.g. `ls /`,
-        // `cat /etc/`, `/add-dir/`) that pi-tui never auto-triggers. force:true
+        // `cat /etc/`) that pi-tui never auto-triggers. force:true
         // is required so pi-tui's own slash-command handling is bypassed —
         // force:false would let it pop up subcommand completions.
         if (textBeforeCursor.trimStart() !== '/') {

@@ -257,18 +257,6 @@ export interface GetPluginInfoPayload {
 export type ReloadPluginsResult = ReloadSummary;
 export type { PluginSummary, PluginInfo };
 
-export interface AddAdditionalDirPayload {
-  readonly path: string;
-  readonly persist: boolean;
-}
-
-export interface AddAdditionalDirResult {
-  readonly additionalDirs: readonly string[];
-  readonly projectRoot: string;
-  readonly configPath: string;
-  readonly persisted: boolean;
-}
-
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -336,7 +324,6 @@ export interface SessionAPI extends AgentAPIWithId {
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
-  addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;
