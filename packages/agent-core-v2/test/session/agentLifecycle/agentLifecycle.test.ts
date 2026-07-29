@@ -13,7 +13,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
-import { Event } from '#/_base/event';
+import { Event, AsyncEmitter } from '#/_base/event';
 import { type McpServerConfig } from '#/agent/mcp/config-schema';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
@@ -58,7 +58,10 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContribution';
+import {
+  ISessionPluginContributionService,
+  type SessionPluginContributionChangedEvent,
+} from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -338,7 +341,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-      isConverging: () => false,
+      generation: () => 0,
       settled: () => Promise.resolve(),
     });
     permissionModeSetMode = vi.fn();
@@ -625,15 +628,19 @@ describe('AgentLifecycleService', () => {
   });
 
   it('joins an in-flight plugin convergence and refreshes a restored agent after it', async () => {
+    let released = false;
     let releaseConverge!: () => void;
     const converging = new Promise<void>((resolve) => {
-      releaseConverge = resolve;
+      releaseConverge = () => {
+        released = true;
+        resolve();
+      };
     });
     let settleCalls = 0;
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-      isConverging: () => true,
+      generation: () => (released ? 1 : 0),
       settled: () => {
         settleCalls += 1;
         return converging;
@@ -707,13 +714,114 @@ describe('AgentLifecycleService', () => {
     expect(handle.accessor.get(IAgentProfileService).getActiveToolNames()).toEqual(['Read']);
   });
 
+  it('skips a convergence refresh that lands mid-restore and catches up after it', async () => {
+    let gateResolve!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      gateResolve = resolve;
+    });
+    let enteredResolve!: () => void;
+    const gateEntered = new Promise<void>((resolve) => {
+      enteredResolve = resolve;
+    });
+    const journal: WireRecord[] = [
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'dev',
+        thinkingEffort: 'off',
+        systemPrompt: 'stale prompt',
+        activeToolNames: [],
+        disallowedTools: [],
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'hi' }],
+        origin: { kind: 'user' },
+      } as WireRecord,
+    ];
+    let index = 0;
+    const log = recordingAppendLog(journal);
+    ix.stub(IAppendLogStore, {
+      ...log.store,
+      read: async function* <R>(): AsyncIterable<R> {
+        for (const record of journal) {
+          index += 1;
+          if (index === journal.length) {
+            enteredResolve();
+            await gate;
+          }
+          yield record as R;
+        }
+      },
+    });
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    let fired = false;
+    ix.stub(ISessionPluginContributionService, {
+      _serviceBrand: undefined,
+      onDidChange: converge.event,
+      generation: () => (fired ? 1 : 0),
+      settled: () => Promise.resolve(),
+    });
+    const devProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: () => 'converged prompt',
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? devProfile : undefined),
+      getDefault: () => devProfile,
+      list: () => [devProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+    const svc = ix.get(IAgentLifecycleService);
+    const pending = svc.create({ agentId: 'main' });
+
+    await gateEntered;
+    fired = true;
+    await converge.fireAsync({}, new AbortController().signal);
+    expect(log.appended.some((record) => record.type === 'config.update')).toBe(false);
+
+    gateResolve();
+    const handle = await pending;
+
+    expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('converged prompt');
+    converge.dispose();
+  });
+
   it('creates agents past a permanently stalled convergence after the join timeout', async () => {
     vi.useFakeTimers();
     try {
       ix.stub(ISessionPluginContributionService, {
         _serviceBrand: undefined,
         onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-        isConverging: () => true,
+        generation: () => 0,
         settled: () => new Promise<void>(() => {}),
       });
       ix.stub(ISessionMcpService, {
@@ -786,7 +894,7 @@ describe('AgentLifecycleService', () => {
       const handle = await pending;
 
       expect(created).toBe(true);
-      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('converged prompt');
+      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('stale prompt');
     } finally {
       vi.useRealTimers();
     }

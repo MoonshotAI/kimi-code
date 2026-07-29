@@ -10,11 +10,11 @@
  * envelope while non-empty unversioned logs are rejected. A restored Agent
  * keeps its replayed profile binding — prompt included — exactly as
  * persisted; live prompt refreshes ride `profile`'s own triggers, never
- * restore. The one join point: an Agent created while a plugin convergence
- * is in flight waits for it — bounded by the convergence timeout, so a
- * wedged convergence can never block creation — and a restored one
- * refreshes once after it, so a plugin mutation never straddles an Agent's
- * bootstrap. Removal awaits
+ * restore. The one join point: bootstrap waits — bounded by the convergence
+ * timeout, so a wedged convergence can never block creation — for any
+ * in-flight plugin convergence, and a restored Agent refreshes once when a
+ * convergence completed after its creation began, so a plugin mutation
+ * never straddles an Agent's bootstrap. Removal awaits
  * the agent task manager's graceful exit policy before
  * draining turns and full compaction, then disposing the child scope. Fans
  * session-level permission-mode switches out to every live agent. Bound at
@@ -207,6 +207,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {
+      const generationAtCreate = handle.accessor
+        .get(ISessionPluginContributionService)
+        .generation();
       const wire = handle.accessor.get(IWireService);
       await wire.seal();
       await this.sessionMetadata.registerAgent(agentId, {
@@ -219,7 +222,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(handle);
       await mcpReady;
       await wire.restore();
-      await this.bindBootstrap(handle, opts);
+      await this.bindBootstrap(handle, opts, generationAtCreate);
       // Activate the AgentTool contributions allowed by the bound Profile
       // before the handle admits turns: restore and binding own the final
       // `activeToolNames`, so this must run after both.
@@ -240,14 +243,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private async bindBootstrap(
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
+    generationAtCreate: number,
   ): Promise<void> {
     const contributions = handle.accessor.get(ISessionPluginContributionService);
-    const wasConverging = contributions.isConverging();
     await withTimeout(contributions.settled(), PLUGIN_CONVERGENCE_TIMEOUT_MS);
     const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
       await profile.bind(opts.binding);
-    } else if (wasConverging) {
+    } else if (contributions.generation() !== generationAtCreate) {
       await profile.refreshSystemPrompt();
     }
     // Apply the configured default only when restore found no persisted mode.

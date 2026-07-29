@@ -11,7 +11,9 @@
  * rebuilt its prompt. MCP-only changes (`kind: 'mcp'`) cannot alter skills or
  * prompts and skip convergence entirely. Convergences run one at a time per
  * session — a later change queues behind an in-flight one, so the fan-out
- * emitter never interleaves deliveries — and each change's wait is bounded by
+ * emitter never interleaves deliveries — and each completed convergence
+ * advances the `generation` counter that Agent bootstrap compares against
+ * to catch up on rounds it missed. Each change's wait is bounded by
  * a timeout so a hung participant cannot block the App mutation queue
  * forever; convergence is a full recompute rather than a delta, so a later
  * mutation retries whatever an earlier failure left stale, and failures
@@ -43,7 +45,7 @@ export class SessionPluginContributionService
   );
   readonly onDidChange: Event<SessionPluginContributionChangedEvent> = this.changeEmitter.event;
   private convergeTail: Promise<void> = Promise.resolve();
-  private inFlightCount = 0;
+  private completedGenerations = 0;
 
   constructor(
     @ILogService private readonly log: ILogService,
@@ -59,8 +61,8 @@ export class SessionPluginContributionService
     );
   }
 
-  isConverging(): boolean {
-    return this.inFlightCount > 0;
+  generation(): number {
+    return this.completedGenerations;
   }
 
   settled(): Promise<void> {
@@ -68,15 +70,11 @@ export class SessionPluginContributionService
   }
 
   private awaitConverge(): Promise<void> {
-    this.inFlightCount += 1;
     const run = this.convergeTail.then(() => this.converge());
     this.convergeTail = run.then(
       () => undefined,
       () => undefined,
     );
-    void this.convergeTail.then(() => {
-      this.inFlightCount -= 1;
-    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => {
@@ -102,6 +100,7 @@ export class SessionPluginContributionService
       );
     }
     await this.changeEmitter.fireAsync({}, new AbortController().signal);
+    this.completedGenerations += 1;
   }
 }
 

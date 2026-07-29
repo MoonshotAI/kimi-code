@@ -75,6 +75,7 @@ function stubWireService(captureRestoreHook?: (hook: RestoreHook) => void): IWir
     dispatch: () => {},
     seal: async () => {},
     restore: async () => {},
+    isRestoring: () => false,
     flush: async () => {},
     getModel: (model) => model.initial() as never,
     subscribe: () => toDisposable(() => {}),

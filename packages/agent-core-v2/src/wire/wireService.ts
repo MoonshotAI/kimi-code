@@ -132,6 +132,10 @@ export class WireService extends Disposable implements IWireService {
     this.appendRecord(createWireMetadataRecord());
   }
 
+  isRestoring(): boolean {
+    return this.restorePhase === 'restoring';
+  }
+
   async restore(): Promise<void> {
     if (
       this.restorePhase === 'restoring' ||

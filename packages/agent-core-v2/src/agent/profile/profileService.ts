@@ -42,7 +42,9 @@
  * catalog by name on the first refresh, rebinding the whole slice (prompt /
  * `disallowedTools` / active tools, but not the bind-time `subagents`,
  * which `config.update` cannot carry) atomically — with a warning and no
- * change when the name is gone. Renders reuse the Agent's first-render
+ * change when the name is gone. A refresh requested while the Agent's wire
+ * log is still replaying is skipped; the bootstrap join re-renders after
+ * restore instead. Renders reuse the Agent's first-render
  * `now` of the current process (a restored Agent re-anchors once on its
  * first live refresh), and no `config.update` is dispatched when nothing
  * changed, so steady-state convergence never churns the wire.
@@ -501,6 +503,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   async refreshSystemPrompt(): Promise<void> {
     try {
+      if (this.wire.isRestoring()) return;
       let profile = this.activeProfile;
       let rebind = false;
       if (profile === undefined) {

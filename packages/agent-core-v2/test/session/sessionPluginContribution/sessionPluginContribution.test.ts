@@ -188,6 +188,7 @@ describe('SessionPluginContributionService', () => {
       release.resolve();
       await fired;
       expect(settled).toBe(true);
+      expect(coordinator.generation()).toBe(1);
       subscription.dispose();
     } finally {
       host.dispose();
@@ -216,6 +217,7 @@ describe('SessionPluginContributionService', () => {
 
       expect(participants).toBe(0);
       expect(catalogChanges).toEqual([]);
+      expect(coordinator.generation()).toBe(0);
       subscription.dispose();
       catalogSubscription.dispose();
     } finally {
