@@ -276,7 +276,7 @@ describe('CoreProcessService direct construction', () => {
   it('default-wires kimiRequestHeaders from identity when caller omits headers', () => {
     const headers = CoreProcessService._defaultKimiRequestHeaders(
       tmpHome,
-      { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+      { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
     );
     expect(headers).toBeDefined();
     expect(headers!['User-Agent']).toMatch(/^kimi-code-cli\/9\.9\.9/);
@@ -297,7 +297,7 @@ describe('CoreProcessService direct construction', () => {
     const picked =
       explicit ?? CoreProcessService._defaultKimiRequestHeaders(
         tmpHome,
-        { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+        { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
       );
     expect(picked).toBe(explicit);
   });

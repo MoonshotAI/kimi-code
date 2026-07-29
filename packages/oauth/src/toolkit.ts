@@ -396,6 +396,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
               createKimiDeviceHeaders({
                 homeDir: this.homeDir,
                 version: identity.version,
+                platform: identity.platform,
               }),
       ...this.managerOptions,
     });

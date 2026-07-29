@@ -353,7 +353,7 @@ export class KimiHarness {
       // see core-impl.ts). Kept as an explicit key so both producers share the
       // same session_started schema.
       client_id: null,
-      client_name: this.identity?.userAgentProduct ?? null,
+      client_name: this.identity?.productName ?? null,
       client_version: this.identity?.version ?? null,
       ui_mode: this.uiMode,
       resumed,

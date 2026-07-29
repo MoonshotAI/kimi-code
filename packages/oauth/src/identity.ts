@@ -18,8 +18,15 @@ import type { DeviceHeaders } from './types';
 export const KIMI_CODE_PLATFORM = 'kimi_code_cli';
 
 export interface KimiHostIdentity {
-  readonly userAgentProduct: string;
+  readonly productName: string;
   readonly version: string;
+  /**
+   * `X-Msh-Platform` value reported to the OAuth host and managed endpoints
+   * (e.g. `kimi_code_cli`, `kimi_code_desktop`). Every host must state its own
+   * explicitly — `KIMI_CODE_PLATFORM` is the CLI's value, not a default to
+   * inherit silently.
+   */
+  readonly platform: string;
   readonly userAgentSuffix?: string | undefined;
 }
 
@@ -70,9 +77,12 @@ export function createKimiDeviceId(
 export function createKimiDeviceHeaders(options: {
   readonly homeDir: string;
   readonly version: string;
+  /** Falls back to `KIMI_CODE_PLATFORM` only for direct callers without a host
+      identity; hosts carrying a `KimiHostIdentity` always pass theirs. */
+  readonly platform?: string | undefined;
 }): DeviceHeaders {
   return {
-    'X-Msh-Platform': KIMI_CODE_PLATFORM,
+    'X-Msh-Platform': options.platform ?? KIMI_CODE_PLATFORM,
     'X-Msh-Version': requiredAsciiHeader(options.version, 'Kimi identity version'),
     'X-Msh-Device-Name': asciiHeader(hostname()),
     'X-Msh-Device-Model': asciiHeader(deviceModel()),
@@ -82,11 +92,11 @@ export function createKimiDeviceHeaders(options: {
 }
 
 export function createKimiUserAgent(options: {
-  readonly userAgentProduct: string;
+  readonly productName: string;
   readonly version: string;
   readonly userAgentSuffix?: string | undefined;
 }): string {
-  const product = requiredAsciiHeader(options.userAgentProduct, 'Kimi identity product');
+  const product = requiredAsciiHeader(options.productName, 'Kimi identity product');
   const version = requiredAsciiHeader(options.version, 'Kimi identity version');
   const suffix =
     options.userAgentSuffix === undefined ? undefined : asciiHeader(options.userAgentSuffix, '');
@@ -101,6 +111,7 @@ export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<s
     ...createKimiDeviceHeaders({
       homeDir: options.homeDir,
       version: options.version,
+      platform: options.platform,
     }),
   };
 }
@@ -141,7 +152,7 @@ export function assertKimiHostIdentity(identity: KimiHostIdentity | undefined): 
   if (identity === undefined) {
     throw new Error('Kimi host identity is required. Pass the host product name and version.');
   }
-  requiredAsciiHeader(identity.userAgentProduct, 'Kimi identity product');
+  requiredAsciiHeader(identity.productName, 'Kimi identity product');
   requiredAsciiHeader(identity.version, 'Kimi identity version');
   return identity;
 }
