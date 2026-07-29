@@ -16,9 +16,9 @@
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
  * exist. Caller-facing orchestration (record mirroring, hooks, telemetry,
  * prompt prefixes) lives with the callers — driving turns on an agent is the
- * `subagent` domain (`ISessionSubagentService`); the session's shared MCP
- * subsystem is the `sessionMcp` domain (`ISessionMcpService`), which this
- * service awaits during creation.
+ * `subagent` domain (`ISessionSubagentService`); the workspace's shared MCP
+ * manager arrives through the seeded `ISessionMcpHandle`, whose initial
+ * connect this service awaits during creation.
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -41,7 +41,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -86,7 +86,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
-    @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
+    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
@@ -152,7 +152,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
-    const mcpReady = this.sessionMcp.ensureMcpReady();
+    const mcpReady = this.mcpHandle.ready;
     // Agent persistence addressing derives from the session's scope string
     // (itself handler-bound): `{sessionScope}/agents/{agentId}` — identical
     // to the layout the pre-Workspace engine wrote.
@@ -164,8 +164,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       agentId,
       // Seed identity facts and the telemetry view. Every other agent-scope
       // service either derives its configuration from `IAgentScopeContext`
-      // (wire, blob) or resolves it through the scope tree (the
-      // session's shared MCP manager via `ISessionMcpService`).
+      // (wire, blob) or resolves it through the scope tree (the workspace's
+      // shared MCP manager via the seeded `ISessionMcpHandle`).
       {
         extra: [
           [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],

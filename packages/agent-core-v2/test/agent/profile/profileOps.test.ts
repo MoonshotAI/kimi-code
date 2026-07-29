@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
 import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
@@ -21,13 +22,13 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
-import { IPluginService } from '#/app/plugin/plugin';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
@@ -213,18 +214,18 @@ function buildHost(key: string): {
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IHostIdentity, stubUnused());
-  host.stub(IPluginService, {
-    _serviceBrand: undefined,
-    onDidReload: () => ({ dispose: () => {} }),
-  });
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
   host.stub(ISessionAgentProfileCatalog, stubUnused());
-  host.stub(ISessionSkillCatalog, {
+  host.stub(ISessionSkillCatalog, stubUnused());
+  host.stub(ISessionInstructionsProvider, {
     _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-  });
+    ready: Promise.resolve(),
+    agentsMd: undefined,
+    agentsMdWarning: undefined,
+    onDidChange: Event.None as Event<void>,
+  } satisfies ISessionInstructionsProvider);
   host.stub(ISessionToolPolicy, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),

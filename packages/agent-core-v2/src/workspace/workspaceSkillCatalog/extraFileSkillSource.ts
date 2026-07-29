@@ -1,11 +1,13 @@
 /**
- * `sessionSkillCatalog` domain (L3) — extra `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain (L3) — extra `ISkillSource` producer.
  *
  * Discovers user-configured extra skill directories (`extraSkillDirs`) through
  * `ISkillDiscovery`, contributing them at priority 10 (above plugin / builtin,
- * below user / workspace). Relative paths resolve against the session project
- * root; `~` and `~/...` resolve against the bootstrap home dir. Bound at Session
- * scope so each session reads its own workspace root.
+ * below user / workspace). Relative paths resolve against the workspace root;
+ * `~` and `~/...` resolve against the bootstrap home dir. Re-fires
+ * `onDidChange` when the `extraSkillDirs` config section changes so the
+ * catalog re-scans THIS source only. Bound at Workspace scope so every
+ * session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -20,8 +22,12 @@ import {
 } from '#/app/skillCatalog/configSection';
 import { configuredRoots } from '#/app/skillCatalog/skillRoots';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
-import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  SKILL_SOURCE_PRIORITY,
+  type ISkillSource,
+  type SkillContribution,
+} from '#/app/skillCatalog/skillSource';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExtraFileSkillSource extends ISkillSource {
   readonly _serviceBrand: undefined;
@@ -41,7 +47,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IConfigService private readonly config: IConfigService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
@@ -56,15 +62,15 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     await this.config.ready;
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
     return this.discovery.discover(
-      await configuredRoots(extraSkillDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'extra'),
+      await configuredRoots(extraSkillDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'extra'),
     );
   }
 }
 
 registerScopedService(
-  LifecycleScope.Session,
+  LifecycleScope.Workspace,
   IExtraFileSkillSource,
   ExtraFileSkillSource,
   ScopeActivation.OnScopeCreated,
-  'sessionSkillCatalog',
+  'workspaceSkillCatalog',
 );

@@ -1,11 +1,11 @@
 /**
- * `sessionSkillCatalog` domain (L3) — explicit `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain (L3) — explicit `ISkillSource` producer.
  *
  * Mirrors v1 SDK `skillDirs`: when runtime options provide `explicitDirs`, this
  * source contributes those directories as the user source, resolving relative
- * paths against the session project root. When no explicit dirs are configured,
- * it yields nothing so default user / project discovery remains active. Bound at
- * Session scope so each session resolves paths against its own workDir.
+ * paths against the workspace root. When no explicit dirs are configured,
+ * it yields nothing so default user / project discovery remains active. Bound
+ * at Workspace scope so every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -14,8 +14,12 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { configuredRoots } from '#/app/skillCatalog/skillRoots';
 import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
-import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  SKILL_SOURCE_PRIORITY,
+  type ISkillSource,
+  type SkillContribution,
+} from '#/app/skillCatalog/skillSource';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExplicitFileSkillSource extends ISkillSource {
   readonly _serviceBrand: undefined;
@@ -33,7 +37,7 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
@@ -43,15 +47,15 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
       return { skills: [] };
     }
     return this.discovery.discover(
-      await configuredRoots(explicitDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'user'),
+      await configuredRoots(explicitDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'user'),
     );
   }
 }
 
 registerScopedService(
-  LifecycleScope.Session,
+  LifecycleScope.Workspace,
   IExplicitFileSkillSource,
   ExplicitFileSkillSource,
   ScopeActivation.OnScopeCreated,
-  'sessionSkillCatalog',
+  'workspaceSkillCatalog',
 );

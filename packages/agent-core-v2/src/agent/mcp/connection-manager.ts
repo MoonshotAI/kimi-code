@@ -7,7 +7,7 @@
  * provider through `mcp/oauth` when tokens are present, flips failing
  * servers into `needs-auth` on 401, and reconnects after authentication.
  * Applies per-server settings over session defaults and emits status changes
- * to subscribers. Constructed by `SessionMcpService`.
+ * to subscribers. Constructed by `WorkspaceMcpService`.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -119,6 +119,11 @@ export class McpConnectionManager {
   get(name: string): McpServerEntry | undefined {
     const entry = this.entries.get(name);
     return entry !== undefined ? toPublicEntry(entry) : undefined;
+  }
+
+  /** The config an entry was last connected with, for idempotence checks. */
+  configOf(name: string): McpServerConfig | undefined {
+    return this.entries.get(name)?.config;
   }
 
   resolved(

@@ -15,43 +15,39 @@
 // expand structurally; classes render as their public instance shape. The
 // defining source file heads each group.
 //
-// External ambient types referenced but not expanded (from node_modules): Readable, Writable
-//
 // snapshot() returns JSON-safe deep copies of these values: Maps become plain
 // objects (or [key, value] entry arrays when a key is not string/number), Sets
 // become arrays, bigints become strings, functions are dropped, circular
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 27 keys · Agent: 68 keys)
+// Index (Session: 25 keys · Agent: 68 keys)
 //   Session
-//     cron.inFlight                             src/session/cron/sessionCronServiceImpl.ts
-//     cron.lastSeenAt                           src/session/cron/sessionCronServiceImpl.ts
-//     cron.parsedCache                          src/session/cron/sessionCronServiceImpl.ts
-//     cron.seededFromStore                      src/session/cron/sessionCronServiceImpl.ts
-//     cron.started                              src/session/cron/sessionCronServiceImpl.ts
-//     cron.tasks                                src/session/cron/sessionCronServiceImpl.ts
-//     interaction.nextId                        src/session/interaction/interactionService.ts
-//     interaction.pending                       src/session/interaction/interactionService.ts
-//     interaction.recentlyResolved              src/session/interaction/interactionService.ts
-//     sessionActivity.current                   src/session/sessionActivity/sessionActivityService.ts
-//     sessionActivity.folds                     src/session/sessionActivity/sessionActivityService.ts
-//     sessionAgentProfileCatalog.contributions  src/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService.ts
-//     sessionAgentProfileCatalog.merged         src/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService.ts
-//     sessionFs.realRootsCache                  src/session/sessionFs/fsService.ts
-//     sessionFs.rgResolution                    src/session/sessionFs/fsService.ts
-//     sessionFsWatch.gitignoreLoaded            src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.pending                    src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.rawCount                   src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.truncated                  src/session/sessionFs/fsWatchService.ts
-//     sessionFsWatch.watched                    src/session/sessionFs/fsWatchService.ts
-//     sessionLog.rootLevel                      src/session/sessionLog/sessionLogService.ts
-//     sessionMetadata.data                      src/session/sessionMetadata/sessionMetadataService.ts
-//     sessionSkillCatalog.contributions         src/session/sessionSkillCatalog/skillCatalogService.ts
-//     sessionSkillCatalog.merged                src/session/sessionSkillCatalog/skillCatalogService.ts
-//     sessionToolPolicy.state                   src/session/sessionToolPolicy/sessionToolPolicyService.ts
-//     workspaceContext.additionalDirs           src/session/workspaceContext/workspaceContextService.ts
-//     workspaceContext.workDir                  src/session/workspaceContext/workspaceContextService.ts
+//     cron.inFlight                      src/session/cron/sessionCronServiceImpl.ts
+//     cron.lastSeenAt                    src/session/cron/sessionCronServiceImpl.ts
+//     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
+//     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
+//     cron.started                       src/session/cron/sessionCronServiceImpl.ts
+//     cron.tasks                         src/session/cron/sessionCronServiceImpl.ts
+//     interaction.nextId                 src/session/interaction/interactionService.ts
+//     interaction.pending                src/session/interaction/interactionService.ts
+//     interaction.recentlyResolved       src/session/interaction/interactionService.ts
+//     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
+//     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
+//     sessionFs.realRootsCache           src/session/sessionFs/fsService.ts
+//     sessionFs.rgResolution             src/session/sessionFs/fsService.ts
+//     sessionFsWatch.gitignoreLoaded     src/session/sessionFs/fsWatchService.ts
+//     sessionFsWatch.pending             src/session/sessionFs/fsWatchService.ts
+//     sessionFsWatch.rawCount            src/session/sessionFs/fsWatchService.ts
+//     sessionFsWatch.truncated           src/session/sessionFs/fsWatchService.ts
+//     sessionFsWatch.watched             src/session/sessionFs/fsWatchService.ts
+//     sessionLog.rootLevel               src/session/sessionLog/sessionLogService.ts
+//     sessionMetadata.data               src/session/sessionMetadata/sessionMetadataService.ts
+//     sessionSkillCatalog.contributions  src/session/sessionSkillCatalog/skillCatalogService.ts
+//     sessionSkillCatalog.merged         src/session/sessionSkillCatalog/skillCatalogService.ts
+//     sessionToolPolicy.state            src/session/sessionToolPolicy/sessionToolPolicyService.ts
+//     workspaceContext.additionalDirs    src/session/workspaceContext/workspaceContextService.ts
+//     workspaceContext.workDir           src/session/workspaceContext/workspaceContextService.ts
 //   Agent
 //     activityView.background                         src/agent/activityView/activityViewService.ts
 //     activityView.current                            src/agent/activityView/activityViewService.ts
@@ -175,133 +171,6 @@ export interface SessionStateSnapshot {
     turnActive: boolean;
     background: number;
     lastTurnReason?: 'completed' | 'cancelled' | 'failed';
-  }>;
-  // src/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService.ts
-  'sessionAgentProfileCatalog.contributions': Map<string, {
-    readonly c: /* AgentProfileContribution — packages/agent-core-v2/src/app/agentFileCatalog/agentProfileSource.ts */ {
-      readonly profiles: readonly /* AgentProfile — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-        readonly name: string;
-        readonly description?: string;
-        readonly whenToUse?: string;
-        readonly override?: boolean;
-        readonly tools?: readonly string[];
-        readonly disallowedTools?: readonly string[];
-        readonly subagents?: readonly string[];
-        readonly modelPreference?: 'primary' | 'secondary';
-        systemPrompt: (context: /* AgentProfileContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-          readonly cwd?: string;
-          readonly cwdListing?: string;
-          readonly agentsMd?: string;
-          readonly additionalDirsInfo?: string;
-          readonly osKind?: string;
-          readonly shellName?: string;
-          readonly shellPath?: string;
-          readonly now?: string;
-          readonly skills?: string;
-          readonly skillActive?: boolean;
-          readonly productName?: string;
-          readonly replyStyleGuide?: string;
-          [key: string]: unknown;
-        }) => string;
-        readonly promptPrefix?: (ctx: /* AgentProfilePromptPrefixContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-          readonly cwd: string;
-          readonly runner: /* ISessionProcessRunner — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-            readonly _serviceBrand: undefined;
-            exec: (args: readonly string[], options?: /* ProcessExecOptions — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-              readonly cwd?: string;
-              readonly env?: Record<string, string>;
-            }) => Promise</* IProcess — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-              readonly stdin: Writable;
-              readonly stdout: Readable;
-              readonly stderr: Readable;
-              readonly pid: number;
-              readonly exitCode: number | null;
-              wait: () => Promise<number>;
-              kill: (signal?: 'SIGABRT' | 'SIGALRM' | 'SIGBUS' | 'SIGCHLD' | 'SIGCONT' | 'SIGFPE' | 'SIGHUP' | 'SIGILL' | 'SIGINT' | 'SIGIO' | 'SIGIOT' | 'SIGKILL' | 'SIGPIPE' | 'SIGPOLL' | 'SIGPROF' | 'SIGPWR' | 'SIGQUIT' | 'SIGSEGV' | 'SIGSTKFLT' | 'SIGSTOP' | 'SIGSYS' | 'SIGTERM' | 'SIGTRAP' | 'SIGTSTP' | 'SIGTTIN' | 'SIGTTOU' | 'SIGUNUSED' | 'SIGURG' | 'SIGUSR1' | 'SIGUSR2' | 'SIGVTALRM' | 'SIGWINCH' | 'SIGXCPU' | 'SIGXFSZ' | 'SIGBREAK' | 'SIGLOST' | 'SIGINFO') => Promise<void>;
-              dispose: () => void | Promise<void>;
-            }>;
-          };
-          readonly log?: /* ILogger — packages/agent-core-v2/src/_base/log/log.ts */ {
-            error: (message: string, payload?: unknown) => void;
-            warn: (message: string, payload?: unknown) => void;
-            info: (message: string, payload?: unknown) => void;
-            debug: (message: string, payload?: unknown) => void;
-            child: (ctx: /* LogContext — packages/agent-core-v2/src/_base/log/log.ts */ {
-              [key: string]: unknown;
-            }) => /* ILogger — recursive (packages/agent-core-v2/src/_base/log/log.ts) */ unknown;
-          };
-        }) => Promise<string>;
-        readonly summaryPolicy?: /* AgentProfileSummaryPolicy — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-          readonly minChars: number;
-          readonly continuationPrompt: string;
-          readonly retries: number;
-        };
-      }[];
-      readonly skipped?: readonly /* SkippedAgentFile — packages/agent-core-v2/src/app/agentFileCatalog/types.ts */ {
-        readonly path: string;
-        readonly reason: string;
-      }[];
-      readonly scannedRoots?: readonly string[];
-    };
-    readonly priority: number;
-  }>;
-  'sessionAgentProfileCatalog.merged': Map<string, /* AgentProfile — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-    readonly name: string;
-    readonly description?: string;
-    readonly whenToUse?: string;
-    readonly override?: boolean;
-    readonly tools?: readonly string[];
-    readonly disallowedTools?: readonly string[];
-    readonly subagents?: readonly string[];
-    readonly modelPreference?: 'primary' | 'secondary';
-    systemPrompt: (context: /* AgentProfileContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-      readonly cwd?: string;
-      readonly cwdListing?: string;
-      readonly agentsMd?: string;
-      readonly additionalDirsInfo?: string;
-      readonly osKind?: string;
-      readonly shellName?: string;
-      readonly shellPath?: string;
-      readonly now?: string;
-      readonly skills?: string;
-      readonly skillActive?: boolean;
-      readonly productName?: string;
-      readonly replyStyleGuide?: string;
-      [key: string]: unknown;
-    }) => string;
-    readonly promptPrefix?: (ctx: /* AgentProfilePromptPrefixContext — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-      readonly cwd: string;
-      readonly runner: /* ISessionProcessRunner — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-        readonly _serviceBrand: undefined;
-        exec: (args: readonly string[], options?: /* ProcessExecOptions — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-          readonly cwd?: string;
-          readonly env?: Record<string, string>;
-        }) => Promise</* IProcess — packages/agent-core-v2/src/session/process/processRunner.ts */ {
-          readonly stdin: Writable;
-          readonly stdout: Readable;
-          readonly stderr: Readable;
-          readonly pid: number;
-          readonly exitCode: number | null;
-          wait: () => Promise<number>;
-          kill: (signal?: 'SIGABRT' | 'SIGALRM' | 'SIGBUS' | 'SIGCHLD' | 'SIGCONT' | 'SIGFPE' | 'SIGHUP' | 'SIGILL' | 'SIGINT' | 'SIGIO' | 'SIGIOT' | 'SIGKILL' | 'SIGPIPE' | 'SIGPOLL' | 'SIGPROF' | 'SIGPWR' | 'SIGQUIT' | 'SIGSEGV' | 'SIGSTKFLT' | 'SIGSTOP' | 'SIGSYS' | 'SIGTERM' | 'SIGTRAP' | 'SIGTSTP' | 'SIGTTIN' | 'SIGTTOU' | 'SIGUNUSED' | 'SIGURG' | 'SIGUSR1' | 'SIGUSR2' | 'SIGVTALRM' | 'SIGWINCH' | 'SIGXCPU' | 'SIGXFSZ' | 'SIGBREAK' | 'SIGLOST' | 'SIGINFO') => Promise<void>;
-          dispose: () => void | Promise<void>;
-        }>;
-      };
-      readonly log?: /* ILogger — packages/agent-core-v2/src/_base/log/log.ts */ {
-        error: (message: string, payload?: unknown) => void;
-        warn: (message: string, payload?: unknown) => void;
-        info: (message: string, payload?: unknown) => void;
-        debug: (message: string, payload?: unknown) => void;
-        child: (ctx: /* LogContext — packages/agent-core-v2/src/_base/log/log.ts */ {
-          [key: string]: unknown;
-        }) => /* ILogger — recursive (packages/agent-core-v2/src/_base/log/log.ts) */ unknown;
-      };
-    }) => Promise<string>;
-    readonly summaryPolicy?: /* AgentProfileSummaryPolicy — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-      readonly minChars: number;
-      readonly continuationPrompt: string;
-      readonly retries: number;
-    };
   }>;
   // src/session/sessionFs/fsService.ts
   'sessionFs.realRootsCache': {
@@ -903,7 +772,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2594": undefined;
+    readonly "__@mediaStripSnapshotBrand@2437": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {

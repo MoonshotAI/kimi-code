@@ -14,7 +14,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/agent/mcp/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/agent/mcp/types';
@@ -220,10 +220,11 @@ describe('AgentMcpService', () => {
   });
 
   function createService(manager: FakeMcpManager): AgentMcpService {
-    ix.stub(ISessionMcpService, {
-      ensureMcpReady: () => Promise.resolve(),
-      connectionManager: () => manager as unknown as McpConnectionManager,
-    });
+    ix.stub(ISessionMcpHandle, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      connectionManager: manager as unknown as McpConnectionManager,
+    } satisfies ISessionMcpHandle);
     ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
     const svc = ix.createInstance(AgentMcpService);
     disposables.add(svc);

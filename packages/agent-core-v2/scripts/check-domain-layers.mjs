@@ -106,6 +106,12 @@ const DOMAIN_LAYER = new Map([
   // Workspace-scope seeded handler facts (`workspace/workspaceContext`) —
   // one domain name per scope tier, same pattern as `state`.
   ['workspaceContext', 1],
+  // `sessionInstructions` is the Session-scope seeded AGENTS.md provider
+  // contract (`ISessionInstructionsProvider`): a pure data + change-event
+  // injection contract (the Workspace-scope `workspaceInstructions` impl
+  // hands it to each session) with no IO, so it sits in L1 beside
+  // `sessionContext`.
+  ['sessionInstructions', 1],
   ['protocol', 1],
   ['hooks', 1],
   // `task` is the managed-concurrent-execution primitive (run + defer).
@@ -158,6 +164,14 @@ const DOMAIN_LAYER = new Map([
   ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
   ['sessionAgentProfileCatalog', 3],
+  // `workspaceSkillCatalog` / `workspaceAgentProfileCatalog` are the
+  // Workspace-scope owners of skill / agent-profile discovery + merging
+  // (sources bound per handler, single-source incremental refresh); they
+  // consume the same L1–L3 registries their Session-scope read views
+  // (`sessionSkillCatalog` / `sessionAgentProfileCatalog`) project, so they
+  // sit in L3 beside them.
+  ['workspaceSkillCatalog', 3],
+  ['workspaceAgentProfileCatalog', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
   ['toolApproval', 3],
@@ -215,6 +229,10 @@ const DOMAIN_LAYER = new Map([
   ['edit', 4],
   ['llmRequester', 4],
   ['profile', 4],
+  // `workspaceInstructions` is the Workspace-scope AGENTS.md snapshot service
+  // (load once per handler, watch-driven reload): it consumes the `profile`
+  // domain's pure AGENTS.md loader, so it sits in L4 beside it.
+  ['workspaceInstructions', 4],
   ['prompt', 4],
   // `shellCommand` orchestrates user `!` commands through `toolRegistry` (L3),
   // `contextMemory` / `prompt` (L4) and `eventBus` (L1); its highest dependency is L4.
@@ -225,6 +243,11 @@ const DOMAIN_LAYER = new Map([
   // L5 — agent task management
   ['agentTask', 5],
   ['mcp', 5],
+  // `workspaceMcp` is the Workspace-scope owner of the handler's one shared
+  // MCP connection manager (connect at build, watch-driven reload,
+  // caller-server union merge); it consumes the `mcp` domain's manager and
+  // config primitives, so it sits in L5 beside it.
+  ['workspaceMcp', 5],
   ['cron', 5],
   // `btw` forks a single side-question sub-agent via `agentLifecycle`,
   // parallel to how the `Agent` tool spawns child agents. Agent-scope, L5.

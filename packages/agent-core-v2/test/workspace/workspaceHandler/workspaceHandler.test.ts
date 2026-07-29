@@ -24,7 +24,11 @@ import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
@@ -42,9 +46,7 @@ import {
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -130,28 +132,34 @@ function hostEnvironmentStub(): IHostEnvironment {
   };
 }
 
-function skillCatalogStub(): ISessionSkillCatalog {
+function workspaceSkillCatalogStub(): IWorkspaceSkillCatalog {
+  const catalog = {
+    getSkill: () => undefined,
+    getPluginSkill: () => undefined,
+    renderSkillPrompt: () => '',
+    listSkills: () => [],
+    listInvocableSkills: () => [],
+    getSkillRoots: () => [],
+    getSkippedByPolicy: () => [],
+    getModelSkillListing: () => '',
+  };
   return {
     _serviceBrand: undefined,
-    catalog: {
-      getSkill: () => undefined,
-      getPluginSkill: () => undefined,
-      renderSkillPrompt: () => '',
-      listSkills: () => [],
-      listInvocableSkills: () => [],
-      getSkillRoots: () => [],
-      getSkippedByPolicy: () => [],
-      getModelSkillListing: () => '',
-    },
     ready: Promise.resolve(),
+    catalog,
     onDidChange: () => ({ dispose: () => {} }),
-    load: () => Promise.resolve(),
     reload: () => Promise.resolve(),
-  };
+    sessionData: () => ({
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      catalog,
+      onDidChange: () => ({ dispose: () => {} }),
+    }),
+  } as unknown as IWorkspaceSkillCatalog;
 }
 
-function agentProfileCatalogStub(): ISessionAgentProfileCatalog {
-  return {
+function workspaceAgentProfileCatalogStub(): IWorkspaceAgentProfileCatalog {
+  const data = {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChange: () => ({ dispose: () => {} }),
@@ -160,9 +168,30 @@ function agentProfileCatalogStub(): ISessionAgentProfileCatalog {
       throw new Error('not implemented');
     },
     list: () => [],
-    load: () => Promise.resolve(),
-    reload: () => Promise.resolve(),
   };
+  return {
+    ...data,
+    reload: () => Promise.resolve(),
+    sessionData: () => data,
+  } as unknown as IWorkspaceAgentProfileCatalog;
+}
+
+function workspaceInstructionsStub(): IWorkspaceInstructionsService {
+  const provider = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    agentsMd: undefined,
+    agentsMdWarning: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+  };
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    snapshot: { agentsMd: undefined, agentsMdWarning: undefined },
+    onDidChange: () => ({ dispose: () => {} }),
+    reload: () => Promise.resolve(),
+    sessionProvider: () => provider,
+  } as unknown as IWorkspaceInstructionsService;
 }
 
 function workspaceStub(): IWorkspaceService {
@@ -306,15 +335,20 @@ function agentLifecycleStub(): IAgentLifecycleService {
   };
 }
 
-function sessionMcpServiceStub(
-  ensureMcpReady: () => Promise<void> = () => Promise.resolve(),
-): ISessionMcpService {
+function workspaceMcpServiceStub(ready: Promise<void> = Promise.resolve()): IWorkspaceMcpService {
   return {
     _serviceBrand: undefined,
-    ensureMcpReady,
+    ready,
     connectionManager: () => {
       throw new Error('not implemented');
     },
+    sessionHandle: () => ({
+      _serviceBrand: undefined,
+      ready,
+      get connectionManager(): McpConnectionManager {
+        throw new Error('not implemented');
+      },
+    }),
   };
 }
 
@@ -475,16 +509,17 @@ describe('WorkspaceHandlerService', () => {
       stubPair(IBootstrapService, bootstrapStub()),
       stubPair(ISessionMetadata, metadataStub()),
       stubPair(IHostEnvironment, hostEnvironmentStub()),
-      stubPair(ISessionSkillCatalog, skillCatalogStub()),
+      stubPair(IWorkspaceSkillCatalog, workspaceSkillCatalogStub()),
       stubPair(ISessionToolPolicy, sessionToolPolicyStub()),
-      stubPair(ISessionAgentProfileCatalog, agentProfileCatalogStub()),
+      stubPair(IWorkspaceAgentProfileCatalog, workspaceAgentProfileCatalogStub()),
+      stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
-      stubPair(ISessionMcpService, sessionMcpServiceStub()),
+      stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionSecondaryModelWarningService, {
@@ -524,14 +559,29 @@ describe('WorkspaceHandlerService', () => {
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
-  it('create forwards caller-supplied MCP servers to the session MCP initial load', async () => {
-    const ensureMcpReady = vi.fn(() => Promise.resolve());
-    const svc = await build([
-      stubPair(ISessionMcpService, sessionMcpServiceStub(ensureMcpReady)),
-    ]);
-    const mcpServers = { docs: { transport: 'http', url: 'https://mcp.example.com' } } as const;
-    await svc.create({ sessionId: 's1', workDir: '/tmp/proj', mcpServers });
-    expect(ensureMcpReady).toHaveBeenCalledWith(mcpServers);
+  it('re-arms the agent-profile catalog after a fatal ready rejection so a later create succeeds', async () => {
+    let readyAttempts = 0;
+    const reload = vi.fn(() => Promise.resolve());
+    const catalogStub = {
+      ...workspaceAgentProfileCatalogStub(),
+      get ready(): Promise<void> {
+        readyAttempts += 1;
+        return readyAttempts === 1
+          ? Promise.reject(new Error('fatal explicit file'))
+          : Promise.resolve();
+      },
+      reload,
+    } as unknown as IWorkspaceAgentProfileCatalog;
+    const svc = await build([stubPair(IWorkspaceAgentProfileCatalog, catalogStub)]);
+
+    await expect(svc.create({ sessionId: 's1', workDir: '/tmp/proj' })).rejects.toThrow(
+      'fatal explicit file',
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(svc.get('s1')).toBeUndefined();
+
+    await svc.create({ sessionId: 's2', workDir: '/tmp/proj' });
+    expect(svc.get('s2')).toBeDefined();
   });
 
   it('create appends the session to the shared session_index.jsonl', async () => {
@@ -945,7 +995,7 @@ describe('WorkspaceHandlerService', () => {
       resolveMcpReady = resolve;
     });
     const svc = await build([
-      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
+      stubPair(IWorkspaceMcpService, workspaceMcpServiceStub(mcpReady)),
     ]);
 
     let settled = false;
@@ -969,7 +1019,7 @@ describe('WorkspaceHandlerService', () => {
     const svc = await build([
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_stub')),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
-      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
+      stubPair(IWorkspaceMcpService, workspaceMcpServiceStub(mcpReady)),
     ]);
 
     const resumed = svc.resume('s1');

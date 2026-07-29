@@ -87,9 +87,10 @@
  *   `IAtomicDocumentStore`, whose on-disk layout
  *   (`<home>/credentials/mcp/<key>-*.json`) matches v1's.
  * - `listMcpServers` / `getMcpStartupMetrics` / `reconnectMcpServer` →
- *   `ISessionMcpService.connectionManager()` through the session scope (no
- *   klient facade exists); the v2 `McpServerEntry` is field-identical with
- *   v1's `McpServerInfo`.
+ *   the seeded `ISessionMcpHandle.connectionManager` through the session
+ *   scope (no klient facade exists) — one shared manager per workspace
+ *   handler since the workspace-domain resource consolidation; the v2
+ *   `McpServerEntry` is field-identical with v1's `McpServerInfo`.
  * - `onEvent` / `receiveEvent` → the base class registries, fed by a
  *   per-live-session wiring (`src/v2/session-wiring.ts`) that subscribes
  *   every live agent's `IEventBus` and translates each `DomainEvent` back
@@ -185,7 +186,7 @@ import {
   ISessionExportService,
   ISessionIndex,
   ISessionInitService,
-  ISessionMcpService,
+  ISessionMcpHandle,
   ISessionMetadata,
   ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
@@ -1057,7 +1058,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     // v1 re-resolves caller-provided additional dirs on every resume and
     // merges them over the workspace-local set; the engine's resume options
-    // do the same while the session scope is materialized.
+    // do the same while the session scope is materialized. Unlike v1, the v2
+    // engine has no caller `mcpServers` channel on create/resume (caller
+    // servers are an ACP-side concern to be designed separately).
     const handle = await resumeSessionById(this.engineAccessor, input.id, {
       additionalDirs: input.additionalDirs,
     });
@@ -1929,9 +1932,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // MCP: the user-global surface is rebuilt over the SDK-side store port in
   // `src/v2/global-mcp.ts` plus the v2 engine's own OAuth service and
   // connection manager (agent-core-v2 has no app-scope MCP config service —
-  // it only reads `mcp.json` — and binds its OAuth orchestrator inside the
-  // session scope); the session-level reads go through the session scope's
-  // `ISessionMcpService` (no klient facade exists for either group).
+  // it only reads `mcp.json`); the session-level reads go through the
+  // session scope's seeded `ISessionMcpHandle` (no klient facade exists for
+  // either group).
   // -----------------------------------------------------------------------
 
   /** v1's per-core `globalMcpOAuth`, built over the app-scope document store. */
@@ -2055,21 +2058,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the session scope (`ISessionMcpService.connectionManager()`).
-   * Both engines settle the initial connect before create/resume returns, so
-   * the entry list is final here; the v2 `McpServerEntry` is field-identical
-   * with v1's `McpServerInfo` (the cast bridges the two packages' type
-   * declarations).
+   * Through the session scope (the seeded `ISessionMcpHandle.connectionManager`
+   * — the workspace handler's one shared manager). Both engines settle the
+   * initial connect before create/resume returns, so the entry list is final
+   * here; the v2 `McpServerEntry` is field-identical with v1's
+   * `McpServerInfo` (the cast bridges the two packages' type declarations).
    */
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
-    return mcp.connectionManager().list() as readonly McpServerInfo[];
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    return mcp.connectionManager.list() as readonly McpServerInfo[];
   }
 
   override async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
-    await mcp.connectionManager().waitForInitialLoad();
-    return { durationMs: mcp.connectionManager().initialLoadDurationMs() };
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    await mcp.connectionManager.waitForInitialLoad();
+    return { durationMs: mcp.connectionManager.initialLoadDurationMs() };
   }
 
   /**
@@ -2078,8 +2081,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * re-registration rides on the status listeners in both engines.
    */
   override async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
-    await mcp.connectionManager().reconnect(input.name);
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    await mcp.connectionManager.reconnect(input.name);
   }
 }
 

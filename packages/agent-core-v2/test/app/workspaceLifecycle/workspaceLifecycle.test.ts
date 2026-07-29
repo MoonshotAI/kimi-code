@@ -20,11 +20,13 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { Error2, ErrorCodes } from '#/errors';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
@@ -112,9 +114,8 @@ function sessionStubs(): ReturnType<typeof stubPair>[] {
       disabledTools: () => [],
       setDisabledTools: () => Promise.resolve(),
     } satisfies ISessionToolPolicy),
-    stubPair(ISessionSkillCatalog, {
-      _serviceBrand: undefined,
-      catalog: {
+    stubPair(IWorkspaceSkillCatalog, (() => {
+      const catalog = {
         getSkill: () => undefined,
         getPluginSkill: () => undefined,
         renderSkillPrompt: () => '',
@@ -123,31 +124,80 @@ function sessionStubs(): ReturnType<typeof stubPair>[] {
         getSkillRoots: () => [],
         getSkippedByPolicy: () => [],
         getModelSkillListing: () => '',
-      },
-      ready: Promise.resolve(),
-      onDidChange: () => ({ dispose: () => {} }),
-      load: () => Promise.resolve(),
-      reload: () => Promise.resolve(),
-    } satisfies ISessionSkillCatalog),
-    stubPair(ISessionAgentProfileCatalog, {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      onDidChange: () => ({ dispose: () => {} }),
-      get: () => undefined,
-      getDefault: () => {
+      };
+      const onDidChange = () => ({ dispose: () => {} });
+      return {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        catalog,
+        onDidChange,
+        load: () => Promise.resolve(),
+        reload: () => Promise.resolve(),
+        sessionData: () => ({
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          catalog,
+          onDidChange,
+        }),
+      } as unknown as IWorkspaceSkillCatalog;
+    })()),
+    stubPair(IWorkspaceAgentProfileCatalog, (() => {
+      const onDidChange = () => ({ dispose: () => {} });
+      const get = () => undefined;
+      const getDefault = () => {
         throw new Error('not implemented');
-      },
-      list: () => [],
-      load: () => Promise.resolve(),
-      reload: () => Promise.resolve(),
-    } satisfies ISessionAgentProfileCatalog),
-    stubPair(ISessionMcpService, {
+      };
+      const list = () => [];
+      return {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        onDidChange,
+        get,
+        getDefault,
+        list,
+        load: () => Promise.resolve(),
+        reload: () => Promise.resolve(),
+        sessionData: () => ({
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          onDidChange,
+          get,
+          getDefault,
+          list,
+        }),
+      } as unknown as IWorkspaceAgentProfileCatalog;
+    })()),
+    stubPair(IWorkspaceInstructionsService, (() => {
+      const onDidChange = () => ({ dispose: () => {} });
+      return {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        snapshot: { agentsMd: undefined, agentsMdWarning: undefined },
+        onDidChange,
+        reload: () => Promise.resolve(),
+        sessionProvider: () => ({
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          agentsMd: undefined,
+          agentsMdWarning: undefined,
+          onDidChange,
+        }),
+      } as unknown as IWorkspaceInstructionsService;
+    })()),
+    stubPair(IWorkspaceMcpService, {
       _serviceBrand: undefined,
-      ensureMcpReady: () => Promise.resolve(),
+      ready: Promise.resolve(),
       connectionManager: () => {
         throw new Error('not implemented');
       },
-    } satisfies ISessionMcpService),
+      sessionHandle: () => ({
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        get connectionManager(): McpConnectionManager {
+          throw new Error('not implemented');
+        },
+      }),
+    } as unknown as IWorkspaceMcpService),
     stubPair(IAgentLifecycleService, (() => {
       const main = {
         id: 'main',

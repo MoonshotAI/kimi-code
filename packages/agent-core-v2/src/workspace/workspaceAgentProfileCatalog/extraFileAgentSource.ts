@@ -1,11 +1,14 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — extra `IAgentProfileSource`
+ * `workspaceAgentProfileCatalog` domain (L3) — extra `IAgentProfileSource`
  * producer.
  *
- * Discovers configured agent profiles through `config`, `workspace`,
- * `bootstrap`, and `hostFs`, and reports skipped files through `log`.
- * `${base_prompt}` is backed by the user source's effective default profile.
- * Bound at Session scope.
+ * Discovers configured agent profiles through `config`, `workspaceContext`,
+ * `bootstrap`, and `hostFs`, resolving relative paths against the workspace
+ * root, and reports skipped files through `log`. `${base_prompt}` is backed
+ * by the user source's effective default profile. Re-fires `onDidChange`
+ * when the `extraAgentDirs` config section changes so the catalog re-scans
+ * THIS source only. Bound at Workspace scope so every session of the handler
+ * shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -29,7 +32,7 @@ import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExtraFileAgentSource extends IAgentProfileSource {
   readonly _serviceBrand: undefined;
@@ -48,7 +51,7 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
 
   constructor(
     @IConfigService private readonly config: IConfigService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
@@ -71,7 +74,7 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
         await configuredAgentRoots(
           this.fs,
           dirs,
-          this.workspace.workDir,
+          this.workspace.cwd,
           this.bootstrap.osHomeDir,
           'extra',
           (message, error) => {
@@ -86,9 +89,9 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
 }
 
 registerScopedService(
-  LifecycleScope.Session,
+  LifecycleScope.Workspace,
   IExtraFileAgentSource,
   ExtraFileAgentSource,
   ScopeActivation.OnScopeCreated,
-  'sessionAgentProfileCatalog',
+  'workspaceAgentProfileCatalog',
 );

@@ -25,6 +25,12 @@ export interface ISessionContext {
   readonly sessionDir: string;
   readonly metaScope: string;
   readonly cwd: string;
+  /**
+   * Extra directories beyond `cwd` the session may touch, computed by the
+   * handler at materialization (workspace-local `.kimi-code/local.toml` set
+   * plus caller-provided dirs) and frozen for the session's lifetime. The
+   * workspace-level add-dir surface reuses this seed channel.
+   */
   readonly additionalDirs?: readonly string[];
   scope(subKey?: string): string;
 }

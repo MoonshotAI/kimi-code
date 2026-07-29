@@ -1,7 +1,7 @@
 /**
- * Scenario: MCP connection lifecycle, timeout defaults, and session config readiness.
+ * Scenario: MCP connection lifecycle, timeout defaults, and workspace config readiness.
  *
- * Exercises the real connection manager and resolves the real session MCP
+ * Exercises the real connection manager and resolves the real workspace MCP
  * service through DI. Stdio MCP processes are the external boundary; timeout
  * forwarding tests stub only the MCP SDK client boundary.
  * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { McpConnectionManager, type McpServerEntry } from '#/agent/mcp/connection-manager';
@@ -38,11 +39,13 @@ import { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
+import type { ReloadSummary } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import { SessionMcpService } from '#/session/mcp/sessionMcpService';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+import { IHostFsWatchService, type HostFsChange, type IHostFsWatchHandle } from '#/os/interface/hostFsWatch';
 
 import { stubLog } from '../../_base/log/stubs';
 import {
@@ -831,7 +834,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 });
 
-describe('Session MCP initialization', () => {
+describe('Workspace MCP initialization', () => {
   let cwd: string;
   let homeDir: string;
   let disposables: DisposableStore;
@@ -853,14 +856,15 @@ describe('Session MCP initialization', () => {
     ]);
   });
 
-  function createSessionMcpService(ready: Promise<void>, mcpSection?: McpSection) {
+  function createWorkspaceMcpService(ready: Promise<void>, mcpSection?: McpSection) {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
-        reg.definePartialInstance(ISessionWorkspaceContext, { workDir: cwd });
+        reg.definePartialInstance(IWorkspaceContext, { cwd });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
+          onDidReload: Event.None as Event<ReloadSummary>,
         });
         reg.definePartialInstance(IAtomicDocumentStore, {});
         reg.defineInstance(ILogService, stubLog());
@@ -870,10 +874,16 @@ describe('Session MCP initialization', () => {
           get: (<T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T),
         });
-        reg.define(ISessionMcpService, SessionMcpService);
+        reg.definePartialInstance(IHostFsWatchService, {
+          watch: (): IHostFsWatchHandle => ({
+            onDidChange: Event.None as Event<HostFsChange>,
+            dispose: () => {},
+          }),
+        });
+        reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
     });
-    return ix.get(ISessionMcpService);
+    return ix.get(IWorkspaceMcpService);
   }
 
   it('exposes the connection manager before config is ready and starts connecting once ready', async () => {
@@ -881,35 +891,29 @@ describe('Session MCP initialization', () => {
     const ready = new Promise<void>((resolve) => {
       resolveConfigReady = resolve;
     });
-    const service = createSessionMcpService(ready);
-    // The manager is available synchronously, independent of config readiness.
-    manager = service.connectionManager();
-    expect(manager.list()).toEqual([]);
-
-    const initialLoad = service.ensureMcpReady({
+    await writeProjectMcpJson(cwd, {
       alpha: {
         transport: 'stdio',
         command: process.execPath,
         args: [stdioFixture],
       },
     });
-    try {
-      // The initial connect is gated on config.ready: no entry exists yet.
-      await sleep(50);
-      expect(manager.list()).toEqual([]);
+    const service = createWorkspaceMcpService(ready);
+    // The manager is available synchronously, independent of config readiness.
+    manager = service.connectionManager();
+    expect(manager.list()).toEqual([]);
 
-      resolveConfigReady();
-      await initialLoad;
-      expect(manager.get('alpha')?.status).toBe('connected');
-    } finally {
-      resolveConfigReady();
-      await initialLoad;
-    }
+    // The initial connect is gated on config.ready: no entry exists yet.
+    await sleep(50);
+    expect(manager.list()).toEqual([]);
+
+    resolveConfigReady();
+    await service.ready;
+    expect(manager.get('alpha')?.status).toBe('connected');
   }, 15000);
 
   it('times out tool calls using the session MCP timeout preference', async () => {
-    const service = createSessionMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
-    await service.ensureMcpReady({
+    await writeProjectMcpJson(cwd, {
       slowTool: {
         transport: 'stdio',
         command: process.execPath,
@@ -917,9 +921,24 @@ describe('Session MCP initialization', () => {
         env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
       },
     });
+    const service = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
+    await service.ready;
     manager = service.connectionManager();
     const client = manager.resolved('slowTool')?.client;
     if (client === undefined) throw new Error('expected a connected client');
     await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
   }, 15000);
 });
+
+async function writeProjectMcpJson(
+  cwd: string,
+  servers: Record<string, unknown>,
+): Promise<void> {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(join(cwd, '.kimi-code'), { recursive: true });
+  await writeFile(
+    join(cwd, '.kimi-code', 'mcp.json'),
+    JSON.stringify({ mcpServers: servers }),
+    'utf8',
+  );
+}

@@ -13,6 +13,13 @@
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
  * never touches the handler itself.
+ * Every Session scope is also seeded with the handler's shared workspace
+ * resources as pure-data read views (the injection contracts):
+ * `sessionSkillCatalogData` / `sessionAgentProfileCatalogData` (the merged
+ * catalogs), `sessionInstructionsProvider` (the AGENTS.md snapshot), and
+ * `sessionMcpHandle` (the one shared MCP connection manager) — discovery,
+ * watching and connecting all live on the Workspace-scope services; session
+ * consumers read the seeds and refresh off their change events.
  * Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at Workspace scope.
  * Persisted sessions are discovered through the `sessionIndex` read model.
@@ -26,14 +33,18 @@
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
  * On
- * materialize, the session's metadata, tool policy, and agent-profile catalog
- * are awaited before the handle is published — agent-file discovery is local-
+ * materialize, the workspace agent-profile catalog's `ready` is awaited
+ * before the handle is published — agent-file discovery is local-
  * fs and cheap, and a resumed session's first turn must see file-defined
  * agent types in the `Agent` tool description; the catalog's `ready` only
  * rejects for a fatal explicit-source error, exactly the case that should
  * fail fast, and on that failure the half-materialized handle is disposed
- * instead of poisoning the session cache (the skill catalog, by contrast, is
- * kicked fire-and-forget). The session-level services whose subscriptions
+ * instead of poisoning the session cache, and the catalog is re-armed with
+ * a fire-and-forget `reload()` so a fixed agent file unblocks later creates
+ * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
+ * The handler's shared MCP manager (file + plugin servers only — sessions
+ * cannot contribute servers) is awaited before create/resume returns. The
+ * session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
@@ -77,17 +88,18 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { sessionMcpHandleSeed } from '#/session/mcp/sessionMcpHandle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { sessionAgentProfileCatalogDataSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
+import { sessionInstructionsProviderSeed } from '#/session/sessionInstructions/instructionsProvider';
 import {
   ISessionLifecycleHooks,
   sessionLifecycleHooksSeed,
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { sessionSkillCatalogDataSeed } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
 import {
@@ -96,6 +108,10 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './addressing';
 import {
@@ -143,6 +159,11 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     private readonly projectLocalConfig: IProjectLocalConfigService,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IWorkspaceSkillCatalog private readonly skillCatalog: IWorkspaceSkillCatalog,
+    @IWorkspaceAgentProfileCatalog
+    private readonly agentProfileCatalog: IWorkspaceAgentProfileCatalog,
+    @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
+    @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
   ) {
     super();
   }
@@ -223,17 +244,30 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
           ...sessionContextSeed(ctx),
           ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
+          // Workspace resource seeds (the §3.5 injection contracts): the
+          // handler's shared skill / agent-profile catalogs, AGENTS.md
+          // snapshot, and MCP manager reach the session as pure-data read
+          // views; refreshes fan out through their change events.
+          ...sessionSkillCatalogDataSeed(this.skillCatalog.sessionData()),
+          ...sessionAgentProfileCatalogDataSeed(this.agentProfileCatalog.sessionData()),
+          ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
+          ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
         ],
       },
     ) as ISessionScopeHandle;
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
-      void handle.accessor.get(ISessionSkillCatalog).ready;
-      await handle.accessor.get(ISessionAgentProfileCatalog).ready;
-      await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+      void this.skillCatalog.ready;
+      await this.agentProfileCatalog.ready;
+      await this.mcp.ready;
     } catch (error) {
       handle.dispose();
+      // Re-arm the workspace agent-profile catalog after a fatal
+      // explicit-source rejection: its `ready` tracks the latest load pass,
+      // so without a reload the handler would keep rejecting every later
+      // session create even after the user fixes the offending agent file.
+      void this.agentProfileCatalog.reload().catch(() => undefined);
       throw error;
     }
     this.sessions.set(opts.sessionId, handle);

@@ -1,10 +1,11 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — explicit `IAgentProfileSource`
+ * `workspaceAgentProfileCatalog` domain (L3) — explicit `IAgentProfileSource`
  * producer.
  *
- * Loads runtime-selected agent files through `hostFs`, resolving paths through
- * `workspace` and `bootstrap`. `${base_prompt}` is backed by the user source's
- * effective default profile. Bound at Session scope.
+ * Loads runtime-selected agent files through `hostFs`, resolving paths
+ * against the workspace root and `bootstrap`. `${base_prompt}` is backed by
+ * the user source's effective default profile. Bound at Workspace scope so
+ * every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -22,7 +23,7 @@ import { resolveAgentPath } from '#/app/agentFileCatalog/paths';
 import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExplicitFileAgentSource extends IAgentProfileSource {
   readonly _serviceBrand: undefined;
@@ -40,7 +41,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
 
   constructor(
     @IAgentCatalogRuntimeOptions private readonly runtimeOptions: IAgentCatalogRuntimeOptions,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IUserFileAgentSource private readonly user: IUserFileAgentSource,
@@ -50,11 +51,12 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     const files = this.runtimeOptions.explicitFiles ?? [];
     const profiles: AgentProfile[] = [];
     for (const file of files) {
-      const filePath = resolveAgentPath(file, this.workspace.workDir, this.bootstrap.osHomeDir);
+      const filePath = resolveAgentPath(file, this.workspace.cwd, this.bootstrap.osHomeDir);
       const text = await this.fs.readText(filePath);
       profiles.push(
-        agentProfileFromFile(parseAgentFileText({ path: filePath, source: 'explicit', text }), (context) =>
-          this.user.getDefaultProfile().systemPrompt(context),
+        agentProfileFromFile(
+          parseAgentFileText({ path: filePath, source: 'explicit', text }),
+          (context) => this.user.getDefaultProfile().systemPrompt(context),
         ),
       );
     }
@@ -63,9 +65,9 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
 }
 
 registerScopedService(
-  LifecycleScope.Session,
+  LifecycleScope.Workspace,
   IExplicitFileAgentSource,
   ExplicitFileAgentSource,
   ScopeActivation.OnScopeCreated,
-  'sessionAgentProfileCatalog',
+  'workspaceAgentProfileCatalog',
 );

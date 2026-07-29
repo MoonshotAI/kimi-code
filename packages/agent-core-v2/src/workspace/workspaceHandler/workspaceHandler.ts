@@ -20,7 +20,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type {
   SessionCloseReason,
@@ -33,7 +32,6 @@ export interface CreateSessionOptions {
   readonly sessionId?: string;
   readonly workDir: string;
   readonly additionalDirs?: readonly string[];
-  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly mainAgentBinding?: BindAgentInput;
 }
 

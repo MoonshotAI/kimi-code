@@ -14,7 +14,6 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
-import { type McpServerConfig } from '#/agent/mcp/config-schema';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
@@ -26,8 +25,10 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { McpOAuthService } from '#/agent/mcp/oauth/service';
+import { createMcpOAuthStore } from '#/agent/mcp/oauth/store';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
@@ -206,7 +207,7 @@ describe('AgentLifecycleService', () => {
       get: (() => undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    ix.stub(IAtomicDocumentStore, {
+    const atomicDocsStore: IAtomicDocumentStore = {
       _serviceBrand: undefined,
       get: async <T>(scope: string, key: string): Promise<T | undefined> =>
         atomicDocs.get(`${scope}/${key}`) as T | undefined,
@@ -222,7 +223,8 @@ describe('AgentLifecycleService', () => {
           .map((key) => key.slice(scope.length + 1)),
       watch: () => Event.None as Event<void>,
       acquire: () => ({ dispose: () => {} }),
-    } satisfies IAtomicDocumentStore);
+    };
+    ix.stub(IAtomicDocumentStore, atomicDocsStore);
     ix.stub(ILogService, noopLog);
     ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
@@ -334,7 +336,25 @@ describe('AgentLifecycleService', () => {
       setMode: permissionModeSetMode,
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
-    ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
+    ix.stub(ISessionInstructionsProvider, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      agentsMd: undefined,
+      agentsMdWarning: undefined,
+      onDidChange: Event.None as Event<void>,
+    } satisfies ISessionInstructionsProvider);
+    // The session's MCP readiness arrives through the seeded
+    // `ISessionMcpHandle`; the default handle carries an OAuth-wired manager
+    // over the test atomic document store so the agent mirror's OAuth
+    // surface stays exercisable.
+    ix.stub(ISessionMcpHandle, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      connectionManager: new McpConnectionManager({
+        log: noopLog,
+        oauthService: new McpOAuthService({ store: createMcpOAuthStore(atomicDocsStore) }),
+      }),
+    } satisfies ISessionMcpHandle);
     stopAllOnExit = vi.fn(async () => []);
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
@@ -616,39 +636,16 @@ describe('AgentLifecycleService', () => {
     ]);
   });
 
-  it('waits for MCP config resolution and initial connect before returning an agent', async () => {
-    let resolvePluginServersRequested!: () => void;
-    const pluginServersRequested = new Promise<void>((resolve) => {
-      resolvePluginServersRequested = resolve;
+  it('waits for the MCP handle readiness before returning an agent', async () => {
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
     });
-    let resolvePluginServers:
-      | ((servers: Record<string, McpServerConfig>) => void)
-      | undefined;
-    const pluginServers = new Promise<Record<string, McpServerConfig>>((resolve) => {
-      resolvePluginServers = resolve;
-    });
-    ix.stub(IPluginService, {
-      ...pluginServiceStub,
-      enabledMcpServers: () => {
-        resolvePluginServersRequested();
-        return pluginServers;
-      },
-    } as unknown as IPluginService);
-
-    let resolveConnectStarted!: () => void;
-    const connectStarted = new Promise<void>((resolve) => {
-      resolveConnectStarted = resolve;
-    });
-    let resolveConnect: (() => void) | undefined;
-    const connected = new Promise<void>((resolve) => {
-      resolveConnect = resolve;
-    });
-    const connectAll = vi
-      .spyOn(McpConnectionManager.prototype, 'connectAll')
-      .mockImplementation(() => {
-        resolveConnectStarted();
-        return connected;
-      });
+    ix.stub(ISessionMcpHandle, {
+      _serviceBrand: undefined,
+      ready,
+      connectionManager: new McpConnectionManager({ log: noopLog }),
+    } satisfies ISessionMcpHandle);
 
     const svc = ix.get(IAgentLifecycleService);
     let settled = false;
@@ -656,47 +653,16 @@ describe('AgentLifecycleService', () => {
       settled = true;
     });
 
-    await pluginServersRequested;
-    expect(settled).toBe(false);
-    expect(connectAll).not.toHaveBeenCalled();
-
-    resolvePluginServers?.({
-      delayed: { transport: 'stdio', command: process.execPath },
+    // The wire seal + registerAgent complete first; the create call then
+    // parks on the seeded MCP readiness promise.
+    await vi.waitFor(() => {
+      expect(registerAgent).toHaveBeenCalled();
     });
-    await connectStarted;
-    expect(connectAll).toHaveBeenCalledTimes(1);
     expect(settled).toBe(false);
 
-    resolveConnect?.();
+    releaseReady();
     await create;
     expect(settled).toBe(true);
-  });
-
-  it('merges caller-supplied MCP servers into the initial connect (file < caller < plugin)', async () => {
-    ix.stub(IPluginService, {
-      ...pluginServiceStub,
-      enabledMcpServers: async () => ({
-        shared: { transport: 'stdio', command: 'plugin-version' },
-      }),
-    } as unknown as IPluginService);
-    const connectAll = vi
-      .spyOn(McpConnectionManager.prototype, 'connectAll')
-      .mockResolvedValue(undefined);
-
-    const sessionMcp = ix.get(ISessionMcpService);
-    await sessionMcp.ensureMcpReady({
-      shared: { transport: 'stdio', command: 'caller-version' },
-      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
-    });
-
-    expect(connectAll).toHaveBeenCalledTimes(1);
-    expect(connectAll).toHaveBeenCalledWith({
-      shared: { transport: 'stdio', command: 'plugin-version' },
-      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
-    });
-
-    await sessionMcp.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
-    expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
   it('exposes the in-flight handle and joins it after bootstrap', async () => {

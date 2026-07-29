@@ -13,14 +13,12 @@
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
-import { mcpServerConfigSchema } from '../mcp.js';
 import type { ServiceContract } from '../types.js';
 
 export const createSessionOptionsSchema = z.object({
   sessionId: z.string().optional(),
   workDir: z.string(),
   additionalDirs: z.array(z.string()).optional(),
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
 });
 
 export const forkSessionOptionsSchema = z.object({

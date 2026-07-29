@@ -1,20 +1,24 @@
 /**
- * `sessionSkillCatalog` domain (L3) — plugin `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain (L3) — plugin `ISkillSource` producer.
  *
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
  * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5
  * (above builtin, below extra / user / workspace, so project, user and extra
  * skills win name collisions). Re-emits `plugin.onDidReload` as `onDidChange`
- * so the sink re-pulls plugin skills when plugins reload; install / enable /
- * remove mutations deliberately do not refresh the session catalog — those
- * take effect on the next explicit reload. Bound at Session scope.
+ * so the catalog re-pulls plugin skills when plugins reload. Bound at
+ * Workspace scope so every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
-import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
+import {
+  PLUGIN_SKILL_SOURCE_ID,
+  SKILL_SOURCE_PRIORITY,
+  type ISkillSource,
+  type SkillContribution,
+} from '#/app/skillCatalog/skillSource';
 import { IPluginService } from '#/app/plugin/plugin';
 
 export interface IPluginSkillSource extends ISkillSource {
@@ -24,7 +28,7 @@ export interface IPluginSkillSource extends ISkillSource {
 export const IPluginSkillSource: ServiceIdentifier<IPluginSkillSource> =
   createDecorator<IPluginSkillSource>('pluginSkillSource');
 
-export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
+export { PLUGIN_SKILL_SOURCE_ID };
 
 export class PluginSkillSource implements IPluginSkillSource {
   declare readonly _serviceBrand: undefined;
@@ -49,9 +53,9 @@ export class PluginSkillSource implements IPluginSkillSource {
 }
 
 registerScopedService(
-  LifecycleScope.Session,
+  LifecycleScope.Workspace,
   IPluginSkillSource,
   PluginSkillSource,
   ScopeActivation.OnScopeCreated,
-  'sessionSkillCatalog',
+  'workspaceSkillCatalog',
 );

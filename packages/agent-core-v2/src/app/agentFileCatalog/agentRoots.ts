@@ -46,6 +46,31 @@ export async function projectAgentRoots(
   return roots;
 }
 
+/**
+ * The project root and the raw project agent-root candidates
+ * (`.kimi-code/agents` and `.agents/agents` under it) regardless of
+ * existence — the watch plan for project-agent refreshes, since
+ * `projectAgentRoots` filters to directories that already exist.
+ */
+export interface ProjectAgentRootCandidates {
+  readonly projectRoot: string;
+  readonly candidates: readonly string[];
+}
+
+export async function projectAgentRootCandidates(
+  fs: IHostFileSystem,
+  workDir: string,
+  warn?: AgentRootWarn,
+): Promise<ProjectAgentRootCandidates> {
+  const projectRoot = await findProjectRoot(fs, workDir, warn);
+  return {
+    projectRoot,
+    candidates: [...PROJECT_BRAND_DIRS, ...PROJECT_GENERIC_DIRS].map((dir) =>
+      join(projectRoot, dir),
+    ),
+  };
+}
+
 export async function configuredAgentRoots(
   fs: IHostFileSystem,
   dirs: readonly string[],

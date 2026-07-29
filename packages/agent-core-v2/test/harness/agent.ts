@@ -24,8 +24,14 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
+import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { ISessionAgentProfileCatalogData } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
@@ -685,13 +691,13 @@ export function cronServices(): TestAgentServiceOverride {
 export function mcpServices(options: {
   readonly manager?: McpConnectionManager;
 }): TestAgentServiceOverride {
-  // `AgentMcpService` now resolves the session's shared manager through
-  // `ISessionMcpService`; tests inject a fake manager by stubbing that service.
-  return sessionService(ISessionMcpService, {
+  // `AgentMcpService` resolves the workspace's shared manager through the
+  // seeded `ISessionMcpHandle`; tests inject a fake manager by stubbing it.
+  return sessionService(ISessionMcpHandle, {
     _serviceBrand: undefined,
-    ensureMcpReady: () => Promise.resolve(),
-    connectionManager: () => options.manager!,
-  } satisfies ISessionMcpService);
+    ready: Promise.resolve(),
+    connectionManager: options.manager!,
+  } satisfies ISessionMcpHandle);
 }
 
 export function skillServices(
@@ -1174,6 +1180,33 @@ export class AgentTestContext {
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
+            // Workspace-resource injection contracts (the seeds the real
+            // handler hands each session): the harness has no Workspace
+            // scope, so it seeds equivalents directly — an empty skill
+            // catalog, the App builtin profile catalog, a live-read AGENTS.md
+            // provider, and a no-server MCP manager. Tests replace them
+            // through the usual service overrides.
+            reg.defineInstance(ISessionSkillCatalogData, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              catalog: new InMemorySkillCatalog(),
+              onDidChange: Event.None as Event<string>,
+            } satisfies ISessionSkillCatalogData);
+            const builtinProfiles = this.root.accessor.get(IAgentProfileCatalogService);
+            reg.defineInstance(ISessionAgentProfileCatalogData, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              onDidChange: Event.None as Event<string>,
+              get: (name: string) => builtinProfiles.get(name),
+              getDefault: () => builtinProfiles.getDefault(),
+              list: () => builtinProfiles.list(),
+            } satisfies ISessionAgentProfileCatalogData);
+            reg.defineInstance(ISessionInstructionsProvider, this.createInstructionsProvider());
+            reg.defineInstance(ISessionMcpHandle, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              connectionManager: new McpConnectionManager(),
+            } satisfies ISessionMcpHandle);
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,
@@ -1859,6 +1892,37 @@ export class AgentTestContext {
 
   private resolvePendingRpc(method: string, id: string, result: unknown): void {
     this.snapshots.respondPending(method, id, result);
+  }
+
+  /**
+   * The harness AGENTS.md provider: no Workspace scope and no fs watch exist
+   * here, so `ready` re-reads the instruction files on every await and the
+   * getters expose the freshest load — the same freshness the old per-prompt
+   * disk read gave prompt builds.
+   */
+  private createInstructionsProvider(): ISessionInstructionsProvider {
+    const fs = this.root.accessor.get(IHostFileSystem);
+    const env = this.root.accessor.get(IHostEnvironment);
+    const bootstrapService = this.root.accessor.get(IBootstrapService);
+    const cwd = this.cwd;
+    let current: LoadedAgentsMd = { content: '', warning: undefined };
+    return {
+      _serviceBrand: undefined,
+      get ready(): Promise<void> {
+        return loadAgentsMdForRoots({ fs, homeDir: env.homeDir }, bootstrapService.homeDir, [
+          cwd,
+        ]).then((result) => {
+          current = result;
+        });
+      },
+      get agentsMd() {
+        return current.content;
+      },
+      get agentsMdWarning() {
+        return current.warning;
+      },
+      onDidChange: Event.None as Event<void>,
+    };
   }
 
   private createInteractionService(): ISessionInteractionService {
