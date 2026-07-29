@@ -255,6 +255,9 @@ async function readSystemPrompt(
   diagnostics: PluginDiagnostic[],
 ): Promise<string | undefined> {
   const parts: string[] = [];
+  if (raw['systemPrompt'] !== undefined && typeof raw['systemPrompt'] !== 'string') {
+    diagnostics.push({ severity: 'warn', message: '"systemPrompt" must be a string' });
+  }
   const inline = stringField(raw, 'systemPrompt');
   if (inline !== undefined) {
     const inlineBytes = Buffer.byteLength(inline, 'utf8');
@@ -297,7 +300,7 @@ async function readSystemPrompt(
           });
         } else {
           try {
-            const content = (await readFile(resolved, 'utf8')).trim();
+            const content = (await readFile(resolved, 'utf8')).replace(/^\uFEFF/, '').trim();
             if (content.length > 0) parts.push(content);
           } catch (error) {
             diagnostics.push({

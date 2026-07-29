@@ -309,6 +309,8 @@ function pluginConvergenceService(
   return sessionService(ISessionPluginContributionService, {
     _serviceBrand: undefined,
     onDidChange: converge.event,
+    isConverging: () => false,
+    settled: () => Promise.resolve(),
   });
 }
 

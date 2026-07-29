@@ -31,21 +31,21 @@
  * in the synchronous segment before the first dispatch, so concurrent binds
  * cannot both pass (an edge-level guard always leaves an interleaving
  * window); a same-name rebind keeps the persisted thinking effort unless the
- * caller explicitly overrides it. A resumed Agent keeps its replayed binding
- * untouched — restore never re-renders the prompt. `refreshSystemPrompt`
- * (driven by the Session tool-policy fan-out, the `[tools]` config watcher,
- * and `sessionPluginContribution` after plugin changes converge) re-renders
- * from the pinned in-memory profile while the Agent lives — a fork pins its
- * source Agent's profile object at fork time — while a genuinely cold
- * binding (a restore, or a fork of one) re-resolves the profile from the
- * Session catalog by name on the first refresh and rebinds
- * the whole slice (prompt / `disallowedTools` / active tools, but not the
- * bind-time `subagents`, which `config.update` cannot carry) is rebound
- * atomically, with a warning and no change when the name is gone. Renders
- * reuse the Agent's first-render `now` of the current process — a restored
- * Agent re-anchors once on its first live refresh — and no `config.update`
- * is dispatched when nothing changed, so steady-state convergence never
- * churns the wire.
+ * caller explicitly overrides it.
+ * A resumed Agent keeps its replayed binding untouched — restore never
+ * re-renders the prompt. `refreshSystemPrompt` (driven by the Session
+ * tool-policy fan-out, the `[tools]` config watcher, and
+ * `sessionPluginContribution` after plugin changes converge) re-renders
+ * from the pinned in-memory profile while the Agent lives; a fork pins its
+ * source Agent's profile object at fork time. Only a genuinely cold binding
+ * (a restore, or a fork of one) re-resolves the profile from the Session
+ * catalog by name on the first refresh, rebinding the whole slice (prompt /
+ * `disallowedTools` / active tools, but not the bind-time `subagents`,
+ * which `config.update` cannot carry) atomically — with a warning and no
+ * change when the name is gone. Renders reuse the Agent's first-render
+ * `now` of the current process (a restored Agent re-anchors once on its
+ * first live refresh), and no `config.update` is dispatched when nothing
+ * changed, so steady-state convergence never churns the wire.
  * `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled rejection

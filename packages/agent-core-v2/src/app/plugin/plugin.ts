@@ -9,7 +9,9 @@
  * did (`mcp`); explicit reloads are also announced through `onDidReload` as
  * soon as the reload commits, without waiting for `onDidChange`
  * participants. Participants are delivered and awaited one at a time, so a
- * mutation's latency grows with the number of live sessions. `waitUntil`
+ * mutation's latency grows with the number of live sessions; both kinds
+ * share one change queue, so an `mcp` change also waits for a prior
+ * `catalog` barrier to finish. `waitUntil`
  * work must never call back into plugin mutations — the new mutation queues
  * behind the barrier its own wait feeds, deadlocking the queue; consumption
  * reads and session-internal work are the safe kinds. Bound at App scope.

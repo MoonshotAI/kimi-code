@@ -44,6 +44,7 @@ export class SessionPluginContributionService
   );
   readonly onDidChange: Event<SessionPluginContributionChangedEvent> = this.changeEmitter.event;
   private convergeTail: Promise<void> = Promise.resolve();
+  private inFlightCount = 0;
 
   constructor(
     @ILogService private readonly log: ILogService,
@@ -59,12 +60,24 @@ export class SessionPluginContributionService
     );
   }
 
+  isConverging(): boolean {
+    return this.inFlightCount > 0;
+  }
+
+  settled(): Promise<void> {
+    return this.convergeTail;
+  }
+
   private awaitConverge(): Promise<void> {
+    this.inFlightCount += 1;
     const run = this.convergeTail.then(() => this.converge());
     this.convergeTail = run.then(
       () => undefined,
       () => undefined,
     );
+    void this.convergeTail.then(() => {
+      this.inFlightCount -= 1;
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => {

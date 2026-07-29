@@ -94,6 +94,23 @@ describe('plugin manifest parser', () => {
 
     const nonString = await parseManifest(dir);
     expect(nonString.manifest?.systemPrompt).toBeUndefined();
+    expect(nonString.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPrompt" must be a string',
+    ]);
+  });
+
+  it('strips a UTF-8 BOM from the systemPromptPath file before trimming', async () => {
+    await writeFile(join(dir, 'PROMPT.md'), '﻿Always cite sources.\n', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
   });
 
   it('reads the systemPromptPath file, trimming surrounding whitespace', async () => {

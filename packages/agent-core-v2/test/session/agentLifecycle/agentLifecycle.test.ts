@@ -338,6 +338,8 @@ describe('AgentLifecycleService', () => {
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
+      isConverging: () => false,
+      settled: () => Promise.resolve(),
     });
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
@@ -620,6 +622,89 @@ describe('AgentLifecycleService', () => {
       ).includes(record.type),
     );
     expect(profileWrites).toEqual([]);
+  });
+
+  it('joins an in-flight plugin convergence and refreshes a restored agent after it', async () => {
+    let releaseConverge!: () => void;
+    const converging = new Promise<void>((resolve) => {
+      releaseConverge = resolve;
+    });
+    let settleCalls = 0;
+    ix.stub(ISessionPluginContributionService, {
+      _serviceBrand: undefined,
+      onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
+      isConverging: () => true,
+      settled: () => {
+        settleCalls += 1;
+        return converging;
+      },
+    });
+    const devProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: () => 'converged prompt',
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? devProfile : undefined),
+      getDefault: () => devProfile,
+      list: () => [devProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'dev',
+        thinkingEffort: 'off',
+        systemPrompt: 'stale prompt',
+        activeToolNames: [],
+        disallowedTools: [],
+      },
+    ]).store);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+    const svc = ix.get(IAgentLifecycleService);
+
+    let created = false;
+    const pending = svc.create({ agentId: 'main' }).then((handle) => {
+      created = true;
+      return handle;
+    });
+    await vi.waitFor(() => {
+      expect(settleCalls).toBe(1);
+    });
+    expect(created).toBe(false);
+
+    releaseConverge();
+    const handle = await pending;
+
+    expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('converged prompt');
+    expect(handle.accessor.get(IAgentProfileService).getActiveToolNames()).toEqual(['Read']);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {

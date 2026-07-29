@@ -183,9 +183,9 @@ Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep
 }
 ```
 
-System-prompt contributions are currently consumed only under `kimi web` and under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`. The interactive TUI and the default `kimi -p` path ignore both fields.
+System-prompt contributions are consumed on the agent-core-v2 engine: under `kimi web`, and under any CLI surface (the interactive TUI or `kimi -p`) with `KIMI_CODE_EXPERIMENTAL_FLAG=1`. The default v1 paths — the TUI and `kimi -p` without the flag — ignore both fields.
 
-Each field — the inline `systemPrompt` and the `systemPromptPath` file — is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning.
+Each field — the inline `systemPrompt` and the `systemPromptPath` file — is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning, including a single plugin whose inline text and file together exceed that budget.
 
 New sessions include instructions from the plugins enabled at the time. Installing, enabling, disabling, removing, or reloading a plugin updates every live session's skill list and system prompt together before the operation returns. Sessions converge one at a time, so a session that takes too long to converge is cut off after a timeout, and a later plugin change brings it up to date once the stalled work clears. A session resumed from disk keeps its persisted prompt until the first prompt refresh (a plugin change, a tool-policy or tools-config change, or compaction). Toggling a plugin's MCP server does not touch prompts.
 

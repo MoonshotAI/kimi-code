@@ -4,8 +4,9 @@
  *
  * Defines `ISessionPluginContributionService`, the Session-level convergence
  * point for App-scope plugin changes, and the awaitable `onDidChange` event
- * that Agent consumers join with their own refresh work. Bound at Session
- * scope.
+ * that Agent consumers join with their own refresh work. Agent creation joins
+ * any in-flight convergence through `isConverging` / `settled`, so a plugin
+ * mutation never straddles an Agent's bootstrap. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -17,6 +18,8 @@ export interface ISessionPluginContributionService {
   readonly _serviceBrand: undefined;
 
   readonly onDidChange: Event<SessionPluginContributionChangedEvent>;
+  isConverging(): boolean;
+  settled(): Promise<void>;
 }
 
 export const ISessionPluginContributionService: ServiceIdentifier<ISessionPluginContributionService> =
