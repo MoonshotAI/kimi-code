@@ -51,7 +51,7 @@ pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端�
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）
 KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop  # 外部 server 模式（不起内嵌 server）
 pnpm run sync:web  # 同步 web dist 到 kimi-code checkout（先 build web）
-pnpm package:macos # 本地打包并签名 macOS arm64 包（CI 不可用时的替代，凭证见 apps/desktop/README.md）
+pnpm package:macos # 本地打包并签名 macOS arm64 包（CI 不可用时的替代，凭证见 apps/desktop/scripts/package-local-macos.sh 头注释）
 pnpm test          # 根 vitest
 pnpm lint          # oxlint --type-aware（.oxlintrc.json 排除 kimi-code submodule——上游代码由上游 CI lint）
 pnpm typecheck     # desktop + web
