@@ -30,6 +30,7 @@ import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/se
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -90,6 +91,7 @@ describe('server-v2 /api/v1/sessions', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -177,13 +179,19 @@ describe('server-v2 /api/v1/sessions', () => {
     const entries = readZipEntries(archive);
     const manifest = JSON.parse(entries.get('manifest.json')?.toString('utf8') ?? 'null') as {
       sessionId: string;
+      kimiCodeVersion: string;
+      desktopVersion?: string;
       webLogPath?: string;
     };
     expect(entries.get('logs/kimi-web.jsonl')?.toString('utf8')).toBe(webLog);
     expect(manifest).toMatchObject({
       sessionId: id,
+      kimiCodeVersion: TEST_HOST_IDENTITY.version,
       webLogPath: 'logs/kimi-web.jsonl',
     });
+    // The engine version never enters the manifest, and a non-desktop export
+    // carries no `desktopVersion`.
+    expect(manifest.desktopVersion).toBeUndefined();
     await expect.poll(() => listExportTempDirs(id)).toEqual([]);
   });
 
@@ -262,12 +270,16 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(res.status).toBe(200);
     const entries = readZipEntries(archive);
     const manifest = JSON.parse(entries.get('manifest.json')?.toString('utf8') ?? 'null') as {
+      kimiCodeVersion: string;
       desktopLogPath?: string;
+      desktopVersion?: string;
     };
     expect(entries.get('logs/kimi-desktop.log')?.toString('utf8')).toBe(
       '2026-07-27T00:00:00.000Z INFO  [renderer] hello\n',
     );
     expect(manifest.desktopLogPath).toBe('logs/kimi-desktop.log');
+    expect(manifest.kimiCodeVersion).toBe(TEST_HOST_IDENTITY.version);
+    expect(manifest.desktopVersion).toBe(TEST_HOST_IDENTITY.version);
   });
 
   async function createStoppedGoalRig(status: 'paused' | 'blocked') {
@@ -1244,6 +1256,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
       'utf-8',
     );
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

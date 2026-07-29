@@ -10,6 +10,7 @@
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
@@ -62,6 +63,11 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
+  /**
+   * Host product identity from `startServer` — the session export route stamps
+   * its manifest from `hostIdentity.version`.
+   */
+  readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
   readonly enableTerminals?: boolean;
@@ -115,7 +121,7 @@ export async function registerApiV1Routes(
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
         core,
-        { serverVersion: opts.serverVersion },
+        { hostIdentity: opts.hostIdentity },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
       registerMessagesRoutes(

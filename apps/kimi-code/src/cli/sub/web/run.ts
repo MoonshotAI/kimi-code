@@ -278,7 +278,14 @@ async function runServerInProcess(
     port: options.port,
     // Report the CLI's product version as `server_version` (/meta, web UI)
     // rather than kap-server's private package version.
-    version,
+    serverVersion: version,
+    // Temporary CLI identity wiring: the full host-identity hookup lands in
+    // step 5 of the host-identity unification.
+    hostIdentity: {
+      productName: 'kimi-code-cli',
+      version,
+      platform: 'kimi_code_cli',
+    },
     logLevel: options.logLevel,
     logger,
     debugEndpoints: options.debugEndpoints,
