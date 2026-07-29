@@ -821,11 +821,16 @@ export function messagesToTurns(
       // Hidden injections (todo-list reminders …) are stream noise, NOT turn
       // boundaries: they land mid-turn between assistant messages, so flushing
       // on them would fragment one agent turn into several chat turns (visible
-      // as repeated folded rows with nothing in between). Only this origin
-      // kind is skipped — every other hidden user message (hook results,
-      // retries, system triggers, …) keeps its boundary. Cron injections
-      // become their own turn below.
-      if (cronKind === undefined && userOriginKind === 'injection') {
+      // as repeated folded rows with nothing in between). A Skill tool call's
+      // loaded-skill message (trigger model-tool / nested-skill) is the same
+      // mid-turn noise — only a user-slash activation opens a real user turn
+      // (isAgentReplayUserTurnRecord parity). Every other hidden user message
+      // (hook results, retries, system triggers, …) keeps its boundary. Cron
+      // injections become their own turn below.
+      const isToolSkillActivation =
+        userOriginKind === 'skill_activation' &&
+        (msg.metadata?.['origin'] as { trigger?: string } | undefined)?.trigger !== 'user-slash';
+      if (cronKind === undefined && (userOriginKind === 'injection' || isToolSkillActivation)) {
         continue;
       }
       // Task notifications are the same mid-turn noise boundary-wise, but they

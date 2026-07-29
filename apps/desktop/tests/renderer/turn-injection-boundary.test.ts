@@ -148,6 +148,78 @@ describe('messagesToTurns hidden injections', () => {
   });
 });
 
+describe('messagesToTurns skill activation', () => {
+  /** The user message a Skill tool call injects with the loaded skill body. */
+  function toolSkillMessage(id: string, trigger = 'model-tool'): AppMessage {
+    return message(id, 'user', [{ type: 'text', text: '<kimi-skill-loaded skill="kimi-webbridge">\n…' }], {
+      metadata: {
+        origin: { kind: 'skill_activation', skillName: 'kimi-webbridge', trigger },
+      },
+    });
+  }
+
+  it('does not split the assistant turn on a Skill tool call', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } },
+        ]),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'tool-1', output: 'x' }]),
+        message('a2', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-2', toolName: 'Skill', input: { skill: 'kimi-webbridge' } },
+        ]),
+        toolSkillMessage('sk-1'),
+        message('t2', 'tool', [
+          { type: 'toolResult', toolCallId: 'tool-2', output: 'Skill "kimi-webbridge" loaded inline.' },
+        ]),
+        message('a3', 'assistant', [{ type: 'text', text: 'done' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.tools?.map((t) => t.id)).toEqual(['tool-1', 'tool-2']);
+    // The Skill call folds with the rest of the activity behind ONE fold row.
+    const { folded, visible } = splitAssistantFold(turns[0]!);
+    expect(folded.map((b) => b.kind)).toEqual(['activity-run']);
+    expect(visible.map((b) => b.kind)).toEqual(['text']);
+  });
+
+  it('treats a nested-skill activation the same way', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'Skill', input: { skill: 'a' } },
+        ]),
+        toolSkillMessage('sk-1', 'nested-skill'),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'tool-1', output: 'ok' }]),
+        message('a2', 'assistant', [{ type: 'text', text: 'done' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.tools?.map((t) => t.id)).toEqual(['tool-1']);
+  });
+
+  it('keeps a user-slash skill activation as a user-turn boundary', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'text', text: 'one' }]),
+        toolSkillMessage('sk-1', 'user-slash'),
+        message('a2', 'assistant', [{ type: 'text', text: 'two' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns.map((t) => t.role)).toEqual(['assistant', 'user', 'assistant']);
+    expect(turns[1]?.skillActivation).toEqual({ name: 'kimi-webbridge', args: undefined });
+  });
+});
+
 describe('messagesToTurns task notifications', () => {
   it('renders a mid-turn notification as a block without splitting the turn', () => {
     const turns = messagesToTurns(
