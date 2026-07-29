@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.30.0
+
+### Minor Changes
+
+- [#2255](https://github.com/MoonshotAI/kimi-code/pull/2255) [`67dd031`](https://github.com/MoonshotAI/kimi-code/commit/67dd03149f36be91a0c081e70d8a2d721b0f1c64) Thanks [@he-yufeng](https://github.com/he-yufeng)! - Add a customizable footer status line, configured via `[status_line]` in `tui.toml`.
+
+### Patch Changes
+
+- [#2313](https://github.com/MoonshotAI/kimi-code/pull/2313) [`de0ba9d`](https://github.com/MoonshotAI/kimi-code/commit/de0ba9d0654273ff6b028a7a561983ebee4e723e) Thanks [@starquakee](https://github.com/starquakee)! - Stop the turn after repeated invalid tool calls instead of retrying indefinitely.
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a quota note after installing official plugins that bill against plan quota (such as Kimi Datasource).
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a notice when an official plugin used in the session has an update available. Run /plugins to install it.
+
+- [#1857](https://github.com/MoonshotAI/kimi-code/pull/1857) [`cdbd33c`](https://github.com/MoonshotAI/kimi-code/commit/cdbd33c13c7f5cd4c49ec112ee4313b3938a7752) Thanks [@vinlee19](https://github.com/vinlee19)! - Fail fast when account quota or balance is exhausted instead of silently retrying for ~3 minutes.
+
+- [#2294](https://github.com/MoonshotAI/kimi-code/pull/2294) [`425cfdf`](https://github.com/MoonshotAI/kimi-code/commit/425cfdf53f0fd3b01527f5fba87acff68f49f368) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix garbled line numbers in code blocks.
+
+- [#2312](https://github.com/MoonshotAI/kimi-code/pull/2312) [`d03a488`](https://github.com/MoonshotAI/kimi-code/commit/d03a4886fdf7c35014c10079a3d417aeb0447d9a) Thanks [@sailist](https://github.com/sailist)! - Remove the 50 MB size limit on file uploads to the built-in server.
+
 ## 0.29.2
 
 ### Patch Changes
