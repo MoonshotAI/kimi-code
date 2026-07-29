@@ -388,6 +388,10 @@ function projectResumedAgents(
  *   model, where v2's bind requires a model and deliberately leaves the
  *   agent unbound (the same model-less gap the getStatus parity pins). With
  *   a configured model both bind the same profile and compare in full.
+ * - `config.subagentNames`: v1's config snapshot carries the bound profile's
+ *   delegatable subagent roster (custom agent files are a v1-engine feature);
+ *   v2's resumed agent state has no equivalent field. Engine-owned profile
+ *   data, not resume data.
  * - `context.tokenCount`: the KNOWN_DIFFS.getContext divergence (v1's running
  *   estimate vs v2's provider-measured prefix) — the history compares in
  *   full, the count only in the empty state.
@@ -415,6 +419,7 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
   const config = projected['config'] as Record<string, unknown>;
   delete config['provider'];
   delete config['systemPrompt'];
+  delete config['subagentNames'];
   const modelLess = config['modelAlias'] === undefined;
   if (modelLess) {
     delete config['profileName'];
