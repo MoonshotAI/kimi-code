@@ -49,6 +49,7 @@ export interface ProfileModelState {
   readonly systemPrompt: string;
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  readonly pluginSections?: string;
 }
 
 export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
@@ -66,6 +67,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     activeToolNames: z.array(z.string()).readonly().optional(),
     disallowedTools: z.array(z.string()).readonly(),
     subagents: z.array(z.string()).readonly().optional(),
+    pluginSections: z.string().optional(),
   }),
   apply: (s, p) => ({
     cwd: p.cwd ?? s.cwd,
@@ -75,6 +77,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     systemPrompt: p.systemPrompt,
     disallowedTools: p.disallowedTools,
     subagents: p.subagents,
+    pluginSections: p.pluginSections ?? s.pluginSections,
   }),
 });
 
@@ -87,6 +90,7 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
     thinkingLevel: z.custom<ThinkingEffort>().optional(),
     systemPrompt: z.string().optional(),
     disallowedTools: z.array(z.string()).readonly().optional(),
+    pluginSections: z.string().optional(),
   }),
   apply: (s, p) => {
     let next: ProfileModelState | undefined;
@@ -111,6 +115,9 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
       !stringArrayEqual(p.disallowedTools, s.disallowedTools)
     ) {
       next = { ...(next ?? s), disallowedTools: p.disallowedTools };
+    }
+    if (p.pluginSections !== undefined && p.pluginSections !== s.pluginSections) {
+      next = { ...(next ?? s), pluginSections: p.pluginSections };
     }
     return next ?? s;
   },

@@ -342,7 +342,6 @@ describe('AgentLifecycleService', () => {
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-      generation: () => 0,
       settled: () => Promise.resolve(),
     });
     permissionModeSetMode = vi.fn();
@@ -628,20 +627,221 @@ describe('AgentLifecycleService', () => {
     expect(profileWrites).toEqual([]);
   });
 
+  it('persists nothing when the bootstrap refresh re-renders a byte-identical prompt', async () => {
+    const devProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: () => 'same prompt',
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? devProfile : undefined),
+      getDefault: () => devProfile,
+      list: () => [devProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    const log = recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'dev',
+        thinkingEffort: 'off',
+        systemPrompt: 'same prompt',
+        activeToolNames: ['Read'],
+        disallowedTools: [],
+      },
+    ]);
+    ix.stub(IAppendLogStore, log.store);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('same prompt');
+    const profileWrites = log.appended.filter((record) =>
+      (
+        [
+          'profile.bind',
+          'config.update',
+          'tools.set_active_tools',
+          'tools.reset_active_tools',
+        ] as readonly string[]
+      ).includes(record.type),
+    );
+    expect(profileWrites).toEqual([]);
+  });
+
+  it('converges a restored agent whose catalog profile changed while the session was cold', async () => {
+    const devProfile = {
+      name: 'dev',
+      tools: ['Read', 'Write'],
+      disallowedTools: ['Bash'],
+      systemPrompt: () => 'fresh prompt',
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? devProfile : undefined),
+      getDefault: () => devProfile,
+      list: () => [devProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    const log = recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'dev',
+        thinkingEffort: 'off',
+        systemPrompt: 'stale prompt',
+        activeToolNames: ['Read'],
+        disallowedTools: [],
+      },
+    ]);
+    ix.stub(IAppendLogStore, log.store);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const profile = handle.accessor.get(IAgentProfileService);
+
+    expect(profile.getSystemPrompt()).toBe('fresh prompt');
+    expect(profile.getActiveToolNames()).toEqual(['Read', 'Write']);
+    expect(profile.data().disallowedTools).toEqual(['Bash']);
+    const writes = log.appended
+      .filter((record) =>
+        (['config.update', 'tools.set_active_tools'] as readonly string[]).includes(record.type),
+      )
+      .map((record) => record.type);
+    expect(writes).toEqual(['config.update', 'tools.set_active_tools']);
+  });
+
+  it('converges a restored agent when plugin instructions changed while the session was cold', async () => {
+    const devProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: (context: { readonly pluginSections?: string }) =>
+        `prompt:${context.pluginSections ?? ''}`,
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? devProfile : undefined),
+      getDefault: () => devProfile,
+      list: () => [devProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(IPluginService, {
+      ...pluginServiceStub,
+      enabledSystemPrompts: async () => [
+        { pluginId: 'demo', content: 'fresh plugin instructions' },
+      ],
+    } as unknown as IPluginService);
+    const log = recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'profile.bind',
+        time: 2,
+        profileName: 'dev',
+        thinkingEffort: 'off',
+        systemPrompt: 'prompt:',
+        activeToolNames: ['Read'],
+        disallowedTools: [],
+        pluginSections: '',
+      },
+    ]);
+    ix.stub(IAppendLogStore, log.store);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const profile = handle.accessor.get(IAgentProfileService);
+
+    expect(profile.getSystemPrompt()).toBe(
+      'prompt:<!-- From: plugin demo -->\nfresh plugin instructions',
+    );
+    expect(profile.data().pluginSections).toBe(
+      '<!-- From: plugin demo -->\nfresh plugin instructions',
+    );
+  });
+
   it('joins an in-flight plugin convergence and refreshes a restored agent after it', async () => {
-    let released = false;
     let releaseConverge!: () => void;
     const converging = new Promise<void>((resolve) => {
-      releaseConverge = () => {
-        released = true;
-        resolve();
-      };
+      releaseConverge = resolve;
     });
     let settleCalls = 0;
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-      generation: () => (released ? 1 : 0),
       settled: () => {
         settleCalls += 1;
         return converging;
@@ -757,11 +957,9 @@ describe('AgentLifecycleService', () => {
       },
     });
     const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    let fired = false;
     ix.stub(ISessionPluginContributionService, {
       _serviceBrand: undefined,
       onDidChange: converge.event,
-      generation: () => (fired ? 1 : 0),
       settled: () => Promise.resolve(),
     });
     const devProfile = {
@@ -805,7 +1003,6 @@ describe('AgentLifecycleService', () => {
     const pending = svc.create({ agentId: 'main' });
 
     await gateEntered;
-    fired = true;
     await converge.fireAsync({}, new AbortController().signal);
     expect(log.appended.some((record) => record.type === 'config.update')).toBe(false);
 
@@ -822,7 +1019,6 @@ describe('AgentLifecycleService', () => {
       ix.stub(ISessionPluginContributionService, {
         _serviceBrand: undefined,
         onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
-        generation: () => 0,
         settled: () => new Promise<void>(() => {}),
       });
       ix.stub(ISessionMcpService, {
@@ -895,7 +1091,7 @@ describe('AgentLifecycleService', () => {
       const handle = await pending;
 
       expect(created).toBe(true);
-      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('stale prompt');
+      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('converged prompt');
     } finally {
       vi.useRealTimers();
     }

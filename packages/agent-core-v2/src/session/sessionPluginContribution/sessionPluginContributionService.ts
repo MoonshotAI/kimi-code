@@ -11,22 +11,20 @@
  * rebuilt its prompt. MCP-only changes (`kind: 'mcp'`) cannot alter skills or
  * prompts and skip convergence entirely. Convergences run one at a time per
  * session — a later change queues behind an in-flight one, so the fan-out
- * emitter never interleaves deliveries — and each completed convergence
- * advances the `generation` counter that Agent bootstrap compares against
- * to catch up on rounds it missed. Each convergence is bounded by
- * a timeout: a wedged participant delays its round (and whatever it
- * blocks drains on a later change, since the emitter delivers queued
- * entries oldest-first), but it can never stop the pipeline or block the
- * App mutation queue forever. Convergence
- * is a full recompute rather than a delta, so a later
- * mutation retries whatever an earlier failure left stale, and failures
- * surface through `log`. Bound at Session scope.
+ * emitter never interleaves deliveries. Every segment (skill reload, fan-out,
+ * the barrier wait itself) is bounded by the same timeout: a wedged
+ * participant delays its round (and whatever it blocks drains oldest-first
+ * on a later change), but it can never stop the pipeline or block the App
+ * mutation queue forever. Convergence is a full recompute rather than a
+ * delta, so a later mutation retries whatever an earlier failure left stale,
+ * and failures surface through `log`. Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { raceOutcome } from '#/_base/utils/promise';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
@@ -48,7 +46,6 @@ export class SessionPluginContributionService
   );
   readonly onDidChange: Event<SessionPluginContributionChangedEvent> = this.changeEmitter.event;
   private convergeTail: Promise<void> = Promise.resolve();
-  private completedGenerations = 0;
 
   constructor(
     @ILogService private readonly log: ILogService,
@@ -64,10 +61,6 @@ export class SessionPluginContributionService
     );
   }
 
-  generation(): number {
-    return this.completedGenerations;
-  }
-
   settled(): Promise<void> {
     return this.convergeTail;
   }
@@ -78,7 +71,7 @@ export class SessionPluginContributionService
       () => undefined,
       () => undefined,
     );
-    return this.raceTimeout(() => run).then((result) => {
+    return raceOutcome(run, PLUGIN_CONVERGENCE_TIMEOUT_MS).then((result) => {
       if (result === 'timeout') {
         this.log.warn(
           'Plugin contribution convergence timed out; a later plugin change retries it',
@@ -88,44 +81,31 @@ export class SessionPluginContributionService
   }
 
   private async converge(): Promise<void> {
-    const reloaded = await this.raceTimeout(async () => {
-      try {
-        await this.skillCatalog.reloadSource(PLUGIN_SKILL_SOURCE_ID);
-      } catch (error) {
-        this.log.warn(
-          `Plugin skill reload failed during convergence: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    });
+    const reloaded = await raceOutcome(
+      (async () => {
+        try {
+          await this.skillCatalog.reloadSource(PLUGIN_SKILL_SOURCE_ID);
+        } catch (error) {
+          this.log.warn(
+            `Plugin skill reload failed during convergence: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      })(),
+      PLUGIN_CONVERGENCE_TIMEOUT_MS,
+    );
     if (reloaded === 'timeout') {
       this.log.warn(
         'Plugin skill reload timed out during convergence; continuing with the previous catalog',
       );
     }
-    const fannedOut = await this.raceTimeout(() =>
+    const fannedOut = await raceOutcome(
       this.changeEmitter.fireAsync({}, new AbortController().signal),
+      PLUGIN_CONVERGENCE_TIMEOUT_MS,
     );
     if (fannedOut === 'timeout') {
       this.log.warn(
         'Plugin contribution fan-out timed out; blocked participants are delivered on later changes',
       );
-    }
-    this.completedGenerations += 1;
-  }
-
-  private async raceTimeout(work: () => Promise<unknown>): Promise<'done' | 'timeout'> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        work().then(() => 'done' as const),
-        new Promise<'timeout'>((resolve) => {
-          timer = setTimeout(() => {
-            resolve('timeout');
-          }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
     }
   }
 }

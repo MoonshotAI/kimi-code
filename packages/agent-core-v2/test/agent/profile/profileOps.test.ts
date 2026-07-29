@@ -227,7 +227,6 @@ function buildHost(key: string): {
   host.stub(ISessionPluginContributionService, {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
-    generation: () => 0,
     settled: () => Promise.resolve(),
   });
   host.stub(ISessionToolPolicy, {

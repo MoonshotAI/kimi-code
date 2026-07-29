@@ -32,24 +32,30 @@
  * cannot both pass (an edge-level guard always leaves an interleaving
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it.
- * A resumed Agent keeps its replayed binding untouched — restore never
- * re-renders the prompt. `refreshSystemPrompt` (driven by the Session
- * tool-policy fan-out, the `[tools]` config watcher, and
- * `sessionPluginContribution` after plugin changes converge) re-renders
+ * A restored Agent replays its persisted binding untouched; bootstrap then
+ * re-converges it only against drift-free inputs — the catalog profile's
+ * tool set and denylist, and the persisted plugin-sections baseline
+ * (piggybacked on the `profile.bind` / `config.update` payloads) — and
+ * refreshes only when one of them changed while the session was cold, so
+ * quiet restores stay wire-neutral while cwd, AGENTS.md, and date drift
+ * wait for the live triggers below. `refreshSystemPrompt`
+ * (driven by the Session tool-policy fan-out, the `[tools]` config watcher,
+ * and `sessionPluginContribution` after plugin changes converge) re-renders
  * from the pinned in-memory profile while the Agent lives; a fork pins its
  * source Agent's profile object at fork time. Only a genuinely cold binding
  * (a restore, or a fork of one) re-resolves the profile from the Session
- * catalog by name on the first refresh, rebinding the whole slice (prompt /
+ * catalog by name, rebinding the whole slice (prompt /
  * `disallowedTools` / active tools, but not the bind-time `subagents`,
  * which `config.update` cannot carry) atomically — with a warning and no
  * change when the name is gone, and with the session-added user-tool
- * overlay replayed onto the rebound base when the tool set is reset. A refresh requested while the Agent's wire
- * log is still replaying is skipped; the bootstrap join re-renders after
- * restore instead. Renders reuse the Agent's first-render `now` of the
- * current UTC day (re-anchored when the date rolls over, so the model's
- * clock never goes stale across days), and no `config.update` is
- * dispatched when nothing changed, so steady-state convergence never
- * churns the wire.
+ * overlay replayed onto the rebound base when the tool set is reset. A
+ * refresh requested while the Agent's wire log is still replaying is
+ * skipped; the bootstrap refresh catches up after restore instead. Renders
+ * reuse the Agent's day-precision `now` (the current UTC date at 00:00,
+ * re-anchored when the date rolls over, so the model's clock never goes
+ * stale across days while steady-state renders stay byte-stable within a
+ * day), and no `config.update` is dispatched when nothing changed, so
+ * steady-state convergence never churns the wire.
  * `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled rejection
@@ -63,7 +69,7 @@
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
  * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
- * / the four emitted-warning dedupe sets / the first-render `now`) is
+ * / the four emitted-warning dedupe sets / the day-anchored `now`) is
  * registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
  * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
@@ -313,13 +319,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get renderedNow(): string {
-    const now = new Date().toISOString();
+    const today = new Date().toISOString().slice(0, 10);
     const anchored = this.states.get(profileRenderedNowKey);
-    if (anchored !== undefined && anchored.slice(0, 10) === now.slice(0, 10)) {
+    if (anchored !== undefined && anchored.slice(0, 10) === today) {
       return anchored;
     }
-    this.states.set(profileRenderedNowKey, now);
-    return now;
+    const value = `${today}T00:00:00.000Z`;
+    this.states.set(profileRenderedNowKey, value);
+    return value;
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -360,6 +367,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
         subagents: snapshot.subagents,
+        pluginSections: snapshot.pluginSections,
       }),
     );
     this.afterConfigDispatch({
@@ -423,6 +431,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
+      pluginSections: context.pluginSections,
     }));
     this.afterConfigDispatch({
       cwd: input.cwd,
@@ -492,6 +501,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
       disallowedTools: profile.disallowedTools ?? [],
+      pluginSections: context.pluginSections,
     });
     this.setActiveTools(profile.tools);
   }
@@ -515,16 +525,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         await this.catalog.ready;
         profile = this.catalog.get(profileName);
         if (profile === undefined) {
-          if (!this.emittedMissingProfileWarnings.has(profileName)) {
-            this.emittedMissingProfileWarnings.add(profileName);
-            this.eventBus.publish({
-              type: 'warning',
-              message:
-                `System prompt refresh skipped: agent profile "${profileName}" no longer exists; ` +
-                'the persisted prompt and tool binding are kept.',
-              code: 'system-prompt-refresh-profile-missing',
-            });
-          }
+          this.publishMissingProfileWarning(profileName);
           return;
         }
         rebind = true;
@@ -536,7 +537,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       } else {
         const systemPrompt = profile.systemPrompt(context);
         if (profile.name !== this.profileName || systemPrompt !== this.systemPrompt) {
-          this.update({ profileName: profile.name, systemPrompt });
+          this.update({
+            profileName: profile.name,
+            systemPrompt,
+            pluginSections: context.pluginSections,
+          });
         }
       }
       this.cacheAgentsMdWarning(context);
@@ -550,6 +555,45 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
+  async convergeRestoredPrompt(): Promise<void> {
+    try {
+      const profileName = this.profileName;
+      if (profileName === undefined) return;
+      await this.catalog.ready;
+      const profile = this.catalog.get(profileName);
+      if (profile === undefined) {
+        this.publishMissingProfileWarning(profileName);
+        return;
+      }
+      const sliceChanged =
+        !sameToolSet(profile.tools, this.wire.getModel(ActiveToolsModel) as ActiveToolsState) ||
+        !sameStringList(profile.disallowedTools ?? [], this.profileState.disallowedTools ?? []);
+      const sectionsChanged =
+        (await this.resolvePluginSections()) !== (this.profileState.pluginSections ?? '');
+      if (sliceChanged || sectionsChanged) {
+        await this.refreshSystemPrompt();
+      }
+    } catch (error) {
+      this.eventBus.publish({
+        type: 'warning',
+        message: `Restored prompt convergence skipped: ${error instanceof Error ? error.message : String(error)}`,
+        code: 'system-prompt-refresh-failed',
+      });
+    }
+  }
+
+  private publishMissingProfileWarning(profileName: string): void {
+    if (this.emittedMissingProfileWarnings.has(profileName)) return;
+    this.emittedMissingProfileWarnings.add(profileName);
+    this.eventBus.publish({
+      type: 'warning',
+      message:
+        `System prompt refresh skipped: agent profile "${profileName}" no longer exists; ` +
+        'the persisted prompt and tool binding are kept.',
+      code: 'system-prompt-refresh-profile-missing',
+    });
+  }
+
   private rebindProfileSlice(
     profile: ResolvedAgentProfile,
     context: SystemPromptContext,
@@ -561,7 +605,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt !== this.systemPrompt ||
       !sameStringList(disallowedTools, this.profileState.disallowedTools ?? [])
     ) {
-      this.update({ profileName: profile.name, systemPrompt, disallowedTools });
+      this.update({
+        profileName: profile.name,
+        systemPrompt,
+        disallowedTools,
+        pluginSections: context.pluginSections,
+      });
     }
     const persistedTools = this.wire.getModel(ActiveToolsModel) as ActiveToolsState;
     if (!sameToolSet(persistedTools, profile.tools)) {
@@ -596,6 +645,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
       subagents:
         this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
+      pluginSections: this.profileState.pluginSections,
     };
   }
 
@@ -699,6 +749,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (changed.disallowedTools !== undefined) {
       payload.disallowedTools = [...changed.disallowedTools];
     }
+    if (changed.pluginSections !== undefined) payload.pluginSections = changed.pluginSections;
     return payload;
   }
 

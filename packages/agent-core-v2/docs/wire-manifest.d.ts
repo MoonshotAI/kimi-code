@@ -82,6 +82,7 @@ interface ConfigUpdatePayload {
   thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
   disallowedTools?: string[];
+  pluginSections?: string;
 }
 
 /**
@@ -454,6 +455,7 @@ interface ProfileBindPayload {
   activeToolNames?: string[];
   disallowedTools: string[];
   subagents?: string[];
+  pluginSections?: string;
 }
 
 /**

@@ -31,3 +31,15 @@ export function timeoutOutcome<Outcome>(
     },
   });
 }
+
+export async function raceOutcome(
+  work: Promise<unknown>,
+  timeoutMs: number,
+): Promise<'done' | 'timeout'> {
+  const expiry = timeoutOutcome(timeoutMs, 'timeout' as const);
+  try {
+    return await Promise.race([work.then(() => 'done' as const), expiry]);
+  } finally {
+    expiry.clear();
+  }
+}

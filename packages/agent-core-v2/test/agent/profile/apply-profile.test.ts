@@ -273,7 +273,7 @@ describe('AgentProfileService.applyProfile', () => {
     await converge.fireAsync({}, new AbortController().signal);
     await converge.fireAsync({}, new AbortController().signal);
 
-    expect(first).toMatch(/^now:\d{4}-\d{2}-\d{2}T/);
+    expect(first).toMatch(/^now:\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
     expect(svc.data().systemPrompt).toBe(first);
 
     vi.useFakeTimers();
@@ -281,7 +281,7 @@ describe('AgentProfileService.applyProfile', () => {
       vi.setSystemTime(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
       await converge.fireAsync({}, new AbortController().signal);
       expect(svc.data().systemPrompt).not.toBe(first);
-      expect(svc.data().systemPrompt).toMatch(/^now:\d{4}-\d{2}-\d{2}T/);
+      expect(svc.data().systemPrompt).toMatch(/^now:\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
     } finally {
       vi.useRealTimers();
     }
@@ -320,7 +320,6 @@ function pluginConvergenceService(
   return sessionService(ISessionPluginContributionService, {
     _serviceBrand: undefined,
     onDidChange: converge.event,
-    generation: () => 0,
     settled: () => Promise.resolve(),
   });
 }

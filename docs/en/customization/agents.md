@@ -152,7 +152,7 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${cwd_listing}` | Listing of the working directory |
 | `${os}` | Operating system kind |
 | `${shell}` | Shell name and path, for example `bash (\`/bin/bash\`)` |
-| `${now}` | The time the agent's prompt was first rendered in the current process, in ISO format |
+| `${now}` | The UTC date the prompt was rendered, as a day-precision ISO timestamp; re-anchored when the date rolls over |
 | `${additional_dirs_info}` | Additional directories added to the workspace; empty when there are none |
 | `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default — the built-in default, or your `SYSTEM.md` override when present |
 | `${plugin_sections}` | A complete Plugin Instructions block contributed by enabled plugins; empty when no enabled plugin contributes instructions |

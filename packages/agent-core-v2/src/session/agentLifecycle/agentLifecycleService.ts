@@ -7,14 +7,13 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
  * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. A restored Agent
- * keeps its replayed profile binding — prompt included — exactly as
- * persisted; live prompt refreshes ride `profile`'s own triggers, never
- * restore. The one join point: bootstrap waits — bounded by the convergence
- * timeout, so a wedged convergence can never block creation — for any
- * in-flight plugin convergence, and a restored Agent refreshes once when a
- * convergence completed after its creation began, so a plugin mutation
- * never straddles an Agent's bootstrap. Removal awaits
+ * envelope while non-empty unversioned logs are rejected. Restore itself
+ * never re-renders; bootstrap then checks the drift-free inputs (the
+ * catalog profile's tool slice and the persisted plugin-sections baseline)
+ * after a bounded join of any in-flight plugin convergence — the timeout
+ * keeps a wedged convergence from blocking creation — and refreshes only
+ * when they changed while the session was cold, so quiet restores stay
+ * wire-neutral. Removal awaits
  * the agent task manager's graceful exit policy before
  * draining turns and full compaction, then disposing the child scope. Fans
  * session-level permission-mode switches out to every live agent. Bound at
@@ -55,6 +54,7 @@ import {
   PLUGIN_CONVERGENCE_TIMEOUT_MS,
 } from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { raceOutcome } from '#/_base/utils/promise';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
@@ -73,22 +73,6 @@ import {
 } from './agentLifecycle';
 
 let nextAgentId = 0;
-
-async function withTimeout(promise: Promise<void>, ms: number): Promise<'done' | 'timeout'> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then(() => 'done' as const),
-      new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => {
-          resolve('timeout');
-        }, ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -209,9 +193,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {
-      const generationAtCreate = handle.accessor
-        .get(ISessionPluginContributionService)
-        .generation();
       const wire = handle.accessor.get(IWireService);
       await wire.seal();
       await this.sessionMetadata.registerAgent(agentId, {
@@ -224,7 +205,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(handle);
       await mcpReady;
       await wire.restore();
-      await this.bindBootstrap(handle, opts, generationAtCreate);
+      await this.bindBootstrap(handle, opts);
       // Activate the AgentTool contributions allowed by the bound Profile
       // before the handle admits turns: restore and binding own the final
       // `activeToolNames`, so this must run after both.
@@ -245,10 +226,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private async bindBootstrap(
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
-    generationAtCreate: number,
   ): Promise<void> {
     const contributions = handle.accessor.get(ISessionPluginContributionService);
-    const joined = await withTimeout(contributions.settled(), PLUGIN_CONVERGENCE_TIMEOUT_MS);
+    const joined = await raceOutcome(
+      contributions.settled(),
+      PLUGIN_CONVERGENCE_TIMEOUT_MS,
+    );
     if (joined === 'timeout') {
       this.log.warn(
         'Timed out waiting for plugin contribution convergence during agent bootstrap; continuing',
@@ -257,8 +240,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
       await profile.bind(opts.binding);
-    } else if (contributions.generation() !== generationAtCreate) {
-      await profile.refreshSystemPrompt();
+    } else {
+      await profile.convergeRestoredPrompt();
     }
     // Apply the configured default only when restore found no persisted mode.
     // A resumed Agent's journal owns its permission posture; callers that need
