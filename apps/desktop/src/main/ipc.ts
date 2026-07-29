@@ -25,7 +25,10 @@ import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
 import { createRendererLogWriter } from './renderer-log';
-import { asRendererTrackEvent } from './renderer-track-validation';
+import {
+  rendererTrackEventSchema,
+  type RendererTrackEvent,
+} from '../shared/track-events';
 import { trackDesktopEvent } from './track';
 import { IPC, type ColorScheme, type WindowsMenuId } from './ipc-channels';
 
@@ -47,6 +50,14 @@ function asTerminalCreateOptions(value: unknown): { cwd?: string; cols?: number;
   if (typeof raw['cols'] === 'number' && Number.isFinite(raw['cols'])) options.cols = raw['cols'];
   if (typeof raw['rows'] === 'number' && Number.isFinite(raw['rows'])) options.rows = raw['rows'];
   return options;
+}
+
+function asRendererTrackEvent(
+  event: unknown,
+  payload: unknown,
+): RendererTrackEvent | null {
+  const result = rendererTrackEventSchema.safeParse({ event, properties: payload });
+  return result.success ? result.data : null;
 }
 
 const rendererLogWriter = createRendererLogWriter();
@@ -261,9 +272,8 @@ export function registerIpcHandlers(): void {
     rendererLogWriter(payload);
   });
   // Renderer telemetry: events are whitelisted and re-validated at this trust
-  // boundary (renderer-track-validation.ts), then flow through the same
-  // CloudAppender pipeline as main-process events. No-op until telemetry is
-  // wired (telemetry.ts).
+  // boundary, then flow through the same CloudAppender pipeline as
+  // main-process events. No-op until telemetry is wired (telemetry.ts).
   ipcMain.on(IPC.track, (_event, eventName: unknown, payload: unknown) => {
     const parsed = asRendererTrackEvent(eventName, payload);
     if (parsed !== null) {

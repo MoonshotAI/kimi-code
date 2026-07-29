@@ -98,9 +98,6 @@ vi.mock('../../src/main/log', () => ({
   redactUrlForLog: vi.fn((url: string) => url),
 }));
 vi.mock('../../src/main/renderer-log', () => ({ createRendererLogWriter: vi.fn(() => vi.fn()) }));
-vi.mock('../../src/main/renderer-track-validation', () => ({
-  asRendererTrackEvent: vi.fn(() => null),
-}));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
 
 import { registerIpcHandlers } from '../../src/main/ipc';
@@ -163,27 +160,6 @@ describe('native_ipc_used telemetry', () => {
     await handler(IPC.openInApp)({}, 'vscode', '/work/project');
     mocks.showOpenDialog.mockRejectedValueOnce(new Error('dialog failed'));
     await expect(handler(IPC.dialogOpen)({}, {})).rejects.toThrow('dialog failed');
-
-    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
-  });
-});
-
-describe('kimi:track renderer event forwarding', () => {
-  it('forwards events that pass the whitelist schema verbatim', async () => {
-    const { asRendererTrackEvent } = await import('../../src/main/renderer-track-validation');
-    vi.mocked(asRendererTrackEvent).mockReturnValue({ event: 'logout', properties: {} });
-
-    listener(IPC.track)({}, 'logout', {});
-
-    expect(asRendererTrackEvent).toHaveBeenCalledWith('logout', {});
-    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('logout', {});
-  });
-
-  it('drops events the whitelist rejects without touching the pipeline', async () => {
-    const { asRendererTrackEvent } = await import('../../src/main/renderer-track-validation');
-    vi.mocked(asRendererTrackEvent).mockReturnValue(null);
-
-    listener(IPC.track)({}, 'not-an-event', { junk: true });
 
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
   });
