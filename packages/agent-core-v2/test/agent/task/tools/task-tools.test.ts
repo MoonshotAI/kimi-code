@@ -22,6 +22,7 @@ import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import type { ITaskHandle } from '#/app/task/task';
+import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
 import type { ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { TaskListTool as V1TaskListTool } from '../../../../../agent-core/src/tools/background/task-list';
@@ -389,8 +390,6 @@ describe('TaskOutputTool', () => {
         task_id: { type: 'string' },
       },
     });
-    // The blocking wait was removed — the schema must not re-grow a
-    // block/timeout escape hatch.
     expect(JSON.stringify(tool.parameters)).not.toContain('"block"');
     expect(JSON.stringify(tool.parameters)).not.toContain('"timeout"');
   });
@@ -496,22 +495,13 @@ describe('TaskOutputTool', () => {
     expect(tasks.waitCalls).toEqual([]);
   });
 
-  it('never waits for a running task, even if a stale client passes block', async () => {
-    const tasks = new FakeTaskService();
-    const taskId = tasks.add(processTask({ taskId: 'bash-running4' }));
+  it('rejects stale block/timeout args at the validator instead of waiting', () => {
+    const validator = compileToolArgsValidator(new TaskOutputTool(new FakeTaskService()).parameters);
 
-    const result = await executeTool(
-      new TaskOutputTool(tasks),
-      // `block`/`timeout` are gone from the schema; a caller that still sends
-      // them is silently treated as a plain non-blocking snapshot.
-      context('task_output_not_ready', { task_id: taskId, block: true, timeout: 1 }),
-    );
-    const output = outputString(result);
-
-    expect(result.isError ?? false).toBe(false);
-    expect(output).toContain('retrieval_status: not_ready');
-    expect(output).toContain('status: running');
-    expect(tasks.waitCalls).toEqual([]);
+    expect(validateToolArgs(validator, { task_id: 'bash-1' })).toBeNull();
+    const stale = validateToolArgs(validator, { task_id: 'bash-1', block: true, timeout: 1 });
+    expect(stale).toContain("must NOT have additional property 'block'");
+    expect(stale).toContain("must NOT have additional property 'timeout'");
   });
 
   it('surfaces timeout terminal metadata', async () => {
@@ -749,7 +739,6 @@ describe('task tool descriptions', () => {
 
     expect(description).toMatch(/background/i);
     expect(description).toMatch(/non-blocking/);
-    // The blocking wait was removed — the description must not reference it.
     expect(description).not.toContain('block=');
     expect(description).toMatch(/output_path/);
     expect(description).toMatch(/Read/);
