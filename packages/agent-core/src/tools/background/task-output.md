@@ -1,6 +1,6 @@
 Retrieve a snapshot of a running or completed background task.
 
-Use this after `Bash(run_in_background=true)` or `Agent(run_in_background=true)` to check progress, or to read the output of a task that has already completed.
+Use this after `Bash(run_in_background=true)`, `Agent(run_in_background=true)`, or `AskUserQuestion(background=true)` to check progress, or to read the output of a task that has already completed.
 
 Guidelines:
 - Prefer relying on automatic completion notifications. Use this tool only when you need task output before the automatic notification arrives.
