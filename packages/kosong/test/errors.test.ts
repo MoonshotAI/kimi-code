@@ -585,6 +585,10 @@ describe('isImageFormatError', () => {
       ),
     ).toBe(true);
     expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
+    // Kimi standalone-sentence form (actual production message)
+    expect(
+      isImageFormatError(new APIStatusError(400, 'Unsupported image. Please try another one.')),
+    ).toBe(true);
     // Gemini
     expect(isImageFormatError(new APIStatusError(400, 'Unable to process input image'))).toBe(true);
     expect(
@@ -624,6 +628,11 @@ describe('isImageFormatError', () => {
     // model blind to the user's images — hiding the real error. They must
     // surface instead of triggering a media-stripped resend.
     expect(isImageFormatError(new APIStatusError(400, 'too many images in request'))).toBe(false);
+    // Qualifier-continuing phrasing: the standalone-sentence pattern must
+    // not swallow count/size variants of "unsupported image …".
+    expect(
+      isImageFormatError(new APIStatusError(400, 'unsupported image size exceeds the limit')),
+    ).toBe(false);
     expect(
       isImageFormatError(new APIStatusError(400, 'image dimension 5000 exceeds maximum 2048')),
     ).toBe(false);

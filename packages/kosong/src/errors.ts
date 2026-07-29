@@ -272,6 +272,11 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   // Unsupported format — OpenAI / Moonshot "unsupported image …".
   /unsupported image (?:url|format|type)/,
+  // Standalone-sentence form — Kimi "Unsupported image. …". The
+  // lookahead keeps the deliberate boundary: phrasings that continue into a
+  // qualifier ("unsupported image size …", a count/size limit) must not
+  // match, so only punctuation- or end-terminated occurrences classify.
+  /unsupported image(?=\s*(?:[.!?]|$))/,
   // Undecodable / corrupt image data.
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
