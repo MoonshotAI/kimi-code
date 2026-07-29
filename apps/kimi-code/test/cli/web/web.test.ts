@@ -651,6 +651,92 @@ describe('`kimi web` option threading', () => {
   });
 });
 
+describe('`kimi web` foreground shutdown', () => {
+  it('passes no fresh budget to host telemetry after engine shutdown expires', async () => {
+    vi.resetModules();
+    const startServer = vi.fn();
+    const shutdownTelemetry = vi.fn(async () => {});
+    const logger = { info: vi.fn(), error: vi.fn() };
+    vi.doMock('@moonshot-ai/kap-server', async () => {
+      const actual = await vi.importActual<typeof import('@moonshot-ai/kap-server')>(
+        '@moonshot-ai/kap-server',
+      );
+      return {
+        ...actual,
+        createServerLogger: vi.fn(() => logger),
+        startServer,
+      };
+    });
+    vi.doMock('@moonshot-ai/kimi-telemetry', async () => {
+      const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-telemetry')>(
+        '@moonshot-ai/kimi-telemetry',
+      );
+      return { ...actual, shutdownTelemetry, track: vi.fn() };
+    });
+    vi.doMock('#/cli/telemetry', () => ({ initializeServerTelemetry: vi.fn() }));
+
+    let nowMs = 10_000;
+    const serverClose = vi.fn(async () => {
+      nowMs = 13_001;
+      throw new Error('engine telemetry unavailable');
+    });
+    startServer.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 58_627,
+      close: serverClose,
+    });
+
+    const previousListeners = new Set(process.listeners('SIGINT'));
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    let signalHandler: (() => void) | undefined;
+    try {
+      const { startServerForeground } = await import('#/cli/sub/web/run');
+      let markReady: (() => void) | undefined;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      void startServerForeground(
+        {
+          host: '127.0.0.1',
+          port: 0,
+          logLevel: 'silent',
+          debugEndpoints: false,
+          insecureNoTls: true,
+          allowRemoteShutdown: false,
+          dangerousBypassAuth: false,
+          allowedHosts: [],
+        },
+        { onReady: () => markReady?.() },
+      );
+      await ready;
+
+      signalHandler = process
+        .listeners('SIGINT')
+        .find((listener) => !previousListeners.has(listener)) as (() => void) | undefined;
+      signalHandler?.();
+
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
+      expect(serverClose).toHaveBeenCalledWith({ telemetryDeadlineMs: 13_000 });
+      expect(shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 0 });
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: expect.objectContaining({ message: 'engine telemetry unavailable' }),
+        }),
+        'telemetry shutdown error',
+      );
+    } finally {
+      if (signalHandler !== undefined) process.removeListener('SIGINT', signalHandler);
+      now.mockRestore();
+      exit.mockRestore();
+      vi.doUnmock('@moonshot-ai/kap-server');
+      vi.doUnmock('@moonshot-ai/kimi-telemetry');
+      vi.doUnmock('#/cli/telemetry');
+      vi.resetModules();
+    }
+  });
+});
+
 describe('shared parsers stay strict', () => {
   it('rejects out-of-range --port', async () => {
     const { parsePort } = await import('#/cli/sub/web/shared');
