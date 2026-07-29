@@ -1,6 +1,12 @@
 import { getCoreVersion } from '#/_base/version';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { ClientCapabilities } from '@modelcontextprotocol/sdk/types.js';
 
+import {
+  KimiChannelNotificationSchema,
+  type MCPChannelMessage,
+} from './channel-notification';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export const KIMI_MCP_CLIENT_NAME = 'kimi-code';
@@ -120,4 +126,58 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
     };
   }
   return { content: [], isError: false };
+}
+
+export const KIMI_CLIENT_CAPABILITIES: ClientCapabilities = {
+  experimental: { channel: {} },
+};
+
+export type ChannelMessageListener = (message: MCPChannelMessage) => void;
+
+/**
+ * Buffers channel messages that arrive before a listener is attached (a real
+ * possibility: `setNotificationHandler` is registered at construction time,
+ * before `McpConnectionManager` gets a chance to subscribe post-connect).
+ * Once a listener is set, messages deliver synchronously and any buffered
+ * backlog flushes in order.
+ */
+export class ChannelMessageHub {
+  private listener: ChannelMessageListener | undefined;
+  private readonly pending: MCPChannelMessage[] = [];
+
+  deliver(message: MCPChannelMessage): void {
+    if (this.listener !== undefined) {
+      this.listener(message);
+      return;
+    }
+    this.pending.push(message);
+  }
+
+  onChannelMessage(listener: ChannelMessageListener): void {
+    this.listener = listener;
+    if (this.pending.length === 0) return;
+    const queued = this.pending.splice(0, this.pending.length);
+    for (const message of queued) listener(message);
+  }
+}
+
+/**
+ * Builds an MCP SDK `Client` pre-wired for the push channel: declares the
+ * `experimental.channel` capability and registers a handler that forwards
+ * `notifications/kimi/channel` into the returned hub. Shared by all three
+ * transport wrappers (stdio / http / sse) so the wiring lives in one place.
+ */
+export function createMcpSdkClient(
+  name: string,
+  version: string,
+): { client: Client; channelHub: ChannelMessageHub } {
+  const client = new Client({ name, version }, { capabilities: KIMI_CLIENT_CAPABILITIES });
+  const channelHub = new ChannelMessageHub();
+  client.setNotificationHandler(KimiChannelNotificationSchema, (notification) => {
+    channelHub.deliver({
+      text: notification.params.text,
+      chatId: notification.params.chatId,
+    });
+  });
+  return { client, channelHub };
 }
