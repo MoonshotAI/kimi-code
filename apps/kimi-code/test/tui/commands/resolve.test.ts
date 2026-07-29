@@ -196,12 +196,21 @@ describe('resolveSlashCommandInput', () => {
   });
 
   it('resolves skill commands and blocks them while busy', () => {
-    const skillCommandMap = new Map([['skill:review', 'review']]);
+    const skillCommandMap = new Map([
+      ['skill:review', 'review'],
+      ['skill:alpha-plugin:review', 'alpha-plugin:review'],
+    ]);
 
     expect(resolve('/skill:review src/app.ts', { skillCommandMap })).toEqual({
       kind: 'skill',
       commandName: 'skill:review',
       skillName: 'review',
+      args: 'src/app.ts',
+    });
+    expect(resolve('/skill:alpha-plugin:review src/app.ts', { skillCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'skill:alpha-plugin:review',
+      skillName: 'alpha-plugin:review',
       args: 'src/app.ts',
     });
     expect(resolve('/skill:review src/app.ts', { skillCommandMap, isStreaming: true })).toEqual({

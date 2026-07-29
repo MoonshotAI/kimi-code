@@ -15,10 +15,11 @@ import type {
   SkillCatalog,
   SkillDefinition,
   SkillMetadata,
+  SkillResolution,
   SkillSource,
   SkippedSkill,
 } from './types';
-import { isInlineSkillType, normalizeSkillName } from './types';
+import { canonicalSkillName, isInlineSkillType, normalizeSkillName } from './types';
 
 const LISTING_DESC_MAX = 250;
 
@@ -68,6 +69,42 @@ export class InMemorySkillCatalog implements SkillCatalog {
     return this.byPluginAndName.get(pluginSkillKey(pluginId, name));
   }
 
+  resolveSkill(name: string): SkillResolution {
+    const separator = name.indexOf(':');
+    if (separator > 0 && separator < name.length - 1) {
+      const pluginSkill = this.getPluginSkill(
+        name.slice(0, separator),
+        name.slice(separator + 1),
+      );
+      if (pluginSkill !== undefined) {
+        return {
+          kind: 'resolved',
+          skill: pluginSkill,
+          canonicalName: canonicalSkillName(pluginSkill),
+        };
+      }
+    }
+
+    const skill = this.getSkill(name);
+    if (skill === undefined) return { kind: 'not-found' };
+    if (skill.plugin === undefined) {
+      return { kind: 'resolved', skill, canonicalName: skill.name };
+    }
+
+    const candidates = this.pluginSkillsNamed(name);
+    if (candidates.length > 1) {
+      return {
+        kind: 'ambiguous',
+        candidates: candidates.map(canonicalSkillName),
+      };
+    }
+    return {
+      kind: 'resolved',
+      skill,
+      canonicalName: canonicalSkillName(skill),
+    };
+  }
+
   renderSkillPrompt(
     skill: SkillDefinition,
     rawArgs: string,
@@ -91,7 +128,10 @@ export class InMemorySkillCatalog implements SkillCatalog {
   }
 
   listSkills(): readonly SkillDefinition[] {
-    return [...this.byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+    return [
+      ...[...this.byName.values()].filter((skill) => skill.plugin === undefined),
+      ...this.byPluginAndName.values(),
+    ].toSorted((a, b) => canonicalSkillName(a).localeCompare(canonicalSkillName(b)));
   }
 
   listInvocableSkills(): readonly SkillDefinition[] {
@@ -135,6 +175,13 @@ export class InMemorySkillCatalog implements SkillCatalog {
     if (options.replace === true || !this.byPluginAndName.has(key)) {
       this.byPluginAndName.set(key, skill);
     }
+  }
+
+  private pluginSkillsNamed(name: string): readonly SkillDefinition[] {
+    const normalizedName = normalizeSkillName(name);
+    return [...this.byPluginAndName.values()]
+      .filter((skill) => normalizeSkillName(skill.name) === normalizedName)
+      .toSorted((a, b) => canonicalSkillName(a).localeCompare(canonicalSkillName(b)));
   }
 }
 
@@ -221,11 +268,17 @@ function renderGroupedSkills(
 }
 
 function formatFullSkill(skill: SkillDefinition): readonly string[] {
-  return [`- ${skill.name}`, `  - Path: ${skill.path}`, `  - Description: ${skill.description}`];
+  return [
+    `- ${canonicalSkillName(skill)}`,
+    `  - Path: ${skill.path}`,
+    `  - Description: ${skill.description}`,
+  ];
 }
 
 function formatModelSkill(skill: SkillDefinition): readonly string[] {
-  const lines = [`- ${skill.name}: ${truncate(skill.description, LISTING_DESC_MAX)}`];
+  const lines = [
+    `- ${canonicalSkillName(skill)}: ${truncate(skill.description, LISTING_DESC_MAX)}`,
+  ];
   if (typeof skill.metadata.whenToUse === 'string' && skill.metadata.whenToUse.length > 0) {
     lines.push(`  When to use: ${skill.metadata.whenToUse}`);
   }

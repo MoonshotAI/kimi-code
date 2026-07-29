@@ -141,6 +141,7 @@ function skillCatalogStub(): ISessionSkillCatalog {
     catalog: {
       getSkill: () => undefined,
       getPluginSkill: () => undefined,
+      resolveSkill: () => ({ kind: 'not-found' }),
       renderSkillPrompt: () => '',
       listSkills: () => [],
       listInvocableSkills: () => [],

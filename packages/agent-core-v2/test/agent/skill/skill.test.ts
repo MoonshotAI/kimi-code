@@ -33,6 +33,19 @@ const COMMIT_SKILL = stubSkill('commit', {
   source: 'user',
 });
 
+function pluginSkill(pluginId: string, name: string) {
+  const dir = `/plugins/${pluginId}/skills/${name}`;
+  return stubSkill(name, {
+    description: `${pluginId} ${name}`,
+    path: `${dir}/SKILL.md`,
+    dir,
+    content: `# ${pluginId} ${name}`,
+    metadata: {},
+    source: 'extra',
+    plugin: { id: pluginId },
+  });
+}
+
 function stubSessionContext(sessionId = 'test-session'): ISessionContext {
   return {
     _serviceBrand: undefined,
@@ -106,6 +119,34 @@ describe('AgentSkillService', () => {
       kind: 'skill_activation',
       skillName: 'commit',
     });
+  });
+
+  it('activate resolves a plugin-qualified skill and records its canonical name', async () => {
+    skills.register(pluginSkill('example-plugin', 'diagnose'));
+    const svc = ix.get(IAgentSkillService);
+
+    await svc.activate({ name: 'example-plugin:diagnose' });
+
+    expect(prompted).toHaveLength(1);
+    expect(prompted[0]!.origin).toMatchObject({
+      kind: 'skill_activation',
+      skillName: 'example-plugin:diagnose',
+    });
+    expect(prompted[0]!.content[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('name="example-plugin:diagnose"'),
+    });
+  });
+
+  it('activate rejects an ambiguous bare plugin skill name with qualified candidates', async () => {
+    skills.register(pluginSkill('beta', 'review'));
+    skills.register(pluginSkill('alpha', 'review'));
+    const svc = ix.get(IAgentSkillService);
+
+    await expect(svc.activate({ name: 'review' })).rejects.toThrow(
+      'Skill "review" is ambiguous. Use one of these qualified names: "alpha:review", "beta:review".',
+    );
+    expect(prompted).toHaveLength(0);
   });
 
   it('activate throws for an unknown skill', async () => {
@@ -248,6 +289,44 @@ describe('SkillTool', () => {
     expect(result).toMatchObject({
       isError: true,
       output: 'Skill "missing" not found in the current skill listing.',
+    });
+  });
+
+  it('loads a plugin skill by its qualified name', async () => {
+    skills.register(pluginSkill('example-plugin', 'diagnose'));
+
+    const result = await executeTool(
+      makeTool(ix),
+      toolContext({ skill: 'example-plugin:diagnose' }),
+    );
+
+    expect(result).toMatchObject({
+      output:
+        'Skill "example-plugin:diagnose" loaded inline. Follow its instructions.',
+    });
+    expect(result.delivery?.message.origin).toMatchObject({
+      kind: 'skill_activation',
+      skillName: 'example-plugin:diagnose',
+    });
+    expect(result.delivery?.message.content[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('name="example-plugin:diagnose"'),
+    });
+  });
+
+  it('returns qualified candidates for an ambiguous bare plugin skill name', async () => {
+    skills.register(pluginSkill('beta', 'review'));
+    skills.register(pluginSkill('alpha', 'review'));
+
+    const result = await executeTool(
+      makeTool(ix),
+      toolContext({ skill: 'review' }),
+    );
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Skill "review" is ambiguous. Use one of these qualified names: "alpha:review", "beta:review".',
     });
   });
 

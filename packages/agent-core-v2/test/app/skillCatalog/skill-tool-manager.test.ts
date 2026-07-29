@@ -165,6 +165,10 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
     skills = {
       getSkill: (name) => (name === skill.name ? skill : undefined),
       getPluginSkill: () => undefined,
+      resolveSkill: (name) =>
+        name === skill.name
+          ? { kind: 'resolved', skill, canonicalName: skill.name }
+          : { kind: 'not-found' },
       renderSkillPrompt: () => skill.content,
       listSkills: () => [skill],
       listInvocableSkills: () => [skill],

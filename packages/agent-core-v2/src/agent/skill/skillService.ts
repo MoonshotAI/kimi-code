@@ -21,7 +21,11 @@ import { renderUserSlashSkillPrompt } from './prompt';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
-import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
+import {
+  formatAmbiguousSkillMessage,
+  isUserActivatableSkillType,
+  type SkillDefinition,
+} from '#/app/skillCatalog/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Turn } from '#/agent/loop/loop';
@@ -45,14 +49,21 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
 
   async activate(input: SkillActivationInput): Promise<Turn> {
     await this.skillCatalog.ready;
-    const skill = this.skillCatalog.catalog.getSkill(input.name);
-    if (skill === undefined) {
+    const resolution = this.skillCatalog.catalog.resolveSkill(input.name);
+    if (resolution.kind === 'not-found') {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
+    if (resolution.kind === 'ambiguous') {
+      throw new Error2(
+        ErrorCodes.SKILL_NOT_FOUND,
+        formatAmbiguousSkillMessage(input.name, resolution.candidates),
+      );
+    }
+    const { canonicalName, skill } = resolution;
     if (!isUserActivatableSkillType(skill.metadata.type)) {
       throw new Error2(
         ErrorCodes.SKILL_TYPE_UNSUPPORTED,
-        `Skill "${skill.name}" cannot be activated by the user`,
+        `Skill "${canonicalName}" cannot be activated by the user`,
       );
     }
 
@@ -62,7 +73,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
       {
         type: 'text',
         text: renderUserSlashSkillPrompt({
-          skillName: skill.name,
+          skillName: canonicalName,
           skillArgs,
           skillContent,
           skillSource: skill.source,
@@ -75,7 +86,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
       {
         kind: 'skill_activation',
         activationId: randomUUID(),
-        skillName: skill.name,
+        skillName: canonicalName,
         trigger: 'user-slash',
         skillType: skill.metadata.type,
         skillPath: skill.path,

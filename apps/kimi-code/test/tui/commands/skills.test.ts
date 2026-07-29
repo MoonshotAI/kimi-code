@@ -91,6 +91,17 @@ describe('skill slash commands', () => {
     expect(built.commandMap.get('mcp-config')).toBe('mcp-config');
   });
 
+  it('preserves a qualified plugin name through the slash-command map', () => {
+    const built = buildSkillSlashCommands([
+      skill('alpha-plugin:review', 'prompt', { source: 'extra' }),
+    ]);
+
+    expect(built.commands.map((command) => command.name)).toEqual([
+      'skill:alpha-plugin:review',
+    ]);
+    expect(built.commandMap.get('skill:alpha-plugin:review')).toBe('alpha-plugin:review');
+  });
+
   it('keeps sub-skills slash-invocable', () => {
     const built = buildSkillSlashCommands([
       skill('outer.inner', 'prompt', {
