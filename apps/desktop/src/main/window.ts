@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 as win32path } from 'node:path';
 
 import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
 import type { AppDetailsOptions, BrowserWindowConstructorOptions } from 'electron';
@@ -16,14 +16,28 @@ import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
 import { quoteWindowsCommandLineArg } from './jump-list';
 import { log, redactUrlForLog } from './log';
+import { trackDesktopEvent } from './track';
 import { setTerminalMenuFocus, getTerminalMenuFocus } from './menu';
 import { bumpTerminalGeneration, killAllTerminals, killStaleTerminals } from './terminal';
 import { isVibrancyEnabled } from './ui-state';
+import { recordWindowLifecycle } from './window-lifecycle';
 
 let mainWindow: BrowserWindow | null = null;
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+// Startup milestones (startup_timing): each phase is reported once per run.
+const startupPhaseSent = new Set<'window_shown' | 'renderer_loaded' | 'renderer_ready'>();
+
+function reportStartupPhase(phase: 'window_shown' | 'renderer_loaded' | 'renderer_ready'): void {
+  if (startupPhaseSent.has(phase)) return;
+  startupPhaseSent.add(phase);
+  trackDesktopEvent('startup_timing', {
+    phase,
+    duration_ms: Math.round(process.uptime() * 1000),
+  });
 }
 
 /** Bring the main window back on screen (Dock click, tray, notification
@@ -33,6 +47,7 @@ export function showMainWindow(): void {
   // Cancel a deferred full-screen hide scheduled by the close handler: the
   // explicit re-show is the fresher intent and wins.
   pendingFullscreenHide = false;
+  pendingHideReason = undefined;
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -77,6 +92,11 @@ export function markQuitting(): void {
 // createWindow). Cleared by showMainWindow: a re-show during the transition
 // cancels the stale close intent.
 let pendingFullscreenHide = false;
+
+// Reason for the next 'hide' event, set by the close→hide path; a plain hide
+// (Cmd+H, hide-on-blur) carries none. Module scope so showMainWindow can drop
+// a stale reason when a deferred close is cancelled.
+let pendingHideReason: 'close_to_tray' | undefined;
 
 /** Close-button policy: hide instead of destroy on macOS/Windows, unless quitting. */
 export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
@@ -329,8 +349,8 @@ export function windowsWindowOptions(
   if (platform !== 'win32') return {};
   return {
     icon: isPackaged
-      ? join(resourcesPath, 'build', 'icon.ico')
-      : join(bundleDir, '..', 'build', 'icon.ico'),
+      ? win32path.join(resourcesPath, 'build', 'icon.ico')
+      : win32path.join(bundleDir, '..', 'build', 'icon.ico'),
   };
 }
 
@@ -473,12 +493,30 @@ export function createWindow(): void {
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
   installWindowsSessionEndWatch(process.platform, win, markQuitting);
+  win.on('show', () => {
+    reportStartupPhase('window_shown');
+    recordWindowLifecycle('shown');
+  });
+  win.on('hide', () => {
+    const reason = pendingHideReason;
+    pendingHideReason = undefined;
+    recordWindowLifecycle('hidden', reason === undefined ? {} : { reason });
+  });
+  win.on('minimize', () => {
+    recordWindowLifecycle('hidden', { reason: 'deactivate' });
+  });
+  // Restoring from minimize fires 'restore', not 'show' — without this the
+  // state stays 'hidden' and every later hide is deduped away.
+  win.on('restore', () => {
+    recordWindowLifecycle('shown');
+  });
   win.on('close', (event) => {
     saveBounds(win);
     if (shouldHideOnClose(process.platform, isQuitting)) {
       event.preventDefault();
       // A detached DevTools window would linger on screen after the hide.
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      pendingHideReason = 'close_to_tray';
       // Hiding a full-screen window would leave a black space behind (macOS)
       // — exit full-screen first, hide once the transition settles.
       if (win.isFullScreen()) {
@@ -494,6 +532,7 @@ export function createWindow(): void {
     }
   });
   win.on('closed', () => {
+    recordWindowLifecycle('closed');
     if (mainWindow === win) {
       mainWindow = null;
     }
@@ -502,6 +541,10 @@ export function createWindow(): void {
     // durable (localStorage) and pending approvals/questions live server-side,
     // so the badge's last-known state stays plausible until then.
   });
+  if (win.isVisible()) {
+    reportStartupPhase('window_shown');
+    recordWindowLifecycle('shown');
+  }
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
@@ -533,6 +576,7 @@ export function createWindow(): void {
   const settleRendererReady = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
+    reportStartupPhase('renderer_ready');
     if (pendingTraySessionSelect !== null) {
       sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
       pendingTraySessionSelect = null;
@@ -565,8 +609,17 @@ export function createWindow(): void {
     bumpTerminalGeneration();
     killAllTerminals();
     setTerminalMenuFocus(false);
+    // A normal teardown (window destroy, app quit) also reports clean-exit.
+    if (details.reason === 'clean-exit') return;
+    trackDesktopEvent('renderer_crashed', {
+      // The contract has no 'memory-eviction' (Chrome memory-pressure kill);
+      // it folds into 'oom'.
+      reason: details.reason === 'memory-eviction' ? 'oom' : details.reason,
+      exit_code: details.exitCode,
+    });
   });
   win.webContents.on('did-finish-load', () => {
+    reportStartupPhase('renderer_loaded');
     settleRendererReady(true);
     if (win.isDestroyed()) return;
     // The new document has committed: sweep the PREVIOUS generation's PTYs.

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -26,6 +26,14 @@ const mocks = vi.hoisted(() => {
     createWindow: vi.fn(),
     showMainWindow: vi.fn(),
     sendLaunchAction: vi.fn(),
+    closeServerHandle: vi.fn(() => new Promise<void>(() => {})),
+    shutdownServerTelemetry: vi.fn((): Promise<void> | null => null),
+    stopShellEnvProbe: vi.fn(),
+    killAllTerminals: vi.fn(),
+    destroyTray: vi.fn(),
+    unregisterGlobalShortcuts: vi.fn(),
+    finalizeWindowLifecycle: vi.fn(),
+    trackDesktopEvent: vi.fn(),
   };
 });
 
@@ -36,7 +44,8 @@ vi.mock('../../src/main/protocol', () => ({
 }));
 vi.mock('../../src/main/connect', () => ({
   rendererDistRoot: '/renderer',
-  closeServerHandle: vi.fn(),
+  closeServerHandle: mocks.closeServerHandle,
+  shutdownServerTelemetry: mocks.shutdownServerTelemetry,
 }));
 vi.mock('../../src/main/window', () => ({
   createWindow: mocks.createWindow,
@@ -46,21 +55,37 @@ vi.mock('../../src/main/window', () => ({
 }));
 vi.mock('../../src/main/tray', () => ({
   createTray: vi.fn(),
-  destroyTray: vi.fn(),
+  destroyTray: mocks.destroyTray,
 }));
 vi.mock('../../src/main/dock-icon', () => ({ initDockIcon: vi.fn() }));
 vi.mock('../../src/main/menu', () => ({ buildMenu: vi.fn() }));
-vi.mock('../../src/main/shortcuts', () => ({ unregisterGlobalShortcuts: vi.fn() }));
+vi.mock('../../src/main/shortcuts', () => ({
+  unregisterGlobalShortcuts: mocks.unregisterGlobalShortcuts,
+}));
+vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
+vi.mock('../../src/main/terminal', () => ({ killAllTerminals: mocks.killAllTerminals }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn() }));
+vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
+vi.mock('../../src/main/window-lifecycle', () => ({
+  finalizeWindowLifecycle: mocks.finalizeWindowLifecycle,
+}));
 
 import { main } from '../../src/main/app';
 
 describe('app second-instance routing', () => {
+  const realPlatform = process.platform;
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listeners.clear();
     mocks.app.isPackaged = true;
+    mocks.shutdownServerTelemetry.mockReturnValue(null);
+    Object.defineProperty(process, 'platform', { value: 'win32', enumerable: true, configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, enumerable: true, configurable: true });
   });
 
   it('isolates unpackaged Windows launches from the installed shell identity', () => {
@@ -84,5 +109,132 @@ describe('app second-instance routing', () => {
 
     expect(mocks.sendLaunchAction).toHaveBeenCalledWith({ action: 'new-chat' });
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('does not block quit while closing the embedded server', () => {
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.finalizeWindowLifecycle).toHaveBeenCalledOnce();
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
+    expect(mocks.finalizeWindowLifecycle.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.closeServerHandle.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.stopShellEnvProbe).toHaveBeenCalledOnce();
+    expect(mocks.killAllTerminals).toHaveBeenCalledOnce();
+    expect(mocks.destroyTray).toHaveBeenCalledOnce();
+    expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
+  });
+
+  it('still starts every cleanup step when another cleanup step fails', () => {
+    mocks.destroyTray.mockImplementationOnce(() => {
+      throw new Error('tray cleanup failed');
+    });
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.killAllTerminals).toHaveBeenCalledOnce();
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
+    expect(mocks.unregisterGlobalShortcuts).toHaveBeenCalledOnce();
+  });
+
+  it('holds quit only for the bounded telemetry flush, then quits without re-arming', async () => {
+    let release = (): void => {};
+    mocks.shutdownServerTelemetry.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(mocks.app.quit).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
+
+    // The re-entrant before-quit from app.quit() must not re-arm the barrier.
+    const second = { preventDefault: vi.fn() };
+    onBeforeQuit?.(second);
+    expect(second.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('quits even when the telemetry flush rejects', async () => {
+    mocks.shutdownServerTelemetry.mockReturnValue(Promise.reject(new Error('flush failed')));
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
+  });
+});
+
+describe('app startup telemetry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listeners.clear();
+    mocks.app.isPackaged = true;
+  });
+
+  async function ready(): Promise<void> {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+  }
+
+  it('tracks app_launched with the normal intent and the main_ready timing', async () => {
+    await ready();
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_launched', { launch_intent: 'normal' });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('startup_timing', {
+      phase: 'main_ready',
+      duration_ms: expect.any(Number),
+    });
+  });
+
+  it('tracks app_launched with the jump_list intent for Jump List flags', async () => {
+    const argv = process.argv;
+    process.argv = [...argv, '--new-chat'];
+    try {
+      await ready();
+    } finally {
+      process.argv = argv;
+    }
+
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_launched', { launch_intent: 'jump_list' });
+  });
+
+  it('tracks app_crashed only for GPU child-process exits', async () => {
+    await ready();
+    const onGone = mocks.listeners.get('child-process-gone');
+    expect(onGone).toBeTypeOf('function');
+
+    onGone?.({}, { type: 'Tab', reason: 'crashed', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('app_crashed', expect.anything());
+
+    // Chromium recycles the GPU process in normal operation — not a crash.
+    onGone?.({}, { type: 'GPU', reason: 'clean-exit', exitCode: 0 });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('app_crashed', expect.anything());
+
+    onGone?.({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('app_crashed', {
+      process: 'gpu',
+      kind: 'crashed',
+      app_uptime_ms: expect.any(Number),
+    });
   });
 });

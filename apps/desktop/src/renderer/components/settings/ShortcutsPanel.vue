@@ -38,12 +38,14 @@ import {
   setShortcutBinding,
   useShortcutOverrides,
 } from '../../composables/useShortcuts';
+import { track } from '../../lib/track';
+import type { ShortcutActionId } from '../../../shared/action-ids';
 
 const { t } = useI18n();
 const overrides = useShortcutOverrides();
 
 const query = ref('');
-const recordingId = ref<string | null>(null);
+const recordingId = ref<ShortcutActionId | null>(null);
 const recordError = ref<string | null>(null);
 // Error pinned to a row OUTSIDE recording (e.g. a refused reset).
 const rowError = ref<{ id: string; message: string } | null>(null);
@@ -123,9 +125,9 @@ function setGlobalShortcutSuspended(suspended: boolean): void {
  *  the OS refuses it (already taken by the system or another app) — without
  *  the rollback the row would show a binding that can never fire. */
 async function finishOsGlobalRecording(
-  id: string,
+  id: ShortcutActionId,
   previous: { customized: boolean; binding: string | null | undefined },
-): Promise<void> {
+): Promise<boolean> {
   await nextTick();
   const bridge = (window as { kimiDesktop?: MenuSuspendBridge }).kimiDesktop;
   const ok = (await bridge?.setGlobalShortcutSuspended?.(false)) ?? true;
@@ -133,13 +135,14 @@ async function finishOsGlobalRecording(
   recordError.value = null;
   liveKeys.value = [];
   setMenuSuspended(false);
-  if (ok) return;
+  if (ok) return true;
   if (previous.customized) {
     setShortcutBinding(id, previous.binding ?? null);
   } else {
     resetShortcutBinding(id);
   }
   rowError.value = { id, message: t('shortcuts.globalTaken') };
+  return false;
 }
 
 function onRecordKeydown(e: KeyboardEvent): void {
@@ -228,9 +231,12 @@ function onRecordKeydown(e: KeyboardEvent): void {
   // registration resumes — finalize asynchronously so a refused chord rolls
   // back with an error instead of sitting dead in the row.
   if (OS_GLOBAL_ACTIONS.includes(id)) {
-    void finishOsGlobalRecording(id, previous);
+    void finishOsGlobalRecording(id, previous).then((ok) => {
+      if (ok) track('shortcut_binding_changed', { action: id, op: 'assign' });
+    });
     return;
   }
+  track('shortcut_binding_changed', { action: id, op: 'assign' });
   stopRecording();
 }
 
@@ -262,12 +268,19 @@ function onReset(action: ShortcutAction): void {
   }
   rowError.value = null;
   resetShortcutBinding(action.id);
+  track('shortcut_binding_changed', { action: action.id, op: 'reset' });
+}
+
+function onClear(action: ShortcutAction): void {
+  setShortcutBinding(action.id, null);
+  track('shortcut_binding_changed', { action: action.id, op: 'clear' });
 }
 
 function onResetAll(): void {
   // Defaults are internally consistent, so a full reset can never conflict.
   rowError.value = null;
   resetAllShortcutBindings();
+  track('shortcut_binding_changed', { action: '*', op: 'reset_all' });
 }
 
 // Modifier keyup during a recording: refresh (or clear) the live preview so
@@ -348,7 +361,7 @@ onUnmounted(() => {
                 v-else-if="resolvedBinding(action.id) !== null"
                 size="sm"
                 :label="t('shortcuts.unassign')"
-                @click="setShortcutBinding(action.id, null)"
+                @click="onClear(action)"
               >
                 <Icon name="trash" />
               </IconButton>

@@ -6,6 +6,8 @@
 // web app keeps the in-app browser only (see docs/native-todos.md).
 //
 
+import { track } from './track';
+
 interface DesktopOpenDialogResult {
   canceled: boolean;
   filePaths: string[];
@@ -80,24 +82,30 @@ export function createAddWorkspaceEntry(deps: AddWorkspaceEntryDeps): () => Prom
     inFlight = true;
     try {
       if (!deps.canPick()) {
+        track('native_feature_used', { feature: 'workspace_picker', fallback: true });
         deps.openFallbackDialog();
         return;
       }
       const result = await deps.pick();
       if (result.status === 'canceled') {
+        // An explicit cancel is neither a native success nor a fallback — no event.
         deps.dropPending();
         return;
       }
       if (result.status === 'error') {
+        track('native_feature_used', { feature: 'workspace_picker', fallback: true });
         deps.reportError();
         deps.openFallbackDialog();
         return;
       }
       const added = await deps.add(result.path);
       if (!added) {
+        track('native_feature_used', { feature: 'workspace_picker', fallback: true });
         deps.reportError();
         deps.openFallbackDialog();
+        return;
       }
+      track('native_feature_used', { feature: 'workspace_picker' });
     } finally {
       inFlight = false;
     }

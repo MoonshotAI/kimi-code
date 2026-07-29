@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { app, Menu, nativeImage, Tray } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
+import { setRuntimeLocale, trackDesktopEvent } from './track';
 import { setTaskbarAttention } from './taskbar';
 
 // System tray (macOS menu-bar / Windows notification area). Desktop-only — the
@@ -281,6 +282,8 @@ export function trayAttentionItemLabel(item: TrayAttentionItem, locale: TrayLoca
 
 function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: TrayLocale): Menu {
   const strings = TRAY_STRINGS[locale];
+  // Pending total as of menu build time, reported with every tray click.
+  const pendingCount = attention.unread + attention.approvals + attention.questions;
   const template: MenuItemConstructorOptions[] = [];
   if (attention.items.length > 0) {
     // The attention sessions themselves, clickable.
@@ -288,12 +291,21 @@ function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: T
     for (const item of attention.items.slice(0, MAX_MENU_ITEMS)) {
       template.push({
         label: trayAttentionItemLabel(item, locale),
-        click: () => actions.openSession(item.sessionId),
+        click: () => {
+          trackDesktopEvent('tray_action', { action: 'open-session', pending_count: pendingCount });
+          actions.openSession(item.sessionId);
+        },
       });
     }
     const rest = attention.items.length - MAX_MENU_ITEMS;
     if (rest > 0) {
-      template.push({ label: strings.moreOverflow(rest), click: () => actions.showMainWindow() });
+      template.push({
+        label: strings.moreOverflow(rest),
+        click: () => {
+          trackDesktopEvent('tray_action', { action: 'show-window', pending_count: pendingCount });
+          actions.showMainWindow();
+        },
+      });
     }
     template.push({ type: 'separator' });
   } else {
@@ -305,9 +317,21 @@ function buildTrayMenu(actions: TrayActions, attention: TrayAttention, locale: T
     }
   }
   template.push(
-    { label: strings.openApp, click: () => actions.showMainWindow() },
+    {
+      label: strings.openApp,
+      click: () => {
+        trackDesktopEvent('tray_action', { action: 'show-window', pending_count: pendingCount });
+        actions.showMainWindow();
+      },
+    },
     { type: 'separator' },
-    { label: strings.quit, click: () => actions.quit() },
+    {
+      label: strings.quit,
+      click: () => {
+        trackDesktopEvent('tray_action', { action: 'quit', pending_count: pendingCount });
+        actions.quit();
+      },
+    },
   );
   return Menu.buildFromTemplate(template);
 }
@@ -345,11 +369,23 @@ export function createTray(actions: TrayActions): Tray | null {
   tray = new Tray(image);
   trayActions = actions;
   lastAttention = ZERO_ATTENTION;
+  // Telemetry locale baseline until the renderer pushes its own (IPC.locale).
+  setRuntimeLocale(effectiveTrayLocale());
   renderTray();
   if (process.platform === 'win32') {
     // Windows convention: left-click / double-click surfaces the window; the
-    // context menu opens on right-click without any handler.
-    tray.on('click', () => actions.showMainWindow());
+    // context menu opens on right-click without any handler. This is the
+    // dominant tray recall path on Windows, so it reports tray_action too —
+    // click only: a double-click also fires click, tracking both would
+    // double-count a single gesture.
+    const showFromTray = (): void => {
+      trackDesktopEvent('tray_action', {
+        action: 'show-window',
+        pending_count: lastAttention.unread + lastAttention.approvals + lastAttention.questions,
+      });
+      actions.showMainWindow();
+    };
+    tray.on('click', showFromTray);
     tray.on('double-click', () => actions.showMainWindow());
   }
   return tray;
@@ -390,6 +426,7 @@ export function setTrayLocale(locale: TrayLocale): void {
     return;
   }
   trayLocale = locale;
+  setRuntimeLocale(locale);
   renderTray();
   syncTaskbarAttention();
 }

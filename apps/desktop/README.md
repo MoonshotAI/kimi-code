@@ -57,6 +57,12 @@ Windows 使用 40px renderer 自定义标题栏配合 Electron Window Controls O
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist；`server_version`
   经 tsdown 注入的 `__KIMI_CORE_VERSION__`（`scripts/kimi-core-version.mjs` 读 submodule 的 CLI 版本）
   显式传给 kap-server——bundle 后 kap-server 默认的 package.json 查找会落到 desktop app 自己的版本上。
+- `src/main/telemetry.ts` / `track.ts` / `telemetry-events.ts` — 内嵌 server 的 CloudAppender 生命周期、
+  desktop 宿主事件 facade 与本地事件契约（renderer 可发事件的契约在 `src/shared/track-events.ts`，
+  renderer 编译期直连）。telemetry 的 `client_version` 使用 desktop app 版本；
+  renderer 经 `kimi:track` 通道进入主进程白名单；接线前的事件由 track.ts 缓冲（上限 200）、
+  接线后回放；退出时 `app.ts` 的 before-quit 屏障只等待 `telemetry.shutdown()`（自带 3s 上限）
+  完成最终 flush——不等待整个 server close（那才是曾经的 quit 卡顿源）。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。
 - `src/main/terminal.ts` — 内置终端（desktop 专属）：主进程 `node-pty` 直接托管 PTY（不经内嵌
   server），`kimi:terminal-*` IPC 六通道；shell 解析 POSIX `$SHELL` / Windows

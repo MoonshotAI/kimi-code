@@ -40,6 +40,9 @@ import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts'
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
+import { track } from '../../lib/track';
+import { consumeSessionIntent } from '../../lib/session-intent';
+import type { SessionCreatedSource } from '../../../shared/track-events';
 import type {
   ActivityState,
   ConversationStatus,
@@ -997,14 +1000,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           rawState.sessions.some((s) => s.id === urlSessionId) ||
           (await fetchSessionIntoList(urlSessionId));
         if (available) {
-          await selectSession(urlSessionId, { urlMode: 'replace' });
+          await selectSession(urlSessionId, { urlMode: 'replace', skipTrack: true });
         }
       }
 
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace' });
+        await selectSession(sessions[0]!.id, { urlMode: 'replace', skipTrack: true });
       }
     } catch (err) {
       traceStatus = 'failed';
@@ -1067,8 +1070,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sessionsInWs.length > 0) {
       const mostRecent = sessionsInWs[0];
       if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
-        // One user action (clicking the workspace) = one history entry.
-        void selectSession(mostRecent.id);
+        // One user action (clicking the workspace) = one history entry. The
+        // auto-selected session is a workspace switch, not a session open.
+        void selectSession(mostRecent.id, { skipTrack: true });
       }
     } else {
       setActiveSessionId(undefined);
@@ -1172,6 +1176,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function createDraftSession(workspaceId: string): Promise<string | null> {
     const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
     if (!ws) return null;
+    // Claim the pending entry-point intent up front: the internal selectSession
+    // below must not report it again as a resume.
+    const sessionSource = consumeSessionIntent('sidebar');
     // Capture the draft thinking level BEFORE any await: a concurrent session
     // switch during creation re-resolves rawState.thinking for the other
     // active session, which would otherwise seed the new session with that
@@ -1204,13 +1211,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         : session;
     upsertSessionFront(created);
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    track('session_created', { kind: 'new', source: sessionSource });
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
     // session" (createSession), here we immediately act on it: keeping
     // sessionLoading=true through the snapshot avoids flashing the empty-session
     // composer before the optimistic first turn lands. selectSession resolves,
     // then the caller adds the first turn synchronously (no await in between),
     // so the view goes loading → message with no empty-composer frame.
-    await selectSession(session.id);
+    await selectSession(session.id, { skipTrack: true });
     // Carry any mode toggles the user staged in the empty composer into the
     // newly-created session, so the first action honors them. Write them to
     // this session's per-session maps by id (not via the activeSessionId-based
@@ -1486,7 +1494,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     if (id === rawState.activeSessionId) return;
     if (rawState.sessions.some((s) => s.id === id)) {
-      void selectSession(id, { urlMode: 'none' });
+      void selectSession(id, { urlMode: 'none', skipTrack: true });
       return;
     }
     // A history entry can point at a session that has since been deleted (or one
@@ -1494,12 +1502,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // recent session and FIX the URL so the bad entry doesn't stick around.
     void (async () => {
       if (await fetchSessionIntoList(id)) {
-        await selectSession(id, { urlMode: 'none' });
+        await selectSession(id, { urlMode: 'none', skipTrack: true });
         return;
       }
       const next = rawState.sessions[0];
       if (next) {
-        await selectSession(next.id, { urlMode: 'replace' });
+        await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
       } else {
         setActiveSessionId(undefined);
         writeSessionUrl(undefined, 'replace');
@@ -1516,8 +1524,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function selectSession(
     sessionId: string,
-    opts?: { urlMode?: SessionUrlMode },
+    opts?: {
+      urlMode?: SessionUrlMode;
+      skipTrack?: boolean;
+      source?: SessionCreatedSource;
+    },
   ): Promise<void> {
+    const sessionSource = opts?.source ?? 'sidebar';
     // Jumps can target a session outside the loaded pages — a tray menu entry
     // kept across a window restart, or a notification for a session the
     // recency window paged out. The workspace sync and the snapshot sync
@@ -1530,8 +1543,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // older target. In-list sessions keep the fully synchronous path below,
       // so their rapid-click URL ordering is unaffected.
       const serial = ++selectSerial;
-      if (!(await fetchSessionIntoList(sessionId))) return;
-      if (serial !== selectSerial) return;
+      if (!(await fetchSessionIntoList(sessionId))) {
+        return;
+      }
+      if (serial !== selectSerial) {
+        return;
+      }
     }
     const messagesLoaded = hasLoadedMessages(sessionId);
     // Only sessions created locally in this client are trusted to be empty.
@@ -1543,12 +1560,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const knownEmpty = !messagesLoaded && sessionsKnownEmpty.has(sessionId);
     // Single-use: after this select resolves the session is no longer "known empty".
     sessionsKnownEmpty.delete(sessionId);
+    // Re-selecting the already-active session is a no-op navigation, not a resume.
+    const isResumedNavigation = rawState.activeSessionId !== sessionId;
     try {
       // Write the URL synchronously (before any await) so rapid clicks lay down
       // history entries in click order.
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
       rawState.sessionLoading = !messagesLoaded && !knownEmpty;
       setActiveSessionId(sessionId);
+      // createDraftSession selects its own fresh session internally and already
+      // reported the 'new' event — skip the duplicate resume there.
+      if (!opts?.skipTrack && isResumedNavigation) {
+        track('session_created', { kind: 'resumed', source: sessionSource });
+      }
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {
         rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
@@ -2579,7 +2603,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (rawState.activeSessionId === id) {
         const next = rawState.sessions[0];
         if (next) {
-          await selectSession(next.id, { urlMode: 'replace' });
+          await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
         } else {
           setActiveSessionId(undefined);
           writeSessionUrl(undefined, 'replace');
@@ -2692,6 +2716,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.logout();
+      track('logout', {});
       await checkAuth();
       await load();
     } catch (err) {
@@ -2725,7 +2750,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const forked = await getKimiWebApi().forkSession(sid);
       upsertSessionFront(forked);
-      await selectSession(forked.id);
+      // Forks are already counted by session_menu_action — no session_created.
+      await selectSession(forked.id, { skipTrack: true });
     } catch (err) {
       pushOperationFailure('fork', err, { sessionId: sid });
     }

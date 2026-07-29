@@ -5,6 +5,7 @@ import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './w
 import { connect } from './connect';
 import { getTraceRecorder } from './trace';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from './updater';
+import { trackDesktopEvent } from './track';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
 import type { WindowsMenuId } from './ipc-channels';
@@ -300,6 +301,7 @@ export function bindingToAccelerator(binding: string | null): string | undefined
 // through even for a version the user skipped in the renderer (the skip only
 // hides the `available` state).
 async function runMenuUpdateCheck(): Promise<void> {
+  trackDesktopEvent('menu_action', { action: 'check-for-updates' });
   const strings = MENU_STRINGS[effectiveMenuLocale()];
   // Parent the dialog to a visible window (hide-on-close may leave it
   // hidden, and a sheet on a hidden window never appears).
@@ -595,6 +597,7 @@ export function menuTemplate(
         id: 'help-docs',
         label: strings.documentation,
         click: () => {
+          trackDesktopEvent('menu_action', { action: 'help-docs' });
           void shell.openExternal(HELP_LINKS.docs);
         },
       },
@@ -602,6 +605,7 @@ export function menuTemplate(
         id: 'help-console',
         label: strings.console,
         click: () => {
+          trackDesktopEvent('menu_action', { action: 'help-console' });
           void shell.openExternal(HELP_LINKS.console);
         },
       },

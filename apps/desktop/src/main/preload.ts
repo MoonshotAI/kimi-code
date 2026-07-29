@@ -320,6 +320,10 @@ export type KimiDesktopApi = {
    *  the sandboxed renderer has no fs access). The main process re-validates,
    *  redacts and rate-limits everything. */
   log: (level: 'info' | 'warn' | 'error', message: string, detail?: unknown) => void;
+  /** Emit a telemetry event through the main process's cloud pipeline. The
+   *  event whitelist is enforced main-side; no-op until telemetry is wired
+   *  (consent off / external-server mode). */
+  track: (event: string, properties?: Record<string, unknown>) => void;
   /** Native embedded terminal (desktop-only): spawn a PTY in the main process
    *  (shell resolved main-side; the renderer only picks cwd/size). Output and
    *  exit stream back via onNativeTerminalOutput/onNativeTerminalExit. */
@@ -496,6 +500,11 @@ export const api: KimiDesktopApi = {
     if (level !== 'info' && level !== 'warn' && level !== 'error') return;
     if (typeof message !== 'string' || message === '') return;
     ipcRenderer.send('kimi:renderer-log', { level, message, detail });
+  },
+  track: (event, properties) => {
+    if (typeof event === 'string' && event !== '') {
+      ipcRenderer.send('kimi:track', event, properties);
+    }
   },
   createNativeTerminal: async (opts) => {
     const options: Record<string, unknown> = {};

@@ -1,0 +1,152 @@
+import { computed, ref } from 'vue';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { AppSession } from '../../src/renderer/api/types';
+
+const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
+  getKimiWebApiMock: vi.fn(),
+  trackMock: vi.fn(),
+}));
+
+vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
+vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
+
+import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function session(id: string): AppSession {
+  return {
+    id,
+    title: id,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    busy: false,
+    archived: false,
+    cwd: '/workspace',
+    model: 'kimi',
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 0,
+      contextLimit: 0,
+      turnCount: 0,
+    },
+    messageCount: 1,
+    lastSeq: 1,
+    workspaceId: 'workspace',
+  };
+}
+
+function createWorkspaceState(getSession: (sessionId: string) => Promise<AppSession>) {
+  const rawState = {
+    sessions: [] as AppSession[],
+    activeSessionId: undefined as string | undefined,
+    activeWorkspaceId: 'workspace',
+    sessionLoading: false,
+    unreadBySession: {} as Record<string, boolean>,
+    gitStatusBySession: {},
+    hiddenWorkspaceRoots: [],
+    workspaceAddedAt: {},
+  };
+  getKimiWebApiMock.mockReturnValue({
+    getSession,
+    getGitStatus: vi.fn().mockRejectedValue(new Error('not needed')),
+  });
+
+  const deps = {
+    taskPoller: { loadTasksForSession: vi.fn() },
+    sideChat: {},
+    modelProvider: { skillsBySession: ref({}), loadSkillsForSession: vi.fn() },
+    pushOperationFailure: vi.fn(),
+    activity: computed(() => ({ state: 'idle' })),
+    sessionsKnownEmpty: new Set<string>(),
+    setSessions: (sessions: AppSession[]) => {
+      rawState.sessions = sessions;
+    },
+    updateSession: vi.fn(),
+    upsertSessionFront: vi.fn(),
+    appendSession: (next: AppSession) => rawState.sessions.push(next),
+    forgetSession: vi.fn(),
+    unpinSessions: vi.fn(),
+    setActiveSessionId: (id: string | undefined) => {
+      rawState.activeSessionId = id;
+    },
+    updateSessionMessages: vi.fn(),
+    nextOptimisticMsgId: vi.fn(() => 'optimistic'),
+    getEventConn: vi.fn(() => null),
+    syncSessionFromSnapshot: vi.fn(async () => 'ok' as const),
+    reopenSession: vi.fn(async () => 'ok' as const),
+    hasLoadedMessages: vi.fn(() => true),
+    refreshSessionStatus: vi.fn(async () => {}),
+    refreshSessionGoal: vi.fn(async () => {}),
+    refreshSessionPlans: vi.fn(async () => {}),
+    persistSessionProfile: vi.fn(async () => true),
+    mergedWorkspaces: computed(() => []),
+    workspacesView: computed(() => []),
+    status: computed(() => ({ cwd: '/workspace' })),
+    workspaceIdForSession: vi.fn(() => 'workspace'),
+    savePermissionToStorage: vi.fn(),
+    savePlanModeToStorage: vi.fn(),
+    saveSwarmModeToStorage: vi.fn(),
+    saveGoalModeToStorage: vi.fn(),
+    draftModes: { planMode: false, swarmMode: false, goalMode: false },
+    saveUnread: vi.fn(),
+    saveActiveWorkspaceToStorage: vi.fn(),
+    saveHiddenWorkspacesToStorage: vi.fn(),
+    goalErrorMessage: vi.fn(),
+    initialized: ref(true),
+    connectIssue: ref(null),
+    selectedDiffPath: ref(null),
+    fileDiffLines: ref([]),
+    fileDiffLoading: ref(false),
+    fileDiffTexts: ref(null),
+    fileDiffEmptyFile: ref(false),
+  };
+
+  return useWorkspaceState(rawState as never, deps as never);
+}
+
+describe('session selection source', () => {
+  beforeEach(() => {
+    getKimiWebApiMock.mockReset();
+    trackMock.mockReset();
+  });
+
+  it('keeps a source bound to its selection when a stale fetch finishes first', async () => {
+    const trayFetch = deferred<AppSession>();
+    const notificationFetch = deferred<AppSession>();
+    const workspace = createWorkspaceState((sessionId) =>
+      sessionId === 'tray-session' ? trayFetch.promise : notificationFetch.promise,
+    );
+
+    const traySelection = workspace.selectSession('tray-session', {
+      urlMode: 'none',
+      source: 'tray',
+    });
+    const notificationSelection = workspace.selectSession('notification-session', {
+      urlMode: 'none',
+      source: 'notification',
+    });
+
+    trayFetch.resolve(session('tray-session'));
+    await traySelection;
+    notificationFetch.resolve(session('notification-session'));
+    await notificationSelection;
+
+    expect(trackMock).toHaveBeenCalledTimes(1);
+    expect(trackMock).toHaveBeenCalledWith('session_created', {
+      kind: 'resumed',
+      source: 'notification',
+    });
+  });
+});

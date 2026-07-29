@@ -39,6 +39,7 @@ export const IPC = {
   rendererLog: 'kimi:renderer-log',
   jumpList: 'kimi:jump-list',
   launchAction: 'kimi:launch-action',
+  track: 'kimi:track',
   terminalCreate: 'kimi:terminal-create',
   terminalInput: 'kimi:terminal-input',
   terminalResize: 'kimi:terminal-resize',

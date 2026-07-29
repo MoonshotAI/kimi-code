@@ -12,6 +12,8 @@
 
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 
+import { track } from '../lib/track';
+
 export type OAuthLoginStep = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
 
 export interface OAuthFlowData {
@@ -59,6 +61,8 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let successTimer: ReturnType<typeof setTimeout> | null = null;
   let consecutivePollFailures = 0;
+  // startFlow timestamp — every stage report carries the elapsed duration.
+  let flowStartedAt = 0;
   // Guards against duplicate cancels when cancelFlow fires twice for the same
   // pending flow (the step stays 'device-code' until the daemon confirms).
   let flowCancelled = false;
@@ -76,6 +80,12 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
   function reachSuccess(dwellMs: number): void {
     stopTimers();
     step.value = 'success';
+    track('oauth_login_step', {
+      stage: 'success',
+      ok: true,
+      method: 'oauth',
+      duration_ms: Date.now() - flowStartedAt,
+    });
     successTimer = setTimeout(() => {
       successTimer = null;
       options.onSuccess?.();
@@ -99,6 +109,9 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     pollTimer = setTimeout(async () => {
       const result = await options.onPollOAuthLogin();
       if (disposed) return;
+      // A user-initiated cancel is terminal; a poll already in flight when it
+      // lands must not double-report or silently resume polling.
+      if (flowCancelled) return;
       if (result === null) {
         // Poll failed (or no active flow). Keep polling through transient
         // blips, but give up with an explicit error after several in a row.
@@ -107,6 +120,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
           stopTimers();
           pollError.value = true;
           step.value = 'error';
+          track('oauth_login_step', {
+            stage: 'error',
+            ok: false,
+            method: 'oauth',
+            duration_ms: Date.now() - flowStartedAt,
+            error_class: 'poll_failed',
+          });
           return;
         }
         scheduleNextPoll(intervalSec);
@@ -118,6 +138,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
       } else if (result.status === 'expired' || result.status === 'cancelled') {
         stopTimers();
         step.value = 'expired';
+        track('oauth_login_step', {
+          stage: 'expired',
+          ok: false,
+          method: 'oauth',
+          duration_ms: Date.now() - flowStartedAt,
+          error_class: result.status === 'cancelled' ? 'cancelled' : 'expired',
+        });
       } else {
         // pending — keep polling
         scheduleNextPoll(intervalSec);
@@ -131,7 +158,9 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     pollError.value = false;
     consecutivePollFailures = 0;
     flowCancelled = false;
+    flowStartedAt = Date.now();
     step.value = 'starting';
+    track('oauth_login_step', { stage: 'starting', method: 'oauth', duration_ms: 0 });
 
     const result = await options.onStartOAuthLogin();
     if (disposed) {
@@ -145,6 +174,13 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     }
     if (!result) {
       step.value = 'error';
+      track('oauth_login_step', {
+        stage: 'error',
+        ok: false,
+        method: 'oauth',
+        duration_ms: Date.now() - flowStartedAt,
+        error_class: 'start_failed',
+      });
       return;
     }
 
@@ -166,6 +202,11 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     };
     secondsLeft.value = result.expiresIn;
     step.value = 'device-code';
+    track('oauth_login_step', {
+      stage: 'device-code',
+      method: 'oauth',
+      duration_ms: Date.now() - flowStartedAt,
+    });
     startCountdown();
     scheduleNextPoll(result.interval);
   }
@@ -180,6 +221,15 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     stopTimers();
     if (step.value === 'device-code' && !flowCancelled) {
       flowCancelled = true;
+      // The user-initiated cancel is the flow's terminal state: our own timers
+      // are stopped, so the poller will never observe the daemon's 'cancelled'.
+      track('oauth_login_step', {
+        stage: 'expired',
+        ok: false,
+        method: 'oauth',
+        duration_ms: Date.now() - flowStartedAt,
+        error_class: 'cancelled',
+      });
       void options.onCancelOAuthLogin();
     }
   }

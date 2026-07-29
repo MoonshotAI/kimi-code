@@ -28,7 +28,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from './composables/useConfirmDialog';
-import type { PromptAttachment } from './composables/useKimiWebClient';
+import type { ColorScheme, FontScale, PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -67,6 +67,10 @@ import {
   resolveOpenInTarget,
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
+import { track } from './lib/track';
+import { setSessionIntent } from './lib/session-intent';
+import type { SessionCreatedSource } from '../shared/track-events';
+import { isAppActionId, type AppActionId } from '../shared/action-ids';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -183,6 +187,7 @@ useTrayAttention(client);
 useJumpList(client, (payload) => {
   runWhenInitialized(client.initialized, () => {
     if (payload.action === 'new-chat') {
+      setSessionIntent('jump_list');
       handleCreateSession();
     } else {
       void openWorkspaceByRoot(payload.root);
@@ -306,7 +311,14 @@ onMounted(() => {
       // The edit menu's Select All forwards here (its accelerator shadows the
       // keydown, so the conversation pane never sees the chord on desktop).
       if (menuId === 'select-all') {
+        track('action_invoked', { action: 'select-all', source: 'menu' });
         selectAllFromMenu();
+        return;
+      }
+      // The connection retry itself runs main-side (menu.ts); the renderer
+      // only records the menu-only action.
+      if (menuId === 'retry-connection') {
+        track('action_invoked', { action: 'retry-connection', source: 'menu' });
         return;
       }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
@@ -315,8 +327,13 @@ onMounted(() => {
       // ownership here: opening the settings dialog on top of another modal
       // would stack competing focus traps — only the closing press (settings
       // already open) is allowed through.
-      if (anyOverlayOpen.value && !(actionId === 'openSettings' && showSettings.value)) return;
-      runShortcutAction(actionId);
+      if (
+        anyOverlayOpen.value &&
+        !(actionId === 'openSettings' && (showSettings.value || showMobileSettings.value))
+      ) {
+        return;
+      }
+      runShortcutAction(actionId, 'menu');
     }) ?? null;
 });
 
@@ -367,7 +384,7 @@ let offMenuAction: (() => void) | null = null;
 
 // Native menu item id → shortcut action id (main/menu.ts); both entry points
 // run the same handler.
-const MENU_ACTION_TO_SHORTCUT: Record<string, string> = {
+const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
   'open-settings': 'openSettings',
   'new-chat': 'newSession',
   'open-folder': 'openFolder',
@@ -391,10 +408,25 @@ async function openWorkspaceInDefaultApp(): Promise<void> {
   await openInNativeApp(target, root);
 }
 
-function runShortcutAction(id: string): void {
+// Single funnel for app-level actions — the keydown dispatcher, the native
+// menu, and the UI buttons all dispatch through here, so action_invoked
+// source attribution lives in exactly one place.
+const SESSION_INTENT_BY_ACTION_SOURCE: Record<'shortcut' | 'menu' | 'button', SessionCreatedSource> = {
+  shortcut: 'shortcut',
+  menu: 'menu',
+  // The buttons all live in the sidebar (or its mobile/floating variants).
+  button: 'sidebar',
+};
+
+function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'button'): void {
+  track('action_invoked', { action: id, source });
   switch (id) {
     case 'openSettings':
-      showSettings.value = !showSettings.value;
+      if (isMobile.value) {
+        showMobileSettings.value = !showMobileSettings.value;
+      } else {
+        showSettings.value = !showSettings.value;
+      }
       break;
     case 'toggleSidebar':
       toggleSidebarCollapse();
@@ -403,6 +435,7 @@ function runShortcutAction(id: string): void {
       sidebarRef.value?.toggleSearch();
       break;
     case 'newSession':
+      setSessionIntent(SESSION_INTENT_BY_ACTION_SOURCE[source]);
       handleCreateSession();
       break;
     case 'archiveSession': {
@@ -474,7 +507,7 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   // otherwise archive chat after chat (no confirm), and toggles would flap.
   if (e.repeat) return;
   const id = matchShortcutAction(e, 'global');
-  if (id === null) return;
+  if (id === null || !isAppActionId(id)) return;
   // A chord the terminal captured (menu-suspension pass-through, see
   // useShortcuts) must not also fire its global action from the bubble.
   if (
@@ -494,12 +527,12 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   // traps and Escape handlers.
   if (anyOverlayOpen.value) {
     const closesOpenDialog =
-      (id === 'openSettings' && showSettings.value) ||
+      (id === 'openSettings' && (showSettings.value || showMobileSettings.value)) ||
       (id === 'searchSessions' && sidebarRef.value?.isSearchOpen() === true);
     if (!closesOpenDialog) return;
   }
   e.preventDefault();
-  runShortcutAction(id);
+  runShortcutAction(id, 'shortcut');
 }
 
 // ---------------------------------------------------------------------------
@@ -765,7 +798,10 @@ async function confirmDeleteWorkspace(id: string): Promise<void> {
     title: t('sidebar.removeWorkspace'),
     message: t('workspace.removeWorkspaceConfirm', { name }),
     variant: 'danger',
-    action: () => client.deleteWorkspace(id),
+    action: async () => {
+      await client.deleteWorkspace(id);
+      track('workspace_removed', { workspace_count: client.workspacesView.value.length });
+    },
   });
   if (!confirmed) return;
   if (client.workspacesView.value.some((w) => w.id === id)) return;
@@ -957,6 +993,7 @@ async function handleCommand(cmd: string): Promise<void> {
     // session is only created when the user sends the first message.
     case '/new':
     case '/clear':
+      setSessionIntent('slash_command');
       handleCreateSession();
       break;
     case '/fork':
@@ -1104,6 +1141,7 @@ async function addWorkspace(root: string): Promise<boolean> {
   addWorkspaceError.value = null;
   const added = await client.addWorkspaceByPath(root);
   if (!added) return false;
+  track('workspace_added', { workspace_count: client.workspacesView.value.length });
   showAddWorkspace.value = false;
   // The no-workspace draft bucket's PTYs run in the fallback cwd, not the
   // just-added folder — discard them.
@@ -1150,6 +1188,7 @@ async function handleDropWorkspacePaths(paths: string[]): Promise<void> {
       showAddWorkspace.value = true;
       break;
     }
+    track('native_feature_used', { feature: 'workspace_drop' });
   }
 }
 
@@ -1176,6 +1215,28 @@ function focusComposerAfterDraft(): void {
   });
 }
 
+// The sidebar settings entry always OPENS the dialog (the modal blocks a
+// second click), unlike the dispatcher's toggle for shortcut/menu presses.
+function openSettingsFromButton(): void {
+  if (!showSettings.value) runShortcutAction('openSettings', 'button');
+}
+
+function setColorSchemeFromSettings(
+  scheme: ColorScheme,
+  sourcePanel: 'settings' | 'mobile_settings' = 'settings',
+): void {
+  client.setColorScheme(scheme);
+  track('settings_changed', { key: 'theme', value: scheme, source_panel: sourcePanel });
+}
+
+function setFontScaleFromSettings(
+  scale: FontScale,
+  sourcePanel: 'settings' | 'mobile_settings' = 'settings',
+): void {
+  client.setFontScale(scale);
+  track('settings_changed', { key: 'font-size', value: scale, source_panel: sourcePanel });
+}
+
 // Primary "+ New": enter the draft state in the current workspace so the
 // right pane shows the onboarding composer. The session is only created when
 // the user sends the first message.
@@ -1193,8 +1254,23 @@ function handleCreateSession(): void {
 // state in the chosen workspace. No backend session is created until the user
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
+  setSessionIntent('sidebar');
   client.openWorkspaceDraft(workspaceId);
   focusComposerAfterDraft();
+}
+
+// The draft composer's workspace picker only re-targets the pending draft —
+// the entry intent (shortcut/menu/…) belongs to whoever opened the draft.
+function handleDraftWorkspaceSelect(workspaceId: string): void {
+  client.openWorkspaceDraft(workspaceId);
+  focusComposerAfterDraft();
+}
+
+function handleSelectSession(selection: {
+  sessionId: string;
+  source: SessionCreatedSource;
+}): void {
+  void client.selectSession(selection.sessionId, { source: selection.source });
 }
 
 // Chat header: open a GitHub PR in a new tab.
@@ -1223,7 +1299,7 @@ function openPr(url: string): void {
     <WindowsTitleBar
       v-if="isWindowsDesktop && !isFullscreen"
       :sidebar-collapsed="sidebarCollapsed"
-      @toggle-sidebar="toggleSidebarCollapse"
+      @toggle-sidebar="runShortcutAction('toggleSidebar', 'button')"
     />
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
@@ -1243,11 +1319,11 @@ function openPr(url: string): void {
         :unread-by-session="client.unreadBySession.value"
         :workspace-sort-mode="client.workspaceSortMode.value"
         :backend="client.backend.value"
-        @select="client.selectSession($event)"
-        @create="handleCreateSession"
+        @select="handleSelectSession($event)"
+        @create="runShortcutAction('newSession', 'button')"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
-        @add-workspace="requestAddWorkspace()"
+        @add-workspace="runShortcutAction('openFolder', 'button')"
         @add-workspace-paths="void handleDropWorkspacePaths($event)"
         @rename="(id, title) => client.renameSession(id, title)"
         @archive="confirmArchiveSession($event)"
@@ -1263,8 +1339,8 @@ function openPr(url: string): void {
         @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
-        @open-settings="showSettings = true"
-        @collapse="toggleSidebarCollapse"
+        @open-settings="openSettingsFromButton"
+        @collapse="runShortcutAction('toggleSidebar', 'button')"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -1287,7 +1363,7 @@ function openPr(url: string): void {
       :branch="client.status.value.branch"
       :session-count="activeWorkspaceSessionCount"
       @open-switcher="showMobileSwitcher = true"
-      @open-settings="showMobileSettings = true"
+      @open-settings="runShortcutAction('openSettings', 'button')"
     />
 
     <ConversationPane
@@ -1338,8 +1414,8 @@ function openPr(url: string): void {
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
-      @select-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="requestAddWorkspace()"
+      @select-workspace="handleDraftWorkspaceSelect($event)"
+      @add-workspace="runShortcutAction('openFolder', 'button')"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
       @login="openLogin()"
@@ -1391,7 +1467,7 @@ function openPr(url: string): void {
       class="sidebar-toggle-btn"
       size="sm"
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
-      @click="toggleSidebarCollapse"
+      @click="runShortcutAction('toggleSidebar', 'button')"
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
@@ -1404,7 +1480,7 @@ function openPr(url: string): void {
       class="new-chat-btn"
       size="sm"
       :label="t('sidebar.newChat')"
-      @click="handleCreateSession"
+      @click="runShortcutAction('newSession', 'button')"
     >
       <Icon name="chat-new" />
     </IconButton>
@@ -1562,8 +1638,8 @@ function openPr(url: string): void {
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
       :initial-tab="settingsInitialTab"
-      @set-color-scheme="client.setColorScheme($event)"
-      @set-font-scale="client.setFontScale($event)"
+      @set-color-scheme="setColorSchemeFromSettings($event)"
+      @set-font-scale="setFontScaleFromSettings($event)"
       @set-notify="client.setNotifyEnabled($event)"
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
@@ -1623,10 +1699,10 @@ function openPr(url: string): void {
       :active-id="client.activeSessionId.value"
       :attention-by-session="client.attentionBySession.value"
       :attention-by-workspace="client.attentionByWorkspace.value"
-      @select="client.selectSession($event)"
-      @create="handleCreateSession"
+      @select="handleSelectSession($event)"
+      @create="runShortcutAction('newSession', 'button')"
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="requestAddWorkspace()"
+      @add-workspace="runShortcutAction('openFolder', 'button')"
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="confirmArchiveSession($event)"
       @delete-workspace="confirmDeleteWorkspace($event)"
@@ -1651,8 +1727,8 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
-      @set-color-scheme="client.setColorScheme($event)"
-      @set-font-scale="client.setFontScale($event)"
+      @set-color-scheme="setColorSchemeFromSettings($event, 'mobile_settings')"
+      @set-font-scale="setFontScaleFromSettings($event, 'mobile_settings')"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />

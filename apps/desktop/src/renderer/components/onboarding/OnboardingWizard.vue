@@ -8,12 +8,13 @@
      values instead of theme tokens — same exemption class as the illustrative
      mockups in the design-system view. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAppearance, type ColorScheme } from '@moonshot-ai/web-core';
 import { Button } from '@moonshot-ai/web-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
 import { type OAuthLoginStartResult } from '../../composables/useOAuthLoginFlow';
+import { track } from '../../lib/track';
 import BrandLogo from './BrandLogo.vue';
 import OnboardingLoginStep from './OnboardingLoginStep.vue';
 
@@ -53,6 +54,74 @@ function back(): void {
   if (stepIndex.value > 0) stepIndex.value--;
 }
 
+// Telemetry: a step is reported when LEAVING it (step switch, finish, skip),
+// carrying how long it was on screen; the wizard-level outcome
+// (completed/abandoned) is reported once from the single `reportOutcome`
+// funnel — Finish, both skips, login success and the custom-provider detour
+// all pass through it. Skipping step 1 abandons the whole wizard; skipping
+// step 2 only skips the login and still counts as completed.
+const wizardStartedAt = Date.now();
+let stepStartedAt = wizardStartedAt;
+let outcomeReported = false;
+// Each step reports at most once: going back and forward again must not
+// double-count a step (going back counts as leaving the step).
+const reportedStepIndexes = new Set<number>();
+
+function reportStepExit(skipped?: boolean): void {
+  if (reportedStepIndexes.has(stepIndex.value)) return;
+  reportedStepIndexes.add(stepIndex.value);
+  track('onboarding_step', {
+    step: step.value,
+    step_index: stepIndex.value,
+    total_steps: STEPS.length,
+    duration_ms: Date.now() - stepStartedAt,
+    ...(skipped === true ? { skipped: true } : {}),
+  });
+}
+
+function reportOutcome(outcome: 'completed' | 'abandoned'): void {
+  if (outcomeReported) return;
+  outcomeReported = true;
+  const totalDuration = Math.min(Date.now() - wizardStartedAt, 3_600_000);
+  if (outcome === 'completed') {
+    track('onboarding_completed', { total_duration_ms: totalDuration });
+  } else {
+    track('onboarding_abandoned', { last_step: step.value, total_duration_ms: totalDuration });
+  }
+}
+
+watch(step, (_newStep, oldStep) => {
+  const oldIndex = STEPS.indexOf(oldStep);
+  if (!reportedStepIndexes.has(oldIndex)) {
+    reportedStepIndexes.add(oldIndex);
+    track('onboarding_step', {
+      step: oldStep,
+      step_index: oldIndex,
+      total_steps: STEPS.length,
+      duration_ms: Date.now() - stepStartedAt,
+    });
+  }
+  stepStartedAt = Date.now();
+});
+
+function skip(): void {
+  reportStepExit(true);
+  reportOutcome(stepIndex.value === 0 ? 'abandoned' : 'completed');
+  emit('complete');
+}
+
+function finish(): void {
+  reportStepExit();
+  reportOutcome('completed');
+  emit('complete');
+}
+
+function onAddProvider(): void {
+  reportStepExit();
+  reportOutcome('completed');
+  emit('addProvider');
+}
+
 // -------------------------------------------------------------------------
 // Step 1 — language + appearance (both apply live)
 // -------------------------------------------------------------------------
@@ -73,6 +142,8 @@ const themeOptions: ReadonlyArray<{ value: ColorScheme; labelKey: string }> = [
 // -------------------------------------------------------------------------
 
 function onLoginSuccess(): void {
+  reportStepExit();
+  reportOutcome('completed');
   emit('loginSuccess');
 }
 </script>
@@ -148,7 +219,7 @@ function onLoginSuccess(): void {
             :on-poll-o-auth-login="props.onPollOAuthLogin"
             :on-cancel-o-auth-login="props.onCancelOAuthLogin"
             @success="onLoginSuccess"
-            @add-provider="emit('addProvider')"
+            @add-provider="onAddProvider"
           />
         </div>
       </section>
@@ -169,7 +240,7 @@ function onLoginSuccess(): void {
           variant="primary"
           size="lg"
           class="wiz-primary"
-          @click="emit('complete')"
+          @click="finish"
         >
           {{ t('onboarding.login.finish') }}
         </Button>
@@ -180,7 +251,7 @@ function onLoginSuccess(): void {
           <Button
             v-if="!(step === 'login' && props.authReady)"
             variant="ghost"
-            @click="emit('complete')"
+            @click="skip"
           >
             {{ step === 'login' ? t('onboarding.login.skip') : t('onboarding.skip') }}
           </Button>

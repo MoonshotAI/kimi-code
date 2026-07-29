@@ -231,3 +231,120 @@ describe('useOAuthLoginFlow', () => {
     expect(callbacks.onPollOAuthLogin).toHaveBeenCalledTimes(1); // no further polls
   });
 });
+
+describe('oauth_login_step tracking', () => {
+  const globalRef = globalThis as { window?: unknown };
+  const originalWindow = globalRef.window;
+
+  let scope: EffectScope;
+  let spy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    scope = effectScope();
+    spy = vi.fn();
+    globalRef.window = { kimiDesktop: { track: spy } };
+  });
+
+  afterEach(() => {
+    scope.stop();
+    vi.useRealTimers();
+    if (originalWindow === undefined) delete globalRef.window;
+    else globalRef.window = originalWindow;
+  });
+
+  /** The properties bags of every emitted event, in order. */
+  function payloads(): Array<Record<string, unknown> | undefined> {
+    return spy.mock.calls.map((call) => call[1]);
+  }
+
+  it('tracks starting → device-code for a pending start (no ok flag mid-flow)', async () => {
+    const flow = scope.run(() => useOAuthLoginFlow(makeCallbacks()))!;
+    await flow.startFlow();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+    ]);
+  });
+
+  it('tracks success with ok on the already-authenticated fast path', async () => {
+    const callbacks = makeCallbacks({
+      onStartOAuthLogin: vi.fn(async () => ({
+        flowId: 'oauth_1',
+        provider: 'kimi-code',
+        status: 'authenticated' as const,
+      })),
+    });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'success', ok: true, method: 'oauth', duration_ms: 0 },
+    ]);
+  });
+
+  it('tracks error with ok=false and start_failed when the start request fails', async () => {
+    const callbacks = makeCallbacks({ onStartOAuthLogin: vi.fn(async () => null) });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'error', ok: false, method: 'oauth', duration_ms: 0, error_class: 'start_failed' },
+    ]);
+  });
+
+  it('tracks success with ok and the flow duration when a poll authenticates', async () => {
+    const callbacks = makeCallbacks({
+      onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'authenticated' as const })),
+    });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'success', ok: true, method: 'oauth', duration_ms: 5000 },
+    ]);
+  });
+
+  it('tracks expired with ok=false and the expired class when the flow expires', async () => {
+    const callbacks = makeCallbacks({
+      onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'expired' as const })),
+    });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'expired', ok: false, method: 'oauth', duration_ms: 5000, error_class: 'expired' },
+    ]);
+  });
+
+  it('tracks expired with the cancelled class when the user cancels on the OAuth host', async () => {
+    const callbacks = makeCallbacks({
+      onPollOAuthLogin: vi.fn(async () => ({ flowId: 'oauth_1', status: 'cancelled' as const })),
+    });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'expired', ok: false, method: 'oauth', duration_ms: 5000, error_class: 'cancelled' },
+    ]);
+  });
+
+  it('tracks error with ok=false and poll_failed after repeated poll failures', async () => {
+    const callbacks = makeCallbacks({ onPollOAuthLogin: vi.fn(async () => null) });
+    const flow = scope.run(() => useOAuthLoginFlow(callbacks))!;
+    await flow.startFlow();
+    await vi.advanceTimersByTimeAsync(15000); // three failed polls
+    expect(payloads()).toEqual([
+      { stage: 'starting', method: 'oauth', duration_ms: 0 },
+      { stage: 'device-code', method: 'oauth', duration_ms: 0 },
+      { stage: 'error', ok: false, method: 'oauth', duration_ms: 15000, error_class: 'poll_failed' },
+    ]);
+  });
+});

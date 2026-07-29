@@ -25,6 +25,11 @@ import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
 import { createRendererLogWriter } from './renderer-log';
+import {
+  rendererTrackEventSchema,
+  type RendererTrackEvent,
+} from '../shared/track-events';
+import { trackDesktopEvent } from './track';
 import { IPC, type ColorScheme, type WindowsMenuId } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -45,6 +50,14 @@ function asTerminalCreateOptions(value: unknown): { cwd?: string; cols?: number;
   if (typeof raw['cols'] === 'number' && Number.isFinite(raw['cols'])) options.cols = raw['cols'];
   if (typeof raw['rows'] === 'number' && Number.isFinite(raw['rows'])) options.rows = raw['rows'];
   return options;
+}
+
+function asRendererTrackEvent(
+  event: unknown,
+  payload: unknown,
+): RendererTrackEvent | null {
+  const result = rendererTrackEventSchema.safeParse({ event, properties: payload });
+  return result.success ? result.data : null;
 }
 
 const rendererLogWriter = createRendererLogWriter();
@@ -71,26 +84,34 @@ export function registerIpcHandlers(): void {
   );
   // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
   // the main process opens the native dialog and returns the user's selection.
-  ipcMain.handle(IPC.dialogOpen, (_event, opts: OpenDialogOptions = {}) => {
+  ipcMain.handle(IPC.dialogOpen, async (_event, opts: OpenDialogOptions = {}) => {
     const win = getMainWindow();
-    return win === null || win.isDestroyed()
+    const result = await (win === null || win.isDestroyed()
       ? dialog.showOpenDialog(opts)
-      : dialog.showOpenDialog(win, opts);
+      : dialog.showOpenDialog(win, opts));
+    trackDesktopEvent('native_ipc_used', { channel: 'dialog-open' });
+    return result;
   });
-  ipcMain.handle(IPC.dialogSave, (_event, opts: SaveDialogOptions = {}) => {
+  ipcMain.handle(IPC.dialogSave, async (_event, opts: SaveDialogOptions = {}) => {
     const win = getMainWindow();
-    return win === null || win.isDestroyed()
+    const result = await (win === null || win.isDestroyed()
       ? dialog.showSaveDialog(opts)
-      : dialog.showSaveDialog(win, opts);
+      : dialog.showSaveDialog(win, opts));
+    trackDesktopEvent('native_ipc_used', { channel: 'dialog-save' });
+    return result;
   });
   // "Open workspace in <app>": the main process owns both the installed-app
   // catalog and the actual launch (open-in.ts); results are forwarded verbatim.
   ipcMain.handle(IPC.openInList, () => listAvailableOpenInApps());
-  ipcMain.handle(IPC.openInApp, (_event, appId: unknown, path: unknown) => {
+  ipcMain.handle(IPC.openInApp, async (_event, appId: unknown, path: unknown) => {
     if (typeof appId !== 'string' || typeof path !== 'string' || path.trim() === '') {
       return { ok: false as const, error: 'invalid open-in arguments' };
     }
-    return openInApp(appId, path);
+    const result = await openInApp(appId, path);
+    if (result.ok) {
+      trackDesktopEvent('native_ipc_used', { channel: 'open-in' });
+    }
+    return result;
   });
   // Initial fullscreen state for the renderer (transitions are pushed over
   // `IPC.fullscreenChanged` by window.ts); needed when the page (re)loads while
@@ -225,6 +246,7 @@ export function registerIpcHandlers(): void {
   // window.focus() can't un-hide it — only the main process can.
   ipcMain.on(IPC.showWindow, () => {
     showMainWindow();
+    trackDesktopEvent('native_ipc_used', { channel: 'show-window' });
   });
   // Onboarding completed (or skipped to the same effect): persist the flag in
   // ui-state.json so it survives dev-server port shifts (renderer localStorage
@@ -240,6 +262,7 @@ export function registerIpcHandlers(): void {
     if (typeof enabled !== 'boolean') return;
     setVibrancyEnabled(enabled);
     applyWindowVibrancy(enabled);
+    trackDesktopEvent('native_ipc_used', { channel: 'vibrancy' });
   });
   ipcMain.handle(IPC.getVibrancy, () => isVibrancyEnabled());
   // Renderer diagnostics → the same log file the main process writes (the
@@ -247,6 +270,15 @@ export function registerIpcHandlers(): void {
   // limiting all live in renderer-log.ts; this handler must never throw.
   ipcMain.on(IPC.rendererLog, (_event, payload: unknown) => {
     rendererLogWriter(payload);
+  });
+  // Renderer telemetry: events are whitelisted and re-validated at this trust
+  // boundary, then flow through the same CloudAppender pipeline as
+  // main-process events. No-op until telemetry is wired (telemetry.ts).
+  ipcMain.on(IPC.track, (_event, eventName: unknown, payload: unknown) => {
+    const parsed = asRendererTrackEvent(eventName, payload);
+    if (parsed !== null) {
+      trackDesktopEvent(parsed.event, parsed.properties);
+    }
   });
   // Native embedded terminal (main/terminal.ts): PTYs live in THIS process;
   // the renderer picks cwd and size, the shell is resolved main-side.

@@ -34,6 +34,8 @@ import PinnedSessionList from './PinnedSessionList.vue';
 import { isDesktop, isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
+import { track } from '../lib/track';
+import type { SessionCreatedSource } from '../../shared/track-events';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -115,7 +117,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  select: [sessionId: string];
+  select: [selection: { sessionId: string; source: SessionCreatedSource }];
   create: [];
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
@@ -165,6 +167,13 @@ function toggleSearch(): void {
   } else {
     openSearch();
   }
+}
+
+// The header search button is the 'button'-sourced entry of the searchSessions
+// action (shortcut/menu entries are attributed in App.vue's dispatcher).
+function onSearchButtonClick(): void {
+  track('action_invoked', { action: 'searchSessions', source: 'button' });
+  openSearch();
 }
 
 // App.vue's shortcut dispatcher drives the dialog through these exposes
@@ -361,7 +370,11 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 }
 
 function onSelectSession(sessionId: string): void {
-  emit('select', sessionId);
+  emit('select', { sessionId, source: 'sidebar' });
+}
+
+function onSearchSelectSession(sessionId: string): void {
+  emit('select', { sessionId, source: 'search' });
 }
 
 // ---------------------------------------------------------------------------
@@ -885,7 +898,7 @@ onBeforeUnmount(() => {
         >
           <Icon name="folder" />
         </IconButton>
-        <button class="search" type="button" @click="openSearch">
+        <button class="search" type="button" @click="onSearchButtonClick">
           <Icon class="search-icon" name="search" />
           <span class="search-input">{{ t('sidebar.search') }}</span>
           <Kbd :keys="sessionSearchKeys" />
@@ -1104,7 +1117,7 @@ onBeforeUnmount(() => {
       v-if="showSearch"
       :sessions="sessions"
       :active-id="activeId"
-      @select="onSelectSession"
+      @select="onSearchSelectSession"
       @close="showSearch = false"
     />
     <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,

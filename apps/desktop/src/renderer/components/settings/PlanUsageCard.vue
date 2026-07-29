@@ -6,7 +6,7 @@
      daemon never surfaces as a toast. Meter colors follow the TUI severity
      thresholds (ok < 50% · warn ≥ 50% · danger ≥ 85%). -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { BoosterWallet, ManagedUsageResult, UsageRow } from '../../api/types';
 import {
@@ -16,10 +16,14 @@ import {
   usagePercent,
   usageSeverity,
 } from '../../lib/planUsage';
+import { track } from '../../lib/track';
 import { Button, Spinner } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   onFetchUsage: () => Promise<ManagedUsageResult>;
+  /** True while the card's panel is the visible settings tab (the Account
+      panel is v-show'd, so being mounted doesn't mean being seen). */
+  active: boolean;
 }>();
 
 const { t } = useI18n();
@@ -57,6 +61,35 @@ const errorMessage = computed(() =>
 // cap is configured; otherwise the limit row reads "Unlimited".
 const hasMonthlyLimit = computed(
   () => wallet.value !== null && wallet.value.monthlyChargeLimitEnabled && wallet.value.monthlyChargeLimitCents > 0,
+);
+
+// The card's single takeaway bucket: worst severity across the plan rows and
+// the booster monthly meter. Null while there's nothing measurable (loading,
+// error, or an account with no metered rows at all).
+const usageBucket = computed<'ok' | 'warn' | 'danger' | null>(() => {
+  if (okResult.value === null) return null;
+  const buckets = usageRows.value.map((row) => usageSeverity(row.used, row.limit));
+  const w = wallet.value;
+  if (w !== null && hasMonthlyLimit.value) {
+    buckets.push(usageSeverity(w.monthlyUsedCents, w.monthlyChargeLimitCents));
+  }
+  if (buckets.length === 0) return null;
+  if (buckets.includes('danger')) return 'danger';
+  if (buckets.includes('warn')) return 'warn';
+  return 'ok';
+});
+
+// One view event per mount (the dialog remounts per open): the first moment
+// the card is both on the visible tab and holding measurable usage data.
+let viewTracked = false;
+watch(
+  [() => props.active, usageBucket],
+  ([active, bucket]) => {
+    if (!active || bucket === null || viewTracked) return;
+    viewTracked = true;
+    track('plan_usage_card_viewed', { usage_bucket: bucket });
+  },
+  { immediate: true },
 );
 
 function money(cents: number, currency: string): string {

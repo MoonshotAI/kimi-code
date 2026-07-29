@@ -2,14 +2,21 @@ import { EventEmitter } from 'node:events';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { netFetchMock } = vi.hoisted(() => ({ netFetchMock: vi.fn() }));
+const { netFetchMock, trackMock } = vi.hoisted(() => ({
+  netFetchMock: vi.fn(),
+  trackMock: vi.fn(),
+}));
 
 // updater.ts imports electron / electron-updater / ./window only for the
 // production wiring (initAutoUpdater); the unit under test is the injected
 // startAutoUpdater state machine. Mock all three so the import stays inert.
-vi.mock('electron', () => ({ app: { isPackaged: false }, net: { fetch: netFetchMock } }));
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getVersion: () => '1.0.0' },
+  net: { fetch: netFetchMock },
+}));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
+vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock }));
 
 import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
 import { log } from '../../src/main/log';
@@ -49,6 +56,8 @@ function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDo
 
 beforeEach(() => {
   vi.useFakeTimers();
+  trackMock.mockClear();
+  markQuittingMock.mockClear();
 });
 
 afterEach(() => {
@@ -88,6 +97,55 @@ describe('startAutoUpdater', () => {
     const { updater } = setup({ autoDownload: true });
     expect(updater.autoDownload).toBe(true);
     expect(updater.autoInstallOnAppQuit).toBe(true);
+  });
+
+  it('tracks state transitions, not per-chunk download progress', () => {
+    const { updater } = setup();
+    updater.emit('update-available', { version: '1.2.3', releaseDate: '2026-07-27' });
+    updater.emit('download-progress', { percent: 10.2 });
+    updater.emit('download-progress', { percent: 55.6 });
+    updater.emit('update-downloaded', { version: '1.2.3', releaseDate: '2026-07-27' });
+
+    expect(trackMock.mock.calls).toEqual([
+      [
+        'update_status_changed',
+        { state: 'available', from_version: '1.0.0', to_version: '1.2.3', prev_state: 'idle' },
+      ],
+      [
+        'update_status_changed',
+        { state: 'downloading', from_version: '1.0.0', to_version: '1.2.3', prev_state: 'available' },
+      ],
+      [
+        'update_status_changed',
+        { state: 'downloaded', from_version: '1.0.0', to_version: '1.2.3', prev_state: 'downloading' },
+      ],
+    ]);
+  });
+
+  it('attaches error_class only to the error transition', () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '1.2.3' });
+    controller.download();
+    trackMock.mockClear();
+
+    class NetworkError extends Error {
+      override name = 'NetworkError';
+    }
+    updater.emit('error', new NetworkError('network down'));
+
+    expect(trackMock).toHaveBeenCalledWith('update_status_changed', {
+      state: 'error',
+      from_version: '1.0.0',
+      to_version: '1.2.3',
+      prev_state: 'downloading',
+      error_class: 'NetworkError',
+    });
+
+    // A background check failure never reaches the error state (and never tracks).
+    updater.emit('update-not-available');
+    trackMock.mockClear();
+    updater.emit('error', new NetworkError('feed unreachable'));
+    expect(trackMock).not.toHaveBeenCalled();
   });
 
   it('setAutoDownload flips the flag only — a waiting update still needs the user click, and disabling never cancels in-flight', () => {

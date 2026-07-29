@@ -12,8 +12,9 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
-import { canSetDockIconChoice, useDockIconChoice } from '../../lib/dockIconChoice';
+import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
 import { logWarn } from '../../lib/log';
+import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { useVibrancy } from '../../composables/useVibrancy';
@@ -31,6 +32,24 @@ const { t } = useI18n();
 // Frosted-sidebar switch (macOS desktop only — the row below is v-if'd on
 // isMacosDesktop; web never renders it).
 const { vibrancy, setVibrancy } = useVibrancy();
+
+function onColorScheme(scheme: ColorScheme): void {
+  emit('setColorScheme', scheme);
+}
+
+function onFontScale(scale: FontScale): void {
+  emit('setFontScale', scale);
+}
+
+function onVibrancyChange(on: boolean): void {
+  setVibrancy(on);
+  track('settings_changed', { key: 'vibrancy', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+function onNotifyChange(on: boolean): void {
+  emit('setNotify', on);
+  track('settings_changed', { key: 'notifications', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
 
 type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived' | 'shortcuts';
 
@@ -145,6 +164,12 @@ onUnmounted(() => {
 const openInAppOptions = ref<Array<{ value: string; label: string; icon?: string }> | null>(null);
 const defaultOpenInApp = useDefaultOpenInTarget();
 
+function onDefaultOpenInChange(appId: string): void {
+  saveDefaultOpenInTarget(appId);
+  // The catalog ids are main-process enums; '' means "cleared back to auto".
+  track('settings_changed', { key: 'open-in-default', value: appId === '' ? 'auto' : appId, source_panel: 'settings' });
+}
+
 const openInSelectValue = computed(() => {
   const options = openInAppOptions.value ?? [];
   const current = defaultOpenInApp.value;
@@ -169,6 +194,13 @@ onMounted(async () => {
 // has no such row (docs/native-todos.md).
 const dockIconChoice = useDockIconChoice();
 const showDockIconRow = isMacosDesktop && canSetDockIconChoice();
+
+// The Dock-icon choice is tracked HERE (not in lib/dockIconChoice.ts): the
+// settings row is the only UI that changes it, so one site covers every edit.
+function onDockIconChange(value: DockIconChoice): void {
+  dockIconChoice.value = value;
+  track('settings_changed', { key: 'dock-icon', value, source_panel: 'settings' });
+}
 
 function exportLog(): void {
   downloadTraceLog();
@@ -200,6 +232,10 @@ const appVersionText = (() => {
 const updateTracker = useUpdateStatus();
 const checkingUpdate = ref(false);
 const checkResult = ref<UpdateCheckResult | null>(null);
+
+function onAutoDownloadChange(on: boolean): void {
+  updateTracker.setAutoDownload(on, 'settings');
+}
 
 async function onCheckUpdate(): Promise<void> {
   if (checkingUpdate.value) return;
@@ -348,6 +384,7 @@ function toggleDefaultThinking(): void {
 // (displayed as on) flips to `false` instead of writing a redundant `true`.
 function toggleTelemetry(): void {
   const enabled = props.config?.telemetry !== false;
+  track('telemetry_consent_changed', { enabled: !enabled });
   emit('updateConfig', { telemetry: !enabled } as Partial<AppConfig>);
 }
 
@@ -509,7 +546,7 @@ function archiveTime(iso: string): string {
                   { value: 'dark', label: t('theme.dark'), icon: 'dark-mode' },
                   { value: 'system', label: t('theme.system') },
                 ]"
-                @update:model-value="emit('setColorScheme', $event as ColorScheme)"
+                @update:model-value="onColorScheme($event as ColorScheme)"
               />
             </div>
             <div v-if="showDockIconRow" class="row">
@@ -517,7 +554,7 @@ function archiveTime(iso: string): string {
                 {{ t('settings.appIcon') }}
                 <span class="hint">{{ t('settings.appIconHint') }}</span>
               </span>
-              <DockIconPicker v-model="dockIconChoice" />
+              <DockIconPicker :model-value="dockIconChoice" @update:model-value="onDockIconChange" />
             </div>
             <div class="row font-size-row">
               <span class="rlabel">
@@ -533,7 +570,7 @@ function archiveTime(iso: string): string {
                   { value: 'xlarge', label: 'XL' },
                 ]"
                 :aria-label="t('settings.uiFontSize')"
-                @update:model-value="emit('setFontScale', $event as FontScale)"
+                @update:model-value="onFontScale($event as FontScale)"
               />
             </div>
             <div v-if="isMacosDesktop" class="row">
@@ -544,7 +581,7 @@ function archiveTime(iso: string): string {
               <Switch
                 :model-value="vibrancy"
                 :label="t('settings.vibrancy')"
-                @update:model-value="setVibrancy"
+                @update:model-value="onVibrancyChange"
               />
             </div>
             <div class="row language-row">
@@ -564,7 +601,7 @@ function archiveTime(iso: string): string {
                   :model-value="openInSelectValue"
                   :options="openInAppOptions"
                   :aria-label="t('settings.defaultOpenInApp')"
-                  @update:model-value="saveDefaultOpenInTarget"
+                  @update:model-value="onDefaultOpenInChange"
                 />
               </div>
             </div>
@@ -584,7 +621,7 @@ function archiveTime(iso: string): string {
                 :model-value="notify"
                 :disabled="notifyPermission === 'denied'"
                 :label="t('settings.notifyEnabled')"
-                @update:model-value="emit('setNotify', $event)"
+                @update:model-value="onNotifyChange"
               />
             </div>
             <div class="row">
@@ -620,7 +657,11 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
-          <PlanUsageCard v-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
+          <PlanUsageCard
+            v-if="signedIn"
+            :on-fetch-usage="props.onFetchUsage"
+            :active="activeTab === 'account'"
+          />
         </section>
 
         <!-- Agent defaults -->
@@ -736,7 +777,7 @@ function archiveTime(iso: string): string {
               <Switch
                 :model-value="updateTracker.autoDownload.value"
                 :label="t('settings.autoDownloadUpdate')"
-                @update:model-value="updateTracker.setAutoDownload($event)"
+                @update:model-value="onAutoDownloadChange"
               />
             </div>
             </div>

@@ -12,6 +12,18 @@
 import { ref } from 'vue';
 import { i18n } from '../../i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { track } from '../../lib/track';
+import type { NotificationKindEvent } from '../../../shared/track-events';
+
+type NotificationKind = NotificationKindEvent['kind'];
+
+// The tag prefix identifies the kind (see maybeNotify* below).
+function kindFromTag(tag: string): NotificationKind | undefined {
+  if (tag.startsWith('kimi-complete-')) return 'turn_complete';
+  if (tag.startsWith('kimi-question-')) return 'question';
+  if (tag.startsWith('kimi-approval-')) return 'approval';
+  return undefined;
+}
 
 export function shouldNotifyCompletion(
   status: 'idle' | 'aborted',
@@ -174,6 +186,8 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
       icon: NOTIFICATION_ICON,
       silent: !notifySound.value,
     });
+    const kind = kindFromTag(tag);
+    if (kind !== undefined) track('notification_shown', { kind });
     n.onclick = () => {
       try {
         // Desktop hide-on-close: the native window may be alive but hidden,
@@ -184,6 +198,7 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
       } catch {
         // ignore
       }
+      if (kind !== undefined) track('notification_clicked', { kind });
       ctx.onClick();
       n.close();
     };

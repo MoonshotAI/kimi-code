@@ -20,6 +20,7 @@ import { isMacosDesktop } from '../../lib/desktopFlag';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
 import { isFindKeyEvent } from '../../lib/transcriptSearch';
+import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
@@ -539,6 +540,7 @@ function openTranscriptSearch(): void {
   }
   searchPreFocus = document.activeElement;
   transcriptSearchOpen.value = true;
+  track('search_opened', {});
 }
 
 function closeTranscriptSearch(): void {

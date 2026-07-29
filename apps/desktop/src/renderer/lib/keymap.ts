@@ -12,6 +12,11 @@
 // `mod` is the platform primary modifier: metaKey (⌘) on Apple platforms,
 // ctrlKey elsewhere.
 
+import {
+  SHORTCUT_ACTION_IDS,
+  type ShortcutActionId,
+} from '../../shared/action-ids';
+
 // ---------------------------------------------------------------------------
 // Platform
 // ---------------------------------------------------------------------------
@@ -33,7 +38,7 @@ export function isAppleShortcutPlatform(): boolean {
 export type ShortcutScope = 'global' | 'composer' | 'conversation';
 
 export interface ShortcutAction {
-  id: string;
+  id: ShortcutActionId;
   scope: ShortcutScope;
   /** i18n keys under the `shortcuts` namespace. */
   labelKey: string;
@@ -49,28 +54,36 @@ export interface ShortcutAction {
   requiresSession?: boolean;
 }
 
-// Registry order is the settings panel's display order (one flat list).
-export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
+const SHORTCUT_ACTION_DEFINITIONS: Record<
+  ShortcutActionId,
+  Omit<ShortcutAction, 'id'>
+> = {
   // Global
   // summonApp is an OS-level global shortcut: the main process registers it
   // with globalShortcut and shows the window even from outside the app. It is
   // NOT dispatched through the renderer keydown (main/shortcuts.ts owns it).
-  { id: 'summonApp', scope: 'global', labelKey: 'shortcuts.actions.summonApp.label', descKey: 'shortcuts.actions.summonApp.desc', defaultBinding: 'shift+mod+space' },
-  { id: 'newSession', scope: 'global', labelKey: 'shortcuts.actions.newSession.label', descKey: 'shortcuts.actions.newSession.desc', defaultBinding: 'mod+n' },
-  { id: 'searchSessions', scope: 'global', labelKey: 'shortcuts.actions.searchSessions.label', descKey: 'shortcuts.actions.searchSessions.desc', defaultBinding: 'mod+k' },
-  { id: 'archiveSession', scope: 'global', labelKey: 'shortcuts.actions.archiveSession.label', descKey: 'shortcuts.actions.archiveSession.desc', defaultBinding: 'alt+mod+a', requiresSession: true },
-  { id: 'toggleSideChat', scope: 'global', labelKey: 'shortcuts.actions.toggleSideChat.label', descKey: 'shortcuts.actions.toggleSideChat.desc', defaultBinding: 'alt+mod+b', requiresSession: true },
-  { id: 'toggleSidebar', scope: 'global', labelKey: 'shortcuts.actions.toggleSidebar.label', descKey: 'shortcuts.actions.toggleSidebar.desc', defaultBinding: 'mod+b' },
-  { id: 'openFolder', scope: 'global', labelKey: 'shortcuts.actions.openFolder.label', descKey: 'shortcuts.actions.openFolder.desc', defaultBinding: 'mod+o' },
-  { id: 'openInDefaultApp', scope: 'global', labelKey: 'shortcuts.actions.openInDefaultApp.label', descKey: 'shortcuts.actions.openInDefaultApp.desc', defaultBinding: 'alt+mod+o', requiresSession: true },
-  { id: 'openSettings', scope: 'global', labelKey: 'shortcuts.actions.openSettings.label', descKey: 'shortcuts.actions.openSettings.desc', defaultBinding: 'mod+,' },
-  { id: 'toggleTerminal', scope: 'global', labelKey: 'shortcuts.actions.toggleTerminal.label', descKey: 'shortcuts.actions.toggleTerminal.desc', defaultBinding: 'ctrl+`' },
+  summonApp: { scope: 'global', labelKey: 'shortcuts.actions.summonApp.label', descKey: 'shortcuts.actions.summonApp.desc', defaultBinding: 'shift+mod+space' },
+  newSession: { scope: 'global', labelKey: 'shortcuts.actions.newSession.label', descKey: 'shortcuts.actions.newSession.desc', defaultBinding: 'mod+n' },
+  searchSessions: { scope: 'global', labelKey: 'shortcuts.actions.searchSessions.label', descKey: 'shortcuts.actions.searchSessions.desc', defaultBinding: 'mod+k' },
+  archiveSession: { scope: 'global', labelKey: 'shortcuts.actions.archiveSession.label', descKey: 'shortcuts.actions.archiveSession.desc', defaultBinding: 'alt+mod+a', requiresSession: true },
+  toggleSideChat: { scope: 'global', labelKey: 'shortcuts.actions.toggleSideChat.label', descKey: 'shortcuts.actions.toggleSideChat.desc', defaultBinding: 'alt+mod+b', requiresSession: true },
+  toggleSidebar: { scope: 'global', labelKey: 'shortcuts.actions.toggleSidebar.label', descKey: 'shortcuts.actions.toggleSidebar.desc', defaultBinding: 'mod+b' },
+  openFolder: { scope: 'global', labelKey: 'shortcuts.actions.openFolder.label', descKey: 'shortcuts.actions.openFolder.desc', defaultBinding: 'mod+o' },
+  openInDefaultApp: { scope: 'global', labelKey: 'shortcuts.actions.openInDefaultApp.label', descKey: 'shortcuts.actions.openInDefaultApp.desc', defaultBinding: 'alt+mod+o', requiresSession: true },
+  openSettings: { scope: 'global', labelKey: 'shortcuts.actions.openSettings.label', descKey: 'shortcuts.actions.openSettings.desc', defaultBinding: 'mod+,' },
+  toggleTerminal: { scope: 'global', labelKey: 'shortcuts.actions.toggleTerminal.label', descKey: 'shortcuts.actions.toggleTerminal.desc', defaultBinding: 'ctrl+`' },
   // Composer (textarea-scoped). Steer (Ctrl/Cmd+S) and interrupt (Escape)
   // stay hardcoded in Composer.vue / ConversationPane.vue by decision —
   // they are NOT customizable and must not appear here.
-  { id: 'composer.send', scope: 'composer', labelKey: 'shortcuts.actions.send.label', descKey: 'shortcuts.actions.send.desc', defaultBinding: 'enter', extraBindings: ['mod+enter', 'ctrl+enter'] },
-  { id: 'composer.newline', scope: 'composer', labelKey: 'shortcuts.actions.newline.label', descKey: 'shortcuts.actions.newline.desc', defaultBinding: 'shift+enter' },
-];
+  'composer.send': { scope: 'composer', labelKey: 'shortcuts.actions.send.label', descKey: 'shortcuts.actions.send.desc', defaultBinding: 'enter', extraBindings: ['mod+enter', 'ctrl+enter'] },
+  'composer.newline': { scope: 'composer', labelKey: 'shortcuts.actions.newline.label', descKey: 'shortcuts.actions.newline.desc', defaultBinding: 'shift+enter' },
+};
+
+// Registry order is the settings panel's display order (one flat list).
+export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = SHORTCUT_ACTION_IDS.map((id) => ({
+  id,
+  ...SHORTCUT_ACTION_DEFINITIONS[id],
+}));
 
 export function shortcutActionById(id: string): ShortcutAction | undefined {
   return SHORTCUT_ACTIONS.find((action) => action.id === id);
@@ -344,7 +357,12 @@ export function isValidBinding(binding: string, scope: ShortcutScope): boolean {
  *  bindings as app-wide menu accelerators via useShortcuts). Their reach is
  *  NOT limited to the renderer's scoped dispatcher, so conflict detection
  *  treats them as crossing every scope (in both directions). */
-export const MENU_SYNCED_ACTIONS: readonly string[] = ['openSettings', 'newSession', 'openFolder', 'toggleTerminal'];
+export const MENU_SYNCED_ACTIONS: readonly ShortcutActionId[] = [
+  'openSettings',
+  'newSession',
+  'openFolder',
+  'toggleTerminal',
+];
 
 /** Actions the main process registers as OS-level global shortcuts
  *  (main/shortcuts.ts globalShortcut). Like menu accelerators, the OS
@@ -352,13 +370,14 @@ export const MENU_SYNCED_ACTIONS: readonly string[] = ['openSettings', 'newSessi
  *  app is focused — so conflict detection must treat them as crossing every
  *  scope, and a binding Electron accelerators can't express has NO renderer
  *  fallback (the recorder rejects it via isAcceleratorExpressible). */
-export const OS_GLOBAL_ACTIONS: readonly string[] = ['summonApp'];
+export const OS_GLOBAL_ACTIONS: readonly ShortcutActionId[] = ['summonApp'];
 
 /** True for every action whose binding is intercepted natively (menu
  *  accelerator or OS global shortcut) rather than by the renderer's scoped
  *  keydown dispatcher. */
 function isNativeWideAction(id: string): boolean {
-  return MENU_SYNCED_ACTIONS.includes(id) || OS_GLOBAL_ACTIONS.includes(id);
+  return MENU_SYNCED_ACTIONS.some((actionId) => actionId === id) ||
+    OS_GLOBAL_ACTIONS.some((actionId) => actionId === id);
 }
 
 /** True on non-Apple platforms for chords shaped like AltGr (alt combined

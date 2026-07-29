@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { DESKTOP_WINDOWS_APP_ID, DESKTOP_WINDOWS_DEV_APP_ID } from '../shared/identity';
 import { log } from './log';
 import { registerRendererProtocol } from './protocol';
-import { rendererDistRoot, closeServerHandle } from './connect';
+import { rendererDistRoot, closeServerHandle, shutdownServerTelemetry } from './connect';
 import { stopShellEnvProbe } from './shell-env';
 import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
@@ -14,6 +14,8 @@ import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
+import { trackDesktopEvent } from './track';
+import { finalizeWindowLifecycle } from './window-lifecycle';
 
 // --- app lifecycle ------------------------------------------------------------
 
@@ -61,13 +63,43 @@ export function main(): void {
 
   registerIpcHandlers();
 
-  app.on('before-quit', () => {
+  // Quit barrier: the fire-and-forget cleanup above lets the process die
+  // before the telemetry flush finishes, losing `exit` and the buffered tail
+  // (the disk fallback only engages after a *completed* flush attempt fails).
+  // Hold quit only for telemetry.shutdown — it caps itself at 3s, and the
+  // full server close is exactly the hang source this ordering avoids.
+  let telemetryFlushArmed = true;
+  app.on('before-quit', (event) => {
     log.info('[kimi-desktop] quitting');
-    stopShellEnvProbe();
-    killAllTerminals();
-    destroyTray();
-    unregisterGlobalShortcuts();
-    closeServerHandle();
+    for (const cleanup of [
+      finalizeWindowLifecycle,
+      stopShellEnvProbe,
+      killAllTerminals,
+      destroyTray,
+      unregisterGlobalShortcuts,
+      closeServerHandle,
+    ]) {
+      try {
+        void Promise.resolve(cleanup()).catch((error: unknown) => {
+          log.error('[kimi-desktop] shutdown step failed', error);
+        });
+      } catch (error) {
+        log.error('[kimi-desktop] shutdown step failed', error);
+      }
+    }
+    if (telemetryFlushArmed) {
+      const flush = shutdownServerTelemetry();
+      if (flush !== null) {
+        telemetryFlushArmed = false;
+        event.preventDefault();
+        // Quit either way: a rejected flush (failed startup, telemetry
+        // internals) must not become an unhandled rejection on the quit path.
+        void flush.then(
+          () => app.quit(),
+          () => app.quit(),
+        );
+      }
+    }
   });
 
   app.on('window-all-closed', () => {
@@ -80,6 +112,25 @@ export function main(): void {
     log.info(
       `[kimi-desktop] app ready (version=${app.getVersion()} platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged})`,
     );
+    const launch = parseLaunchArgs(process.argv);
+    trackDesktopEvent('app_launched', {
+      launch_intent: launch.newChat || launch.workspace !== undefined ? 'jump_list' : 'normal',
+    });
+    trackDesktopEvent('startup_timing', {
+      phase: 'main_ready',
+      duration_ms: Math.round(process.uptime() * 1000),
+    });
+    app.on('child-process-gone', (_event, details) => {
+      // Chromium recycles the GPU process in normal operation (clean-exit) —
+      // that is not a crash.
+      if (details.type === 'GPU' && details.reason !== 'clean-exit') {
+        trackDesktopEvent('app_crashed', {
+          process: 'gpu',
+          kind: details.reason,
+          app_uptime_ms: Math.round(process.uptime() * 1000),
+        });
+      }
+    });
     // Dock icon follows the effective appearance (dark/light tile swap);
     // packaged builds additionally keep the static .icns for Finder etc.
     initDockIcon();

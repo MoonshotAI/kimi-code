@@ -20,6 +20,7 @@
 import { computed, watch, type ComputedRef, type Ref } from 'vue';
 
 import { i18n } from '../i18n';
+import type { SessionCreatedSource } from '../../shared/track-events';
 
 export interface TrayAttentionItem {
   sessionId: string;
@@ -216,7 +217,10 @@ interface TrayAttentionSource {
   pendingBySession: ComputedRef<Record<string, { approvals: number; questions: number }>>;
   /** False until the client's first load() settles (see useWorkspaceState). */
   initialized: Ref<boolean>;
-  selectSession: (sessionId: string) => Promise<void>;
+  selectSession: (
+    sessionId: string,
+    opts?: { source?: SessionCreatedSource },
+  ) => Promise<void>;
 }
 
 /** App.vue wiring: report the client's global attention state to the tray and
@@ -251,7 +255,7 @@ export function useTrayAttention(client: TrayAttentionSource): void {
   createTraySessionSelector(bridge, (sessionId) => {
     runWhenInitialized(client.initialized, () => {
       // Fire-and-forget: a failed/stale jump must never break the tray path.
-      void client.selectSession(sessionId).catch(() => {});
+      void client.selectSession(sessionId, { source: 'tray' }).catch(() => {});
     });
   });
   createTrayLocaleSync(bridge, i18n.global.locale);

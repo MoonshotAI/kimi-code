@@ -13,6 +13,10 @@ import { dirname, join } from 'node:path';
 
 import { app, dialog } from 'electron';
 
+// track.ts only contains the host event buffer and type-only imports. Renderer
+// IPC validation lives in a separate module so this bootstrap path stays tiny.
+import { trackDesktopEvent } from './track';
+
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 
 type Level = 'INFO' | 'WARN' | 'ERROR';
@@ -158,6 +162,12 @@ export function installCrashGuards(): void {
       return;
     }
     log.error('uncaughtException', error);
+    trackDesktopEvent('app_crashed', {
+      process: 'main',
+      kind: 'uncaught_exception',
+      error_name: error.name,
+      app_uptime_ms: Math.round(process.uptime() * 1000),
+    });
     surfaceUncaught(error);
   });
   process.on('unhandledRejection', (reason) => {
@@ -169,6 +179,12 @@ export function installCrashGuards(): void {
     // rejection to the fatal uncaught-exception path, so route genuinely
     // unexpected rejections through the same surfacing as exceptions.
     log.error('unhandledRejection', reason);
+    trackDesktopEvent('app_crashed', {
+      process: 'main',
+      kind: 'unhandled_rejection',
+      error_name: reason instanceof Error ? reason.name : undefined,
+      app_uptime_ms: Math.round(process.uptime() * 1000),
+    });
     surfaceUncaught(reason);
   });
 }

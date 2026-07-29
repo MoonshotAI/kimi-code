@@ -13,9 +13,24 @@ import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
+import { trackDesktopEvent } from './track';
+import type { StartupConnectResultEvent } from './telemetry-events';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
+let serverInitialization: Promise<DesktopServerHandle | null> | null = null;
+let serverCloseRequested = false;
+let serverClosePromise: Promise<void> | null = null;
+
+// Consecutive connect failures since the last success (or since launch);
+// reported as startup_connect_result.retry_count.
+let consecutiveConnectFailures = 0;
+
+/** Where a connect failure was raised: starting the embedded server, or
+    loading the renderer URL (external mode has no start stage). */
+type ConnectFailureStage = 'server_start' | 'load_url';
+
+type ConnectFailurePhase = NonNullable<StartupConnectResultEvent['failure_phase']>;
 
 // connect() calls are serialized through this queue: window (re)creation
 // (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
@@ -47,14 +62,45 @@ export function serverLogPath(): string {
   return join(resolveKimiHome(), 'server', 'server.log');
 }
 
-export function closeServerHandle(): void {
-  void serverHandle?.close();
-  serverHandle = null;
+export function closeServerHandle(): Promise<void> {
+  serverCloseRequested = true;
+  return (serverClosePromise ??= (async () => {
+    try {
+      await serverInitialization;
+    } catch {
+      // A failed start leaves no handle to close.
+    }
+    const handle = serverHandle;
+    serverHandle = null;
+    await handle?.close();
+  })());
+}
+
+// The quit barrier can only afford the telemetry flush (bounded at 3s by
+// telemetry.shutdown itself) — awaiting the full server close reintroduces
+// the quit hang that made the barrier fire-and-forget.
+export function shutdownServerTelemetry(): Promise<void> | null {
+  if (serverHandle !== null) return serverHandle.shutdownTelemetry();
+  // Server start still in flight (shell-env probe can take seconds): bound
+  // the wait so a quit during startup doesn't outlast the flush itself.
+  const initialization = serverInitialization;
+  if (initialization === null) return null;
+  return (async () => {
+    const handle = await Promise.race([
+      initialization,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 2_000);
+        timer.unref?.();
+      }),
+    ]);
+    await handle?.shutdownTelemetry();
+  })();
 }
 
 // --- connect flow -------------------------------------------------------------
 
 export function connect(win: BrowserWindow): Promise<void> {
+  if (serverCloseRequested) return serverClosePromise ?? Promise.resolve();
   const run = connectQueue.then(() => connectOnce(win));
   // A rejected run must not poison the queue: the menu's 重试连接 is exactly
   // a later call, and it has to run even after a failed attempt.
@@ -63,6 +109,8 @@ export function connect(win: BrowserWindow): Promise<void> {
 }
 
 async function connectOnce(win: BrowserWindow): Promise<void> {
+  if (serverCloseRequested) return;
+  let failureStage: ConnectFailureStage = 'load_url';
   try {
     let origin: string;
     let token: string | undefined;
@@ -84,31 +132,84 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       // closing it first would tear down perfectly good sessions on every
       // window (re)creation. A failed start leaves the handle null, so a
       // later retry comes back through here and starts fresh.
-      if (serverHandle === null) {
-        // The embedded server and every tool it spawns share this process's
-        // env; wait for the probe (warmed up in index.ts) to fill it first.
-        await startShellEnvProbe();
-        serverHandle = await startDesktopServer({
-          // No static fallback in HMR dev: the renderer comes from the Vite dev
-          // server, and desktop-dist may not exist (kap-server would refuse to
-          // start without index.html in it).
-          webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
-          identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
-          extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
-        });
-        log.info(`[kimi-desktop] connected to ${serverHandle.origin}`);
+      let activeHandle = serverHandle;
+      if (activeHandle === null) {
+        failureStage = 'server_start';
+        const initialization = (async (): Promise<DesktopServerHandle | null> => {
+          // The embedded server and every tool it spawns share this process's
+          // env; wait for the probe (warmed up in index.ts) to fill it first.
+          await startShellEnvProbe();
+          if (serverCloseRequested) return null;
+          const handle = await startDesktopServer({
+            // No static fallback in HMR dev: the renderer comes from the Vite dev
+            // server, and desktop-dist may not exist (kap-server would refuse to
+            // start without index.html in it).
+            webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
+            identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
+            extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
+          });
+          serverHandle = handle;
+          return handle;
+        })();
+        serverInitialization = initialization;
+        try {
+          const handle = await initialization;
+          if (handle === null || serverCloseRequested) return;
+          activeHandle = handle;
+        } finally {
+          if (serverInitialization === initialization) serverInitialization = null;
+        }
+        failureStage = 'load_url';
+        log.info(`[kimi-desktop] connected to ${activeHandle.origin}`);
       } else {
-        log.info(`[kimi-desktop] reusing embedded server ${serverHandle.origin}`);
+        log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
       }
-      ({ origin } = serverHandle);
+      ({ origin } = activeHandle);
     }
     if (!win.isDestroyed()) {
-      await win.loadURL(rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled()));
+      const url = rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled());
+      if (target.external) {
+        await win.loadURL(url);
+      } else {
+        const startedAt = Date.now();
+        try {
+          await win.loadURL(url);
+          trackDesktopEvent('embedded_renderer_load_result', {
+            ok: true,
+            duration_ms: Date.now() - startedAt,
+          });
+        } catch (error) {
+          trackDesktopEvent('embedded_renderer_load_result', {
+            ok: false,
+            duration_ms: Date.now() - startedAt,
+            error_class: error instanceof Error ? error.name : 'unknown',
+          });
+          throw error;
+        }
+      }
+      consecutiveConnectFailures = 0;
+      trackDesktopEvent('startup_connect_result', { ok: true });
     }
   } catch (error) {
+    consecutiveConnectFailures += 1;
     const message = error instanceof Error ? error.message : String(error);
+    // failure_phase heuristic: auth/timeout signals win over the stage
+    // default. Strip quoted spans and URLs first — external-mode URLs carry
+    // `#token=…`, which would make every external failure match auth.
+    const normalized = message.replace(/'[^']*'|"[^"]*"|https?:\/\/\S+/g, ' ').toLowerCase();
+    let failurePhase: ConnectFailurePhase = failureStage === 'server_start' ? 'spawn' : 'handshake';
+    if (/401|unauthorized|token/.test(normalized)) failurePhase = 'auth';
+    else if (/err_timed_out|timeout|etimedout/.test(normalized)) failurePhase = 'timeout';
+    else if (failureStage === 'server_start' && /eaddrinuse|port/.test(normalized)) failurePhase = 'port';
+    trackDesktopEvent('startup_connect_result', {
+      ok: false,
+      failure_phase: failurePhase,
+      retry_count: consecutiveConnectFailures,
+      error_class: error instanceof Error ? error.name : 'unknown',
+    });
     log.error(`[kimi-desktop] connect failed: ${message}`);
     if (!win.isDestroyed()) {
+      trackDesktopEvent('startup_failure_screen_shown', {});
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }
   }

@@ -11,6 +11,7 @@
 import { ref, shallowRef } from 'vue';
 import { logError } from '../lib/log';
 import { safeGetString, STORAGE_KEYS } from '../lib/storage';
+import { track } from '../lib/track';
 
 export type TraceSource = 'rest' | 'ws' | 'client';
 
@@ -522,6 +523,20 @@ export function traceKeyEvent(event: ExportTraceEvent, info?: ExportTraceMetadat
 let clientCaptureInstalled = false;
 let uninstallClientCapture: (() => void) | null = null;
 
+// renderer_error throttle: an exception loop (watcher, rAF) must not flood
+// the telemetry pipeline — one event per error class per minute.
+const RENDERER_ERROR_WINDOW_MS = 60_000;
+const rendererErrorLastSent = new Map<string, number>();
+
+function trackRendererError(errorClass: string): void {
+  const now = Date.now();
+  const last = rendererErrorLastSent.get(errorClass);
+  if (last !== undefined && now - last < RENDERER_ERROR_WINDOW_MS) return;
+  rendererErrorLastSent.set(errorClass, now);
+  // Class only — never the message/stack (user content can leak there).
+  track('renderer_error', { error_class: errorClass });
+}
+
 /** Wire up always-on window failures and debug-only console capture. */
 export function installClientErrorCapture(): () => void {
   if (clientCaptureInstalled) return () => uninstallClientCapture?.();
@@ -532,12 +547,14 @@ export function installClientErrorCapture(): () => void {
   try {
     if (typeof window !== 'undefined') {
       const onError = (e: ErrorEvent): void => {
+        const errorClass = e.error instanceof Error ? e.error.name : 'Error';
         traceKeyEvent('window:error', {
           status: 'failed',
-          errorName: e.error instanceof Error ? e.error.name : 'Error',
+          errorName: errorClass,
           line: e.lineno,
           col: e.colno,
         });
+        trackRendererError(errorClass);
         // Always-on, not debug-gated: an uncaught renderer failure is
         // otherwise invisible in packaged builds. Forwarded to the
         // main-process log file via the desktop bridge (no-op on web).
@@ -552,6 +569,7 @@ export function installClientErrorCapture(): () => void {
           status: 'failed',
           errorName: reason instanceof Error ? reason.name : typeof reason,
         });
+        trackRendererError(rejectionErrorClass(reason));
         logError(
           `[kimi-code] unhandled rejection: ${rejectionText(reason)}`,
           reason instanceof Error ? reason.stack : undefined,
@@ -621,6 +639,18 @@ export function rejectionText(reason: unknown): string {
     return String(reason);
   } catch {
     return '[unstringifiable reason]';
+  }
+}
+
+/** renderer_error's error_class for a rejection reason: the Error name, else
+    the constructor name (a bare string rejects as 'String', etc.). */
+function rejectionErrorClass(reason: unknown): string {
+  if (reason instanceof Error) return reason.name;
+  try {
+    const name = (reason as { constructor?: { name?: string } } | null)?.constructor?.name;
+    return typeof name === 'string' && name !== '' ? name : 'Unknown';
+  } catch {
+    return 'Unknown';
   }
 }
 

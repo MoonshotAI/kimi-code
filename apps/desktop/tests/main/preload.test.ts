@@ -64,6 +64,7 @@ const WHITELIST = [
   'showOpenDialog',
   'showSaveDialog',
   'showWindow',
+  'track',
 ];
 
 beforeEach(() => {
@@ -302,6 +303,15 @@ describe('kimiDesktop preload bridge', () => {
     exposed.log('info', '');
     exposed.log('info', 42 as unknown as string);
     expect(send).toHaveBeenCalledTimes(12);
+
+    // Telemetry: non-empty event names forward; empty ones are dropped.
+    exposed.track('action_invoked', { action: 'newSession', source: 'shortcut' });
+    expect(send).toHaveBeenCalledWith('kimi:track', 'action_invoked', {
+      action: 'newSession',
+      source: 'shortcut',
+    });
+    exposed.track('');
+    expect(send).toHaveBeenCalledTimes(13);
   });
 
   it('coerces the auto-download preference response to a boolean default', async () => {
