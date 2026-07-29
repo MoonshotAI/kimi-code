@@ -79,6 +79,10 @@ import {
   raceWithTimeout,
   requireConfiguredModel,
 } from '../run-prompt';
+import {
+  createTelemetryShutdownDeadline,
+  formatTelemetryShutdownWarning,
+} from '../telemetry-shutdown';
 import { createKimiCodeHostIdentity } from '../version';
 
 import { resolveOutputFormat } from '../options';
@@ -176,8 +180,17 @@ export async function runV2Print(
       try {
         await restorePermission();
       } finally {
+        const telemetryDeadline = createTelemetryShutdownDeadline(
+          CLI_SHUTDOWN_TIMEOUT_MS,
+          (error) => {
+            stderr.write(formatTelemetryShutdownWarning(error));
+          },
+        );
         if (telemetryService !== undefined) {
-          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+          const service = telemetryService;
+          await telemetryDeadline.run((remainingMs) =>
+            raceWithTimeout(service.shutdown(), remainingMs),
+          );
         }
         app.dispose();
       }

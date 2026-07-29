@@ -23,6 +23,7 @@ import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
+import { createTelemetryShutdownDeadline } from '../../telemetry-shutdown';
 import {
   createKimiCodeHostIdentity,
   getHostPackageRoot,
@@ -57,7 +58,7 @@ const WEB_ASSETS_DIR = 'dist-web';
 interface RoutedServer {
   readonly address: string;
   readonly logger: ServerLogger;
-  close(): Promise<void>;
+  close(options?: { readonly telemetryDeadlineMs?: number }): Promise<void>;
 }
 
 export interface WebCliOptions extends ServerCliOptions {
@@ -249,15 +250,23 @@ async function runServerInProcess(
     if (stopping) return;
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
-    try {
-      await running?.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-    } catch (error) {
-      running?.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'server shutdown error',
-      );
-    }
+    const telemetryDeadline = createTelemetryShutdownDeadline(
+      CLI_SHUTDOWN_TIMEOUT_MS,
+      (error) => {
+        running?.logger.error(
+          { err: error instanceof Error ? error : new Error(String(error)) },
+          'telemetry shutdown error',
+        );
+      },
+    );
+    await telemetryDeadline.run(async () =>
+      running?.close({
+        telemetryDeadlineMs: telemetryDeadline.expiresAtMs,
+      }),
+    );
+    await telemetryDeadline.run((remainingMs) =>
+      shutdownTelemetry({ timeoutMs: remainingMs }),
+    );
     process.exit(0);
   }
 
@@ -305,7 +314,7 @@ async function runServerInProcess(
   running = {
     address: `http://${v2.host}:${v2.port}`,
     logger,
-    close: () => v2.close(),
+    close: (closeOptions) => v2.close(closeOptions),
   };
 
   track('server_started', { daemon: false });
