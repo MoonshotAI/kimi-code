@@ -4,6 +4,8 @@
  * Request/response shapes of the v1 `/oauth/*` endpoints plus the managed
  * OAuth provider model-refresh response, defined as zod schemas so the
  * transports validate against the same contract the `IOAuthService` returns.
+ * New endpoints use the camelCase domain contract owned by the oauth
+ * package (re-exported below); legacy snake_case schemas stay local.
  */
 
 import { z } from 'zod';
@@ -160,51 +162,13 @@ export const managedUsageResultSchema = z.discriminatedUnion('kind', [
 export type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;
 
 // ---------------------------------------------------------------------------
-// Managed-account profile (`GET /v1/oauth/userinfo`) — mirrors the toolkit's
-// `AuthManagedUserInfoResult` (camelCase domain model → snake_case wire DTO).
+// Managed-account profile (`GET /v1/oauth/userinfo`) — camelCase domain
+// contract owned by `@moonshot-ai/kimi-code-oauth` (its zod schemas are the
+// single source of truth); re-exported here so transports keep one import
+// path. Legacy snake_case endpoints keep their local schemas above.
 // ---------------------------------------------------------------------------
 
-export const managedUserInfoPhoneSchema = z.object({
-  country_code: z.string(),
-  number: z.string(),
-});
-export type ManagedUserInfoPhone = z.infer<typeof managedUserInfoPhoneSchema>;
-
-export const managedUserInfoSchema = z.object({
-  user_id: z.string(),
-  nickname: z.string(),
-  status: z.string(),
-  region: z.string(),
-  user_level: z.number().int(),
-  user_level_name: z.string(),
-  domain: z.number().int(),
-  domain_name: z.string(),
-  global_id: z.string().optional(),
-  bio: z.string().optional(),
-  avatar: z.string().optional(),
-  username: z.string().optional(),
-  email: z.string().optional(),
-  phone: managedUserInfoPhoneSchema.optional(),
-  created_time: z.string().optional(),
-  last_login_time: z.string().optional(),
-});
-export type ManagedUserInfo = z.infer<typeof managedUserInfoSchema>;
-
-export const managedUserInfoOkSchema = z.object({
-  kind: z.literal('ok'),
-  user_info: managedUserInfoSchema,
-});
-export type ManagedUserInfoOk = z.infer<typeof managedUserInfoOkSchema>;
-
-export const managedUserInfoErrorSchema = z.object({
-  kind: z.literal('error'),
-  message: z.string(),
-  status: z.number().int().optional(),
-});
-export type ManagedUserInfoError = z.infer<typeof managedUserInfoErrorSchema>;
-
-export const managedUserInfoResultSchema = z.discriminatedUnion('kind', [
-  managedUserInfoOkSchema,
-  managedUserInfoErrorSchema,
-]);
-export type ManagedUserInfoResult = z.infer<typeof managedUserInfoResultSchema>;
+export {
+  managedUserInfoResultSchema,
+  type ManagedUserInfoResult,
+} from '@moonshot-ai/kimi-code-oauth';

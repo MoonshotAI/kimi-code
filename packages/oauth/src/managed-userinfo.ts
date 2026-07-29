@@ -27,7 +27,14 @@
  * record, the timestamps RFC3339 strings passed through verbatim). The
  * parser normalizes the payload into a structured, camelCase domain
  * model; presentation is left to the consumer.
+ *
+ * The camelCase zod schemas below are the single source of truth for the
+ * domain model and double as the daemon REST wire contract: new daemon
+ * endpoints speak the camelCase domain shape directly, while legacy
+ * snake_case endpoints are unaffected.
  */
+
+import { z } from 'zod';
 
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
@@ -39,31 +46,50 @@ export function kimiCodeUserInfoUrl(): string {
   return `${kimiCodeBaseUrl()}/me`;
 }
 
-export interface ManagedUserInfoPhone {
-  readonly countryCode: string;
-  readonly number: string;
-}
+export const managedUserInfoPhoneSchema = z.object({
+  countryCode: z.string(),
+  number: z.string(),
+});
+export type ManagedUserInfoPhone = z.infer<typeof managedUserInfoPhoneSchema>;
 
-export interface ManagedUserInfo {
-  readonly userId: string;
-  readonly nickname: string;
-  readonly status: string;
-  readonly region: string;
-  readonly userLevel: number;
-  readonly userLevelName: string;
-  readonly domain: number;
-  readonly domainName: string;
-  readonly globalId?: string;
-  readonly bio?: string;
-  readonly avatar?: string;
-  readonly username?: string;
-  readonly email?: string;
-  readonly phone?: ManagedUserInfoPhone;
+export const managedUserInfoSchema = z.object({
+  userId: z.string(),
+  nickname: z.string(),
+  status: z.string(),
+  region: z.string(),
+  userLevel: z.number().int(),
+  userLevelName: z.string(),
+  domain: z.number().int(),
+  domainName: z.string(),
+  globalId: z.string().optional(),
+  bio: z.string().optional(),
+  avatar: z.string().optional(),
+  username: z.string().optional(),
+  email: z.string().optional(),
+  phone: managedUserInfoPhoneSchema.optional(),
   /** Backend RFC3339 timestamp, passed through verbatim. */
-  readonly createdTime?: string;
+  createdTime: z.string().optional(),
   /** Backend RFC3339 timestamp, passed through verbatim. */
-  readonly lastLoginTime?: string;
-}
+  lastLoginTime: z.string().optional(),
+});
+export type ManagedUserInfo = z.infer<typeof managedUserInfoSchema>;
+
+const managedUserInfoOkSchema = z.object({
+  kind: z.literal('ok'),
+  userInfo: managedUserInfoSchema,
+});
+
+const managedUserInfoErrorSchema = z.object({
+  kind: z.literal('error'),
+  message: z.string(),
+  status: z.number().int().optional(),
+});
+
+export const managedUserInfoResultSchema = z.discriminatedUnion('kind', [
+  managedUserInfoOkSchema,
+  managedUserInfoErrorSchema,
+]);
+export type ManagedUserInfoResult = z.infer<typeof managedUserInfoResultSchema>;
 
 /**
  * Lenient parse: anything that is not a record, or lacks a `user_id`

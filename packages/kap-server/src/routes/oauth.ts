@@ -20,7 +20,6 @@ import {
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
-  type ManagedUserInfoResult,
   type ManagedUsageResult,
   type UsageRow,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
@@ -191,7 +190,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const result = await core.accessor.get(IOAuthService).getManagedUserInfo(req.query.provider);
-      reply.send(okEnvelope(toWireUserInfo(result), req.id));
+      reply.send(okEnvelope(result, req.id));
     },
   );
   app.get(
@@ -242,37 +241,3 @@ function toWireUsageRow(row: DomainUsageRow): UsageRow {
     reset_at: row.resetAt,
   };
 }
-
-/** Domain (camelCase) → wire (snake_case) mapping for the profile payload. */
-function toWireUserInfo(result: ManagedUserInfoDomainResult): ManagedUserInfoResult {
-  if (result.kind === 'error') {
-    return { kind: 'error', message: result.message, status: result.status };
-  }
-  const userInfo = result.userInfo;
-  return {
-    kind: 'ok',
-    user_info: {
-      user_id: userInfo.userId,
-      nickname: userInfo.nickname,
-      status: userInfo.status,
-      region: userInfo.region,
-      user_level: userInfo.userLevel,
-      user_level_name: userInfo.userLevelName,
-      domain: userInfo.domain,
-      domain_name: userInfo.domainName,
-      global_id: userInfo.globalId,
-      bio: userInfo.bio,
-      avatar: userInfo.avatar,
-      username: userInfo.username,
-      email: userInfo.email,
-      phone:
-        userInfo.phone === undefined
-          ? undefined
-          : { country_code: userInfo.phone.countryCode, number: userInfo.phone.number },
-      created_time: userInfo.createdTime,
-      last_login_time: userInfo.lastLoginTime,
-    },
-  };
-}
-
-type ManagedUserInfoDomainResult = Awaited<ReturnType<IOAuthService['getManagedUserInfo']>>;

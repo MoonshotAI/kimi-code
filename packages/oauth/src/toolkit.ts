@@ -34,8 +34,7 @@ import {
 import {
   fetchManagedUserInfo,
   kimiCodeUserInfoUrl,
-  type FetchManagedUserInfoError,
-  type ManagedUserInfo,
+  type ManagedUserInfoResult,
 } from './managed-userinfo';
 import {
   fetchManagedUsage,
@@ -107,12 +106,7 @@ export type AuthManagedUsageResult =
     }
   | FetchManagedUsageError;
 
-export type AuthManagedUserInfoResult =
-  | {
-      readonly kind: 'ok';
-      readonly userInfo: ManagedUserInfo;
-    }
-  | FetchManagedUserInfoError;
+export type AuthManagedUserInfoResult = ManagedUserInfoResult;
 
 export class KimiOAuthToolkit<TConfig = unknown> {
   private readonly homeDir: string;

@@ -40,7 +40,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/proper-lockfile": "^4.1.4"

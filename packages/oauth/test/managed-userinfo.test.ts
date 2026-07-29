@@ -3,6 +3,8 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   fetchManagedUserInfo,
   kimiCodeUserInfoUrl,
+  managedUserInfoResultSchema,
+  managedUserInfoSchema,
   parseManagedUserInfoPayload,
 } from '../src/managed-userinfo';
 
@@ -296,5 +298,58 @@ describe('fetchManagedUserInfo', () => {
     const result = await fetchManagedUserInfo('https://api.example/me', 'access-token');
 
     expect(result).toEqual({ kind: 'error', message: 'Failed to fetch profile: socket hang up' });
+  });
+});
+
+describe('managedUserInfoResultSchema', () => {
+  const fullUserInfo = {
+    userId: 'u_123',
+    nickname: 'moonwalker',
+    status: 'USER_STATUS_NORMAL',
+    region: 'REGION_CN',
+    userLevel: 30,
+    userLevelName: 'Vivace',
+    domain: 1,
+    domainName: 'DOMAIN_EXAMPLE',
+    globalId: 'u_123',
+    avatar: 'https://example.com/avatar.png',
+    username: 'moonwalker2333',
+    email: 'user@example.com',
+    phone: { countryCode: '86', number: '176****0000' },
+    createdTime: '2026-06-11T13:26:47.561184Z',
+    lastLoginTime: '2026-07-16T03:12:03.033412Z',
+  };
+
+  it('accepts a full camelCase domain payload', () => {
+    expect(managedUserInfoResultSchema.parse({ kind: 'ok', userInfo: fullUserInfo })).toEqual({
+      kind: 'ok',
+      userInfo: fullUserInfo,
+    });
+    expect(
+      managedUserInfoResultSchema.parse({ kind: 'error', message: 'nope', status: 401 }),
+    ).toEqual({ kind: 'error', message: 'nope', status: 401 });
+  });
+
+  it('rejects a payload missing a required field', () => {
+    expect(() =>
+      managedUserInfoSchema.parse({
+        userId: 'u_123',
+        nickname: 'moonwalker',
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        userLevelName: 'Vivace',
+        domain: 1,
+        domainName: 'DOMAIN_EXAMPLE',
+      }),
+    ).toThrow();
+  });
+
+  it('strips unknown keys by default', () => {
+    const parsed = managedUserInfoSchema.parse({
+      ...fullUserInfo,
+      unexpected_key: 'drop me',
+    });
+    expect(parsed).not.toHaveProperty('unexpected_key');
+    expect(parsed).toEqual(fullUserInfo);
   });
 });

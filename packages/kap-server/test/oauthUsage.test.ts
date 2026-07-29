@@ -217,7 +217,7 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
     return managedUserInfoResultSchema.parse(body.data);
   }
 
-  it('maps the ok profile payload to the snake_case wire shape', async () => {
+  it('returns the ok profile payload in the camelCase domain shape', async () => {
     const getManagedUserInfo = vi.fn(async () => ({
       kind: 'ok' as const,
       userInfo: {
@@ -242,22 +242,22 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
 
     expect(await getUserInfo()).toEqual({
       kind: 'ok',
-      user_info: {
-        user_id: 'u_123',
+      userInfo: {
+        userId: 'u_123',
         nickname: 'moonwalker',
         status: 'USER_STATUS_NORMAL',
         region: 'REGION_CN',
-        user_level: 30,
-        user_level_name: 'Vivace',
+        userLevel: 30,
+        userLevelName: 'Vivace',
         domain: 1,
-        domain_name: 'DOMAIN_EXAMPLE',
-        global_id: 'u_123',
+        domainName: 'DOMAIN_EXAMPLE',
+        globalId: 'u_123',
         avatar: 'https://example.com/avatar.png',
         username: 'moonwalker2333',
         email: 'user@example.com',
-        phone: { country_code: '86', number: '176****0000' },
-        created_time: '2026-06-11T13:26:47.561184Z',
-        last_login_time: '2026-07-16T03:12:03.033412Z',
+        phone: { countryCode: '86', number: '176****0000' },
+        createdTime: '2026-06-11T13:26:47.561184Z',
+        lastLoginTime: '2026-07-16T03:12:03.033412Z',
       },
     });
   });
