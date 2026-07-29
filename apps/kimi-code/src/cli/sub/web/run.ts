@@ -16,7 +16,7 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -280,8 +280,13 @@ async function runServerInProcess(
     serverVersion: version,
     // The CLI's host identity: feeds the engine's bootstrap client identity
     // and the derived outbound headers (User-Agent + X-Msh-*), so web-UI
-    // OAuth flows and model / WebSearch requests carry the CLI identity.
-    hostIdentity: createKimiCodeHostIdentity(version),
+    // OAuth flows and model / WebSearch requests carry the CLI identity. The
+    // `web` User-Agent suffix distinguishes web-UI traffic from direct CLI
+    // runs upstream (same product token, same platform).
+    hostIdentity: {
+      ...createKimiCodeHostIdentity(version),
+      userAgentSuffix: WEB_USER_AGENT_SUFFIX,
+    },
     logLevel: options.logLevel,
     logger,
     debugEndpoints: options.debugEndpoints,
