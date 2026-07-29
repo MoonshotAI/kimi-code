@@ -35,8 +35,10 @@
  * untouched — restore never re-renders the prompt. `refreshSystemPrompt`
  * (driven by the Session tool-policy fan-out, the `[tools]` config watcher,
  * and `sessionPluginContribution` after plugin changes converge) re-renders
- * from the pinned in-memory profile while the Agent lives; once the process
- * restarted, the profile is re-resolved from the Session catalog by name and
+ * from the pinned in-memory profile while the Agent lives — a fork pins its
+ * source Agent's profile object at fork time — while a genuinely cold
+ * binding (a restore, or a fork of one) re-resolves the profile from the
+ * Session catalog by name on the first refresh and rebinds
  * the whole slice (prompt / `disallowedTools` / active tools, but not the
  * bind-time `subagents`, which `config.update` cannot carry) is rebound
  * atomically, with a warning and no change when the name is gone. Renders
@@ -340,8 +342,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
-  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
-    this.activeProfile = undefined;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot, profile?: ResolvedAgentProfile): void {
+    this.activeProfile = profile;
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(
       profileBind({
@@ -563,6 +565,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   getAgentsMdWarning(): string | undefined {
     return this.agentsMdWarning;
+  }
+
+  getPinnedProfile(): ResolvedAgentProfile | undefined {
+    return this.activeProfile;
   }
 
   data(): ProfileData {

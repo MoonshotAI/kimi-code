@@ -123,7 +123,7 @@ export interface IAgentProfileService {
 
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
-  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot, profile?: ResolvedAgentProfile): void;
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
@@ -132,6 +132,7 @@ export interface IAgentProfileService {
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
   refreshSystemPrompt(): Promise<void>;
   getAgentsMdWarning(): string | undefined;
+  getPinnedProfile(): ResolvedAgentProfile | undefined;
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;

@@ -258,6 +258,25 @@ describe('AgentProfileService.applyProfile', () => {
     converge.dispose();
   });
 
+  it('anchors the rendered timestamp at the first render and reuses it across refreshes', async () => {
+    const nowProfile: ResolvedAgentProfile = {
+      name: 'now-profile',
+      systemPrompt: (context) => `now:${context.now ?? ''}`,
+      tools: [],
+    };
+    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const { profile: svc } = buildContext(pluginConvergenceService(converge));
+    await svc.applyProfile(nowProfile);
+    const first = svc.data().systemPrompt;
+
+    await converge.fireAsync({}, new AbortController().signal);
+    await converge.fireAsync({}, new AbortController().signal);
+
+    expect(first).toMatch(/^now:\d{4}-\d{2}-\d{2}T/);
+    expect(svc.data().systemPrompt).toBe(first);
+    converge.dispose();
+  });
+
   it('keeps the persisted binding and warns when the bound profile no longer exists', async () => {
     const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
     const { ctx: context, profile: svc } = buildContext(

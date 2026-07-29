@@ -239,7 +239,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
 
-    const sourceData = source.accessor.get(IAgentProfileService).data();
+    const sourceProfile = source.accessor.get(IAgentProfileService);
+    const sourceData = sourceProfile.data();
     const childProfile = child.accessor.get(IAgentProfileService);
     const override = opts?.binding;
     if (override?.profile !== undefined) {
@@ -250,7 +251,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         cwd: override?.cwd ?? sourceData.cwd,
       });
     } else {
-      childProfile.applyBindingSnapshot(sourceData);
+      childProfile.applyBindingSnapshot(sourceData, sourceProfile.getPinnedProfile());
       if (override?.model !== undefined) await childProfile.setModel(override.model);
       if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
       if (override?.cwd !== undefined) childProfile.update({ cwd: override.cwd });

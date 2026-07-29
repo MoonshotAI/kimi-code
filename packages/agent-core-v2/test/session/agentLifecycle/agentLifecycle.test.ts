@@ -43,6 +43,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -837,6 +838,73 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
+  });
+
+  it('fork pins the source profile so refresh triggers never rebind its tool set', async () => {
+    const catalogProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: () => 'catalog prompt',
+    };
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None,
+      get: (name: string) => (name === 'dev' ? catalogProfile : undefined),
+      getDefault: () => catalogProfile,
+      list: () => [catalogProfile],
+      load: () => Promise.resolve(),
+      reload: () => Promise.resolve(),
+    } as unknown as ISessionAgentProfileCatalog);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/tmp/kimi-agentLifecycle-home',
+      ready: Promise.resolve(),
+    });
+    ix.stub(IHostIdentity, {
+      _serviceBrand: undefined,
+      productName: 'Kimi Code CLI',
+      replyStyleGuide: 'Reply clearly.',
+    });
+    ix.stub(IHostFileSystem, {
+      _serviceBrand: undefined,
+      stat: async () => { throw new Error('not found'); },
+      lstat: async () => { throw new Error('not found'); },
+      readdir: async () => [],
+    } as unknown as IHostFileSystem);
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const pinnedProfile = {
+      name: 'dev',
+      tools: ['Read'],
+      systemPrompt: () => 'pinned prompt',
+    };
+    source.accessor.get(IAgentProfileService).applyBindingSnapshot(
+      {
+        cwd: '/work',
+        profileName: 'dev',
+        thinkingLevel: 'off',
+        systemPrompt: 'inherited prompt',
+        activeToolNames: ['Read', 'custom-tool'],
+        disallowedTools: [],
+      },
+      pinnedProfile,
+    );
+
+    const child = await svc.fork('main', { agentId: 'forked' });
+    const childProfile = child.accessor.get(IAgentProfileService);
+    expect(childProfile.getPinnedProfile()).toBe(pinnedProfile);
+
+    await childProfile.refreshSystemPrompt();
+
+    expect(childProfile.getActiveToolNames()).toEqual(['Read', 'custom-tool']);
+    expect(childProfile.getSystemPrompt()).toBe('pinned prompt');
   });
 
   it('run throws when the agent does not exist', () => {
