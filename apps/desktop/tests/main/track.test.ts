@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { asRendererTrackEvent } from '../../src/main/renderer-track-validation';
-import { setDesktopTrackImpl, trackDesktopEvent } from '../../src/main/track';
+import {
+  getRuntimeLocale,
+  setDesktopTrackImpl,
+  setRuntimeLocale,
+  trackDesktopEvent,
+} from '../../src/main/track';
 
 beforeEach(() => {
   setDesktopTrackImpl(null);
@@ -75,6 +80,16 @@ describe('trackDesktopEvent', () => {
       'startup_timing',
       { phase: 'main_ready', duration_ms: 10 },
     ]);
+  });
+});
+
+describe('runtime locale', () => {
+  it('stores the pushed locale, defaulting to undefined', () => {
+    expect(getRuntimeLocale()).toBeUndefined();
+    setRuntimeLocale('zh');
+    expect(getRuntimeLocale()).toBe('zh');
+    setRuntimeLocale(undefined);
+    expect(getRuntimeLocale()).toBeUndefined();
   });
 });
 

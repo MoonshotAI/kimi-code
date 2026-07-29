@@ -38,13 +38,11 @@ import {
   resetDaysSinceInstallCacheForTests,
   wireDesktopTelemetry,
 } from '../../src/main/telemetry';
-import { setDesktopTrackImpl, trackDesktopEvent } from '../../src/main/track';
 import {
-  getRuntimeLocale,
-  getServerMode,
+  setDesktopTrackImpl,
   setRuntimeLocale,
-  setServerMode,
-} from '../../src/main/runtime-context';
+  trackDesktopEvent,
+} from '../../src/main/track';
 
 const EXISTING_DEVICE = { deviceId: 'device-1', firstLaunch: false } as const;
 
@@ -272,7 +270,6 @@ describe('super properties injection', () => {
   beforeEach(async () => {
     createCloudAppenderMock.mockReset();
     nativeThemeMock.shouldUseDarkColors = false;
-    setServerMode(undefined);
     setRuntimeLocale(undefined);
     resetDaysSinceInstallCacheForTests();
     homeDir = await mkdtemp(join(tmpdir(), 'kimi-telemetry-'));
@@ -281,7 +278,6 @@ describe('super properties injection', () => {
 
   afterEach(() => {
     setDesktopTrackImpl(null);
-    setServerMode(undefined);
     setRuntimeLocale(undefined);
     vi.unstubAllEnvs();
   });
@@ -295,7 +291,6 @@ describe('super properties injection', () => {
     await writeFile(join(homeDir, 'device_id'), 'device-1');
     wiredTrack();
     const { core, telemetryService } = makeCore(undefined);
-    setServerMode('embedded');
     setRuntimeLocale('zh');
 
     const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
@@ -304,7 +299,6 @@ describe('super properties injection', () => {
     trackDesktopEvent('window_lifecycle', { action: 'shown' });
     expect(telemetryService.track).toHaveBeenCalledWith('window_lifecycle', {
       action: 'shown',
-      server_mode: 'embedded',
       locale: 'zh',
       theme: 'light',
       days_since_install: 0,
@@ -322,8 +316,8 @@ describe('super properties injection', () => {
   });
 
   it('omits context values that are unset or unreadable', async () => {
-    // No device_id file in homeDir → days_since_install is dropped; server_mode
-    // and locale stay unset.
+    // No device_id file in homeDir → days_since_install is dropped; locale
+    // stays unset.
     wiredTrack();
     const { core, telemetryService } = makeCore(undefined);
 
@@ -332,7 +326,6 @@ describe('super properties injection', () => {
 
     trackDesktopEvent('global_shortcut_invoked', {});
     const properties = telemetryService.track.mock.calls.at(-1)?.[1] as Record<string, unknown>;
-    expect(properties['server_mode']).toBeUndefined();
     expect(properties['locale']).toBeUndefined();
     expect(properties['days_since_install']).toBeUndefined();
     expect(properties['app_uptime_ms']).toEqual(expect.any(Number));
@@ -347,30 +340,14 @@ describe('super properties injection', () => {
     nativeThemeMock.shouldUseDarkColors = true;
 
     const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
-    setServerMode('external');
     setRuntimeLocale('en');
 
     trackDesktopEvent('global_shortcut_invoked', {});
     expect(telemetryService.track).toHaveBeenCalledWith(
       'global_shortcut_invoked',
-      expect.objectContaining({ server_mode: 'external', locale: 'en', theme: 'dark' }),
+      expect.objectContaining({ locale: 'en', theme: 'dark' }),
     );
 
     await handle!.shutdown();
-  });
-});
-
-describe('runtime-context', () => {
-  it('stores server_mode and locale, defaulting to undefined', () => {
-    expect(getServerMode()).toBeUndefined();
-    expect(getRuntimeLocale()).toBeUndefined();
-    setServerMode('embedded');
-    setRuntimeLocale('zh');
-    expect(getServerMode()).toBe('embedded');
-    expect(getRuntimeLocale()).toBe('zh');
-    setServerMode(undefined);
-    setRuntimeLocale(undefined);
-    expect(getServerMode()).toBeUndefined();
-    expect(getRuntimeLocale()).toBeUndefined();
   });
 });

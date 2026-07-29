@@ -413,19 +413,6 @@ describe('startup_connect_result', () => {
       expect.anything(),
     );
   });
-
-  it('records the server mode in the runtime context', async () => {
-    const { connect } = await importConnect();
-    const { getServerMode } = await import('../../src/main/runtime-context');
-    mocks.startDesktopServer.mockResolvedValue(fakeHandle());
-
-    await connect(fakeWindow() as unknown as BrowserWindow);
-    expect(getServerMode()).toBe('embedded');
-
-    process.env['KIMI_SERVER_URL'] = 'http://127.0.0.1:58627';
-    await connect(fakeWindow() as unknown as BrowserWindow);
-    expect(getServerMode()).toBe('external');
-  });
 });
 
 describe('classifyConnectFailure', () => {

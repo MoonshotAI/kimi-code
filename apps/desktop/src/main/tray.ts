@@ -3,8 +3,7 @@ import { join } from 'node:path';
 import { app, Menu, nativeImage, Tray } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
-import { trackDesktopEvent } from './track';
-import { setRuntimeLocale } from './runtime-context';
+import { setRuntimeLocale, trackDesktopEvent } from './track';
 import { setTaskbarAttention } from './taskbar';
 
 // System tray (macOS menu-bar / Windows notification area). Desktop-only — the

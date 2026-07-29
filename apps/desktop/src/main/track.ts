@@ -1,6 +1,8 @@
 // Host telemetry facade. Events fired before embedded telemetry is wired (app
 // launch, startup phases) are buffered and replayed once wiring completes;
 // without an impl the buffer is the only place they exist, so it stays small.
+// Also holds the runtime locale (renderer-pushed via tray.ts) that
+// telemetry.ts merges into every event as the `locale` super property.
 
 import type { TelemetryProperties } from '@moonshot-ai/agent-core-v2';
 
@@ -43,4 +45,14 @@ export function trackDesktopEvent<K extends DesktopEventName>(
     return;
   }
   impl(event, props);
+}
+
+let locale: string | undefined;
+
+export function setRuntimeLocale(next: string | undefined): void {
+  locale = next;
+}
+
+export function getRuntimeLocale(): string | undefined {
+  return locale;
 }

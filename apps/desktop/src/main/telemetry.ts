@@ -16,9 +16,8 @@ import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
-import { getRuntimeLocale, getServerMode } from './runtime-context';
 import { startDesktopSystemMetrics, stopDesktopSystemMetrics } from './system-metrics';
-import { setDesktopTrackImpl } from './track';
+import { getRuntimeLocale, setDesktopTrackImpl } from './track';
 
 export interface DesktopTelemetryHandle {
   /** Emits `exit`, flushes the buffer, stops periodic flush. Idempotent. */
@@ -82,8 +81,6 @@ function withSuperProperties(properties: TelemetryProperties | undefined): Telem
     app_uptime_ms: Math.round(process.uptime() * 1000),
     theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
   };
-  const serverMode = getServerMode();
-  if (serverMode !== undefined) injected['server_mode'] = serverMode;
   const daysSinceInstall = readDaysSinceInstall();
   if (daysSinceInstall !== undefined) injected['days_since_install'] = daysSinceInstall;
   const locale = getRuntimeLocale();

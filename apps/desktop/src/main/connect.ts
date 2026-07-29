@@ -13,7 +13,6 @@ import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
-import { setServerMode } from './runtime-context';
 import { trackDesktopEvent } from './track';
 import type { StartupConnectResultEvent } from './telemetry-events';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
@@ -136,7 +135,6 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     // builds always use `app://renderer`.
     const devBase = app.isPackaged ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
     const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
-    setServerMode(target.external ? 'external' : 'embedded');
     if (target.external) {
       ({ origin, token } = target);
       // Redact: KIMI_SERVER_URL may carry basic-auth userinfo, which must not
