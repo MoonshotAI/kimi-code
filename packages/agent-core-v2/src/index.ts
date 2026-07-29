@@ -317,6 +317,7 @@ export * from '#/session/agentLifecycle/agentLifecycleService';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcp';
 export * from '#/session/mcp/sessionMcpService';
+export * from '#/session/mcp/mcpChannelFlag';
 export * from '#/session/mcp/sessionMcpChannelBridge';
 export * from '#/session/mcp/sessionMcpChannelBridgeImpl';
 export * from '#/session/subagent/subagent';
