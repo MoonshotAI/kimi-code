@@ -228,14 +228,13 @@ export interface GlobalFacade {
 // tie every contract schema to its engine type.
 // ---------------------------------------------------------------------------
 
-const ENV_PROPERTIES = [
+const ENV_SCALAR_PROPERTIES = [
   'platform',
   'arch',
   'cwd',
   'osHomeDir',
   'homeDir',
   'configPath',
-  'clientVersion',
   'sessionsDir',
   'blobsDir',
   'storeDir',
@@ -251,14 +250,18 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
   // env() result can never change — resolve it once and reuse the promise.
   let envPromise: Promise<KlientEnvInfo> | undefined;
   const env = (): Promise<KlientEnvInfo> => {
-    envPromise ??= Promise.all(
-      ENV_PROPERTIES.map((prop) => call('bootstrapService', prop, []) as Promise<string>),
-    ).then(
-      (values) =>
-        Object.fromEntries(
-          ENV_PROPERTIES.map((prop, index) => [prop, values[index]]),
-        ) as unknown as KlientEnvInfo,
-    );
+    envPromise ??= Promise.all([
+      ...ENV_SCALAR_PROPERTIES.map((prop) => call('bootstrapService', prop, []) as Promise<string>),
+      // The wire surface keeps `clientVersion` (a string); it is sourced from
+      // the bootstrap clientIdentity, which replaced the flat scalar.
+      call('bootstrapService', 'clientIdentity', []) as Promise<{ version: string }>,
+    ]).then((values) => {
+      const scalars = Object.fromEntries(
+        ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
+      );
+      const identity = values[values.length - 1] as { version: string };
+      return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
+    });
     return envPromise;
   };
 
