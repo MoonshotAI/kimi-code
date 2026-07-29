@@ -54,6 +54,12 @@ export interface DeviceHeaders {
   readonly 'X-Msh-Device-Id': string;
 }
 
+/** Headers sent with OAuth HTTP requests: the `X-Msh-*` device set, plus a
+    product User-Agent when the caller carries a host identity — the OAuth
+    host needs both to tell client families (platform) and runtime surfaces
+    (UA suffix) apart. */
+export type OAuthRequestHeaders = Record<string, string>;
+
 /** JSON wire format for token persistence (snake_case, Python-compatible). */
 export interface TokenInfoWire {
   readonly access_token: string;
