@@ -18,6 +18,7 @@ import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
+import UsagePanel from './components/chat/UsagePanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
@@ -40,7 +41,7 @@ import { openDialogCount } from './composables/dialogStack';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
-import type { AppConfig, ThinkingLevel } from './api/types';
+import type { AppConfig, ManagedUsageResult, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
@@ -318,6 +319,10 @@ const showProviders = ref(false);
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
+const showUsagePanel = ref(false);
+const usagePanelLoading = ref(false);
+const usagePanelResult = ref<ManagedUsageResult | null>(null);
+const usagePanelError = ref<string | null>(null);
 const showSettings = ref(false);
 
 type SubmitPayload = {
@@ -342,6 +347,7 @@ const anyOverlayOpen = computed<boolean>(
     showLogin.value ||
     showAddWorkspace.value ||
     showStatusPanel.value ||
+    showUsagePanel.value ||
     showSettings.value ||
     showOnboarding.value ||
     showMobileSwitcher.value ||
@@ -497,6 +503,22 @@ async function handleEditMessage(payload: {
   conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
 }
 
+// `/usage` — open the usage panel and fetch fresh plan quotas from the daemon.
+// Session token/context data renders from client state (no extra call).
+async function openUsagePanel(): Promise<void> {
+  showUsagePanel.value = true;
+  usagePanelLoading.value = true;
+  usagePanelResult.value = null;
+  usagePanelError.value = null;
+  try {
+    usagePanelResult.value = await client.getManagedUsage();
+  } catch (err) {
+    usagePanelError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    usagePanelLoading.value = false;
+  }
+}
+
 // Handler for slash commands emitted by Composer (via ConversationPane)
 function handleCommand(cmd: string): void {
   // `/compact <text>` carries an optional free-text instruction steering what
@@ -568,6 +590,9 @@ function handleCommand(cmd: string): void {
       break;
     case '/status':
       showStatusPanel.value = true;
+      break;
+    case '/usage':
+      void openUsagePanel();
       break;
     case '/login':
       openLogin();
@@ -1041,6 +1066,17 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
       @close="showStatusPanel = false"
+    />
+
+    <!-- Usage panel overlay (/usage) — session usage from client state, plan -->
+    <!-- quotas fetched from the daemon each time the panel opens -->
+    <UsagePanel
+      v-if="showUsagePanel"
+      :usage="client.sessionUsage.value"
+      :managed="usagePanelResult"
+      :managed-error="usagePanelError"
+      :loading="usagePanelLoading"
+      @close="showUsagePanel = false"
     />
 
     <!-- Add Workspace overlay (daemon folder browser + paste-path fallback) -->

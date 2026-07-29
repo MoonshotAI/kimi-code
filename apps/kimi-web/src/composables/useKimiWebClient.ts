@@ -65,6 +65,7 @@ import type {
   AppQuestionRequest,
   AppSession,
   AppSessionRuntimeStatus,
+  AppSessionUsage,
   AppSkill,
   AppTask,
   AppWarning,
@@ -72,6 +73,7 @@ import type {
   ApprovalDecision,
   KimiEventConnection,
   KimiEventMeta,
+  ManagedUsageResult,
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
@@ -2260,6 +2262,17 @@ const sessionCost = computed<number>(() => {
   return activeSession?.usage.totalCostUsd ?? 0;
 });
 
+/** Cumulative token/context usage for the active session (from daemon usage). */
+const sessionUsage = computed<AppSessionUsage | null>(() => {
+  const activeSession = rawState.sessions.find((s) => s.id === rawState.activeSessionId);
+  return activeSession?.usage ?? null;
+});
+
+/** Managed-account plan usage for the `/usage` panel — always a fresh daemon call. */
+function getManagedUsage(): Promise<ManagedUsageResult> {
+  return getKimiWebApi().getManagedUsage();
+}
+
 const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
@@ -2782,6 +2795,8 @@ export function useKimiWebClient() {
     compaction,
     status,
     sessionCost,
+    sessionUsage,
+    getManagedUsage,
     fileDiff,
     selectedDiffPath,
     fileDiffLoading,

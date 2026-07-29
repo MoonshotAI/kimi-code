@@ -482,6 +482,39 @@ export interface WireLogoutResult {
   logged_out: boolean;
 }
 
+// `GET /oauth/usage` — managed-account plan usage (limits + booster wallet).
+// Mirrors `managedUsageResultSchema` in agent-core-v2's oauthProtocol.
+export interface WireUsageWindow {
+  duration: number;
+  unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
+export interface WireUsageRow {
+  name?: string;
+  window?: WireUsageWindow;
+  used: number;
+  limit: number;
+  reset_at?: string;
+}
+
+export interface WireBoosterWallet {
+  balance_cents: number;
+  total_cents: number;
+  monthly_charge_limit_enabled: boolean;
+  monthly_charge_limit_cents: number;
+  monthly_used_cents: number;
+  currency: string;
+}
+
+export type WireManagedUsageResult =
+  | {
+      kind: 'ok';
+      summary: WireUsageRow | null;
+      limits: WireUsageRow[];
+      extra_usage: WireBoosterWallet | null;
+    }
+  | { kind: 'error'; message: string; status?: number };
+
 // ---------------------------------------------------------------------------
 // File upload wire DTOs
 // ---------------------------------------------------------------------------

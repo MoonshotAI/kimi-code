@@ -801,6 +801,8 @@ export interface KimiWebApi {
   } | null>;
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
+  /** Managed-account plan usage (limits + Extra Usage wallet) for `/usage`. */
+  getManagedUsage(): Promise<ManagedUsageResult>;
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
@@ -821,3 +823,38 @@ export type OAuthLoginStartResult =
       provider: string;
       status: 'authenticated';
     };
+
+// ---------------------------------------------------------------------------
+// Managed-account usage (`getManagedUsage()` → `GET /api/v1/oauth/usage`)
+// ---------------------------------------------------------------------------
+
+export interface ManagedUsageWindow {
+  duration: number;
+  unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
+export interface ManagedUsageRow {
+  name?: string;
+  window?: ManagedUsageWindow;
+  used: number;
+  limit: number;
+  resetAt?: string;
+}
+
+export interface BoosterWalletInfo {
+  balanceCents: number;
+  totalCents: number;
+  monthlyChargeLimitEnabled: boolean;
+  monthlyChargeLimitCents: number;
+  monthlyUsedCents: number;
+  currency: string;
+}
+
+export type ManagedUsageResult =
+  | {
+      kind: 'ok';
+      summary: ManagedUsageRow | null;
+      limits: ManagedUsageRow[];
+      extraUsage: BoosterWalletInfo | null;
+    }
+  | { kind: 'error'; message: string; status?: number };

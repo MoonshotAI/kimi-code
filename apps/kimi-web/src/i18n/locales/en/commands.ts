@@ -16,5 +16,6 @@ export default {
     noSession: 'Open a session before exporting it.',
   },
   status: { desc: 'View session status' },
+  usage: { desc: 'View session tokens, context window and plan quotas' },
   undo: { desc: 'Undo the last message' },
 } as const;
