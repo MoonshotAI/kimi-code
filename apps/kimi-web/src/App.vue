@@ -505,17 +505,25 @@ async function handleEditMessage(payload: {
 
 // `/usage` — open the usage panel and fetch fresh plan quotas from the daemon.
 // Session token/context data renders from client state (no extra call).
+let usagePanelFetchId = 0;
 async function openUsagePanel(): Promise<void> {
+  // Guard against a stale response: reopening the panel supersedes the previous
+  // fetch, so a slow earlier request must not overwrite the newer result, error,
+  // or loading state when it finally settles.
+  const fetchId = ++usagePanelFetchId;
   showUsagePanel.value = true;
   usagePanelLoading.value = true;
   usagePanelResult.value = null;
   usagePanelError.value = null;
   try {
-    usagePanelResult.value = await client.getManagedUsage();
+    const result = await client.getManagedUsage();
+    if (fetchId !== usagePanelFetchId) return;
+    usagePanelResult.value = result;
   } catch (err) {
+    if (fetchId !== usagePanelFetchId) return;
     usagePanelError.value = err instanceof Error ? err.message : String(err);
   } finally {
-    usagePanelLoading.value = false;
+    if (fetchId === usagePanelFetchId) usagePanelLoading.value = false;
   }
 }
 
