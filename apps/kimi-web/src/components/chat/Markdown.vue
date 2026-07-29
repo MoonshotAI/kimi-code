@@ -672,6 +672,16 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-block-content pre:not(.shiki) code) {
   color: var(--color-text);
 }
+/* markstream-vue 1.0.7's scoped fallback rule does not match the generated
+   <pre> element, so line-numbered fallback blocks do not reserve space for the
+   gutter. Keep this limited to the fallback renderer; Shiki already applies
+   the same padding to its code element. */
+.md :deep(pre.markstream-pre--line-numbers.code-pre-fallback > .markstream-pre__code) {
+  box-sizing: border-box;
+  min-width: 100%;
+  padding-left: var(--markstream-code-padding-left, 52px);
+  padding-right: var(--markstream-code-padding-x, 12px);
+}
 
 /* Links — open in a new tab (markstream handles target/rel) */
 .md :deep(a) {
