@@ -2,7 +2,8 @@
  * Session-level agent profile catalog.
  *
  * Merges the builtin (code-embedded) profiles with the file-backed sources
- * (user / extra / project / explicit) by priority, requiring an explicit
+ * (plugin / user / extra / project / explicit) by priority, requiring an
+ * explicit
  * opt-in (`override: true`) before a file replaces a same-name builtin. The
  * merged view always contains the builtin profiles (seeded at construction);
  * file profiles appear once `ready` resolves. A failing `explicit` source (an
@@ -34,6 +35,7 @@ import { describeInactiveToolPattern, findInactiveToolPatterns } from './validat
 import {
   AgentProfileCatalogSnapshotSchema,
   type AgentFileDefinition,
+  type AgentFileRoot,
   type AgentFileSource,
   type AgentProfileCatalogSnapshot,
 } from './types';
@@ -48,10 +50,13 @@ export interface SessionAgentCatalogOptions {
   readonly osHomeDir: string;
   readonly extraDirs?: readonly string[];
   readonly explicitFiles?: readonly string[];
+  /** Agent directories contributed by enabled plugins (lowest file priority). */
+  readonly pluginRoots?: readonly AgentFileRoot[];
   readonly warn?: (message: string, error?: unknown) => void;
 }
 
 const SOURCE_PRIORITY: Readonly<Record<AgentFileSource, number>> = {
+  plugin: 5,
   user: 10,
   extra: 20,
   project: 30,
@@ -211,6 +216,15 @@ export class SessionAgentProfileCatalog {
     for (const roots of [userRoots, extraRoots, projectRoots]) {
       if (roots.length === 0) continue;
       const discovered = await discoverAgentFiles(roots, warn);
+      for (const definition of discovered.agents) {
+        this.warnInactivePatterns(definition);
+        entries.push(this.entryFromDefinition(definition, effectiveDefault));
+      }
+    }
+
+    const pluginRoots = this.options.pluginRoots ?? [];
+    if (pluginRoots.length > 0) {
+      const discovered = await discoverAgentFiles(pluginRoots, warn);
       for (const definition of discovered.agents) {
         this.warnInactivePatterns(definition);
         entries.push(this.entryFromDefinition(definition, effectiveDefault));

@@ -101,11 +101,19 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     return { manifestKind, manifestPath, shadowedManifestPath, diagnostics };
   }
 
-  let skills = await resolveSkillsField(pluginRoot, raw['skills'], diagnostics);
+  let skills = await resolveDirListField(pluginRoot, 'skills', raw['skills'], diagnostics);
   if (raw['skills'] === undefined) {
     const rootSkillMd = path.join(pluginRoot, 'SKILL.md');
     if (await isFile(rootSkillMd)) {
       skills = [pluginRoot];
+    }
+  }
+
+  let agents = await resolveDirListField(pluginRoot, 'agents', raw['agents'], diagnostics);
+  if (raw['agents'] === undefined) {
+    const agentsDir = path.join(pluginRoot, 'agents');
+    if (await isDir(agentsDir)) {
+      agents = [agentsDir];
     }
   }
 
@@ -123,6 +131,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     license: stringField(raw, 'license'),
     author: readAuthor(raw['author']),
     skills,
+    agents,
     sessionStart: readSessionStart(raw['sessionStart'], diagnostics),
     mcpServers: await readMcpServers(pluginRoot, raw['mcpServers'], diagnostics),
     hooks: readHooks(raw['hooks'], diagnostics),
@@ -147,8 +156,9 @@ function recordUnsupportedRuntimeFields(
   }
 }
 
-async function resolveSkillsField(
+async function resolveDirListField(
   pluginRoot: string,
+  field: string,
   raw: unknown,
   diagnostics: PluginDiagnostic[],
 ): Promise<readonly string[]> {
@@ -159,7 +169,7 @@ async function resolveSkillsField(
   } else if (Array.isArray(raw) && raw.every((entry) => typeof entry === 'string')) {
     entries.push(...raw);
   } else {
-    diagnostics.push({ severity: 'error', message: '"skills" must be a string or string[]' });
+    diagnostics.push({ severity: 'error', message: `"${field}" must be a string or string[]` });
     return [];
   }
 
@@ -168,7 +178,7 @@ async function resolveSkillsField(
     if (!entry.startsWith('./')) {
       diagnostics.push({
         severity: 'error',
-        message: `"skills" path must start with "./" (got "${entry}")`,
+        message: `"${field}" path must start with "./" (got "${entry}")`,
       });
       continue;
     }
@@ -183,14 +193,14 @@ async function resolveSkillsField(
     if (!isWithin(real, rootReal)) {
       diagnostics.push({
         severity: 'error',
-        message: `"skills" path resolves outside the plugin (${entry})`,
+        message: `"${field}" path resolves outside the plugin (${entry})`,
       });
       continue;
     }
     if (!(await isDir(real))) {
       diagnostics.push({
         severity: 'warn',
-        message: `"skills" path is not a directory (${entry})`,
+        message: `"${field}" path is not a directory (${entry})`,
       });
       continue;
     }

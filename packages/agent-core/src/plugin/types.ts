@@ -33,6 +33,7 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[]; // resolved absolute paths
+  readonly agents?: readonly string[]; // resolved absolute paths
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];

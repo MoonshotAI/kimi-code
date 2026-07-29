@@ -352,6 +352,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       osHomeDir: this.userHomeDir,
       extraDirs: config.extraAgentDirs,
       explicitFiles: options.agentFiles,
+      pluginRoots: this.plugins.pluginAgentRoots(),
       warn: (message, error) => {
         agentCatalogWarnings.push({ message, error });
       },

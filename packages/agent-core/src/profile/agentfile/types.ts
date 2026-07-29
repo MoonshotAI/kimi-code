@@ -11,7 +11,7 @@
 import type { AgentModelPreference } from '../types';
 import { z } from 'zod';
 
-export type AgentFileSource = 'project' | 'user' | 'extra' | 'explicit';
+export type AgentFileSource = 'plugin' | 'project' | 'user' | 'extra' | 'explicit';
 
 export interface AgentFileRoot {
   readonly path: string;

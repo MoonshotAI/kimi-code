@@ -9,7 +9,7 @@
 
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
-export type AgentFileSource = 'project' | 'user' | 'extra' | 'explicit';
+export type AgentFileSource = 'plugin' | 'project' | 'user' | 'extra' | 'explicit';
 
 export interface AgentFileRoot {
   readonly path: string;

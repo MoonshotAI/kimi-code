@@ -84,6 +84,7 @@ export const pluginManifestSchema = z.object({
   homepage: z.string().optional(),
   license: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  agents: z.array(z.string()).optional(),
   sessionStart: pluginSessionStartSchema.optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
   hooks: z.array(hookDefSchema).optional(),
