@@ -133,7 +133,7 @@ interface ContextAppendMessagePayload {
     }[];
     id?: string;
     providerMessageId?: string;
-    origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined;
+    origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'mcp_channel' | 'hook_result' | 'retry' | undefined;
     isError?: boolean;
     note?: string;
   };
@@ -581,7 +581,7 @@ interface TurnPromptPayload {
   _name: 'turn.prompt';
   input: readonly ContentPart[];
   /** PromptOrigin */
-  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'mcp_channel' | 'hook_result' | 'retry';
 }
 
 /**
@@ -592,7 +592,7 @@ interface TurnSteerPayload {
   _name: 'turn.steer';
   input: readonly ContentPart[];
   /** PromptOrigin */
-  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'mcp_channel' | 'hook_result' | 'retry';
 }
 
 /**
