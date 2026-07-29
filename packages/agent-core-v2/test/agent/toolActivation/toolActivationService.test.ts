@@ -1,3 +1,14 @@
+/**
+ * Scenario: Agent-tool contributions activate lazily under the bound Profile,
+ * while the progressive-disclosure gateway remains available unless the
+ * Profile explicitly denies it.
+ *
+ * Responsibility: verify activation through the observable runtime registry
+ * using the real activation and registry services with test-only tool
+ * contributions.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/toolActivation/toolActivationService.test.ts`.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -20,6 +31,7 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 
 class StubTool implements AgentTool {
@@ -35,6 +47,7 @@ class StubTool implements AgentTool {
 const IAlphaTool = createDecorator<AgentTool>('activationTestAlphaTool');
 const IBetaTool = createDecorator<AgentTool>('activationTestBetaTool');
 const IGammaTool = createDecorator<AgentTool>('activationTestGammaTool');
+const ISelectToolsTestTool = createDecorator<AgentTool>('activationTestSelectToolsTool');
 
 let alphaConstructions = 0;
 let betaConstructions = 0;
@@ -58,6 +71,12 @@ class GammaTool extends StubTool {
   constructor() {
     super('Gamma');
     gammaConstructions += 1;
+  }
+}
+
+class SelectToolsTestTool extends StubTool {
+  constructor() {
+    super(SELECT_TOOLS_TOOL_NAME);
   }
 }
 
@@ -85,6 +104,7 @@ describe('AgentToolActivationService', () => {
         reg.define(IAlphaTool, AlphaTool);
         reg.define(IBetaTool, BetaTool);
         reg.define(IGammaTool, GammaTool);
+        reg.define(ISelectToolsTestTool, SelectToolsTestTool);
       },
     });
   }
@@ -161,6 +181,33 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeUndefined();
     expect(betaConstructions).toBe(0);
+  });
+
+  it('implicitly activates select_tools when the profile allowlist omits it', async () => {
+    profileData.activeToolNames = ['Alpha'];
+    registerAgentToolService(ISelectToolsTestTool, SelectToolsTestTool, {
+      name: SELECT_TOOLS_TOOL_NAME,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve(SELECT_TOOLS_TOOL_NAME)).toBeInstanceOf(
+      SelectToolsTestTool,
+    );
+  });
+
+  it('honors profile disallowedTools for the implicit select_tools activation', async () => {
+    profileData.activeToolNames = ['Alpha'];
+    profileData.disallowedTools = [SELECT_TOOLS_TOOL_NAME];
+    registerAgentToolService(ISelectToolsTestTool, SelectToolsTestTool, {
+      name: SELECT_TOOLS_TOOL_NAME,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve(SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
   });
 
   it('skips contributions whose when predicate fails', async () => {

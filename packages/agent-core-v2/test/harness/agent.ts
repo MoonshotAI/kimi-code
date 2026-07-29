@@ -381,6 +381,7 @@ export interface TestAgentOptions {
   | Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>
   | undefined;
   readonly initialConfig?: Partial<KimiConfig> | undefined;
+  readonly initialActiveToolNames?: readonly string[] | undefined;
   readonly autoConfigure?: boolean | undefined;
   readonly cwd?: string | undefined;
   readonly [key: string]: unknown;
@@ -1253,6 +1254,11 @@ export class AgentTestContext {
         workspace.setWorkDir(nextCwd);
       },
     });
+    if (options.initialActiveToolNames !== undefined) {
+      this.get(IAgentProfileService).update({
+        activeToolNames: options.initialActiveToolNames,
+      });
+    }
 
     this.initializeRestorableServices();
     // Resolve the activity view so its constructor subscriptions publish
@@ -1336,10 +1342,6 @@ export class AgentTestContext {
     const permissionRules = this.get(IAgentPermissionRulesService);
     const cron = this.get(ISessionCronService);
     const plan = this.get(IAgentPlanService);
-    // Activate the AgentTool contributions before any profile allowlist is
-    // applied by `configure()` — at this point `activeToolNames` is still
-    // undefined, so every contribution whose `when` holds lands in the
-    // registry, matching the harness's historical all-tools behavior.
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
     this.get(IAgentExternalHooksService);
