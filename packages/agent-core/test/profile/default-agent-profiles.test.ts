@@ -102,6 +102,20 @@ describe('default agent profiles', () => {
     }
   });
 
+  it('renders the Plugin Instructions section only when plugin sections exist', () => {
+    const pluginSections = '<!-- From: plugin demo -->\nAlways cite sources.';
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
+      const prompt =
+        DEFAULT_AGENT_PROFILES[name]?.systemPrompt({ ...promptContext, pluginSections }) ?? '';
+      expect(prompt).toContain('# Plugin Instructions');
+      expect(prompt).toContain('<!-- From: plugin demo -->');
+      expect(prompt).toContain('Always cite sources.');
+    }
+
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(prompt).not.toContain('# Plugin Instructions');
+  });
+
   it('keeps optional-tool guidance out of the shared system prompt entirely', () => {
     // Tool-coupled guidance now lives in each tool's own description, which the schema
     // layer ships ONLY when the tool is registered — that is the availability gate, for

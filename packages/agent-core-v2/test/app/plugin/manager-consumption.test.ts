@@ -47,6 +47,7 @@ async function makePlugin(
     agents?: boolean;
     version?: string;
     sessionStartSkill?: string;
+    systemPrompt?: string;
     mcpServers?: Record<string, unknown>;
     hooks?: readonly unknown[];
     commands?: Record<string, string>;
@@ -81,6 +82,9 @@ async function makePlugin(
   }
   if (options.sessionStartSkill !== undefined) {
     manifest['sessionStart'] = { skill: options.sessionStartSkill };
+  }
+  if (options.systemPrompt !== undefined) {
+    manifest['systemPrompt'] = options.systemPrompt;
   }
   if (options.mcpServers !== undefined) {
     manifest['mcpServers'] = options.mcpServers;
@@ -437,6 +441,21 @@ describe('PluginManager consumption plane', () => {
     expect(manager.enabledSessionStarts()).toEqual([{ pluginId: 'demo', skillName: 'demo-skill' }]);
     await manager.setEnabled('demo', false);
     expect(manager.enabledSessionStarts()).toEqual([]);
+  });
+
+  it('enabledSystemPrompts() returns only enabled plugin systemPrompt declarations', async () => {
+    const home = await makeKimiHome();
+    const withPrompt = await makePlugin('prompted', { systemPrompt: 'Always cite sources.' });
+    const withoutPrompt = await makePlugin('plain', { skills: true });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(withPrompt);
+    await manager.install(withoutPrompt);
+    expect(manager.enabledSystemPrompts()).toEqual([
+      { pluginId: 'prompted', content: 'Always cite sources.' },
+    ]);
+    await manager.setEnabled('prompted', false);
+    expect(manager.enabledSystemPrompts()).toEqual([]);
   });
 
   it('setMcpServerEnabled() persists explicit MCP server state with cwd + env + runtime name', async () => {

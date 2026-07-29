@@ -1,7 +1,8 @@
 /**
  * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
  * and the AgentFileDefinition → AgentProfile factory (template substitution,
- * `${base_prompt}`, tool pass-through, explicit override intent).
+ * `${base_prompt}`, `${plugin_sections}`, tool pass-through, explicit override
+ * intent).
  * Pure-function level, no IO.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/app/agentFileCatalog/agentFile.test.ts`.
@@ -208,9 +209,13 @@ describe('agentProfileFromFile', () => {
   };
   const basePrompt = () => 'BASE_PROMPT';
 
-  it('returns a plain body verbatim and injects no context', () => {
+  it('returns a plain body verbatim and injects no unreferenced context', () => {
     const profile = agentProfileFromFile(base, basePrompt);
-    const prompt = profile.systemPrompt({ agentsMd: 'AGENTS_MD_CONTENT', skills: 'SKILLS_LISTING' });
+    const prompt = profile.systemPrompt({
+      agentsMd: 'AGENTS_MD_CONTENT',
+      skills: 'SKILLS_LISTING',
+      pluginSections: 'PLUGIN_INSTRUCTIONS',
+    });
 
     expect(prompt).toBe('PROMPT_BODY');
     expect(profile.tools).toBeUndefined();
@@ -257,6 +262,20 @@ describe('agentProfileFromFile', () => {
     );
 
     expect(profile.systemPrompt({})).toBe('extra instructions\n\nBASE_PROMPT');
+  });
+
+  it('places plugin instructions where ${plugin_sections} is referenced', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'before\n${plugin_sections}after' },
+      basePrompt,
+    );
+
+    const prompt = profile.systemPrompt({ pluginSections: 'PLUGIN_INSTRUCTIONS' });
+
+    expect(prompt).toContain('before');
+    expect(prompt).toContain('# Plugin Instructions');
+    expect(prompt).toContain('PLUGIN_INSTRUCTIONS');
+    expect(prompt).toContain('after');
   });
 
   it('passes tools and disallowedTools through', () => {

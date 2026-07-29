@@ -107,6 +107,65 @@ describe('Agent config', () => {
     expect(ctx.agent.config.systemPrompt).toBe('Prompt with additional dirs: none');
   });
 
+  it('useProfile injects enabled plugin system-prompt sections', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'plugin-profile',
+      systemPrompt: (context) => context.pluginSections ?? '',
+      tools: [],
+    };
+    ctx.agent.setPluginSystemPrompts([{ pluginId: 'demo', content: 'Always cite sources.' }]);
+
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toBe('<!-- From: plugin demo -->\nAlways cite sources.');
+
+    ctx.agent.setPluginSystemPrompts([]);
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toBe('');
+  });
+
+  it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'plugin-profile',
+      systemPrompt: (context) => context.pluginSections ?? '',
+      tools: [],
+    };
+    const large = 'x'.repeat(48 * 1024);
+    ctx.agent.setPluginSystemPrompts([
+      { pluginId: 'first', content: large },
+      { pluginId: 'second', content: large },
+    ]);
+
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toContain('<!-- From: plugin first -->');
+    expect(ctx.agent.config.systemPrompt).not.toContain('<!-- From: plugin second -->');
+    const budgetWarnings = (events: ReturnType<typeof ctx.newEvents>) =>
+      events.filter(
+        (entry) =>
+          (entry as { event?: string }).event === 'warning' &&
+          (entry as { args?: { code?: string } }).args?.code === 'plugin-sections-oversized',
+      );
+    expect(budgetWarnings(ctx.newEvents())).toHaveLength(1);
+
+    // A re-render applies the budget again but does not warn twice.
+    ctx.agent.setPluginSystemPrompts([
+      { pluginId: 'first', content: large },
+      { pluginId: 'second', content: large },
+      { pluginId: 'third', content: 'small' },
+    ]);
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toContain('<!-- From: plugin third -->');
+    expect(ctx.agent.config.systemPrompt).not.toContain('<!-- From: plugin second -->');
+    expect(budgetWarnings(ctx.newEvents())).toHaveLength(0);
+  });
+
   it('config.update with cwd initializes builtin tools', async () => {
     const ctx = testAgent();
     ctx.configure();

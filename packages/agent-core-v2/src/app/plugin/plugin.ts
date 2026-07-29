@@ -2,8 +2,9 @@
  * `plugin` domain (L3) — App-scoped plugin management and consumption contract.
  *
  * Defines `IPluginService`, which manages installed plugins and exposes their
- * enabled commands, skills, session-start content, MCP servers, and hooks.
- * Successful reloads are announced through `onDidReload`. Bound at App scope.
+ * enabled commands, skills, session-start content, system-prompt sections,
+ * MCP servers, and hooks. Successful reloads are announced through
+ * `onDidReload`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -15,6 +16,7 @@ import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import type {
   EnabledPluginSessionStart,
+  EnabledPluginSystemPrompt,
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
@@ -60,6 +62,7 @@ export interface IPluginService {
   pluginSkillRoots(): Promise<readonly SkillRoot[]>;
   pluginAgentRoots(): Promise<readonly AgentFileRoot[]>;
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]>;
+  enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   enabledHooks(): Promise<readonly HookDef[]>;
   readonly onDidReload: Event<ReloadSummary>;
