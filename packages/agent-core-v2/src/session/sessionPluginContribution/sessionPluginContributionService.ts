@@ -28,10 +28,9 @@ import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkil
 
 import {
   ISessionPluginContributionService,
+  PLUGIN_CONVERGENCE_TIMEOUT_MS,
   type SessionPluginContributionChangedEvent,
 } from './sessionPluginContribution';
-
-const CONVERGE_TIMEOUT_MS = 30_000;
 
 export class SessionPluginContributionService
   extends Disposable
@@ -82,7 +81,7 @@ export class SessionPluginContributionService
     const expired = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => {
         resolve('timeout');
-      }, CONVERGE_TIMEOUT_MS);
+      }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
     });
     return Promise.race([run.then(() => 'done' as const), expired]).then((result) => {
       if (timer !== undefined) clearTimeout(timer);

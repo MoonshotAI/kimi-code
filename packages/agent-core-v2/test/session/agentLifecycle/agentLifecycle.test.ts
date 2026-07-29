@@ -707,6 +707,91 @@ describe('AgentLifecycleService', () => {
     expect(handle.accessor.get(IAgentProfileService).getActiveToolNames()).toEqual(['Read']);
   });
 
+  it('creates agents past a permanently stalled convergence after the join timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      ix.stub(ISessionPluginContributionService, {
+        _serviceBrand: undefined,
+        onDidChange: Event.None as ISessionPluginContributionService['onDidChange'],
+        isConverging: () => true,
+        settled: () => new Promise<void>(() => {}),
+      });
+      ix.stub(ISessionMcpService, {
+        _serviceBrand: undefined,
+        ensureMcpReady: () => Promise.resolve(),
+        connectionManager: () => ({
+          list: () => [],
+          onStatusChange: () => () => {},
+          waitForInitialLoad: () => Promise.resolve(),
+          initialLoadDurationMs: () => 0,
+        }),
+      } as unknown as ISessionMcpService);
+      const devProfile = {
+        name: 'dev',
+        tools: ['Read'],
+        systemPrompt: () => 'converged prompt',
+      };
+      ix.stub(ISessionAgentProfileCatalog, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        onDidChange: Event.None,
+        get: (name: string) => (name === 'dev' ? devProfile : undefined),
+        getDefault: () => devProfile,
+        list: () => [devProfile],
+        load: () => Promise.resolve(),
+        reload: () => Promise.resolve(),
+      } as unknown as ISessionAgentProfileCatalog);
+      ix.stub(IAppendLogStore, recordingAppendLog([
+        createWireMetadataRecord(1),
+        {
+          type: 'profile.bind',
+          time: 2,
+          profileName: 'dev',
+          thinkingEffort: 'off',
+          systemPrompt: 'stale prompt',
+          activeToolNames: [],
+          disallowedTools: [],
+        },
+      ]).store);
+      ix.stub(IHostEnvironment, {
+        _serviceBrand: undefined,
+        osKind: 'Linux',
+        osArch: 'x64',
+        osVersion: 'test',
+        shellName: 'bash',
+        shellPath: '/bin/bash',
+        pathClass: 'posix',
+        homeDir: '/tmp/kimi-agentLifecycle-home',
+        ready: Promise.resolve(),
+      });
+      ix.stub(IHostIdentity, {
+        _serviceBrand: undefined,
+        productName: 'Kimi Code CLI',
+        replyStyleGuide: 'Reply clearly.',
+      });
+      ix.stub(IHostFileSystem, {
+        _serviceBrand: undefined,
+        stat: async () => { throw new Error('not found'); },
+        lstat: async () => { throw new Error('not found'); },
+        readdir: async () => [],
+      } as unknown as IHostFileSystem);
+      const svc = ix.get(IAgentLifecycleService);
+
+      let created = false;
+      const pending = svc.create({ agentId: 'main' }).then((handle) => {
+        created = true;
+        return handle;
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const handle = await pending;
+
+      expect(created).toBe(true);
+      expect(handle.accessor.get(IAgentProfileService).getSystemPrompt()).toBe('converged prompt');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });

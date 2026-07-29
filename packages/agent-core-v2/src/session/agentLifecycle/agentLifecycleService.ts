@@ -11,8 +11,10 @@
  * keeps its replayed profile binding — prompt included — exactly as
  * persisted; live prompt refreshes ride `profile`'s own triggers, never
  * restore. The one join point: an Agent created while a plugin convergence
- * is in flight waits for it (and a restored one refreshes once after it),
- * so a plugin mutation never straddles an Agent's bootstrap. Removal awaits
+ * is in flight waits for it — bounded by the convergence timeout, so a
+ * wedged convergence can never block creation — and a restored one
+ * refreshes once after it, so a plugin mutation never straddles an Agent's
+ * bootstrap. Removal awaits
  * the agent task manager's graceful exit policy before
  * draining turns and full compaction, then disposing the child scope. Fans
  * session-level permission-mode switches out to every live agent. Bound at
@@ -47,7 +49,10 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import { ISessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContribution';
+import {
+  ISessionPluginContributionService,
+  PLUGIN_CONVERGENCE_TIMEOUT_MS,
+} from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -67,6 +72,22 @@ import {
 } from './agentLifecycle';
 
 let nextAgentId = 0;
+
+async function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          resolve();
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -222,7 +243,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   ): Promise<void> {
     const contributions = handle.accessor.get(ISessionPluginContributionService);
     const wasConverging = contributions.isConverging();
-    await contributions.settled();
+    await withTimeout(contributions.settled(), PLUGIN_CONVERGENCE_TIMEOUT_MS);
     const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
       await profile.bind(opts.binding);

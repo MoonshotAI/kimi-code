@@ -14,6 +14,8 @@ import type { Event, IWaitUntil } from '#/_base/event';
 
 export type SessionPluginContributionChangedEvent = IWaitUntil;
 
+export const PLUGIN_CONVERGENCE_TIMEOUT_MS = 30_000;
+
 export interface ISessionPluginContributionService {
   readonly _serviceBrand: undefined;
 
