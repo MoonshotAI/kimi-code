@@ -233,9 +233,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
-    // Plugin system-prompt sections (and the plugin skill listing) reach the
-    // prompt on explicit plugin reload: the sink re-pulls the plugin source
-    // and only then fires this event, so the re-render reads both fresh.
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
         if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
