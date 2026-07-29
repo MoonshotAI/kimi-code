@@ -125,15 +125,35 @@ function isTodoListReminder(message: ContextMessage): boolean {
 }
 
 /**
- * The previous turn ended without a final TodoList write: the most recent
- * assistant message made no tool calls (turn complete, control back with the
- * user) and was not itself a TodoList update. Mid-turn history (latest
- * assistant step still has tool calls in flight) does not qualify.
+ * The previous turn ended without a TodoList write anywhere in it: the most
+ * recent assistant message made no tool calls (turn complete, control back
+ * with the user), and scanning that just-finished turn — back to the genuine
+ * user prompt that started it — finds no TodoList write. A same-turn write
+ * followed by a closing text response counts as bookkeeping done, and
+ * mid-turn history (latest assistant step still has tool calls in flight)
+ * does not qualify.
  */
 function turnEndedWithoutTodoWrite(history: readonly ContextMessage[]): boolean {
-  const lastAssistant = history.findLast((message) => message.role === 'assistant');
-  if (lastAssistant === undefined) return false;
-  if (lastAssistant.toolCalls.length > 0) return false;
+  let lastAssistantIndex = -1;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === 'assistant') {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+  if (lastAssistantIndex < 0) return false;
+  const lastAssistant = history[lastAssistantIndex];
+  if (lastAssistant === undefined || lastAssistant.toolCalls.length > 0) return false;
+  for (let i = lastAssistantIndex; i >= 0; i -= 1) {
+    const message = history[i];
+    if (message === undefined) continue;
+    if (message.role === 'user') {
+      // Injected reminders are mid-turn artifacts, not turn boundaries.
+      if (message.origin?.kind === 'injection') continue;
+      break;
+    }
+    if (message.role === 'assistant' && hasTodoListWrite(message)) return false;
+  }
   return true;
 }
 

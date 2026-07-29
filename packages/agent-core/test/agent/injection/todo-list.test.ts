@@ -106,6 +106,15 @@ function priorTodoReminder(): ContextMessage {
   };
 }
 
+function userPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'next task please' }],
+    toolCalls: [],
+    origin: { kind: 'user' },
+  } as ContextMessage;
+}
+
 function lastReminderText(history: readonly ContextMessage[]): string {
   const message = history.findLast((entry) => entry.origin?.kind === 'injection');
   return message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
@@ -194,9 +203,11 @@ describe('TodoListReminderInjector', () => {
       { title: 'Mark todo done', status: 'in_progress' },
     ];
     // Only 3 turns since the last write — far below the cadence threshold —
-    // but the latest assistant step closed the turn without a TodoList write.
+    // and the write happened in a previous turn; the just-finished turn
+    // closed without any TodoList write.
     const history = [
       todoListWrite(todos),
+      userPrompt(),
       ...Array.from({ length: 3 }, () => assistantMessage()),
       turnEndedMessage(),
     ];
@@ -252,13 +263,53 @@ describe('TodoListReminderInjector', () => {
     expect(history).toHaveLength(5);
   });
 
+  it('does not fire when the just-finished turn already wrote the TodoList', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
+    // Regression: the agent updated the TodoList mid-turn, got the tool
+    // result, then closed the turn with a text-only reply. The write happened
+    // inside this same turn, so there is nothing to reconcile.
+    const history = [
+      userPrompt(),
+      ...Array.from({ length: 2 }, () => assistantMessage()),
+      todoListWrite(todos),
+      assistantMessage(),
+      turnEndedMessage(),
+      userPrompt(),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    expect(history).toHaveLength(7);
+  });
+
+  it('still fires when the last write happened before the just-finished turn', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
+    const history = [
+      todoListWrite(todos),
+      userPrompt(),
+      ...Array.from({ length: 2 }, () => assistantMessage()),
+      turnEndedMessage(),
+      userPrompt(),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    expect(lastReminderText(history)).toContain('The previous turn ended with unfinished todo items');
+  });
+
   it('spaces out turn-end reminders', async () => {
     const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
     const history = [
       todoListWrite(todos),
+      userPrompt(),
       priorTodoReminder(),
       ...Array.from({ length: 1 }, () => assistantMessage()),
       turnEndedMessage(),
+      userPrompt(),
     ];
     const agent = todoAgent({ history, todos, todoListActive: true });
     const injector = new TodoListReminderInjector(agent);
@@ -266,7 +317,7 @@ describe('TodoListReminderInjector', () => {
     await injector.inject();
 
     // Only 2 assistant turns since the last reminder — below the spacing.
-    expect(history).toHaveLength(4);
+    expect(history).toHaveLength(6);
 
     history.push(...Array.from({ length: 2 }, () => assistantMessage()), turnEndedMessage());
     await injector.inject();
