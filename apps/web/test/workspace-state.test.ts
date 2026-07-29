@@ -1476,6 +1476,23 @@ describe('useWorkspaceState — session list loading', () => {
     expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
   });
 
+  it('stops a global session walk before requesting another page when invalidated', async () => {
+    const firstPage = { ...createSession(), id: 'sess_first' };
+    let shouldContinue = true;
+    apiMock.listSessions.mockImplementation(async () => {
+      shouldContinue = false;
+      return { items: [firstPage], hasMore: true };
+    });
+    const { workspaceState } = createSessionLoadRig([]);
+
+    const result = await workspaceState.listAllSessionsGlobal({
+      shouldContinue: () => shouldContinue,
+    });
+
+    expect(apiMock.listSessions).toHaveBeenCalledOnce();
+    expect(result).toEqual({ sessions: [firstPage], error: undefined });
+  });
+
   it('preserves cached sessions when every workspace initial page rejects', async () => {
     const firstError = new Error('workspace A unavailable');
     const cachedA = {

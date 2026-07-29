@@ -636,6 +636,8 @@ export interface KimiEventHandlers {
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
   onError(code: number, msg: string, fatal: boolean): void;
   onConnectionChange(connected: boolean): void;
+  /** Fires after reconnect replay is complete and client_hello is acknowledged. */
+  onReplayComplete?(): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
   onTranscriptReset?(

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppMessage, AppQuestionRequest, AppTask } from '../src/api';
+import type {
+  AppApprovalRequest,
+  AppMessage,
+  AppQuestionRequest,
+  AppSession,
+  AppTask,
+} from '../src/api';
 import { createInitialState, reduceAppEvent, type EventMeta, type KimiClientState } from '../src/api/daemon/eventReducer';
 
 const SID = 's_1';
@@ -57,6 +63,54 @@ function thinkingPart(state: KimiClientState, messageId = 'm_1') {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('reduceAppEvent session work state', () => {
+  it('clears a stale pending interaction when an idle work event omits it', () => {
+    const session: AppSession = {
+      id: SID,
+      title: 'Session',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      busy: true,
+      mainTurnActive: false,
+      pendingInteraction: 'approval',
+      archived: false,
+      cwd: '/workspace',
+      model: 'model',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        contextTokens: 0,
+        contextLimit: 0,
+        turnCount: 0,
+      },
+      messageCount: 0,
+      lastSeq: 0,
+    };
+    let state = createInitialState();
+    state.sessions = [session];
+    state.approvalsBySession[SID] = [approval('approval_1')];
+    state.questionsBySession[SID] = [question('question_1')];
+
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: SID,
+        busy: false,
+        mainTurnActive: false,
+      },
+      meta(),
+    );
+
+    expect(state.sessions[0]?.pendingInteraction).toBe('none');
+    expect(state.approvalsBySession[SID]).toBeUndefined();
+    expect(state.questionsBySession[SID]).toBeUndefined();
+  });
 });
 
 describe('reduceAppEvent thinking-part timing on user interactions', () => {

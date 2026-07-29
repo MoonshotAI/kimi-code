@@ -50,6 +50,8 @@ export interface DaemonEventSocketHandlers {
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
   /** Called when the WS connection opens or closes */
   onConnectionState(connected: boolean): void;
+  /** Called after client_hello succeeds, once subscription replay is complete. */
+  onReplayComplete?(): void;
   /** Called on error frames or JSON parse failures */
   onError(code: number, msg: string, fatal: boolean): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
@@ -119,6 +121,7 @@ export class DaemonEventSocket {
   private readonly terminalAttachments = new Map<string, TerminalAttachment>();
 
   private msgSeq = 0;
+  private clientHelloId: string | null = null;
 
   /** Automatic reconnect (exponential backoff, reset on a successful hello). */
   private reconnectAttempts = 0;
@@ -530,7 +533,10 @@ export class DaemonEventSocket {
       }
 
       case 'ack':
-        // ack frames are fire-and-forget for now (no request tracking)
+        if (frame.id === this.clientHelloId) {
+          this.clientHelloId = null;
+          if (frame.code === 0) this.opts.handlers.onReplayComplete?.();
+        }
         break;
 
       case 'terminal_output': {
@@ -632,9 +638,11 @@ export class DaemonEventSocket {
       cursors[sid] = cursor;
     }
 
+    const clientHelloId = this.nextId();
+    this.clientHelloId = clientHelloId;
     this.send({
       type: 'client_hello',
-      id: this.nextId(),
+      id: clientHelloId,
       payload: {
         client_id: this.opts.clientId,
         subscriptions: allSessionIds,

@@ -43,13 +43,19 @@ class FakeWebSocket {
   }
 }
 
-function makeHandlers(): DaemonEventSocketHandlers & { states: boolean[] } {
+function makeHandlers(): DaemonEventSocketHandlers & {
+  states: boolean[];
+  replayCompletions: number[];
+} {
   const states: boolean[] = [];
+  const replayCompletions: number[] = [];
   return {
     states,
+    replayCompletions,
     onWireEvent: () => {},
     onResync: () => {},
     onConnectionState: (connected) => states.push(connected),
+    onReplayComplete: () => replayCompletions.push(Date.now()),
     onError: () => {},
   };
 }
@@ -104,6 +110,42 @@ describe('DaemonEventSocket reconnect + staleness', () => {
     // A late onclose from the stale socket must NOT schedule another connect.
     first.onclose?.({ code: 1000, reason: 'reconnect', wasClean: true });
     expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('reports replay complete only for the successful client_hello ack', () => {
+    const handlers = makeHandlers();
+    const socket = new DaemonEventSocket({ wsUrl: WS_URL, clientId: CLIENT_ID, handlers });
+    socket.connect();
+    const first = FakeWebSocket.instances[0]!;
+    first.emitMessage(SERVER_HELLO);
+
+    const hello = JSON.parse(first.sent[0]!) as { id: string };
+    first.emitMessage({
+      type: 'ack',
+      id: 'another-request',
+      code: 0,
+      msg: 'success',
+      payload: {},
+    });
+    expect(handlers.replayCompletions).toHaveLength(0);
+
+    first.emitMessage({
+      type: 'ack',
+      id: hello.id,
+      code: 0,
+      msg: 'success',
+      payload: {},
+    });
+    expect(handlers.replayCompletions).toHaveLength(1);
+
+    first.emitMessage({
+      type: 'ack',
+      id: hello.id,
+      code: 0,
+      msg: 'duplicate',
+      payload: {},
+    });
+    expect(handlers.replayCompletions).toHaveLength(1);
   });
 
   it('reconnect() is a no-op after close()', () => {

@@ -1745,6 +1745,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
         handlers.onConnectionChange(connected);
       },
 
+      onReplayComplete: () => {
+        handlers.onReplayComplete?.();
+      },
+
       onError: (code: number, msg: string, fatal: boolean) => {
         handlers.onError(code, msg, fatal);
       },
