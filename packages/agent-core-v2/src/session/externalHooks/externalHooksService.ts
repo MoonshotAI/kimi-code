@@ -13,11 +13,16 @@
  * the Agent-scope adapter follows against the agent behavior services. The
  * actual hook execution is delegated to the shared App-scope
  * `IExternalHooksRunnerService`; all config/plugin loading and engine lifecycle
- * live in the runner. Bound at Session scope.
+ * live in the runner. For every translated event, this adapter resolves the
+ * current effective mode from the relevant Agent scope through
+ * `agentLifecycle` and `permissionMode`: main for session lifecycle events,
+ * requester for subagent events. Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import {
   ISessionLifecycleService,
@@ -25,6 +30,10 @@ import {
   type SessionCreateSource,
 } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import {
   type AgentTaskStartHookContext,
   type AgentTaskStopHookContext,
@@ -44,6 +53,7 @@ export class SessionExternalHooksService
   constructor(
     @ISessionContext private readonly context: ISessionContext,
     @ISessionLifecycleService lifecycle: ISessionLifecycleService,
+    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionSubagentService subagents: ISessionSubagentService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
   ) {
@@ -78,6 +88,7 @@ export class SessionExternalHooksService
       matcherValue: source,
       cwd: this.context.cwd,
       sessionId: this.context.sessionId,
+      permissionMode: this.permissionMode(MAIN_AGENT_ID),
       inputData: { source },
     });
   }
@@ -87,6 +98,7 @@ export class SessionExternalHooksService
       matcherValue: reason,
       cwd: this.context.cwd,
       sessionId: this.context.sessionId,
+      permissionMode: this.permissionMode(MAIN_AGENT_ID),
       inputData: { reason },
     });
   }
@@ -96,6 +108,7 @@ export class SessionExternalHooksService
     await this.runner.trigger('SubagentStart', {
       matcherValue: ctx.agentName,
       signal: ctx.signal,
+      permissionMode: this.permissionMode(ctx.requesterAgentId),
       inputData: {
         agentName: ctx.agentName,
         prompt: ctx.prompt,
@@ -107,11 +120,17 @@ export class SessionExternalHooksService
   private notifySubagentStop(ctx: AgentTaskStopHookContext): void {
     void this.runner.fireAndForgetTrigger('SubagentStop', {
       matcherValue: ctx.agentName,
+      permissionMode: this.permissionMode(ctx.requesterAgentId),
       inputData: {
         agentName: ctx.agentName,
         response: ctx.response,
       },
     });
+  }
+
+  private permissionMode(agentId: string | undefined): PermissionMode | undefined {
+    if (agentId === undefined) return undefined;
+    return this.agents.get(agentId)?.accessor.get(IAgentPermissionModeService).mode;
   }
 }
 

@@ -62,9 +62,12 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 {
   "hook_event_name": "PreToolUse",
   "session_id": "session_abc",
-  "cwd": "/path/to/project"
+  "cwd": "/path/to/project",
+  "permission_mode": "manual"
 }
 ```
+
+可选字段 `permission_mode` 表示与该事件关联的 Agent 当前实际生效的权限模式。其值为 `manual`、`auto` 或 `yolo`，并会反映运行时的模式切换，而不只是配置中的默认值。事件没有关联的存活 Agent 时，该字段会省略。
 
 具体事件还会附带额外字段（如工具名称、命令内容），见下方事件一览。所有字段名使用下划线命名（snake_case）。
 

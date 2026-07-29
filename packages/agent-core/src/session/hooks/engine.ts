@@ -7,6 +7,7 @@ import type {
   HookMatcherValue,
   HookResult,
 } from './types';
+import type { PermissionMode } from '../../agent/permission';
 
 const DEFAULT_HOOK_TIMEOUT_SECONDS = 30;
 
@@ -31,6 +32,10 @@ export class HookEngine {
       result[event] = hooks.length;
     }
     return result;
+  }
+
+  withPermissionMode(getPermissionMode: () => PermissionMode): HookEngine {
+    return new PermissionModeHookEngine(this, getPermissionMode);
   }
 
   trigger(event: string, args: HookEngineTriggerArgs = {}): Promise<HookResult[]> {
@@ -70,12 +75,19 @@ export class HookEngine {
     args: HookEngineTriggerArgs,
   ): Promise<HookResult[]> {
     const matcherValue = matcherValueText(args.matcherValue);
-    const inputData = toHookInputData({
+    const eventInputData = { ...args.inputData };
+    delete eventInputData['permissionMode'];
+    delete eventInputData['permission_mode'];
+    const rawInputData: Record<string, unknown> = {
       hookEventName: event,
       sessionId: this.options.sessionId ?? '',
       cwd: this.options.cwd ?? '',
-      ...args.inputData,
-    });
+      ...eventInputData,
+    };
+    if (args.permissionMode !== undefined) {
+      rawInputData['permissionMode'] = args.permissionMode;
+    }
+    const inputData = toHookInputData(rawInputData);
     const matched = this.matchingHooks(event, matcherValue);
     if (matched.length === 0) return [];
 
@@ -127,6 +139,45 @@ export class HookEngine {
     try {
       this.options.onResolved?.(event, target, action, reason, durationMs);
     } catch {}
+  }
+}
+
+class PermissionModeHookEngine extends HookEngine {
+  constructor(
+    private readonly engine: HookEngine,
+    private readonly getPermissionMode: () => PermissionMode,
+  ) {
+    super();
+  }
+
+  override get summary(): Record<string, number> {
+    return this.engine.summary;
+  }
+
+  override trigger(event: string, args: HookEngineTriggerArgs = {}): Promise<HookResult[]> {
+    return this.engine.trigger(event, this.withContext(args));
+  }
+
+  override triggerBlock(
+    event: string,
+    args: HookEngineTriggerArgs = {},
+  ): Promise<HookBlockDecision | undefined> {
+    return this.engine.triggerBlock(event, this.withContext(args));
+  }
+
+  override fireAndForgetTrigger(
+    event: string,
+    args: HookEngineTriggerArgs = {},
+  ): Promise<HookResult[]> {
+    return this.engine.fireAndForgetTrigger(event, this.withContext(args));
+  }
+
+  private withContext(args: HookEngineTriggerArgs): HookEngineTriggerArgs {
+    try {
+      return { ...args, permissionMode: this.getPermissionMode() };
+    } catch {
+      return { ...args, permissionMode: undefined };
+    }
   }
 }
 

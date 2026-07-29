@@ -1,4 +1,5 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { PermissionMode } from '../../agent/permission';
 
 export const HOOK_EVENT_TYPES = [
   'PreToolUse',
@@ -52,6 +53,7 @@ export interface HookEngineTriggerArgs {
   readonly matcherValue?: HookMatcherValue;
   readonly inputData?: Record<string, unknown>;
   readonly signal?: AbortSignal;
+  readonly permissionMode?: PermissionMode;
 }
 
 export type HookTriggeredCallback = (event: string, target: string, count: number) => void;

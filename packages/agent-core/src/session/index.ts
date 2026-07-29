@@ -1354,6 +1354,7 @@ export class Session {
     await this.hookEngine.trigger('SessionStart', {
       matcherValue: source,
       inputData: { source },
+      permissionMode: this.getReadyAgent('main')?.permission.mode,
     });
   }
 
@@ -1361,6 +1362,7 @@ export class Session {
     await this.hookEngine.trigger('SessionEnd', {
       matcherValue: reason,
       inputData: { reason },
+      permissionMode: this.getReadyAgent('main')?.permission.mode,
     });
   }
 }

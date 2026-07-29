@@ -43,6 +43,7 @@ export interface AgentRunHandle {
 
 /** Facts announced when an agent run this session is hosting is about to start. */
 export interface AgentTaskStartHookContext {
+  readonly requesterAgentId?: string;
   readonly agentName: string;
   readonly prompt: string;
   readonly signal: AbortSignal;
@@ -50,6 +51,7 @@ export interface AgentTaskStartHookContext {
 
 /** Facts announced when an agent run this session is hosting has stopped. */
 export interface AgentTaskStopHookContext {
+  readonly requesterAgentId?: string;
   readonly agentName: string;
   readonly response: string;
 }

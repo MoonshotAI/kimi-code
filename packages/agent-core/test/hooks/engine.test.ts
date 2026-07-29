@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { PermissionMode } from '../../src/agent/permission';
 
 // Dynamic-import contract: locks the public shape of the future HookEngine
 // without forcing TS module resolution to find a file that doesn't exist yet.
@@ -32,6 +33,38 @@ interface HookBlockDecision {
 
 type HookMatcherValue = string | readonly ContentPart[];
 
+interface HookEngineInstance {
+  trigger: (
+    event: string,
+    args?: {
+      matcherValue?: HookMatcherValue;
+      inputData?: Record<string, unknown>;
+      signal?: AbortSignal;
+      permissionMode?: PermissionMode;
+    },
+  ) => Promise<HookResult[]>;
+  triggerBlock: (
+    event: string,
+    args?: {
+      matcherValue?: HookMatcherValue;
+      inputData?: Record<string, unknown>;
+      signal?: AbortSignal;
+      permissionMode?: PermissionMode;
+    },
+  ) => Promise<HookBlockDecision | undefined>;
+  fireAndForgetTrigger: (
+    event: string,
+    args?: {
+      matcherValue?: HookMatcherValue;
+      inputData?: Record<string, unknown>;
+      signal?: AbortSignal;
+      permissionMode?: PermissionMode;
+    },
+  ) => Promise<HookResult[]>;
+  withPermissionMode(getPermissionMode: () => PermissionMode): HookEngineInstance;
+  summary: Record<string, number>;
+}
+
 interface HookEngineCtor {
   new (
     hooks: HookDef[],
@@ -47,33 +80,7 @@ interface HookEngineCtor {
         durationMs: number,
       ) => void;
     },
-  ): {
-    trigger: (
-      event: string,
-      args?: {
-        matcherValue?: HookMatcherValue;
-        inputData?: Record<string, unknown>;
-        signal?: AbortSignal;
-      },
-    ) => Promise<HookResult[]>;
-    triggerBlock: (
-      event: string,
-      args?: {
-        matcherValue?: HookMatcherValue;
-        inputData?: Record<string, unknown>;
-        signal?: AbortSignal;
-      },
-    ) => Promise<HookBlockDecision | undefined>;
-    fireAndForgetTrigger: (
-      event: string,
-      args?: {
-        matcherValue?: HookMatcherValue;
-        inputData?: Record<string, unknown>;
-        signal?: AbortSignal;
-      },
-    ) => Promise<HookResult[]>;
-    summary: Record<string, number>;
-  };
+  ): HookEngineInstance;
 }
 
 interface EngineModule {
@@ -227,6 +234,64 @@ describe('HookEngine', () => {
     const results = await engine.trigger('SessionStart');
 
     expect(results[0]?.stdout?.trim()).toBe('SessionStart ses_123 /tmp');
+  });
+
+  it('serializes the trigger permission mode as permission_mode', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        command:
+          'node -e "let s=\\"\\";process.stdin.on(\\"data\\",d=>s+=d);process.stdin.on(\\"end\\",()=>process.stdout.write(JSON.parse(s).permission_mode));"',
+        timeout: 5,
+      },
+    ]);
+
+    const results = await engine.trigger('PreToolUse', {
+      permissionMode: 'auto',
+      inputData: { permissionMode: 'manual', permission_mode: 'yolo' },
+    });
+
+    expect(results[0]?.stdout).toBe('auto');
+  });
+
+  it('omits permission_mode when no effective permission mode is available', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'SessionStart',
+        command:
+          'node -e "let s=\\"\\";process.stdin.on(\\"data\\",d=>s+=d);process.stdin.on(\\"end\\",()=>process.stdout.write(String(Object.hasOwn(JSON.parse(s),\\"permission_mode\\"))));"',
+        timeout: 5,
+      },
+    ]);
+
+    const results = await engine.trigger('SessionStart', {
+      inputData: { permissionMode: 'spoofed', permission_mode: 'spoofed' },
+    });
+
+    expect(results[0]?.stdout).toBe('false');
+  });
+
+  it('omits permission_mode when the effective mode cannot be read', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'SessionStart',
+        command:
+          'node -e "let s=\\"\\";process.stdin.on(\\"data\\",d=>s+=d);process.stdin.on(\\"end\\",()=>process.stdout.write(String(Object.hasOwn(JSON.parse(s),\\"permission_mode\\"))));"',
+        timeout: 5,
+      },
+    ]).withPermissionMode(() => {
+      throw new Error('permission mode unavailable');
+    });
+
+    const results = await engine.trigger('SessionStart', {
+      permissionMode: 'auto',
+      inputData: { permissionMode: 'manual', permission_mode: 'yolo' },
+    });
+
+    expect(results[0]?.stdout).toBe('false');
   });
 
   it('treats an empty matcher string as a catch-all for any matcher value', async () => {
