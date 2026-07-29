@@ -8,7 +8,9 @@
  * front-loads the same resolution to session start (main-agent creation): an
  * unresolvable model or an effort the model does not list becomes a `warning`
  * event on the main agent's event bus, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). Session-scoped — one instance per session.
+ * (`GET /sessions/{id}/warnings`). A mid-session `[secondary_model]` change
+ * (the SDK's `applyPersistedSecondaryModel` path) refreshes the cache through
+ * `recheckSecondaryModelWarning`. Session-scoped — one instance per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -24,6 +26,15 @@ export interface SecondaryModelWarning {
 export interface ISessionSecondaryModelWarningService {
   readonly _serviceBrand: undefined;
   getSecondaryModelWarning(): SecondaryModelWarning | undefined;
+  /**
+   * Recompute the cached warning against the live config after a mid-session
+   * `[secondary_model]` change. Publishes the new warning on the main agent's
+   * bus only when it differs from the cached one; a cleared warning has no
+   * event of its own — the pull path simply stops returning it. Returns the
+   * fresh warning (`undefined` when the recipe is now valid, unset, or the
+   * experiment is off).
+   */
+  recheckSecondaryModelWarning(): SecondaryModelWarning | undefined;
 }
 
 export const ISessionSecondaryModelWarningService: ServiceIdentifier<ISessionSecondaryModelWarningService> =
