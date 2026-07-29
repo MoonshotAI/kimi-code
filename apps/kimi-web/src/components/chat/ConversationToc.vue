@@ -29,16 +29,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-// Width the rail needs beside the reading column once its labels are fully
-// revealed on hover/focus: 3px bar + 10px gap + 220px label, plus a small
-// buffer so the text never kisses the container edge. Kept in sync with the
-// `.toc-bar` / `.toc-label` rules below.
+// Width the rail needs to its left once its labels are fully revealed on
+// hover/focus: 3px bar + 10px gap + 220px label, plus a small buffer so the
+// text never kisses the container edge. Kept in sync with the `.toc-bar` /
+// `.toc-label` rules below.
 const EXPANDED_WIDTH = 240;
 
 const navRef = ref<HTMLElement | null>(null);
-// Whether the rail, once expanded, fits within the room to the right of the
-// reading column. When it would overflow, we hide the outline entirely rather
-// than showing a panel that gets clipped by the container edge.
+// Whether the rail, once expanded, fits within the room to its left (the
+// labels reveal leftward over the content). When it would overflow, we hide
+// the outline entirely rather than showing a panel that gets clipped by the
+// container edge.
 const fits = ref(true);
 
 let observer: ResizeObserver | null = null;
@@ -47,9 +48,9 @@ function measure(): void {
   const nav = navRef.value;
   const parent = nav?.offsetParent as HTMLElement | null;
   if (!nav || !parent) return;
-  const navLeft = nav.getBoundingClientRect().left;
-  const parentRight = parent.getBoundingClientRect().right;
-  fits.value = parentRight - navLeft >= EXPANDED_WIDTH;
+  const navRight = nav.getBoundingClientRect().right;
+  const parentLeft = parent.getBoundingClientRect().left;
+  fits.value = navRight - parentLeft >= EXPANDED_WIDTH;
 }
 
 // The outline is only useful once there is something to navigate, and it never
@@ -93,8 +94,9 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Conversation outline: a vertical list of short bars (one per user query),
-       vertically centered beside the chat. Hovering the list enlarges the bars
-       and reveals each query's title to the right, making rows easy to click. -->
+       vertically centered at the pane's right edge. Hovering the list enlarges
+       the bars and reveals each query's title to the left, over the content,
+       making rows easy to click. -->
   <nav
     v-if="visible"
     ref="navRef"
@@ -125,15 +127,12 @@ onBeforeUnmount(() => {
   z-index: var(--z-sticky);
   top: 50%;
   transform: translateY(-50%);
-  /* Anchor to the reading-column edge, the rail's original position. Tables
-     that grow past it (up to --p-table-max) temporarily hide the rail via the
-     occlusion hit-test in ConversationPane, so proximity is safe again.
-     The cqi cap keeps the rail inside narrow containers. */
-  --toc-content-max: min(
-    var(--p-content-max),
-    calc(100cqi - var(--space-5) - var(--space-5))
-  );
-  left: calc(50% + (var(--toc-content-max) / 2) + 14px);
+  /* Anchor to the pane's right edge, just inside the panes scrollbar gutter.
+     The reading column spans the full pane width, so that edge is the only
+     stable outside position left; labels reveal leftward over the content.
+     Tables that reach the rail temporarily hide it via the occlusion hit-test
+     in ConversationPane, so the overlap is safe. */
+  right: calc(var(--panes-scrollbar-width, 0px) + var(--space-2));
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -142,10 +141,11 @@ onBeforeUnmount(() => {
 }
 /* Invisible hover bridge: the collapsed rail is only a few px wide, so this
    extends the hover target on both sides to make the outline easy to open and
-   forgiving to stay within. The left side covers only the 14px gap to the
-   content edge — a table wide enough to reach past the gap also covers the
-   bar, which hides the rail (pointer-events: none) before the bridge can
-   steal its events. Kept at z-index 0 so it sits behind the rows (which are
+   forgiving to stay within. The left side covers only the 14px gap toward the
+   content — a table wide enough to reach past the gap also covers the bar,
+   which hides the rail (pointer-events: none) before the bridge can steal its
+   events. The right side stops at the scrollbar gutter so it never swallows
+   scrollbar clicks. Kept at z-index 0 so it sits behind the rows (which are
    raised to z-index 1) — otherwise the bridge, as a positioned pseudo-element,
    paints above the in-flow rows and swallows their clicks. */
 .conversation-toc::before {
@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
   top: 0;
   bottom: 0;
   left: -14px;
-  right: -48px;
+  right: calc(-1 * var(--space-2));
   z-index: 0;
 }
 .conversation-toc:hover,
@@ -175,6 +175,8 @@ onBeforeUnmount(() => {
 
 .toc-row {
   display: flex;
+  /* Bar rightmost (its x stays pinned at the pane edge), label extends left. */
+  flex-direction: row-reverse;
   align-items: center;
   gap: 10px;
   height: 18px;
@@ -213,20 +215,31 @@ onBeforeUnmount(() => {
     color var(--duration-fast) var(--ease-out);
 }
 
-/* Hover / focus: enlarge bars and reveal labels to the right. */
+/* Hover / focus: enlarge bars and reveal labels to the left. */
 .conversation-toc:hover .toc-bar,
 .conversation-toc:focus-within .toc-bar { height: 18px; opacity: 0.5; }
 .conversation-toc:hover .toc-label,
 .conversation-toc:focus-within .toc-label { max-width: 220px; opacity: 1; }
+/* The revealed labels float over the message content, so the expanded outline
+   gets its own panel background to stay readable. The padding grows leftward
+   only, keeping the rail bar's x stable (the table-occlusion hit-test in
+   ConversationPane depends on it). */
+.conversation-toc:hover .toc-scroll,
+.conversation-toc:focus-within .toc-scroll {
+  padding-left: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-md);
+}
 
 .toc-row.active .toc-bar { opacity: 1; height: 18px; }
 .toc-row.active .toc-label { color: var(--color-accent); font-weight: var(--weight-medium); }
 .toc-row:hover .toc-bar { opacity: 1; }
 .toc-row:hover .toc-label { color: var(--color-text); }
 
-/* When there is not enough room to the right of the reading column to reveal
-   the labels, the rail is kept mounted (so its position can keep being
-   measured) but hidden from view and from pointer/screen-reader interaction. */
+/* When there is not enough room to the left of the rail to reveal the labels,
+   the rail is kept mounted (so its position can keep being measured) but
+   hidden from view and from pointer/screen-reader interaction. */
 .conversation-toc.toc-clipped {
   visibility: hidden;
   pointer-events: none;

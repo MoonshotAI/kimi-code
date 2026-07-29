@@ -419,7 +419,7 @@ onUnmounted(() => {
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">--p-sidebar-w</td><td class="val">264px</td><td>left session sidebar width</td></tr>
-                <tr><td class="tk">--p-content-max</td><td class="val">760px</td><td>chat reading-column max width (regular chat prose)</td></tr>
+                <tr><td class="tk">--p-content-max</td><td class="val">760px</td><td>xl dialog width</td></tr>
                 <tr><td class="tk">--p-content-wide</td><td class="val">920px</td><td>wide content (settings / panel)</td></tr>
                 <tr><td class="tk">--p-table-max</td><td class="val">1040px</td><td>desktop wide-table max width (see §04)</td></tr>
                 <tr><td class="tk">--p-table-cell-max</td><td class="val">700px</td><td>max width of a single table column; longer cell content wraps (see §04)</td></tr>
@@ -1028,7 +1028,7 @@ onUnmounted(() => {
 
             <h3 class="sub">Unified message stream</h3>
             <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Conversation · 760px reading column</span></div>
+              <div class="stage-bar"><span class="st">Conversation · full-width column</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
                 <div class="demo-chat">
 
@@ -1122,7 +1122,7 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
-            <p><b>Wide markdown tables (desktop):</b> regular chat prose stays within the 760px reading column (<code>--p-content-max</code>). On desktop a wide table may grow naturally with its content up to 1040px (<code>--p-table-max</code>), centred within the conversation pane; beyond that the excess scrolls horizontally inside the table's own wrapper — the page and the chat area never scroll sideways. A single column is capped at 700px (<code>--p-table-cell-max</code>), so long cell content wraps inside the cell instead of stretching the table. The conversation outline (TOC) keeps its usual position just outside the reading column; when a table grows past it and scrolls under the rail, the TOC is hidden temporarily and returns as soon as the table leaves, without touching the user's TOC setting. On mobile a table never breaks out of the reading column.</p>
+            <p><b>Wide markdown tables (desktop):</b> the chat reading column follows the pane width — there is no fixed max-width cap. On desktop a wide table may grow naturally with its content up to 1040px (<code>--p-table-max</code>), centred within the conversation pane; beyond that the excess scrolls horizontally inside the table's own wrapper — the page and the chat area never scroll sideways. A single column is capped at 700px (<code>--p-table-cell-max</code>), so long cell content wraps inside the cell instead of stretching the table. The conversation outline (TOC) is anchored to the pane's right edge, just inside the scrollbar gutter, and reveals its labels leftward over the content on hover; when a table grows past it and scrolls under the rail, the TOC is hidden temporarily and returns as soon as the table leaves, without touching the user's TOC setting. On mobile a table never breaks out of the column.</p>
 
             <h3 class="sub">Tool calls: compact by default, grouped, expand on demand</h3>
             <p>High-frequency calls like <code>read_file</code> / <code>bash</code> / <code>grep</code> are "operational noise" — if each one took a full card, parallel triggers would quickly drown out the conversation.
@@ -1206,7 +1206,7 @@ onUnmounted(() => {
             <h3 class="sub">Responsive</h3>
             <p>See §02 <code>--p-bp-sm</code> for the breakpoint. This section only gives mobile-adaptation pointers for the chat interface; a full mobile mockup is out of scope for this spec.</p>
             <div class="callout info"><span class="ico">i</span><div>
-              At ≤640px: dialogs anchor to the bottom as Sheets (xl top radius, top drag handle), the sidebar collapses into an expandable drawer, the Composer toolbar is allowed to wrap, and the chat reading column drops its max-width to fill the screen.
+              At ≤640px: dialogs anchor to the bottom as Sheets (xl top radius, top drag handle), the sidebar collapses into an expandable drawer, and the Composer toolbar is allowed to wrap.
             </div></div>
           </section>
 
