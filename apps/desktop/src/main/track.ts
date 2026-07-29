@@ -4,10 +4,6 @@
 
 import type { TelemetryProperties } from '@moonshot-ai/agent-core-v2';
 
-import {
-  rendererTrackEventSchema,
-  type RendererTrackEvent,
-} from '../shared/track-events';
 import type { DesktopEventName, DesktopEventPayloads } from './telemetry-events';
 
 type TrackImpl = (event: string, properties?: TelemetryProperties) => void;
@@ -47,14 +43,4 @@ export function trackDesktopEvent<K extends DesktopEventName>(
     return;
   }
   impl(event, props);
-}
-
-// --- kimi:track IPC payloads --------------------------------------------------
-
-export function asRendererTrackEvent(
-  event: unknown,
-  payload: unknown,
-): RendererTrackEvent | null {
-  const result = rendererTrackEventSchema.safeParse({ event, properties: payload });
-  return result.success ? result.data : null;
 }

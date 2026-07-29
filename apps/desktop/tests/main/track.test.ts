@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  asRendererTrackEvent,
-  setDesktopTrackImpl,
-  trackDesktopEvent,
-} from '../../src/main/track';
+import { asRendererTrackEvent } from '../../src/main/renderer-track-validation';
+import { setDesktopTrackImpl, trackDesktopEvent } from '../../src/main/track';
 
 beforeEach(() => {
   setDesktopTrackImpl(null);

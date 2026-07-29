@@ -13,9 +13,8 @@ import { dirname, join } from 'node:path';
 
 import { app, dialog } from 'electron';
 
-// track.ts itself stays cheap to load: its agent-core-v2 import is
-// `import type` (erased at build) and the zod schema from shared/track-events
-// is a small pure module — this file's load-time graph stays tiny by design.
+// track.ts only contains the host event buffer and type-only imports. Renderer
+// IPC validation lives in a separate module so this bootstrap path stays tiny.
 import { trackDesktopEvent } from './track';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;

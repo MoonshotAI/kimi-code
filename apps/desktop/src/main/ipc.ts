@@ -20,7 +20,8 @@ import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
 import { createRendererLogWriter } from './renderer-log';
-import { asRendererTrackEvent, trackDesktopEvent } from './track';
+import { asRendererTrackEvent } from './renderer-track-validation';
+import { trackDesktopEvent } from './track';
 import { IPC, type ColorScheme, type WindowsMenuId } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
