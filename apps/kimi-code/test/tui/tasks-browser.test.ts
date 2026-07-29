@@ -498,6 +498,37 @@ describe('TasksBrowserController — preview freshness', () => {
     });
   });
 
+  it('stops polling output when the refreshed task list becomes terminal', async () => {
+    const runningTask = task({
+      taskId: 'bash-polled-terminal',
+      detached: true,
+      status: 'running',
+    });
+    const completedTask = task({
+      taskId: runningTask.taskId,
+      detached: true,
+      status: 'completed',
+    });
+    const listTasks = vi
+      .fn()
+      .mockResolvedValueOnce([runningTask])
+      .mockResolvedValueOnce([completedTask]);
+    const getOutput = vi.fn().mockResolvedValue('process output');
+    const rig = controllerRig({ getOutput, tasks: [runningTask], listTasks });
+    controller = rig.controller;
+
+    await controller.show();
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(1);
+    });
+    rig.poll();
+
+    await vi.waitFor(() => {
+      expect(listTasks).toHaveBeenCalledTimes(2);
+    });
+    expect(getOutput).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a stale running poll after a terminal event reloads final output', async () => {
     const stalePoll = deferred<BackgroundTaskInfo[]>();
     const runningTask = task({

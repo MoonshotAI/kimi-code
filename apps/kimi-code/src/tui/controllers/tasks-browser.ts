@@ -263,8 +263,16 @@ export class TasksBrowserController {
     const selectedTask =
       browser.selectedTaskId === undefined
         ? undefined
+        : tasks.find((task) => task.taskId === browser.selectedTaskId);
+    const cachedSelectedTask =
+      browser.selectedTaskId === undefined
+        ? undefined
         : this.host.backgroundTasks.get(browser.selectedTaskId);
-    if (opts.reloadTail !== false && selectedTask?.status === 'running') {
+    if (
+      opts.reloadTail !== false &&
+      selectedTask?.status === 'running' &&
+      cachedSelectedTask?.status === 'running'
+    ) {
       this.reloadSelectedTail(browser);
     }
   }
