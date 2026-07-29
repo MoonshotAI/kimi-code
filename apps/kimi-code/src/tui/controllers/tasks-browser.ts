@@ -9,6 +9,18 @@ import type { CustomEditor } from '../components/editor/custom-editor';
 const TASKS_POLL_INTERVAL_MS = 1_000;
 const PREVIEW_TAIL_CHARACTERS = 4_000;
 
+export interface TasksBrowserPolling {
+  start(callback: () => void, intervalMs: number): NodeJS.Timeout;
+  stop(timer: NodeJS.Timeout): void;
+}
+
+const DEFAULT_TASKS_BROWSER_POLLING: TasksBrowserPolling = {
+  start: (callback, intervalMs) => setInterval(callback, intervalMs),
+  stop: (timer) => {
+    clearInterval(timer);
+  },
+};
+
 export interface TasksBrowserHost {
   readonly state: {
     readonly tasksBrowser: TasksBrowserState | undefined;
@@ -49,7 +61,10 @@ export type TasksBrowserState = {
 };
 
 export class TasksBrowserController {
-  constructor(private readonly host: TasksBrowserHost) {}
+  constructor(
+    private readonly host: TasksBrowserHost,
+    private readonly polling: TasksBrowserPolling = DEFAULT_TASKS_BROWSER_POLLING,
+  ) {}
 
   async show(): Promise<void> {
     const { state } = this.host;
@@ -94,7 +109,7 @@ export class TasksBrowserController {
     state.ui.setFocus(component);
     state.ui.requestRender(true);
 
-    const pollTimer = setInterval(() => {
+    const pollTimer = this.polling.start(() => {
       void this.refresh({ silent: true });
     }, TASKS_POLL_INTERVAL_MS);
 
@@ -124,7 +139,7 @@ export class TasksBrowserController {
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
     if (browser.viewer !== undefined) this.closeOutputViewer();
-    if (browser.pollTimer !== undefined) clearInterval(browser.pollTimer);
+    if (browser.pollTimer !== undefined) this.polling.stop(browser.pollTimer);
     if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
 
     state.ui.clear();
@@ -226,7 +241,11 @@ export class TasksBrowserController {
     }
     if (state.tasksBrowser !== browser) return;
     this.pushProps(tasks);
-    if (opts.reloadTail !== false) {
+    const selectedTask =
+      browser.selectedTaskId === undefined
+        ? undefined
+        : this.host.backgroundTasks.get(browser.selectedTaskId);
+    if (opts.reloadTail !== false && selectedTask?.status === 'running') {
       this.reloadSelectedTail(browser);
     }
   }

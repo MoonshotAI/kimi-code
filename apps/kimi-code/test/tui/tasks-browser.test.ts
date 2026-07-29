@@ -114,9 +114,12 @@ function controllerRig(options: {
 }): {
   controller: TasksBrowserController;
   get browser(): TasksBrowserState | undefined;
+  backgroundTasks: Map<string, BackgroundTaskInfo>;
+  poll(): void;
 } {
   let browser: TasksBrowserState | undefined;
   let children: Component[] = [];
+  let poll = () => {};
   const ui = {
     get children() {
       return children;
@@ -135,6 +138,9 @@ function controllerRig(options: {
     listBackgroundTasks: options.listTasks ?? vi.fn().mockResolvedValue(tasks),
     getBackgroundTaskOutput: options.getOutput,
   } as unknown as Session;
+  const backgroundTasks = new Map(
+    tasks.map((backgroundTask) => [backgroundTask.taskId, backgroundTask]),
+  );
   const host: TasksBrowserHost = {
     state: {
       get tasksBrowser() {
@@ -145,18 +151,26 @@ function controllerRig(options: {
       ui,
       editor: {} as CustomEditor,
     },
-    backgroundTasks: new Map(
-      tasks.map((backgroundTask) => [backgroundTask.taskId, backgroundTask]),
-    ),
+    backgroundTasks,
     session,
     showError: vi.fn(),
     setTasksBrowser(value) {
       browser = value;
     },
   };
-  const controller = new TasksBrowserController(host);
+  const controller = new TasksBrowserController(host, {
+    start(callback) {
+      poll = callback;
+      return {} as NodeJS.Timeout;
+    },
+    stop() {},
+  });
   return {
     controller,
+    backgroundTasks,
+    poll() {
+      poll();
+    },
     get browser() {
       return browser;
     },
@@ -417,6 +431,72 @@ describe('TasksBrowserController — preview freshness', () => {
         'slow process output',
       );
     });
+  });
+
+  it('does not poll output again after the selected task is terminal', async () => {
+    const completedTask = task({
+      taskId: 'bash-complete',
+      detached: true,
+      status: 'completed',
+    });
+    const getOutput = vi.fn().mockResolvedValue('final process output');
+    const rig = controllerRig({ getOutput, tasks: [completedTask] });
+    controller = rig.controller;
+
+    await controller.show();
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(1);
+    });
+    rig.poll();
+
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('ignores a stale running poll after a terminal event reloads final output', async () => {
+    const stalePoll = deferred<BackgroundTaskInfo[]>();
+    const runningTask = task({
+      taskId: 'bash-transition',
+      detached: true,
+      status: 'running',
+    });
+    const listTasks = vi
+      .fn()
+      .mockResolvedValueOnce([runningTask])
+      .mockReturnValueOnce(stalePoll.promise);
+    const getOutput = vi
+      .fn()
+      .mockResolvedValueOnce('running output')
+      .mockResolvedValueOnce('final output')
+      .mockResolvedValueOnce('unexpected extra output');
+    const rig = controllerRig({ getOutput, tasks: [runningTask], listTasks });
+    controller = rig.controller;
+
+    await controller.show();
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(1);
+    });
+    rig.poll();
+    await vi.waitFor(() => {
+      expect(listTasks).toHaveBeenCalledTimes(2);
+    });
+    rig.backgroundTasks.set(
+      runningTask.taskId,
+      task({
+        taskId: runningTask.taskId,
+        detached: true,
+        status: 'completed',
+      }),
+    );
+    controller.repaint();
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(2);
+    });
+    stalePoll.resolve([runningTask]);
+    await stalePoll.promise;
+
+    expect(getOutput).toHaveBeenCalledTimes(2);
   });
 
   it('opens the full output viewer without applying the preview tail limit', async () => {
