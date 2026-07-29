@@ -195,6 +195,28 @@ function asLaunchActionPayload(value: unknown): LaunchActionPayload | null {
   return null;
 }
 
+/** A terminal the main process spawned (main/terminal.ts NativeTerminalInfo,
+    structurally duplicated). */
+export type NativeTerminalInfo = { id: string; shell: string; cwd: string };
+
+export type NativeTerminalCreateOptions = { cwd?: string; cols?: number; rows?: number };
+
+function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { id?: unknown; shell?: unknown; cwd?: unknown };
+  if (
+    typeof candidate.id === 'string' &&
+    candidate.id !== '' &&
+    typeof candidate.shell === 'string' &&
+    typeof candidate.cwd === 'string'
+  ) {
+    return { id: candidate.id, shell: candidate.shell, cwd: candidate.cwd };
+  }
+  return null;
+}
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   popupWindowsMenu: (request: {
@@ -264,6 +286,9 @@ export type KimiDesktopApi = {
   /** Silence (true) or restore (false) all native menu accelerators while
    *  the settings panel records a shortcut. */
   setMenuSuspended: (suspended: boolean) => void;
+  /** xterm focus in the native terminal: strip native menu accelerators so
+   *  control keys (Ctrl+C & friends) reach the PTY instead of the menu. */
+  setTerminalMenuFocus: (focused: boolean) => void;
   /** Push the summon-app binding (canonical keymap format) so the main
    *  process registers it as an OS-level global shortcut. Resolves false
    *  when the OS refused the binding (already taken) — the previous working
@@ -295,6 +320,15 @@ export type KimiDesktopApi = {
    *  the sandboxed renderer has no fs access). The main process re-validates,
    *  redacts and rate-limits everything. */
   log: (level: 'info' | 'warn' | 'error', message: string, detail?: unknown) => void;
+  /** Native embedded terminal (desktop-only): spawn a PTY in the main process
+   *  (shell resolved main-side; the renderer only picks cwd/size). Output and
+   *  exit stream back via onNativeTerminalOutput/onNativeTerminalExit. */
+  createNativeTerminal: (opts?: NativeTerminalCreateOptions) => Promise<NativeTerminalInfo>;
+  nativeTerminalInput: (id: string, data: string) => void;
+  nativeTerminalResize: (id: string, cols: number, rows: number) => void;
+  closeNativeTerminal: (id: string) => void;
+  onNativeTerminalOutput: (cb: (id: string, data: string) => void) => () => void;
+  onNativeTerminalExit: (cb: (id: string, exitCode: number | null) => void) => () => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -415,6 +449,11 @@ export const api: KimiDesktopApi = {
       ipcRenderer.send('kimi:menu-suspend', suspended);
     }
   },
+  setTerminalMenuFocus: (focused) => {
+    if (typeof focused === 'boolean') {
+      ipcRenderer.send('kimi:menu-terminal-focus', focused);
+    }
+  },
   setGlobalShortcut: async (action, binding) => {
     if (typeof action !== 'string' || (binding !== null && typeof binding !== 'string')) {
       return false;
@@ -457,6 +496,61 @@ export const api: KimiDesktopApi = {
     if (level !== 'info' && level !== 'warn' && level !== 'error') return;
     if (typeof message !== 'string' || message === '') return;
     ipcRenderer.send('kimi:renderer-log', { level, message, detail });
+  },
+  createNativeTerminal: async (opts) => {
+    const options: Record<string, unknown> = {};
+    if (typeof opts?.cwd === 'string' && opts.cwd !== '') options['cwd'] = opts.cwd;
+    if (typeof opts?.cols === 'number' && Number.isFinite(opts.cols)) options['cols'] = opts.cols;
+    if (typeof opts?.rows === 'number' && Number.isFinite(opts.rows)) options['rows'] = opts.rows;
+    const info = asNativeTerminalInfo(await ipcRenderer.invoke('kimi:terminal-create', options));
+    if (info === null) {
+      throw new Error('terminal-create: invalid response from main process');
+    }
+    return info;
+  },
+  nativeTerminalInput: (id, data) => {
+    if (typeof id === 'string' && id !== '' && typeof data === 'string' && data !== '') {
+      ipcRenderer.send('kimi:terminal-input', { id, data });
+    }
+  },
+  nativeTerminalResize: (id, cols, rows) => {
+    if (
+      typeof id === 'string' &&
+      id !== '' &&
+      typeof cols === 'number' &&
+      Number.isFinite(cols) &&
+      typeof rows === 'number' &&
+      Number.isFinite(rows)
+    ) {
+      ipcRenderer.send('kimi:terminal-resize', { id, cols, rows });
+    }
+  },
+  closeNativeTerminal: (id) => {
+    if (typeof id === 'string' && id !== '') {
+      ipcRenderer.send('kimi:terminal-close', { id });
+    }
+  },
+  onNativeTerminalOutput: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      if (typeof payload !== 'object' || payload === null) return;
+      const { id, data } = payload as { id?: unknown; data?: unknown };
+      if (typeof id === 'string' && id !== '' && typeof data === 'string') {
+        cb(id, data);
+      }
+    };
+    ipcRenderer.on('kimi:terminal-output', listener);
+    return () => ipcRenderer.removeListener('kimi:terminal-output', listener);
+  },
+  onNativeTerminalExit: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      if (typeof payload !== 'object' || payload === null) return;
+      const { id, exitCode } = payload as { id?: unknown; exitCode?: unknown };
+      if (typeof id === 'string' && id !== '') {
+        cb(id, typeof exitCode === 'number' ? exitCode : null);
+      }
+    };
+    ipcRenderer.on('kimi:terminal-exit', listener);
+    return () => ipcRenderer.removeListener('kimi:terminal-exit', listener);
   },
 };
 

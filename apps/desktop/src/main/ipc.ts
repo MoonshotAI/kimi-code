@@ -1,8 +1,13 @@
-import { dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { app, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 
-import { getMainWindow, showMainWindow, applyWindowVibrancy } from './window';
+import { existsSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+
+import { getMainWindow, showMainWindow, applyWindowVibrancy, sendToRenderer } from './window';
 import { listAvailableOpenInApps, openInApp } from './open-in';
+import { getTerminalManager, initTerminalManager } from './terminal';
+import { startShellEnvProbe } from './shell-env';
 import {
   getUpdateAutoDownload,
   getUpdateStatus,
@@ -14,8 +19,8 @@ import {
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setContextMenuLocale } from './context-menu';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
-import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
-import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
+import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, setTerminalMenuFocus, onTerminalMenuFocus } from './menu';
+import { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
@@ -28,6 +33,18 @@ function isColorScheme(value: unknown): value is ColorScheme {
 
 function isWindowsMenuId(value: unknown): value is WindowsMenuId {
   return value === 'file' || value === 'edit' || value === 'view' || value === 'help';
+}
+
+/** Terminal create payload (renderer only picks cwd/size — the shell itself
+    is resolved main-side, never from renderer input). */
+function asTerminalCreateOptions(value: unknown): { cwd?: string; cols?: number; rows?: number } {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const options: { cwd?: string; cols?: number; rows?: number } = {};
+  if (typeof raw['cwd'] === 'string' && raw['cwd'] !== '') options.cwd = raw['cwd'];
+  if (typeof raw['cols'] === 'number' && Number.isFinite(raw['cols'])) options.cols = raw['cols'];
+  if (typeof raw['rows'] === 'number' && Number.isFinite(raw['rows'])) options.rows = raw['rows'];
+  return options;
 }
 
 const rendererLogWriter = createRendererLogWriter();
@@ -167,6 +184,16 @@ export function registerIpcHandlers(): void {
       setMenuSuspended(suspended);
     }
   });
+  // xterm focus in the native terminal: strip menu accelerators (Windows also
+  // strips the edit menu's Ctrl-chords) so control keys reach the PTY.
+  ipcMain.on(IPC.menuTerminalFocus, (_event, focused: unknown) => {
+    if (typeof focused === 'boolean') {
+      setTerminalMenuFocus(focused);
+    }
+  });
+  // The OS-level summon shortcut suspends with the menu accelerators —
+  // globalShortcut would eat a Ctrl-bound chord before the PTY ever sees it.
+  onTerminalMenuFocus(setGlobalShortcutTerminalFocus);
   // The summon-app global shortcut follows the renderer's customizable binding
   // (canonical keymap format). Registration lives in the main process because
   // globalShortcut must fire even when the window is hidden or unfocused.
@@ -220,5 +247,72 @@ export function registerIpcHandlers(): void {
   // limiting all live in renderer-log.ts; this handler must never throw.
   ipcMain.on(IPC.rendererLog, (_event, payload: unknown) => {
     rendererLogWriter(payload);
+  });
+  // Native embedded terminal (main/terminal.ts): PTYs live in THIS process;
+  // the renderer picks cwd and size, the shell is resolved main-side.
+  initTerminalManager({
+    // Lazy: app.getLocale() is only valid after app-ready, which is later
+    // than this registration.
+    locale: () => {
+      try {
+        return app.getLocale();
+      } catch {
+        return 'en';
+      }
+    },
+    homeDir: homedir(),
+    pathExists: (path) => existsSync(path),
+    isDirectory: (path) => {
+      try {
+        return statSync(path).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    pushOutput: (id, data) => sendToRenderer(IPC.terminalOutput, { id, data }),
+    pushExit: (id, exitCode) => sendToRenderer(IPC.terminalExit, { id, exitCode }),
+  });
+  ipcMain.handle(IPC.terminalCreate, async (event, payload: unknown) => {
+    const win = getMainWindow();
+    if (win === null || win.isDestroyed() || event.sender !== win.webContents) {
+      throw new Error('terminal-create: unknown sender');
+    }
+    const manager = getTerminalManager();
+    const gen = manager.generation();
+    // Wait out the memoized shell-env probe so the first PTY inherits the
+    // user's PATH on GUI launches.
+    await startShellEnvProbe();
+    // A reload during the probe bumps the generation — spawning now would
+    // orphan the PTY.
+    const winAfter = getMainWindow();
+    if (
+      manager.generation() !== gen ||
+      winAfter === null ||
+      winAfter.isDestroyed() ||
+      event.sender !== winAfter.webContents
+    ) {
+      throw new Error('terminal-create superseded by a renderer navigation');
+    }
+    return manager.create(asTerminalCreateOptions(payload));
+  });
+  ipcMain.on(IPC.terminalInput, (_event, payload: unknown) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const { id, data } = payload as Record<string, unknown>;
+    if (typeof id !== 'string' || id === '' || typeof data !== 'string') return;
+    getTerminalManager().write(id, data);
+  });
+  ipcMain.on(IPC.terminalResize, (_event, payload: unknown) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const { id, cols, rows } = payload as Record<string, unknown>;
+    if (typeof id !== 'string' || id === '') return;
+    if (typeof cols !== 'number' || !Number.isFinite(cols)) return;
+    if (typeof rows !== 'number' || !Number.isFinite(rows)) return;
+    getTerminalManager().resize(id, cols, rows);
+  });
+  ipcMain.on(IPC.terminalClose, (_event, payload: unknown) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const { id } = payload as Record<string, unknown>;
+    if (typeof id !== 'string' || id === '') return;
+    getTerminalManager().close(id);
   });
 }

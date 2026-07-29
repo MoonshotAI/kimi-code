@@ -9,6 +9,7 @@ import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
 import OpenInMenu from './OpenInMenu.vue';
+import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -252,6 +253,14 @@ async function onOpenInApp(appId: string): Promise<void> {
   if (!props.workspaceRoot) return;
   await openInNativeApp(appId, props.workspaceRoot);
 }
+
+// Native terminal toggle (desktop-only fork): the bridge-probing store hides
+// the button entirely on web / old bridges.
+const terminalStore = useNativeTerminal();
+
+function toggleTerminalPanel(): void {
+  terminalStore.toggle(props.workspaceRoot);
+}
 </script>
 
 <template>
@@ -345,6 +354,17 @@ async function onOpenInApp(appId: string): Promise<void> {
       :available-apps="openInApps"
       @open-in-app="onOpenInApp"
     />
+
+    <!-- Toggle the bottom terminal panel (desktop-only fork; hidden otherwise) -->
+    <IconButton
+      v-if="terminalStore.available"
+      class="ch-terminal"
+      :class="{ open: terminalStore.open.value }"
+      :label="t('terminal.toggle')"
+      @click="toggleTerminalPanel"
+    >
+      <Icon name="terminal" size="sm" />
+    </IconButton>
 
     <!-- Git branch + status — plain text with semantic colors. Renders for any
          git repo, even a detached HEAD (empty branch → "detached" label), so the
@@ -495,6 +515,12 @@ async function onOpenInApp(appId: string): Promise<void> {
 .chat-header .ch-act-more { width: 24px; height: 24px; border-radius: var(--radius-sm); }
 .chat-header .ch-act-more :deep(svg) { width: 14px; height: 14px; }
 .ch-act-more.open { background: var(--color-well); color: var(--color-text); }
+
+/* Terminal panel toggle — same icon-button geometry as the kebab; the
+   "open" state mirrors the panel's visibility. */
+.chat-header .ch-terminal { width: var(--space-6); height: var(--space-6); border-radius: var(--radius-sm); }
+.chat-header .ch-terminal :deep(svg) { width: var(--p-ic-sm); height: var(--p-ic-sm); }
+.ch-terminal.open { background: var(--color-well); color: var(--color-text); }
 
 /* Dev-environment badge — same pill language as the PR badge, in the warning
    hue so a dev window is recognizable at a glance. Not interactive. */

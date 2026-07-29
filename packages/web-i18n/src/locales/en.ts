@@ -28,6 +28,7 @@ import settings from './en/settings';
 import header from './en/header';
 import sideChat from './en/sideChat';
 import shortcuts from './en/shortcuts';
+import terminal from './en/terminal';
 
 export default {
   common,
@@ -60,4 +61,5 @@ export default {
   header,
   sideChat,
   shortcuts,
+  terminal,
 };

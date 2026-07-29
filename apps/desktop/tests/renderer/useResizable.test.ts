@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick, ref } from 'vue';
 
 import { useResizable } from '../../src/renderer/composables/useResizable';
 
@@ -93,6 +94,17 @@ describe('useResizable', () => {
     expect(useResizable(OPTIONS).width.value).toBe(480);
     store.set('k', '10');
     expect(useResizable(OPTIONS).width.value).toBe(170);
+  });
+
+  it('clamps the committed width when a reactive cap shrinks', async () => {
+    const cap = ref(480);
+    const r = useResizable({ ...OPTIONS, max: cap });
+    r.setWidth(400);
+    expect(r.width.value).toBe(400);
+    cap.value = 300;
+    await nextTick();
+    expect(r.width.value).toBe(300);
+    expect(store.get('k')).toBe('300');
   });
 
   it('coalesces a burst of pointermove events into one update per frame', () => {
@@ -259,5 +271,39 @@ describe('useResizable', () => {
     expect(r.width.value).toBe(480); // committed on drag end…
     expect(r.cursor.value).toBe('w-resize'); // …and the cursor still agrees
     expect(bodyStyle.cursor).toBe(''); // body cursor cleared
+  });
+
+  it('axis y: drags with clientY, reverse grows upward, and uses row cursors', () => {
+    const listeners = new Map<string, Array<(event: { clientY: number }) => void>>();
+    const el = {
+      addEventListener: (type: string, cb: (event: { clientY: number }) => void) => {
+        listeners.set(type, [...(listeners.get(type) ?? []), cb]);
+      },
+      removeEventListener: (type: string, cb: (event: { clientY: number }) => void) => {
+        listeners.set(type, (listeners.get(type) ?? []).filter((fn) => fn !== cb));
+      },
+      setPointerCapture: () => {},
+      releasePointerCapture: () => {},
+    } as unknown as HTMLElement;
+    const fire = (type: string, clientY: number) => {
+      for (const cb of listeners.get(type) ?? []) cb({ clientY });
+    };
+    const down = { preventDefault: () => {}, clientY: 300, currentTarget: el, pointerId: 1 } as unknown as PointerEvent;
+
+    // Bottom-panel shape: axis y + reverse — dragging UP (smaller clientY) grows.
+    const r = useResizable({ ...OPTIONS, axis: 'y', reverse: true });
+    expect(r.cursor.value).toBe('row-resize');
+    r.onPointerDown(down);
+    fire('pointermove', 240); // 60px up → grows 60
+    flushFrame();
+    expect(r.width.value).toBe(330);
+    fire('pointermove', 1000); // way down → clamped to min
+    flushFrame();
+    expect(r.width.value).toBe(170);
+    expect(r.cursor.value).toBe('n-resize'); // at min: only upward (grow) works
+    fire('pointerup', 1000);
+
+    r.setWidth(480); // at max: only downward (shrink) works
+    expect(r.cursor.value).toBe('s-resize');
   });
 });

@@ -16,6 +16,8 @@ import { installExternalLinkGuard } from './external-links';
 import { IPC, type LaunchActionPayload, type RendererEventChannel } from './ipc-channels';
 import { quoteWindowsCommandLineArg } from './jump-list';
 import { log, redactUrlForLog } from './log';
+import { setTerminalMenuFocus, getTerminalMenuFocus } from './menu';
+import { bumpTerminalGeneration, killAllTerminals, killStaleTerminals } from './terminal';
 import { isVibrancyEnabled } from './ui-state';
 
 let mainWindow: BrowserWindow | null = null;
@@ -514,6 +516,12 @@ export function createWindow(): void {
     // A reload replaces the renderer and its tray-select subscription; queue
     // clicks again until the load settles (either handler below).
     rendererReady = false;
+    // Snapshot for the abort path — the old document's focused xterm needs it back.
+    abortedNavTerminalFocus = getTerminalMenuFocus();
+    // The old page's terminals belong to the previous generation; its xterm
+    // focus flag goes with it (a dead renderer never sends focusout).
+    bumpTerminalGeneration();
+    setTerminalMenuFocus(false);
   });
   // Settle funnel for the ready flag. Success marks the fresh page ready; a
   // failed/aborted navigation leaves the previously committed page (and its
@@ -521,6 +529,7 @@ export function createWindow(): void {
   // one wedged false here used to swallow every later tray click into a flush
   // that never came. The connect error page never qualifies (isAppRendererUrl),
   // so a queued click survives it and flushes once the real renderer loads.
+  let abortedNavTerminalFocus = false;
   const settleRendererReady = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
@@ -532,11 +541,19 @@ export function createWindow(): void {
       sendToRenderer(IPC.launchAction, action);
     }
   };
+  // The abort counterpart: the old document's xterm stays focused but no new
+  // focusin fires — restore the snapshot.
+  const restoreTerminalFocusOnAbort = (isMainFrame: boolean): void => {
+    if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
+    setTerminalMenuFocus(abortedNavTerminalFocus);
+  };
   win.webContents.on('did-fail-load', (_event, _code, _desc, _url, isMainFrame) => {
     settleRendererReady(isMainFrame);
+    restoreTerminalFocusOnAbort(isMainFrame);
   });
   win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame) => {
     settleRendererReady(isMainFrame);
+    restoreTerminalFocusOnAbort(isMainFrame);
   });
   // A crashed/killed renderer (OOM, GPU fault) shows the user a frozen or
   // blank page with no other trace — the log file is the only record.
@@ -544,10 +561,19 @@ export function createWindow(): void {
     log.error(
       `[kimi-desktop] renderer process gone (reason=${details.reason} exitCode=${details.exitCode})`,
     );
+    // Bump first: a pending create must come back superseded for the dead page.
+    bumpTerminalGeneration();
+    killAllTerminals();
+    setTerminalMenuFocus(false);
   });
   win.webContents.on('did-finish-load', () => {
     settleRendererReady(true);
     if (win.isDestroyed()) return;
+    // The new document has committed: sweep the PREVIOUS generation's PTYs.
+    // Killing here (not at did-start-navigation) keeps them alive when a
+    // reload fails or aborts and the old page stays displayed; scoping to
+    // stale generations keeps terminals the fresh page already spawned.
+    killStaleTerminals();
     const factor = win.webContents.getZoomFactor();
     const level = win.webContents.getZoomLevel();
     void win.webContents

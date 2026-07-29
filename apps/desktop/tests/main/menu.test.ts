@@ -255,12 +255,34 @@ describe('menuTemplate', () => {
     expect(fileItems.find((item) => item.id === 'open-folder')?.accelerator).toBeUndefined();
   });
 
+  it('View menu carries Toggle Terminal, wired, with the accelerator following the binding', () => {
+    const zhView = submenuItems(menuTemplate(true, 'zh').find((item) => item.label === '视图') as MenuItemConstructorOptions);
+    const zhItem = zhView.find((item) => item.id === 'toggle-terminal');
+    expect(zhItem).toMatchObject({ label: '切换终端', accelerator: 'Control+`' });
+    // Same rule as New Chat: a handler-less accelerator would shadow the keydown.
+    expect(typeof zhItem?.click).toBe('function');
+
+    const enView = submenuItems(menuTemplate(true, 'en').find((item) => item.label === 'View') as MenuItemConstructorOptions);
+    expect(enView.find((item) => item.id === 'toggle-terminal')).toMatchObject({ label: 'Toggle Terminal' });
+
+    const rebound = submenuItems(
+      menuTemplate(true, 'en', { toggleTerminal: 'shift+mod+t' }).find((item) => item.label === 'View') as MenuItemConstructorOptions,
+    );
+    expect(rebound.find((item) => item.id === 'toggle-terminal')).toMatchObject({
+      accelerator: 'Shift+CommandOrControl+T',
+    });
+    const unassigned = submenuItems(
+      menuTemplate(true, 'en', { toggleTerminal: null }).find((item) => item.label === 'View') as MenuItemConstructorOptions,
+    );
+    expect(unassigned.find((item) => item.id === 'toggle-terminal')?.accelerator).toBeUndefined();
+  });
+
   it('strips every accelerator outside the edit menu while suspended (shortcut recording)', () => {
     // A DISABLED item's accelerator can still fire on macOS, so the suspended
     // template removes key equivalents outright: no accelerator, no role. The
     // edit menu keeps both so copy/paste stays functional (its accelerators
     // are reserved anyway).
-    const template = menuTemplate(true, 'en', {}, true);
+    const template = menuTemplate(true, 'en', {}, 'recording');
     const edit = template.find((item) => item.id === 'edit-menu');
     expect(edit).toBeDefined();
     const editItems = new Set(walkItems(submenuItems(edit as MenuItemConstructorOptions)));
@@ -275,6 +297,51 @@ describe('menuTemplate', () => {
     // …and the default (unsuspended) template keeps roles and accelerators.
     const normal = menuTemplate(true, 'en');
     expect(walkItems(normal).some((item) => item.accelerator !== undefined)).toBe(true);
+  });
+
+  it('terminal suspension on macOS deregisters only custom Ctrl-only accelerators', () => {
+    // A user-bound Ctrl chord on a menu-synced action would fire natively
+    // before the PTY — it goes silent; ⌘-based defaults stay armed.
+    const template = menuTemplate(true, 'en', { openSettings: 'ctrl+c' }, 'terminal');
+    const appItems = submenuItems(template[0] as MenuItemConstructorOptions);
+    const settings = appItems.find((item) => item.id === 'open-settings');
+    expect(settings?.accelerator).toBeUndefined();
+    expect(settings?.registerAccelerator).toBe(false);
+    // The default terminal binding is itself Ctrl-only (ctrl+`) — stripped too.
+    const viewItems = submenuItems(template.find((item) => item.label === 'View') as MenuItemConstructorOptions);
+    const toggle = viewItems.find((item) => item.id === 'toggle-terminal');
+    expect(toggle?.accelerator).toBeUndefined();
+    expect(toggle?.registerAccelerator).toBe(false);
+    // ⌘-based items keep their accelerators; roles stay untouched.
+    const fileItems = submenuItems(template.find((item) => item.label === 'File') as MenuItemConstructorOptions);
+    expect(fileItems.find((item) => item.id === 'new-chat')?.accelerator).toBe('CommandOrControl+N');
+    expect(walkItems(template).some((item) => item.role !== undefined)).toBe(true);
+  });
+
+  it('terminal suspension deregisters accelerators but keeps roles/clicks; macOS stays fully armed', () => {
+    // macOS: every accelerator is ⌘-based (no collision with the PTY's
+    // Ctrl-chords), so the menu keeps roles, accelerators, and clicks.
+    const macTemplate = menuTemplate(true, 'en', {}, 'terminal');
+    const macNormal = menuTemplate(true, 'en');
+    expect(walkItems(macTemplate).some((item) => item.accelerator !== undefined)).toBe(true);
+    expect(walkItems(macTemplate).some((item) => item.role !== undefined)).toBe(true);
+    expect(walkItems(macTemplate).length).toBe(walkItems(macNormal).length);
+
+    // Windows/Linux: every accelerator is deregistered — role items keep
+    // their native behavior (role + registerAccelerator:false), custom items
+    // keep their clicks and lose the dead accelerator display.
+    for (const template of [menuTemplate(false, 'en', {}, 'terminal'), windowsMenuTemplate('en', {}, 'terminal', false)]) {
+      for (const item of walkItems(template)) {
+        expect(item.accelerator, item.label).toBeUndefined();
+        if (item.role === undefined && item.type !== 'separator') {
+          expect(item.registerAccelerator, item.label).toBe(false);
+        }
+      }
+      // Role-backed items survive (reload / zoom / copy-paste …).
+      expect(walkItems(template).some((item) => item.role !== undefined)).toBe(true);
+      // Click-wired items survive too.
+      expect(walkItems(template).some((item) => typeof item.click === 'function')).toBe(true);
+    }
   });
 
   it('replaces the selectAll role with a wired custom item (the role accelerator would shadow the renderer keydown)', () => {

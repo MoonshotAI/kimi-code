@@ -9,6 +9,7 @@ export default {
     openFolder: { label: '打开文件夹', desc: '通过系统原生选择器添加工作目录' },
     openInDefaultApp: { label: '在默认应用中打开', desc: '在默认编辑器或终端中打开当前工作目录' },
     openSettings: { label: '打开设置', desc: '显示或隐藏设置窗口' },
+    toggleTerminal: { label: '切换终端', desc: '显示或隐藏底部终端面板' },
     send: { label: '发送消息', desc: '发送输入框中的内容' },
     newline: { label: '换行', desc: '在输入框中插入换行' },
   },

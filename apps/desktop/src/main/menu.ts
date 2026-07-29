@@ -27,6 +27,7 @@ interface MenuStrings {
   view: string;
   newChat: string;
   openFolder: string;
+  toggleTerminal: string;
   aboutApp: string;
   quitApp: string;
   settings: string;
@@ -65,6 +66,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     view: '视图',
     newChat: '新建会话',
     openFolder: '打开文件夹…',
+    toggleTerminal: '切换终端',
     aboutApp: '关于 Kimi Code',
     quitApp: '退出 Kimi Code',
     settings: '设置…',
@@ -101,6 +103,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     view: 'View',
     newChat: 'New Session',
     openFolder: 'Open Folder…',
+    toggleTerminal: 'Toggle Terminal',
     aboutApp: 'About Kimi Code',
     quitApp: 'Quit Kimi Code',
     settings: 'Settings…',
@@ -157,6 +160,7 @@ const MENU_SHORTCUT_DEFAULTS: Record<string, string | null> = {
   openSettings: 'mod+,',
   newSession: 'mod+n',
   openFolder: 'mod+o',
+  toggleTerminal: 'ctrl+`',
 };
 
 let menuShortcutOverrides: Record<string, string | null> = {};
@@ -175,19 +179,58 @@ export function setMenuShortcuts(bindings: Record<string, string | null>): void 
   buildMenu();
 }
 
-// While the settings panel records a shortcut, every menu accelerator must go
-// silent: they intercept keys BEFORE the renderer, so recording ⌘R would
-// reload the app instead of showing the reserved hint. The renderer toggles
-// this around each recording (and on panel unmount).
-let menuSuspended = false;
+// Two independent suspension sources — neither clobbers the other:
+// - recording: the settings panel's shortcut recorder (seconds at a time).
+//   Menu accelerators intercept keys BEFORE the renderer, so recording ⌘R
+//   would reload the app instead of showing the reserved hint.
+// - terminal: xterm focus in the native terminal (potentially hours). On
+//   Windows/Linux the edit menu's Ctrl+C/V/A/Z accelerators fire before the
+//   renderer, so the PTY would never see SIGINT & friends (macOS uses ⌘-based
+//   roles and is unaffected — its edit menu stays armed for copy/paste).
+let recordingSuspended = false;
+let terminalFocused = false;
+
+export type MenuSuspension = 'recording' | 'terminal' | false;
+
+function currentSuspension(): MenuSuspension {
+  if (recordingSuspended) return 'recording';
+  if (terminalFocused) return 'terminal';
+  return false;
+}
 
 /** Silence (or restore) all menu accelerators during shortcut recording. */
 export function setMenuSuspended(suspended: boolean): void {
-  if (suspended === menuSuspended) {
+  if (suspended === recordingSuspended) {
     return;
   }
-  menuSuspended = suspended;
+  recordingSuspended = suspended;
   buildMenu();
+}
+
+let terminalFocusListener: ((focused: boolean) => void) | null = null;
+
+/** Single wiring point for state that must follow the terminal-focus
+ *  suspension (ipc.ts registers the OS global-shortcut suspension here). */
+export function onTerminalMenuFocus(listener: (focused: boolean) => void): void {
+  terminalFocusListener = listener;
+}
+
+/** xterm focus in the native terminal: strip every accelerator (Windows also
+ *  strips the edit menu's Ctrl-chords) so control keys reach the PTY. Click
+ *  handlers stay live — the menus keep working when clicked. */
+export function setTerminalMenuFocus(focused: boolean): void {
+  if (focused === terminalFocused) {
+    return;
+  }
+  terminalFocused = focused;
+  buildMenu();
+  terminalFocusListener?.(focused);
+}
+
+/** Current terminal-focus state — window.ts snapshots it at navigation start
+ *  so an aborted reload can restore it for the surviving old document. */
+export function getTerminalMenuFocus(): boolean {
+  return terminalFocused;
 }
 
 // Accelerator key names for the non-printable canonical keys; single
@@ -364,7 +407,7 @@ export function menuTemplate(
   isMac: boolean,
   locale: TrayLocale,
   shortcutOverrides: Record<string, string | null> = {},
-  suspended = false,
+  suspension: MenuSuspension = false,
   tracing = false,
 ): MenuItemConstructorOptions[] {
   const strings = MENU_STRINGS[locale];
@@ -465,6 +508,18 @@ export function menuTemplate(
       { role: 'zoomIn' },
       { role: 'zoomOut' },
       { type: 'separator' },
+      {
+        id: 'toggle-terminal',
+        label: strings.toggleTerminal,
+        accelerator: bindingToAccelerator(menuBinding(shortcutOverrides, 'toggleTerminal')),
+        click: () => {
+          // Same wiring rule as New Chat: the accelerator would shadow the
+          // renderer's keydown, so the click must forward the same action.
+          showMainWindow();
+          sendToRenderer(IPC.menuAction, 'toggle-terminal');
+        },
+      },
+      { type: 'separator' },
       { role: 'togglefullscreen' },
     ],
   };
@@ -562,30 +617,79 @@ export function menuTemplate(
   };
 
   const template: MenuItemConstructorOptions[] = [appMenu, fileMenu, editMenu, viewMenu, windowMenu, helpMenu];
-  if (!suspended) return template;
-  // Shortcut recording: strip every key equivalent outright. On macOS a
-  // DISABLED item's accelerator can still fire while the menu is closed
-  // (menuNeedsUpdate refreshes state on the key press), so silencing must
-  // remove the accelerators, not the items: every non-edit-menu item becomes
-  // a plain label — no role, no accelerator, no click — which has no key
-  // equivalent at all. The edit menu stays functional (copy/paste); its
-  // accelerators are harmless during recording and already reserved.
-  const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+  if (!suspension) return template;
+  if (suspension === 'recording') {
+    // Shortcut recording: strip every key equivalent outright. On macOS a
+    // DISABLED item's accelerator can still fire while the menu is closed
+    // (menuNeedsUpdate refreshes state on the key press), so silencing must
+    // remove the accelerators, not the items: every non-edit-menu item becomes
+    // a plain label — no role, no accelerator, no click — which has no key
+    // equivalent at all. The edit menu stays functional (copy/paste); its
+    // accelerators are harmless during recording and already reserved.
+    const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+      items.map((item) => {
+        if (item.type === 'separator') return item;
+        if (item.id === 'edit-menu') return item;
+        return {
+          label: item.label,
+          submenu: Array.isArray(item.submenu) ? silence(item.submenu as MenuItemConstructorOptions[]) : undefined,
+        };
+      });
+    return silence(template);
+  }
+  // Terminal focus on macOS: role accelerators are all ⌘-based (the PTY's
+  // Ctrl chords don't collide) and stay armed. The exception: menu-synced
+  // items mirror USER bindings, and the recorder allows Ctrl chords on macOS
+  // — a custom Ctrl+C would still fire natively before the PTY. Deregister
+  // just those custom Ctrl-only accelerators.
+  if (isMac) {
+    const deregisterCtrlOnly = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+      items.map((item) => {
+        const accel = typeof item.accelerator === 'string' ? item.accelerator : '';
+        const next: MenuItemConstructorOptions = {
+          ...item,
+          submenu: Array.isArray(item.submenu)
+            ? deregisterCtrlOnly(item.submenu as MenuItemConstructorOptions[])
+            : undefined,
+        };
+        if (
+          item.role === undefined &&
+          accel.includes('Control') &&
+          !accel.includes('CommandOrControl')
+        ) {
+          next.registerAccelerator = false;
+          delete next.accelerator;
+        }
+        return next;
+      });
+    return deregisterCtrlOnly(template);
+  }
+  // Terminal focus on Windows/Linux: deregister every accelerator so control
+  // keys reach the PTY — INCLUDING the edit menu's Ctrl-chords — while the
+  // items themselves stay fully functional: roles keep their native click
+  // behavior, explicit clicks keep theirs. (registerAccelerator:false leaves
+  // the shortcut text displayed but unregistered; our custom items instead
+  // drop the dead display.)
+  const deregister = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.map((item) => {
       if (item.type === 'separator') return item;
-      if (item.id === 'edit-menu') return item;
-      return {
-        label: item.label,
-        submenu: Array.isArray(item.submenu) ? silence(item.submenu as MenuItemConstructorOptions[]) : undefined,
+      const next: MenuItemConstructorOptions = {
+        ...item,
+        registerAccelerator: false,
+        submenu: Array.isArray(item.submenu)
+          ? deregister(item.submenu as MenuItemConstructorOptions[])
+          : undefined,
       };
+      if (item.role === undefined) delete next.accelerator;
+      return next;
     });
-  return silence(template);
+  return deregister(template);
 }
 
 export function windowsMenuTemplate(
   locale: TrayLocale,
   shortcutOverrides: Record<string, string | null> = {},
-  suspended = false,
+  suspension: MenuSuspension = false,
   isDev = !app.isPackaged,
   tracing = false,
 ): MenuItemConstructorOptions[] {
@@ -631,19 +735,39 @@ export function windowsMenuTemplate(
     { ...view, id: 'view-menu', label: strings.view, submenu: viewItems },
     { id: 'help-menu', label: strings.help, submenu: helpSubmenu },
   ];
-  if (!suspended) return template;
-  const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+  if (!suspension) return template;
+  if (suspension === 'recording') {
+    const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+      items.map((item) => {
+        if (item.type === 'separator' || item.id === 'edit-menu') return item;
+        return {
+          id: item.id,
+          label: item.label,
+          submenu: Array.isArray(item.submenu)
+            ? silence(item.submenu as MenuItemConstructorOptions[])
+            : undefined,
+        };
+      });
+    return silence(template);
+  }
+  // Terminal focus on Windows: deregister every accelerator INCLUDING the
+  // edit menu's Ctrl-chords (they would otherwise shadow the PTY's control
+  // keys). Roles keep their native click behavior, explicit clicks keep
+  // theirs — only the key equivalents go silent.
+  const deregister = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.map((item) => {
-      if (item.type === 'separator' || item.id === 'edit-menu') return item;
-      return {
-        id: item.id,
-        label: item.label,
+      if (item.type === 'separator') return item;
+      const next: MenuItemConstructorOptions = {
+        ...item,
+        registerAccelerator: false,
         submenu: Array.isArray(item.submenu)
-          ? silence(item.submenu as MenuItemConstructorOptions[])
+          ? deregister(item.submenu as MenuItemConstructorOptions[])
           : undefined,
       };
+      if (item.role === undefined) delete next.accelerator;
+      return next;
     });
-  return silence(template);
+  return deregister(template);
 }
 
 let applicationMenu: Menu | null = null;
@@ -718,12 +842,13 @@ export function popupWindowsMenu(
 }
 
 export function buildMenu(): void {
+  const suspension = currentSuspension();
   applicationMenu = Menu.buildFromTemplate(
     process.platform === 'win32'
       ? windowsMenuTemplate(
           effectiveMenuLocale(),
           menuShortcutOverrides,
-          menuSuspended,
+          suspension,
           !app.isPackaged,
           getTraceRecorder().isRecording(),
         )
@@ -731,7 +856,7 @@ export function buildMenu(): void {
           process.platform === 'darwin',
           effectiveMenuLocale(),
           menuShortcutOverrides,
-          menuSuspended,
+          suspension,
           getTraceRecorder().isRecording(),
         ),
   );

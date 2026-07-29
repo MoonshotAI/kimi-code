@@ -9,6 +9,7 @@ export default {
     openFolder: { label: 'Open Folder', desc: 'Add a workspace folder with the native picker' },
     openInDefaultApp: { label: 'Open in App', desc: 'Open the workspace in your default editor/terminal' },
     openSettings: { label: 'Open Settings', desc: 'Show or hide the settings dialog' },
+    toggleTerminal: { label: 'Toggle Terminal', desc: 'Show or hide the bottom terminal panel' },
     send: { label: 'Send Message', desc: 'Send the composer input' },
     newline: { label: 'Newline', desc: 'Insert a newline in the composer' },
   },

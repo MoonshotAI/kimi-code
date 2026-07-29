@@ -11,6 +11,7 @@ import { initDockIcon } from './dock-icon';
 import { buildMenu } from './menu';
 import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
+import { killAllTerminals } from './terminal';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
 
@@ -63,6 +64,7 @@ export function main(): void {
   app.on('before-quit', () => {
     log.info('[kimi-desktop] quitting');
     stopShellEnvProbe();
+    killAllTerminals();
     destroyTray();
     unregisterGlobalShortcuts();
     closeServerHandle();

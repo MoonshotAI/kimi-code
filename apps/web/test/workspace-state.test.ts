@@ -1095,7 +1095,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     const err = new Error('snapshot failed');
     apiMock.createSession.mockRejectedValue(err);
 
-    await expect(ws.createGoal('improve test coverage')).resolves.toBeUndefined();
+    await expect(ws.createGoal('improve test coverage')).resolves.toBeNull();
 
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('createGoal', err);
     expect(apiMock.updateSession).not.toHaveBeenCalled();

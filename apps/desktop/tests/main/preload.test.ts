@@ -21,6 +21,8 @@ vi.mock('electron', () => ({
 
 const WHITELIST = [
   'checkForUpdates',
+  'closeNativeTerminal',
+  'createNativeTerminal',
   'downloadUpdate',
   'getPathForFile',
   'getUpdateAutoDownload',
@@ -30,10 +32,14 @@ const WHITELIST = [
   'isFullscreen',
   'listOpenInApps',
   'log',
+  'nativeTerminalInput',
+  'nativeTerminalResize',
   'onFullscreenChanged',
   'onLaunchAction',
   'onMenu',
   'onMenuAction',
+  'onNativeTerminalExit',
+  'onNativeTerminalOutput',
   'popupWindowsMenu',
   'onShortcut',
   'onTraySelectSession',
@@ -50,6 +56,7 @@ const WHITELIST = [
   'setMenuShortcuts',
   'setMenuSuspended',
   'setOnboarded',
+  'setTerminalMenuFocus',
   'setTheme',
   'setTrayAttention',
   'setUpdateAutoDownload',
@@ -134,6 +141,12 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setMenuSuspended('yes'); // junk ignored
     expect(send).toHaveBeenCalledTimes(5);
 
+    // Terminal menu focus: booleans forward; junk is ignored.
+    exposed.setTerminalMenuFocus(true);
+    expect(send).toHaveBeenCalledWith('kimi:menu-terminal-focus', true);
+    exposed.setTerminalMenuFocus('yes');
+    expect(send).toHaveBeenCalledTimes(6);
+
     // Global shortcut: action + nullable binding invoke; the boolean result
     // is validated (non-true resolves false); junk never reaches the channel.
     invoke.mockResolvedValueOnce(true);
@@ -164,7 +177,7 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setDockIconChoice('dark');
     expect(send).toHaveBeenCalledWith('kimi:dock-icon-choice', 'dark');
     exposed.setDockIconChoice('bogus');
-    expect(send).toHaveBeenCalledTimes(8); // invalid choice ignored
+    expect(send).toHaveBeenCalledTimes(9); // invalid choice ignored
 
     invoke.mockResolvedValueOnce('dark');
     await expect(exposed.getOsAppearance()).resolves.toBe('dark');
@@ -183,7 +196,7 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:jump-list', workspaces);
     exposed.setJumpList([{ name: 'x', root: '' }]); // empty root ignored
     exposed.setJumpList('nope'); // junk ignored
-    expect(send).toHaveBeenCalledTimes(9);
+    expect(send).toHaveBeenCalledTimes(10);
 
     const offMenu = exposed.onMenu(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
@@ -256,7 +269,7 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setVibrancy(false);
     expect(send).toHaveBeenCalledWith('kimi:vibrancy', false);
     exposed.setVibrancy('yes'); // junk ignored
-    expect(send).toHaveBeenCalledTimes(10);
+    expect(send).toHaveBeenCalledTimes(11);
 
     // getVibrancy: only an explicit false from the main process disables.
     invoke.mockResolvedValueOnce(false);
@@ -288,7 +301,7 @@ describe('kimiDesktop preload bridge', () => {
     exposed.log('debug' as 'warn', 'x');
     exposed.log('info', '');
     exposed.log('info', 42 as unknown as string);
-    expect(send).toHaveBeenCalledTimes(11);
+    expect(send).toHaveBeenCalledTimes(12);
   });
 
   it('coerces the auto-download preference response to a boolean default', async () => {
@@ -416,5 +429,55 @@ describe('kimiDesktop preload bridge', () => {
       throw new Error('bad file');
     });
     expect(exposed.getPathForFile(file)).toBeNull();
+  });
+
+  it('wires the native terminal methods and validates both directions', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    // create: valid options pass through; junk fields are stripped.
+    invoke.mockResolvedValueOnce({ id: 't1', shell: 'zsh', cwd: '/work' });
+    await expect(
+      exposed.createNativeTerminal({ cwd: '/work', cols: 120, rows: 30 }),
+    ).resolves.toEqual({ id: 't1', shell: 'zsh', cwd: '/work' });
+    expect(invoke).toHaveBeenCalledWith('kimi:terminal-create', { cwd: '/work', cols: 120, rows: 30 });
+    invoke.mockResolvedValueOnce({ id: 't2', shell: 'zsh', cwd: '/' });
+    await exposed.createNativeTerminal({ cwd: '', cols: Number.NaN });
+    expect(invoke).toHaveBeenLastCalledWith('kimi:terminal-create', {});
+    // A malformed main-process response rejects instead of leaking junk.
+    invoke.mockResolvedValueOnce({ shell: 'zsh' });
+    await expect(exposed.createNativeTerminal()).rejects.toThrow('terminal-create');
+
+    // input/resize/close: valid payloads forward; malformed ones never send.
+    exposed.nativeTerminalInput('t1', 'ls\n');
+    expect(send).toHaveBeenCalledWith('kimi:terminal-input', { id: 't1', data: 'ls\n' });
+    exposed.nativeTerminalInput('', 'x');
+    exposed.nativeTerminalInput('t1', '');
+    exposed.nativeTerminalResize('t1', 80, 24);
+    expect(send).toHaveBeenCalledWith('kimi:terminal-resize', { id: 't1', cols: 80, rows: 24 });
+    exposed.nativeTerminalResize('t1', Number.NaN, 24);
+    exposed.closeNativeTerminal('t1');
+    expect(send).toHaveBeenCalledWith('kimi:terminal-close', { id: 't1' });
+    exposed.closeNativeTerminal('');
+    expect(send).toHaveBeenCalledTimes(3);
+
+    // output/exit events forward after structural validation.
+    const outputCb = vi.fn();
+    exposed.onNativeTerminalOutput(outputCb);
+    listeners.get('kimi:terminal-output')?.({}, { id: 't1', data: 'hello' });
+    expect(outputCb).toHaveBeenCalledWith('t1', 'hello');
+    listeners.get('kimi:terminal-output')?.({}, { id: 't1' });
+    listeners.get('kimi:terminal-output')?.({}, 'hello');
+    expect(outputCb).toHaveBeenCalledTimes(1);
+
+    const exitCb = vi.fn();
+    exposed.onNativeTerminalExit(exitCb);
+    listeners.get('kimi:terminal-exit')?.({}, { id: 't1', exitCode: 0 });
+    expect(exitCb).toHaveBeenCalledWith('t1', 0);
+    // Missing/invalid exitCode maps to null (signal kills carry none).
+    listeners.get('kimi:terminal-exit')?.({}, { id: 't1' });
+    expect(exitCb).toHaveBeenCalledWith('t1', null);
+    listeners.get('kimi:terminal-exit')?.({}, { exitCode: 1 });
+    expect(exitCb).toHaveBeenCalledTimes(2);
   });
 });

@@ -22,6 +22,7 @@ import {
   type ShortcutScope,
 } from '../lib/keymap';
 import { safeGetJson, safeSetJson, STORAGE_KEYS } from '../lib/storage';
+import { isMacosDesktop } from '../lib/desktopFlag';
 
 /** action id → canonical binding (null = unassigned; absent = default). */
 export type ShortcutOverrides = Record<string, string | null>;
@@ -176,4 +177,18 @@ export function matchShortcutAction(e: KeyboardEvent, scope: ShortcutScope): str
     if (binding !== null && matchBinding(e, binding)) return action.id;
   }
   return null;
+}
+
+/** True when a global-scope chord matched inside the terminal must reach the
+ *  PTY instead of firing its action. Mirrors the menu suspension
+ *  (main/menu.ts): macOS deregisters custom Ctrl-only accelerators while
+ *  xterm is focused, Windows/Linux every accelerator — so those chords are
+ *  terminal input here too. The terminal's own toggle is the lone exception
+ *  on every platform (the panel must stay reachable). TerminalView's xterm
+ *  key filter and the App.vue dispatcher both key off this so the two sides
+ *  cannot disagree. */
+export function terminalPassesChordToPty(e: KeyboardEvent, actionId: string): boolean {
+  if (actionId === 'toggleTerminal') return false;
+  if (isMacosDesktop) return e.ctrlKey && !e.metaKey && !e.altKey;
+  return true;
 }

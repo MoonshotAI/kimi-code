@@ -1875,6 +1875,11 @@ function selectAllRegion(target: EventTarget | null): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  // The desktop native terminal owns these chords while focused (vim/less/
+  // fzf/tmux input); no .terminal-host exists on web — a no-op there.
+  if (event.target instanceof Element && event.target.closest('.terminal-host') !== null) {
+    return;
+  }
   // Escape is owned by whatever sits above the conversation: a modal layer
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier

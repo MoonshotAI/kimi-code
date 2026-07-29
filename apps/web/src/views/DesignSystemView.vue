@@ -1467,7 +1467,7 @@ onUnmounted(() => {
             </p>
 
             <h3 class="sub">Layout grid</h3>
-            <p>On desktop it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent <code>auto</code> track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles.</p>
+            <p>On web it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent <code>auto</code> track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles. (The desktop app adds a second row for its terminal panel — desktop-only, see below.)</p>
             <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">App.vue · .app</span></div><pre>grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
     /*         sidebar ↑    ↑handle  ↑conversation  ↑handle ↑right panel (auto) */</pre></div>
             <table class="dt">
@@ -1574,6 +1574,15 @@ onUnmounted(() => {
               <li>Panel head: bold mono title + optional muted subtitle + middle slot (Badge / control / path) + close IconButton on the right.</li>
               <li>When opened, the panel width snaps from <code>0 → var(--preview-w)</code> with no animation, squeezing the conversation column in a single layout.</li>
               <li>At ≤640px the panel becomes a full-screen overlay (<code>position:fixed; inset:0</code>).</li>
+            </ul>
+
+            <h3 class="sub">Bottom terminal panel (desktop-only)</h3>
+            <p>The native terminal (<code>components/terminal/</code>) sits in the conversation column's own bottom grid slot — the sidebar and the right panel span BOTH rows and keep full height (the VS Code layout: the panel belongs to the editor area, not to the whole window). Its height transitions <code>0 ↔ var(--terminal-h)</code> (260px default, 120 min, 60% viewport max; persisted), squeezing the conversation column above instead of overlaying it. The panel mounts lazily on first open and then stays mounted so xterm scrollback survives a collapse.</p>
+            <ul class="clean">
+              <li>Resize: a horizontal twin of the ResizeHandle (4px strip over the 0.5px top hairline, <code>row-resize</code> mid-range, <code>n/s-resize</code> at the limits, same neutral f2/f3 ramp, never accent). The shared <code>useResizable</code> hook owns it via <code>axis: 'y'</code>; the height var is written imperatively during a drag (same no-Vue-rerender rule as <code>--preview-w</code>).</li>
+              <li>Toolbar (32px, 0.5px bottom hairline): tab strip on the left — each tab is a compact <code>radius-sm</code> pill (leading terminal glyph, muted while exited + shell label + hover close affordance), the active tab uses <code>--color-selected</code>, hover <code>--color-hover</code>; a "+" action appends a tab. Tabs follow the §08 tablist keyboard model (roving tabindex, ←/→/Home/End), the close affordance is its own button (no nested interactives), and the height separator is keyboard-operable (↑/↓ in steps, value exposed). Trailing actions: restart (only while the active tab exited) and a collapse chevron. Collapsing sets <code>inert</code> on the region — the xterm instances and their scrollback stay mounted but leave the tab order.</li>
+              <li>The xterm canvas cannot resolve CSS variables either, so its palette is resolved from the live <code>--color-*</code> tokens at runtime (re-read on scheme flips; the ANSI hues the status ramp doesn't cover use dedicated <code>--color-term-magenta/cyan</code> tokens); the font is the app JetBrains Mono stack sized off the content token scale. While focused, the panel owns every key except the registered app shortcuts (chat-level Esc / find / select-all chords stay inert inside it).</li>
+              <li>Entries: the chat header's terminal IconButton (right of Open in, lit while the panel is open) — on the empty-composer state, where no chat header renders, the same button floats at the conversation's top-right instead — plus <code>ctrl+`</code> (⌃` on macOS — VS Code's binding; ⌘` stays free for the OS window switcher — customizable in the shortcut registry), and the View menu's Toggle Terminal item. New tabs spawn in the visible workspace root. Terminal state is per session: switching sessions swaps the visible bucket while the others keep their PTYs and xterm views alive (scrollback survives a round trip; the ten most recent sessions are kept, LRU). The panel never renders on mobile / web.</li>
             </ul>
 
             <div class="callout info"><span class="ico">i</span><div>

@@ -12,7 +12,7 @@
 // w-resize/e-resize (the direction that still has an effect) instead of the
 // neutral col-resize.
 
-import { computed, onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
+import { computed, onBeforeUnmount, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue';
 import { safeGetString, safeSetString } from '../lib/storage';
 
 export interface UseResizableOptions {
@@ -27,6 +27,9 @@ export interface UseResizableOptions {
   max: MaybeRefOrGetter<number>;
   /** True when dragging right should shrink the controlled width. */
   reverse?: boolean;
+  /** Drag axis: 'x' (default) resizes a width, 'y' a height (clientY deltas,
+   *  row/n/s-resize cursors). The option/return names stay *width* either way. */
+  axis?: 'x' | 'y';
   /** Optional live applier for drag frames. When set, each animation frame
    *  calls it with the latest clamped width INSTEAD of updating the `width`
    *  ref — the caller writes straight to the DOM, keeping Vue re-renders out
@@ -71,7 +74,7 @@ function writeStored(key: string, value: number): void {
 }
 
 export function useResizable(options: UseResizableOptions): UseResizable {
-  const { storageKey, defaultWidth, min, max, reverse = false, applyLive } = options;
+  const { storageKey, defaultWidth, min, max, reverse = false, axis = 'x', applyLive } = options;
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
@@ -83,14 +86,17 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   // The cursor names the direction that still has an effect: at the eastward
   // limit only westward dragging resizes (w-resize), and vice versa. `reverse`
-  // flips which direction grows the width.
+  // flips which direction grows the width. On the y axis the pairs are
+  // n/s-resize with a row-resize neutral.
   function cursorFor(w: number): string {
     const atMin = w <= min;
     const atMax = w >= toValue(max);
-    if (atMin && atMax) return 'col-resize'; // no room to move at all
-    if (atMax) return reverse ? 'e-resize' : 'w-resize';
-    if (atMin) return reverse ? 'w-resize' : 'e-resize';
-    return 'col-resize';
+    const neutral = axis === 'x' ? 'col-resize' : 'row-resize';
+    if (atMin && atMax) return neutral; // no room to move at all
+    const [growCursor, shrinkCursor] = axis === 'x' ? ['e-resize', 'w-resize'] : ['s-resize', 'n-resize'];
+    if (atMax) return reverse ? growCursor : shrinkCursor;
+    if (atMin) return reverse ? shrinkCursor : growCursor;
+    return neutral;
   }
 
   // Live drag width, non-null only while dragging. Drives the cursor (and the
@@ -113,8 +119,19 @@ export function useResizable(options: UseResizableOptions): UseResizable {
     writeStored(storageKey, next);
   }
 
+  // A shrinking cap (window resize) pulls the committed width down with it —
+  // otherwise the stale over-cap value resurfaces on the next drag/keyboard
+  // step and jumps the panel back above the clamp.
+  watch(
+    () => toValue(max),
+    (cap) => {
+      if (!dragging.value && width.value > cap) setWidth(cap);
+    },
+  );
+
   // Drag bookkeeping — captured at pointerdown so we resize relative to the
-  // start point rather than absolute cursor coordinates.
+  // start point rather than absolute cursor coordinates. "Position" is clientX
+  // on the x axis, clientY on the y axis.
   let startX = 0;
   let startWidth = 0;
   let activeEl: HTMLElement | null = null;
@@ -144,7 +161,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   function onPointerMove(event: PointerEvent): void {
     if (!dragging.value) return;
-    latestClientX = event.clientX;
+    latestClientX = axis === 'x' ? event.clientX : event.clientY;
     if (rafId !== 0) return; // a frame with the newest position is already pending
     if (typeof requestAnimationFrame !== 'function') {
       applyDragWidth(); // no rAF (non-DOM environment) — update synchronously
@@ -190,7 +207,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
   function onPointerDown(event: PointerEvent): void {
     event.preventDefault();
     dragging.value = true;
-    startX = event.clientX;
+    startX = axis === 'x' ? event.clientX : event.clientY;
     // The stored width can exceed the current cap (e.g. after the window narrows
     // or a side panel opens). Clamp the drag start so the handle responds
     // immediately instead of first covering an invisible delta.

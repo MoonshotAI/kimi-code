@@ -307,17 +307,23 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Side chat (BTW) — now rendered in the unified right-side detail layer.
   // ---------------------------------------------------------------------------
-  async function openSideChatTab(prompt?: string): Promise<void> {
+  async function openSideChatTab(prompt?: string): Promise<string | null> {
     // Empty-composer heal: `/btw [<question>]` from the new-session screen needs
     // a parent session before openSideChat can start a BTW sub-agent. Create one
     // in the active workspace (same path as the first prompt / a new-session
-    // skill / goal), then open the side chat on it.
+    // skill / goal), then open the side chat on it. Returns the created session
+    // id (null when a session already existed) for follow-up state anchoring.
     if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
-      await client.startSessionAndOpenSideChat(client.activeWorkspaceId.value, prompt);
-    } else {
-      await client.openSideChat(prompt);
+      const createdId = await client.startSessionAndOpenSideChat(
+        client.activeWorkspaceId.value,
+        prompt,
+      );
+      detailTarget.value = 'btw';
+      return createdId;
     }
+    await client.openSideChat(prompt);
     detailTarget.value = 'btw';
+    return null;
   }
 
   function closeSideChat(): void {
