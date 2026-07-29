@@ -1179,6 +1179,201 @@ const enqueueEvent = createEventBatcher<PendingAppEvent>(
   { coalesce: coalesceAppRenderEvents },
 );
 
+interface SessionWorkBaselineRun {
+  workEventSeqBySession: Map<string, number>;
+  turnEventSeqBySession: Map<string, number>;
+  pendingEventBySession: Map<
+    string,
+    { seq: number; source: 'work' | 'interaction' }
+  >;
+  turnStartBySession: Map<string, { generation: number; pending: boolean }>;
+  witnessedTurnBySession: Set<string>;
+}
+
+const SESSION_WORK_BASELINE_RETRY_MAX_MS = 30_000;
+let connectionGeneration = 0;
+let sessionWorkBaselineRun: SessionWorkBaselineRun | null = null;
+// REST list rows only authorize skipping older activity frames, not transcript data.
+const sessionActivityWatermarkBySession = new Map<string, number>();
+let sessionWorkBaselineRetryAttempt = 0;
+let sessionWorkBaselineRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelSessionWorkBaselineRetry(): void {
+  if (sessionWorkBaselineRetryTimer === null) return;
+  clearTimeout(sessionWorkBaselineRetryTimer);
+  sessionWorkBaselineRetryTimer = null;
+}
+
+function scheduleSessionWorkBaselineRetry(error: unknown): void {
+  if (!rawState.connected || sessionWorkBaselineRetryTimer !== null) return;
+  const delay = Math.min(
+    SESSION_WORK_BASELINE_RETRY_MAX_MS,
+    1000 * 2 ** sessionWorkBaselineRetryAttempt,
+  );
+  sessionWorkBaselineRetryAttempt += 1;
+  logWarn('[kimi-web] session work reconciliation incomplete; retrying', error);
+  sessionWorkBaselineRetryTimer = setTimeout(() => {
+    sessionWorkBaselineRetryTimer = null;
+    if (rawState.connected) void reconcileSessionWorkAfterReconnect();
+  }, delay);
+}
+
+function applySessionWorkBaseline(
+  sessions: AppSession[],
+  run: SessionWorkBaselineRun,
+): void {
+  const baselineById = new Map(sessions.map((session) => [session.id, session] as const));
+  let sessionsChanged = false;
+  let turnActiveChanged = false;
+  const nextTurnActive = { ...rawState.turnActiveBySession };
+  const finishedSessionIds: string[] = [];
+  const authoritativePendingBySession = new Map<
+    string,
+    'none' | 'approval' | 'question'
+  >();
+  const nextSessions = rawState.sessions.map((session) => {
+    const baseline = baselineById.get(session.id);
+    if (baseline === undefined) return session;
+    const workEventSeq = run.workEventSeqBySession.get(session.id) ?? 0;
+    const turnEventSeq = run.turnEventSeqBySession.get(session.id) ?? 0;
+    const pendingEvent = run.pendingEventBySession.get(session.id);
+    const workChanged = workEventSeq > baseline.lastSeq;
+    const turnChanged =
+      turnEventSeq > baseline.lastSeq;
+    const pendingChanged =
+      pendingEvent !== undefined && pendingEvent.seq > baseline.lastSeq;
+    const busy =
+      workChanged || (turnChanged && session.mainTurnActive === true)
+        ? session.busy || session.mainTurnActive === true
+        : baseline.busy;
+    const mainTurnActive =
+      workChanged || turnChanged
+        ? session.mainTurnActive
+        : baseline.mainTurnActive ?? (busy ? session.mainTurnActive : false);
+    const pendingInteraction = pendingChanged
+      ? pendingEvent.source === 'work'
+        ? session.pendingInteraction
+        // The server uses the same approval-over-question priority when both exist.
+        : (rawState.approvalsBySession[session.id]?.length ?? 0) > 0
+          ? 'approval'
+          : (rawState.questionsBySession[session.id]?.length ?? 0) > 0
+            ? 'question'
+            : 'none'
+      : baseline.pendingInteraction ?? (busy ? session.pendingInteraction : 'none');
+    if (
+      ((pendingChanged && pendingEvent.source === 'work') ||
+        (!pendingChanged &&
+          (baseline.pendingInteraction !== undefined || baseline.busy === false))) &&
+      pendingInteraction !== undefined
+    ) {
+      authoritativePendingBySession.set(session.id, pendingInteraction);
+    }
+    const lastTurnReason = workChanged ? session.lastTurnReason : baseline.lastTurnReason;
+    sessionActivityWatermarkBySession.set(
+      session.id,
+      Math.max(
+        sessionActivityWatermarkBySession.get(session.id) ?? 0,
+        baseline.lastSeq,
+      ),
+    );
+    const turnStart = run.turnStartBySession.get(session.id);
+    if (
+      (mainTurnActive === false || (mainTurnActive === undefined && !busy)) &&
+      run.witnessedTurnBySession.has(session.id) &&
+      turnStart !== undefined &&
+      workspaceState.isLocalTurnSnapshotCurrent(session.id, turnStart)
+    ) {
+      finishedSessionIds.push(session.id);
+    }
+
+    if (mainTurnActive === true && !nextTurnActive[session.id]) {
+      nextTurnActive[session.id] = true;
+      turnActiveChanged = true;
+    } else if (
+      (mainTurnActive === false || !busy) &&
+      nextTurnActive[session.id]
+    ) {
+      delete nextTurnActive[session.id];
+      turnActiveChanged = true;
+    }
+
+    if (
+      session.busy === busy &&
+      session.mainTurnActive === mainTurnActive &&
+      session.pendingInteraction === pendingInteraction &&
+      session.lastTurnReason === lastTurnReason
+    ) {
+      return session;
+    }
+    sessionsChanged = true;
+    return {
+      ...session,
+      busy,
+      mainTurnActive,
+      pendingInteraction,
+      lastTurnReason,
+    };
+  });
+  if (sessionsChanged) setSessions(nextSessions);
+  if (turnActiveChanged) applyRecordDiff(rawState.turnActiveBySession, nextTurnActive);
+  for (const [sessionId, pendingInteraction] of authoritativePendingBySession) {
+    if (pendingInteraction === 'none') {
+      delete rawState.approvalsBySession[sessionId];
+      delete rawState.questionsBySession[sessionId];
+    } else if (pendingInteraction === 'question') {
+      delete rawState.approvalsBySession[sessionId];
+    }
+  }
+  for (const sessionId of finishedSessionIds) {
+    workspaceState.finishPromptLocal(sessionId, { turnWasActive: true });
+  }
+}
+
+async function reconcileSessionWorkAfterReconnect(): Promise<void> {
+  const run: SessionWorkBaselineRun = {
+    workEventSeqBySession: new Map(),
+    turnEventSeqBySession: new Map(),
+    pendingEventBySession: new Map(),
+    turnStartBySession: new Map(
+      rawState.sessions.map((session) => [
+        session.id,
+        workspaceState.localTurnStartState(session.id),
+      ]),
+    ),
+    witnessedTurnBySession: new Set(
+      rawState.sessions
+        .filter(
+          (session) =>
+            rawState.inFlightBySession[session.id] ||
+            rawState.turnActiveBySession[session.id],
+        )
+        .map((session) => session.id),
+    ),
+  };
+  sessionWorkBaselineRun = run;
+
+  try {
+    const result = await workspaceState.listAllSessionsGlobal({
+      shouldContinue: () => sessionWorkBaselineRun === run && rawState.connected,
+    });
+    if (sessionWorkBaselineRun !== run || !rawState.connected) return;
+    // Apply queued events first, then compare their seq with each REST row's
+    // lastSeq so the newer source wins for each work-state field.
+    enqueueEvent.flush();
+    applySessionWorkBaseline(result.sessions, run);
+    sessionWorkBaselineRun = null;
+    if (result.error !== undefined) {
+      scheduleSessionWorkBaselineRetry(result.error);
+    } else {
+      sessionWorkBaselineRetryAttempt = 0;
+    }
+  } catch (error) {
+    if (sessionWorkBaselineRun !== run || !rawState.connected) return;
+    sessionWorkBaselineRun = null;
+    scheduleSessionWorkBaselineRetry(error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // WS subscription (lazy, only when a session is selected)
 // ---------------------------------------------------------------------------
@@ -1205,6 +1400,60 @@ function connectEventsIfNeeded(): void {
       ) {
         workspaceState.applyWorkspaceEvent(appEvent);
         return;
+      }
+      const isWorkEvent = appEvent.type === 'sessionWorkChanged';
+      const isTurnEvent = appEvent.type === 'turnActiveChanged';
+      const isInteractionEvent =
+        appEvent.type === 'approvalRequested' ||
+        appEvent.type === 'approvalResolved' ||
+        appEvent.type === 'approvalExpired' ||
+        appEvent.type === 'questionRequested' ||
+        appEvent.type === 'questionAnswered' ||
+        appEvent.type === 'questionDismissed';
+      if ((isWorkEvent || isTurnEvent || isInteractionEvent) && meta.seq > 0) {
+        const watermark =
+          sessionActivityWatermarkBySession.get(meta.sessionId) ?? 0;
+        if (meta.seq <= watermark) return;
+        sessionActivityWatermarkBySession.set(meta.sessionId, meta.seq);
+      }
+      if (
+        sessionWorkBaselineRun !== null &&
+        (isWorkEvent || isTurnEvent || isInteractionEvent)
+      ) {
+        if (isWorkEvent) {
+          const previous =
+            sessionWorkBaselineRun.workEventSeqBySession.get(meta.sessionId) ?? 0;
+          if (meta.seq > previous) {
+            sessionWorkBaselineRun.workEventSeqBySession.set(meta.sessionId, meta.seq);
+          }
+          if (appEvent.pendingInteraction !== undefined || !appEvent.busy) {
+            const pending = sessionWorkBaselineRun.pendingEventBySession.get(
+              meta.sessionId,
+            );
+            if (pending === undefined || meta.seq > pending.seq) {
+              sessionWorkBaselineRun.pendingEventBySession.set(meta.sessionId, {
+                seq: meta.seq,
+                source: 'work',
+              });
+            }
+          }
+        } else if (isTurnEvent) {
+          const previous =
+            sessionWorkBaselineRun.turnEventSeqBySession.get(meta.sessionId) ?? 0;
+          if (meta.seq > previous) {
+            sessionWorkBaselineRun.turnEventSeqBySession.set(meta.sessionId, meta.seq);
+          }
+        } else {
+          const pending = sessionWorkBaselineRun.pendingEventBySession.get(
+            meta.sessionId,
+          );
+          if (pending === undefined || meta.seq > pending.seq) {
+            sessionWorkBaselineRun.pendingEventBySession.set(meta.sessionId, {
+              seq: meta.seq,
+              source: 'interaction',
+            });
+          }
+        }
       }
 
       // Merge safe streaming chunks, then process the ordered queue in bounded
@@ -1258,17 +1507,33 @@ function connectEventsIfNeeded(): void {
       });
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
+      if (!connected) {
+        sessionWorkBaselineRun = null;
+        sessionActivityWatermarkBySession.clear();
+        cancelSessionWorkBaselineRetry();
+        sessionWorkBaselineRetryAttempt = 0;
+      }
       // The data channel is healthy again (server_hello received). Clear any
       // stale "Realtime connection error" toast instead of relying on its
       // auto-dismiss timer: iOS Safari freezes timers while a tab is
       // backgrounded, so the toast would otherwise linger until a manual
       // refresh even though the reconnect already succeeded.
       if (connected) {
+        connectionGeneration += 1;
         dismissWsError();
         // A (re)connect can mean the backend was restarted — or switched, when
         // the dev proxy was moved to the other engine. Re-read /meta so
         // serverVersion / backend never go stale.
         void workspaceState.refreshServerMeta();
+      }
+    },
+
+    onReplayComplete() {
+      // Replay frames were queued for bounded rendering; drain them before the
+      // REST baseline starts so the ACK is also a state-application barrier.
+      enqueueEvent.flush();
+      if (connectionGeneration > 1) {
+        void reconcileSessionWorkAfterReconnect();
       }
     },
 

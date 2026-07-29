@@ -595,7 +595,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
    *  still reachable after a refresh. A later-page failure returns the pages
    *  already fetched plus the error; only a first-page failure rejects. */
-  async function listAllSessionsGlobal(): Promise<{
+  async function listAllSessionsGlobal(options?: {
+    shouldContinue?: () => boolean;
+  }): Promise<{
     sessions: AppSession[];
     error?: unknown;
   }> {
@@ -604,6 +606,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     let beforeId: string | undefined;
     let continuationError: unknown;
     for (;;) {
+      if (options?.shouldContinue?.() === false) break;
       let page: { items: AppSession[]; hasMore: boolean };
       try {
         page = await api.listSessions({

@@ -407,19 +407,30 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'sessionWorkChanged': {
+      let pendingInteraction: AppSession['pendingInteraction'];
       next.sessions = next.sessions.map((s) => {
         if (s.id !== event.sessionId) return s;
+        pendingInteraction =
+          event.pendingInteraction ?? (event.busy ? s.pendingInteraction : 'none');
         return {
           ...s,
           busy: event.busy,
           mainTurnActive: event.mainTurnActive ?? (event.busy ? s.mainTurnActive : false),
-          pendingInteraction: event.pendingInteraction ?? s.pendingInteraction,
+          pendingInteraction,
           // Authoritative, not nullish-merge: an omitted last_turn_reason is
           // how the server says "no current outcome" (a fresh turn cleared
           // the previous one), so the stale value must not survive.
           lastTurnReason: event.lastTurnReason,
         };
       });
+      if (isFreshEvent(state, meta)) {
+        if (pendingInteraction === 'none') {
+          delete next.approvalsBySession[event.sessionId];
+          delete next.questionsBySession[event.sessionId];
+        } else if (pendingInteraction === 'question') {
+          delete next.approvalsBySession[event.sessionId];
+        }
+      }
       if (event.mainTurnActive === true) {
         next.turnActiveBySession[event.sessionId] = true;
       } else if (event.mainTurnActive === false || !event.busy) {
