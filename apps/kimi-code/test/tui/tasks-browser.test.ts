@@ -433,6 +433,50 @@ describe('TasksBrowserController — preview freshness', () => {
     });
   });
 
+  it('reloads final output after a terminal event interrupts an in-flight preview', async () => {
+    const runningOutput = deferred<string>();
+    const finalOutput = deferred<string>();
+    const runningTask = task({
+      taskId: 'bash-in-flight',
+      detached: true,
+      status: 'running',
+    });
+    const getOutput = vi
+      .fn()
+      .mockReturnValueOnce(runningOutput.promise)
+      .mockReturnValueOnce(finalOutput.promise)
+      .mockResolvedValueOnce('unexpected third output');
+    const rig = controllerRig({ getOutput, tasks: [runningTask] });
+    controller = rig.controller;
+
+    await controller.show();
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(1);
+    });
+    rig.backgroundTasks.set(
+      runningTask.taskId,
+      task({
+        taskId: runningTask.taskId,
+        detached: true,
+        status: 'completed',
+      }),
+    );
+    controller.repaint();
+    runningOutput.resolve('pre-termination output');
+
+    await vi.waitFor(() => {
+      expect(getOutput).toHaveBeenCalledTimes(2);
+    });
+    controller.repaint();
+    finalOutput.resolve('final output');
+    await vi.waitFor(() => {
+      expect(strip(rig.browser!.component.render(120).join('\n'))).toContain(
+        'final output',
+      );
+    });
+    expect(getOutput).toHaveBeenCalledTimes(2);
+  });
+
   it('does not poll output again after the selected task is terminal', async () => {
     const completedTask = task({
       taskId: 'bash-complete',
