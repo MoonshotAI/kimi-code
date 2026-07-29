@@ -461,6 +461,28 @@ interface AnthropicToolParam extends AnthropicTool {
   cache_control?: { type: 'ephemeral' } | null;
 }
 
+const ANTHROPIC_UNSUPPORTED_ROOT_SCHEMA_KEYWORDS = new Set([
+  'oneOf',
+  'anyOf',
+  'allOf',
+]);
+const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com';
+const ANTHROPIC_API_BASE_URL_WITH_TRAILING_SLASH = `${ANTHROPIC_API_BASE_URL}/`;
+
+function hasAnthropicCompatibleSchema(tool: Tool): boolean {
+  return !Object.keys(tool.parameters).some((key) =>
+    ANTHROPIC_UNSUPPORTED_ROOT_SCHEMA_KEYWORDS.has(key),
+  );
+}
+
+function isOfficialAnthropicEndpoint(baseUrl: string | undefined): boolean {
+  return (
+    baseUrl === undefined ||
+    baseUrl === ANTHROPIC_API_BASE_URL ||
+    baseUrl === ANTHROPIC_API_BASE_URL_WITH_TRAILING_SLASH
+  );
+}
+
 function convertTool(tool: Tool): AnthropicToolParam {
   return {
     name: tool.name,
@@ -1076,7 +1098,11 @@ export class AnthropicChatProvider implements ChatProvider {
     }
 
     // Convert tools
-    const anthropicTools: AnthropicToolParam[] = tools.map((t) => convertTool(t));
+    const requestTools = isOfficialAnthropicEndpoint(this._baseUrl)
+      ? tools.filter(hasAnthropicCompatibleSchema)
+      : tools;
+    const anthropicTools: AnthropicToolParam[] = requestTools
+      .map((tool) => convertTool(tool));
     if (anthropicTools.length > 0) {
       const lastTool = anthropicTools.at(-1);
       if (lastTool !== undefined) {
