@@ -4,8 +4,10 @@
  * Iterates the `toolRegistry` contribution table and, for each entry allowed
  * by the bound Profile's tool policy (`profile`), resolves the Agent-scope
  * service through the container — nothing constructs the tool before this
- * `accessor.get` — and registers the real instance into the runtime
- * registry.
+ * `accessor.get` — and registers the real instance into the runtime registry.
+ * The `select_tools` disclosure gateway remains implicitly activatable when
+ * omitted from the Profile allowlist, while an explicit Profile deny still
+ * wins; request-time policy and disclosure gating control its visibility.
  *
  * Activation runs once explicitly from `AgentLifecycleService.create` (after
  * restore and profile binding) and re-runs on every `agent.status.updated`
@@ -30,6 +32,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 
 import { IAgentToolActivationService } from './toolActivation';
 
@@ -57,7 +60,11 @@ export class AgentToolActivationService extends Disposable implements IAgentTool
       for (const { id, options } of getAgentToolContributions()) {
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!isToolActive(policy, options.name, source)) continue;
+        const activationPolicy =
+          options.name === SELECT_TOOLS_TOOL_NAME
+            ? { disallowedTools: data.disallowedTools }
+            : policy;
+        if (!isToolActive(activationPolicy, options.name, source)) continue;
         if (options.when !== undefined && !options.when(accessor)) continue;
         const tool = accessor.get(id);
         this._register(

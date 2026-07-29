@@ -9,13 +9,12 @@
  * loads a schema into the next request, the top-level table never changes
  * across loads, the record carries the disclosure gate (v1 recorder parity,
  * F2), and a tail-slicing undo re-enables re-injection (F1). Wiring:
- * testAgent harness with scripted provider, real toolSelect / executor /
- * projector / announcer services; harness builds the Agent scope without
- * `AgentLifecycleService.create`, so the eager-instantiation production
- * would do (agentLifecycleService create) is forced here the same way.
- * The flag env is stubbed before `createTestAgent` snapshots it into
- * bootstrap, and module imports register the flag / tool contributions the
- * way `src/index.ts` does in production.
+ * testAgent harness with scripted provider and real toolSelect / executor /
+ * projector / announcer services. The gateway regression applies a Profile
+ * allowlist that omits `select_tools` before contribution activation,
+ * matching production lifecycle ordering. The flag env is stubbed before
+ * `createTestAgent` snapshots it into bootstrap, and module imports register
+ * the flag / tool contributions the way `src/index.ts` does in production.
  * Run: ../../node_modules/.bin/vitest run test/toolSelect/toolSelect.e2e.test.ts
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -103,6 +102,43 @@ function historyText(history: readonly ContextMessage[]): string {
     .join('\n');
 }
 
+async function createDisclosureRig(initialActiveToolNames?: readonly string[]) {
+  const ctx = createTestAgent({ initialActiveToolNames });
+  ctx.get(IAgentToolSelectService);
+  ctx.get(IAgentToolSelectAnnouncementsService);
+  ctx.get(IAgentToolExecutorService);
+  ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+  await ctx.rpc.setPermission({ mode: 'yolo' });
+  const alpha = new StubMcpTool(MCP_ALPHA);
+  const registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });
+  return { ctx, alpha, registration };
+}
+
+describe('profile-bound progressive disclosure gateway', () => {
+  let ctx: TestAgentContext | undefined;
+  let registration: { dispose(): void } | undefined;
+
+  beforeEach(() => {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+  });
+
+  afterEach(async () => {
+    registration?.dispose();
+    vi.unstubAllEnvs();
+    await ctx?.dispose();
+  });
+
+  it('exposes select_tools to the provider when the profile allowlist omits the gateway', async () => {
+    ({ ctx, registration } = await createDisclosureRig(['mcp__*']));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'inspect available tools' }] });
+    await ctx.untilTurnEnd();
+
+    expect(toolNames(ctx.llmCalls[0]!.tools)).toContain('select_tools');
+  });
+});
+
 describe('progressive tool disclosure end-to-end', () => {
   let ctx: TestAgentContext;
   let alpha: StubMcpTool;
@@ -110,14 +146,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
   beforeEach(async () => {
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
-    ctx = createTestAgent();
-    ctx.get(IAgentToolSelectService);
-    ctx.get(IAgentToolSelectAnnouncementsService);
-    ctx.get(IAgentToolExecutorService);
-    ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
-    await ctx.rpc.setPermission({ mode: 'yolo' });
-    alpha = new StubMcpTool(MCP_ALPHA);
-    registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });
+    ({ ctx, alpha, registration } = await createDisclosureRig());
   });
 
   afterEach(async () => {
@@ -143,7 +172,6 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const firstWire = ctx.llmCalls[0]!;
     expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
-    expect(toolNames(firstWire.tools)).toContain('select_tools');
     const announcementText = firstWire.history
       .map((message) =>
         message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
