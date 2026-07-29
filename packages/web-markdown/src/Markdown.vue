@@ -362,13 +362,20 @@ const CODE_DARK_THEME = 'github-dark';
 // `loading: false` is the important one. markstream's CodeBlock shows a loading
 // SKELETON whenever `!stream && loading`, and its `loading` prop DEFAULTS TO
 // TRUE. We never set it, so every settled (non-streaming) code block sat in the
-// skeleton state until shiki finished highlighting it — and when a screenful of
-// code mounts at once (switching to a long session, or a fast burst of output)
-// shiki can't keep up, so the skeletons get stuck and the whole page reads as
-// blank placeholders. Pinning `loading` to false drops the skeleton entirely:
-// the block renders its plain-text fallback immediately and shiki upgrades it to
-// the highlighted version when the highlighter is ready. Streaming blocks are
-// unaffected (their `stream` is true, so the skeleton gate was already false).
+// skeleton state until the highlighter finished — and when a screenful of code
+// mounts at once (switching to a long session, or a fast burst of output) the
+// highlighter can't keep up, so the skeletons get stuck and the whole page
+// reads as blank placeholders. Pinning `loading` to false drops the skeleton
+// entirely: the block renders its plain-text fallback immediately and upgrades
+// to the highlighted version when the highlighter is ready. Streaming blocks
+// are unaffected (their `stream` is true, so the skeleton gate was already
+// false).
+// Chat code blocks show no gutter: line numbers eat 3+ characters of reading
+// width and every chat block starts at line 1 anyway. stream-diffs derives its
+// gutter from `lineNumbers === false` (boolean, not monaco's 'off' string).
+// This rides inside codeBlockProps because markstream 1.0.7 only forwards the
+// top-level codeBlockMonacoOptions to the 'monaco' renderer kind — the 'shiki'
+// kind's props object omits it, while codeBlockProps reach the same component.
 const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
@@ -377,6 +384,7 @@ const codeBlockProps = {
   showCollapseButton: false,
   showFontSizeButtons: false,
   loading: false,
+  monacoOptions: { lineNumbers: false },
 };
 
 function copyCodeBlockFallback(code: string): void {
@@ -389,11 +397,12 @@ function copyCodeBlockFallback(code: string): void {
 }
 
 // Root cause for the "large session turns into code skeletons" failure:
-// markstream mounts every code block in the loaded transcript, then shiki has
-// to tokenize all of them. `loading: false` removes the visible skeleton gate,
-// but it still leaves a long shiki queue on very large messages. Heavy messages
-// therefore use markstream's plain <pre> renderer: no highlighter queue, no
-// skeleton path, and the content remains immediately readable.
+// markstream mounts every code block in the loaded transcript, then the
+// highlighter has to tokenize all of them. `loading: false` removes the
+// visible skeleton gate, but it still leaves a long highlighter queue on very
+// large messages. Heavy messages therefore use markstream's plain <pre>
+// renderer: no highlighter queue, no skeleton path, and the content remains
+// immediately readable.
 
 // ---------------------------------------------------------------------------
 // ```diff fences are handled locally, NOT by markstream.
@@ -471,7 +480,7 @@ function copyDiff(code: string, idx: number) {
 <template>
   <div ref="mdRef" class="md">
     <template v-for="(seg, i) in segments" :key="i">
-      <!-- Non-diff markdown → markstream (smooth streaming + shiki) -->
+      <!-- Non-diff markdown → markstream (smooth streaming + monaco code blocks) -->
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
