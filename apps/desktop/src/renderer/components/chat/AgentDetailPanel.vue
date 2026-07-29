@@ -6,6 +6,7 @@ import { Badge, PanelHeader } from '@moonshot-ai/web-ui';
 
 import { useFollowScroll } from '../../composables/useFollowScroll';
 import type { AgentMember, ChatTurn, FilePreviewRequest, ToolMedia } from '../../types';
+import type { TurnFileChange } from '../chatTurnRendering';
 import ChatPane from './ChatPane.vue';
 import OutputPanel from './tool-calls/OutputPanel.vue';
 
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   openAgent: [agentId: string];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
+  openTurnDiff: [change: TurnFileChange];
 }>();
 
 const { t } = useI18n();
@@ -130,6 +132,7 @@ function phaseLabel(phase: AgentMember['phase']): string {
           @open-agent="emit('openAgent', $event)"
           @open-file="emit('openFile', $event)"
           @open-media="emit('openMedia', $event)"
+          @open-turn-diff="emit('openTurnDiff', $event)"
         />
       </template>
     </div>

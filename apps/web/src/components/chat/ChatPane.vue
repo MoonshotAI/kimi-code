@@ -139,6 +139,7 @@ const props = withDefaults(
   {
     approvals: () => [],
     questions: () => [],
+    turnFilesInteractive: true,
     turnActive: false,
     working: false,
     compaction: null,

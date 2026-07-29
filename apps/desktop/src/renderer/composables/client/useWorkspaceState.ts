@@ -63,6 +63,7 @@ export const SESSIONS_INITIAL_PAGE_SIZE = 5;
 const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
+const FS_PATH_NOT_FOUND_CODE = 40409;
 // Shared "already resolved" conflict (40902). The daemon reuses it for both
 // approvals and questions when a second client races the resolve, so a
 // duplicate submit is reported as a conflict even though the desired end
@@ -444,7 +445,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // An empty (0-byte) new file has no line diff — git has nothing to
         // add — and the generic "no line changes" state would wrongly read
         // as "nothing changed". Read the file to tell the two apart.
-        const file = await readFileContent(path);
+        const file = await readFileContent(path).catch(() => null);
         if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
         fileDiffEmptyFile.value = file !== null && file.size === 0;
         return;
@@ -456,7 +457,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const texts = await buildFullDiffTexts(rows, {
         truncated: result.truncated,
         readNewText: async () => {
-          const file = await readFileContent(path);
+          const file = await readFileContent(path).catch(() => null);
           if (!file || file.isBinary || file.encoding !== 'utf-8') return null;
           return file.content;
         },
@@ -2872,7 +2873,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /**
    * Read file content for the active session.
-   * Returns the file metadata + content (including path), or null on error or no active session.
+   * Returns the file metadata + content (including path), or null on error or
+   * no active session. A genuinely-absent path (fs.path_not_found) is RETHROWN
+   * instead of nulled — the file preview maps it to a dedicated not-found
+   * state, which a shared "read failed" can't express.
    */
   async function readFileContent(path: string): Promise<{
     path: string;
@@ -2901,6 +2905,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       };
     } catch (err) {
       logWarn('[kimi-code] readFileContent failed for', path, err);
+      if (isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND_CODE) throw err;
       return null;
     }
   }

@@ -1534,6 +1534,7 @@ function openPr(url: string): void {
         @open-agent="openAgentPanel"
         @open-file="openFilePreview"
         @open-media="openMediaPreview"
+        @open-turn-diff="openTurnDiff($event)"
       />
       <SideChatPanel
         v-else-if="detailTarget === 'btw' && btwVisible"

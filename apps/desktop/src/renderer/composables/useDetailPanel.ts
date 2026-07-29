@@ -1,7 +1,7 @@
 // apps/web/src/composables/useDetailPanel.ts
 // Unified right-side detail layer. Only one detail is open at a time.
 
-import { computed, ref, watch, type Ref } from 'vue';
+import { computed, ref, shallowRef, watch, type Ref } from 'vue';
 import type { AgentMember } from '../types';
 import type { TurnFileChange } from '../components/chatTurnRendering';
 import type { DetailTarget } from './useFilePreview';
@@ -287,7 +287,8 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Unlike the git 'diff' slot (workspace vs HEAD), this shows ONE turn's edit to
   // ONE file — the DiffViewLine[] the summary derived alongside its stats.
-  const turnDiffChange = ref<TurnFileChange | null>(null);
+  // shallowRef: openTurnDiff toggles on raw-object identity.
+  const turnDiffChange = shallowRef<TurnFileChange | null>(null);
 
   function openTurnDiff(change: TurnFileChange): void {
     // Toggle only on the SAME change object: two turns may touch one path, and

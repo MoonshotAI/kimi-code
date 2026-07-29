@@ -247,7 +247,13 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       }
     } catch (err) {
       if (requestSeq !== previewRequestSeq) return;
-      previewError.value = err instanceof Error ? err.message : t('filePreview.errors.loadFailed');
+      // readFileContent rethrows fs.path_not_found — the file was renamed or
+      // deleted after the turn touched it, which is not a read failure.
+      previewError.value = isNotFoundError(err)
+        ? t('filePreview.errors.notFound')
+        : err instanceof Error
+          ? err.message
+          : t('filePreview.errors.loadFailed');
     } finally {
       if (requestSeq === previewRequestSeq) {
         previewLoading.value = false;

@@ -9,13 +9,16 @@ import type { FilePreviewRequest } from '../../types';
 import { basename } from '../../lib/pathBasename';
 import { pathRelativeTo } from '../../lib/pathRelativeTo';
 
-const props = defineProps<{
-  changes: TurnFileChange[];
-  cwd?: string;
-  /** False where nothing handles the row action (e.g. the BTW side chat) —
-      file rows then render as plain text instead of links. */
-  interactive?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    changes: TurnFileChange[];
+    cwd?: string;
+    /** False where nothing handles the row action (e.g. the BTW side chat) —
+        file rows then render as plain text instead of links. */
+    interactive?: boolean;
+  }>(),
+  { interactive: true },
+);
 
 const emit = defineEmits<{
   openDiff: [change: TurnFileChange];
@@ -252,6 +255,9 @@ button.tf-file {
 }
 button.tf-file:hover {
   text-decoration: underline;
+  /* The spec's "lightly": the line rides the faint text token, not the
+     full-strength label colour. */
+  text-decoration-color: var(--color-text-faint);
   text-underline-offset: 3px;
 }
 .tf-file:focus-visible {
@@ -278,6 +284,9 @@ button.tf-file:hover {
   width: 100%;
   justify-content: flex-start;
   border-radius: 0;
+}
+.turn-files .tf-more:not(:disabled):active {
+  transform: none;
 }
 .tf-more-car {
   color: var(--color-text-faint);
