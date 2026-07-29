@@ -5,7 +5,8 @@
  * by the bound Profile's tool policy (`profile`), resolves the Agent-scope
  * service through the container — nothing constructs the tool before this
  * `accessor.get` — and registers the real instance into the runtime
- * registry.
+ * registry. When progressive tool disclosure is enabled, the `select_tools`
+ * gateway is also activated unless an explicit policy disables it.
  *
  * Activation runs once explicitly from `AgentLifecycleService.create` (after
  * restore and profile binding) and re-runs on every `agent.status.updated`
@@ -28,8 +29,10 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 
 import { IAgentToolActivationService } from './toolActivation';
 
@@ -57,7 +60,15 @@ export class AgentToolActivationService extends Disposable implements IAgentTool
       for (const { id, options } of getAgentToolContributions()) {
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!isToolActive(policy, options.name, source)) continue;
+        const active =
+          isToolActive(policy, options.name, source) ||
+          (options.name === SELECT_TOOLS_TOOL_NAME &&
+            accessor.get(IAgentToolSelectService).enabled() &&
+            accessor.get(IAgentToolPolicyService).isToolActiveForDisclosure(
+              options.name,
+              source,
+            ));
+        if (!active) continue;
         if (options.when !== undefined && !options.when(accessor)) continue;
         const tool = accessor.get(id);
         this._register(

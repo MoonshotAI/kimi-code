@@ -12,6 +12,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import {
   _clearAgentToolContributionsForTests,
   getAgentToolContributions,
@@ -20,6 +21,7 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 
 class StubTool implements AgentTool {
@@ -35,10 +37,12 @@ class StubTool implements AgentTool {
 const IAlphaTool = createDecorator<AgentTool>('activationTestAlphaTool');
 const IBetaTool = createDecorator<AgentTool>('activationTestBetaTool');
 const IGammaTool = createDecorator<AgentTool>('activationTestGammaTool');
+const ISelectToolsTool = createDecorator<AgentTool>('activationTestSelectToolsTool');
 
 let alphaConstructions = 0;
 let betaConstructions = 0;
 let gammaConstructions = 0;
+let selectToolsConstructions = 0;
 
 class AlphaTool extends StubTool {
   constructor() {
@@ -61,9 +65,18 @@ class GammaTool extends StubTool {
   }
 }
 
+class SelectToolsTool extends StubTool {
+  constructor() {
+    super(SELECT_TOOLS_TOOL_NAME);
+    selectToolsConstructions += 1;
+  }
+}
+
 describe('AgentToolActivationService', () => {
   let savedContributions: readonly AgentToolContribution[];
   let disposables: DisposableStore;
+  let toolSelectEnabled: boolean;
+  let disclosureToolActive: boolean;
   const profileData: {
     activeToolNames?: readonly string[];
     disallowedTools?: readonly string[];
@@ -80,11 +93,18 @@ describe('AgentToolActivationService', () => {
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
         });
+        reg.definePartialInstance(IAgentToolSelectService, {
+          enabled: () => toolSelectEnabled,
+        });
+        reg.definePartialInstance(IAgentToolPolicyService, {
+          isToolActiveForDisclosure: () => disclosureToolActive,
+        });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolActivationService, AgentToolActivationService);
         reg.define(IAlphaTool, AlphaTool);
         reg.define(IBetaTool, BetaTool);
         reg.define(IGammaTool, GammaTool);
+        reg.define(ISelectToolsTool, SelectToolsTool);
       },
     });
   }
@@ -95,6 +115,9 @@ describe('AgentToolActivationService', () => {
     alphaConstructions = 0;
     betaConstructions = 0;
     gammaConstructions = 0;
+    selectToolsConstructions = 0;
+    toolSelectEnabled = false;
+    disclosureToolActive = true;
     _clearAgentToolContributionsForTests();
     delete profileData.activeToolNames;
     delete profileData.disallowedTools;
@@ -133,6 +156,50 @@ describe('AgentToolActivationService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+  });
+
+  it('activates select_tools for disclosure when the profile omits it', async () => {
+    profileData.activeToolNames = ['Alpha', 'mcp__*'];
+    toolSelectEnabled = true;
+    registerAgentToolService(ISelectToolsTool, SelectToolsTool, {
+      name: SELECT_TOOLS_TOOL_NAME,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve(SELECT_TOOLS_TOOL_NAME)).toBeInstanceOf(
+      SelectToolsTool,
+    );
+    expect(selectToolsConstructions).toBe(1);
+  });
+
+  it('does not activate select_tools through disclosure when the gate is closed', async () => {
+    profileData.activeToolNames = ['Alpha', 'mcp__*'];
+    registerAgentToolService(ISelectToolsTool, SelectToolsTool, {
+      name: SELECT_TOOLS_TOOL_NAME,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve(SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
+    expect(selectToolsConstructions).toBe(0);
+  });
+
+  it('does not activate select_tools through disclosure when the policy disables it', async () => {
+    profileData.activeToolNames = ['Alpha', 'mcp__*'];
+    toolSelectEnabled = true;
+    disclosureToolActive = false;
+    registerAgentToolService(ISelectToolsTool, SelectToolsTool, {
+      name: SELECT_TOOLS_TOOL_NAME,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve(SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
+    expect(selectToolsConstructions).toBe(0);
   });
 
   it('activates only the tools allowed by the profile allowlist', async () => {
