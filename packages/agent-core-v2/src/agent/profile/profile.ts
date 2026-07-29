@@ -127,6 +127,13 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
+  /**
+   * Re-publish the current model/thinking slice of `agent.status.updated` on
+   * demand. The slice otherwise rides only the bind-time emission, which
+   * consumers that key an agent's events off a later announcement (e.g.
+   * `subagent.spawned`) have already dropped — see `emitAgentRunSpawned`.
+   */
+  republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
