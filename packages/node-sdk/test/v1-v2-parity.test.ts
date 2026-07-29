@@ -3710,6 +3710,33 @@ describe('v1↔v2 global MCP parity', () => {
   }, 20_000);
 });
 
+type McpServerList = Awaited<ReturnType<SDKRpcClientBase['listMcpServers']>>;
+
+/**
+ * List MCP servers on both engines once the initial connect has settled.
+ * v1 connects in the background after create resolves while v2 awaits the
+ * initial connect inside create, so an immediate list can catch either side
+ * still pending under load; poll until no server reports a transient status.
+ */
+async function listMcpServersWhenSettled(
+  pair: SessionParityPair,
+  input: { readonly sessionId: string },
+  timeoutMs = 10_000,
+): Promise<readonly [McpServerList, McpServerList]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lists = await Promise.all([
+      pair.v1.listMcpServers(input),
+      pair.v2.listMcpServers(input),
+    ] as const);
+    const settled = lists.every((servers) =>
+      servers.every((server) => server.status !== 'pending'),
+    );
+    if (settled || Date.now() >= deadline) return lists;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describe('v1↔v2 session MCP parity', () => {
   /** working (connects, 3 tools) + broken (fails fast) + off (disabled). */
   const SESSION_MCP_FIXTURE = {
@@ -3735,10 +3762,7 @@ describe('v1↔v2 session MCP parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_mcp_list' });
       const input = { sessionId: 'session_parity_mcp_list' } as const;
-      const [v1Servers, v2Servers] = await Promise.all([
-        pair.v1.listMcpServers(input),
-        pair.v2.listMcpServers(input),
-      ]);
+      const [v1Servers, v2Servers] = await listMcpServersWhenSettled(pair, input);
       expect(normalize(v2Servers, 'name')).toEqual(normalize(v1Servers, 'name'));
       const byName = new Map(v1Servers.map((server) => [server.name, server]));
       expect(byName.get('working')).toMatchObject({
