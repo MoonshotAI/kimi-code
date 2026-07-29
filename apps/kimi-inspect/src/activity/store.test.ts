@@ -113,7 +113,10 @@ describe('SessionActivityHub', () => {
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('approval');
     // The hello goes out with no subscriptions — global facts flow regardless.
-    const hello = JSON.parse(instances[0]!.sent[0]!) as { type: string; payload: { subscriptions: string[] } };
+    const hello = JSON.parse(instances[0]!.sent[0]!) as {
+      type: string;
+      payload: { subscriptions: string[] };
+    };
     expect(hello.type).toBe('client_hello');
     expect(hello.payload.subscriptions).toEqual([]);
     hub.close();

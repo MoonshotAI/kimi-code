@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILES, loadAgentProfilesFromSources } from '../../src/profile';
+import {
+  ADDITIONAL_DIRS_SECTION_PROSE,
+  SKILLS_SECTION_PROSE,
+  WINDOWS_NOTES,
+} from '../../src/profile/prompt-sections';
 
 const promptContext = {
   osEnv: {
@@ -38,6 +43,20 @@ describe('default agent profiles', () => {
     expect(prompt.indexOf('Only read skill details when needed')).toBeLessThan(
       prompt.indexOf('- test-skill: does things'),
     );
+  });
+
+  it('renders the environment prose sections from the shared prompt-sections source', () => {
+    // system.md must render the shared constants (never re-inlined copies), so
+    // the builtin default prompt and the agent-file renderer cannot drift.
+    const prompt =
+      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
+        ...promptContext,
+        osEnv: { ...promptContext.osEnv, osKind: 'Windows' },
+        additionalDirsInfo: 'EXTRA_DIR_1',
+      }) ?? '';
+    expect(prompt).toContain(WINDOWS_NOTES);
+    expect(prompt).toContain(ADDITIONAL_DIRS_SECTION_PROSE);
+    expect(prompt).toContain(SKILLS_SECTION_PROSE);
   });
 
   it('lists the goal tools on the agent profile but not on subagent profiles', () => {

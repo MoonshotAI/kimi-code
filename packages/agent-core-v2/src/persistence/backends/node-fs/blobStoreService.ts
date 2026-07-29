@@ -19,6 +19,10 @@ export class BlobStoreService implements IBlobStore {
     await this.storage.write(scope, key, data, { atomic: true });
   }
 
+  async putStream(scope: string, key: string, source: AsyncIterable<Uint8Array>): Promise<void> {
+    await this.storage.writeStream(scope, key, source, { atomic: true });
+  }
+
   async get(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.storage.read(scope, key);
   }

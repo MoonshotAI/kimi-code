@@ -1,0 +1,597 @@
+@match: echo $((x << 2 | 1))
+echo $((x << 2 | 1))
+===
+@known-diff heredoc-content-chunks: foo() { cat <<EOF
+foo() { cat <<EOF
+body $x
+EOF
+}
+---
+hasError: false
+program [0,31] "foo() { cat <<EOF\nbody $x\nEOF\n}"
+  function_definition [0,31] "foo() { cat <<EOF\nbody $x\nEOF\n}"
+    word [0,3] "foo"
+    (() [3,4] "("
+    ()) [4,5] ")"
+    compound_statement [6,31] "{ cat <<EOF\nbody $x\nEOF\n}"
+      ({) [6,7] "{"
+      redirected_statement [8,29] "cat <<EOF\nbody $x\nEOF"
+        command [8,11] "cat"
+          command_name [8,11] "cat"
+            word [8,11] "cat"
+        heredoc_redirect [12,29] "<<EOF\nbody $x\nEOF"
+          (<<) [12,14] "<<"
+          heredoc_start [14,17] "EOF"
+          heredoc_body [18,26] "body $x\n"
+            heredoc_content [18,23] "body "
+            simple_expansion [23,25] "$x"
+              ($) [23,24] "$"
+              variable_name [24,25] "x"
+            heredoc_content [25,26] "\n"
+          heredoc_end [26,29] "EOF"
+      (}) [30,31] "}"
+===
+@known-diff recovery-partial-nodes: if cat <<EOF; then x; fi
+if cat <<EOF; then x; fi
+body
+EOF
+---
+hasError: true
+program [0,33] "if cat <<EOF; then x; fi\nbody\nEOF"
+  if_statement [0,33] "if cat <<EOF; then x; fi\nbody\nEOF"
+    (if) [0,2] "if"
+    redirected_statement [3,33] "cat <<EOF; then x; fi\nbody\nEOF"
+      command [3,6] "cat"
+        command_name [3,6] "cat"
+          word [3,6] "cat"
+      heredoc_redirect [7,33] "<<EOF; then x; fi\nbody\nEOF"
+        (<<) [7,9] "<<"
+        heredoc_start [9,12] "EOF"
+        (;) [12,13] ";"
+        command [14,20] "then x"
+          command_name [14,18] "then"
+            word [14,18] "then"
+          word [19,20] "x"
+        (;) [20,21] ";"
+        command [22,24] "fi"
+          command_name [22,24] "fi"
+            word [22,24] "fi"
+        heredoc_body [25,30] "body\n"
+          heredoc_content [25,30] "body\n"
+        heredoc_end [30,33] "EOF"
+===
+@match: cmd <<< "$str"
+cmd <<< "$str"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+hello $USER
+EOF
+---
+hasError: false
+program [0,25] "cat <<EOF\nhello $USER\nEOF"
+  redirected_statement [0,25] "cat <<EOF\nhello $USER\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,25] "<<EOF\nhello $USER\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,22] "hello $USER\n"
+        heredoc_content [10,16] "hello "
+        simple_expansion [16,21] "$USER"
+          ($) [16,17] "$"
+          variable_name [17,21] "USER"
+        heredoc_content [21,22] "\n"
+      heredoc_end [22,25] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<-EOF
+cat <<-EOF
+	indented
+	EOF
+---
+hasError: false
+program [0,25] "cat <<-EOF\n\tindented\n\tEOF"
+  redirected_statement [0,25] "cat <<-EOF\n\tindented\n\tEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,25] "<<-EOF\n\tindented\n\tEOF"
+      (<<-) [4,7] "<<-"
+      heredoc_start [7,10] "EOF"
+      heredoc_body [12,22] "indented\n\t"
+        heredoc_content [12,22] "indented\n\t"
+      heredoc_end [22,25] "EOF"
+===
+@match: cat <<'EOF'
+cat <<'EOF'
+raw $notexpanded
+EOF
+===
+@known-diff heredoc-multiple-on-line: cat <<A <<B
+cat <<A <<B
+body a
+A
+body b
+B
+---
+hasError: true
+program [0,29] "cat <<A <<B\nbody a\nA\nbody b\nB"
+  redirected_statement [0,20] "cat <<A <<B\nbody a\nA"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,20] "<<A <<B\nbody a\nA"
+      (<<) [4,6] "<<"
+      heredoc_start [6,7] "A"
+      ERROR [8,11] "<<B"
+        (<<) [8,10] "<<"
+        word [10,11] "B"
+      heredoc_body [12,19] "body a\n"
+        heredoc_content [12,19] "body a\n"
+      heredoc_end [19,20] "A"
+  command [21,27] "body b"
+    command_name [21,25] "body"
+      word [21,25] "body"
+    word [26,27] "b"
+  command [28,29] "B"
+    command_name [28,29] "B"
+      word [28,29] "B"
+===
+@match: echo $((1<<2))
+echo $((1<<2))
+===
+@known-diff recovery-partial-nodes: cat <<EOF
+cat <<EOF
+no end marker
+---
+hasError: true
+program [0,23] "cat <<EOF\nno end marker"
+  redirected_statement [0,23] "cat <<EOF\nno end marker"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,23] "<<EOF\nno end marker"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,23] "no end marker"
+        heredoc_content [10,23] "no end marker"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+hello $USER and `date` ${x}
+done
+EOF
+---
+hasError: false
+program [0,46] "cat <<EOF\nhello $USER and `date` ${x}..."
+  redirected_statement [0,46] "cat <<EOF\nhello $USER and `date` ${x}..."
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,46] "<<EOF\nhello $USER and `date` ${x}\ndon..."
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,43] "hello $USER and `date` ${x}\ndone\n"
+        heredoc_content [10,16] "hello "
+        simple_expansion [16,21] "$USER"
+          ($) [16,17] "$"
+          variable_name [17,21] "USER"
+        heredoc_content [21,26] " and "
+        command_substitution [26,32] "`date`"
+          (`) [26,27] "`"
+          command [27,31] "date"
+            command_name [27,31] "date"
+              word [27,31] "date"
+          (`) [31,32] "`"
+        heredoc_content [32,33] " "
+        expansion [33,37] "${x}"
+          (${) [33,35] "${"
+          variable_name [35,36] "x"
+          (}) [36,37] "}"
+        heredoc_content [37,43] "\ndone\n"
+      heredoc_end [43,46] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+plain only
+EOF
+---
+hasError: false
+program [0,24] "cat <<EOF\nplain only\nEOF"
+  redirected_statement [0,24] "cat <<EOF\nplain only\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,24] "<<EOF\nplain only\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,21] "plain only\n"
+        heredoc_content [10,21] "plain only\n"
+      heredoc_end [21,24] "EOF"
+===
+@match: cat <<-"EOF"
+cat <<-"EOF"
+	x
+	EOF
+===
+@known-diff heredoc-content-chunks: cat <<-EOF
+cat <<-EOF
+		a
+	b
+		EOF
+---
+hasError: false
+program [0,23] "cat <<-EOF\n\t\ta\n\tb\n\t\tEOF"
+  redirected_statement [0,23] "cat <<-EOF\n\t\ta\n\tb\n\t\tEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,23] "<<-EOF\n\t\ta\n\tb\n\t\tEOF"
+      (<<-) [4,7] "<<-"
+      heredoc_start [7,10] "EOF"
+      heredoc_body [13,20] "a\n\tb\n\t\t"
+        heredoc_content [13,20] "a\n\tb\n\t\t"
+      heredoc_end [20,23] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+$(cmd) `other` $v ${w}
+EOF
+---
+hasError: false
+program [0,36] "cat <<EOF\n$(cmd) `other` $v ${w}\nEOF"
+  redirected_statement [0,36] "cat <<EOF\n$(cmd) `other` $v ${w}\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,36] "<<EOF\n$(cmd) `other` $v ${w}\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,33] "$(cmd) `other` $v ${w}\n"
+        command_substitution [10,16] "$(cmd)"
+          ($() [10,12] "$("
+          command [12,15] "cmd"
+            command_name [12,15] "cmd"
+              word [12,15] "cmd"
+          ()) [15,16] ")"
+        heredoc_content [16,17] " "
+        command_substitution [17,24] "`other`"
+          (`) [17,18] "`"
+          command [18,23] "other"
+            command_name [18,23] "other"
+              word [18,23] "other"
+          (`) [23,24] "`"
+        heredoc_content [24,25] " "
+        simple_expansion [25,27] "$v"
+          ($) [25,26] "$"
+          variable_name [26,27] "v"
+        heredoc_content [27,28] " "
+        expansion [28,32] "${w}"
+          (${) [28,30] "${"
+          variable_name [30,31] "w"
+          (}) [31,32] "}"
+        heredoc_content [32,33] "\n"
+      heredoc_end [33,36] "EOF"
+===
+@known-diff heredoc-tail-statements: cat <<EOF arg1 arg2
+cat <<EOF arg1 arg2
+body
+EOF
+---
+hasError: false
+program [0,28] "cat <<EOF arg1 arg2\nbody\nEOF"
+  redirected_statement [0,28] "cat <<EOF arg1 arg2\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,28] "<<EOF arg1 arg2\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      word [10,14] "arg1"
+      word [15,19] "arg2"
+      heredoc_body [20,25] "body\n"
+        heredoc_content [20,25] "body\n"
+      heredoc_end [25,28] "EOF"
+===
+@known-diff heredoc-tail-statements: cat <<EOF > out
+cat <<EOF > out
+body
+EOF
+---
+hasError: false
+program [0,24] "cat <<EOF > out\nbody\nEOF"
+  redirected_statement [0,24] "cat <<EOF > out\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,24] "<<EOF > out\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      file_redirect [10,15] "> out"
+        (>) [10,11] ">"
+        word [12,15] "out"
+      heredoc_body [16,21] "body\n"
+        heredoc_content [16,21] "body\n"
+      heredoc_end [21,24] "EOF"
+===
+@known-diff heredoc-tail-statements: cat <<EOF | grep x
+cat <<EOF | grep x
+body
+EOF
+---
+hasError: false
+program [0,27] "cat <<EOF | grep x\nbody\nEOF"
+  redirected_statement [0,27] "cat <<EOF | grep x\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,27] "<<EOF | grep x\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      pipeline [10,18] "| grep x"
+        (|) [10,11] "|"
+        command [12,18] "grep x"
+          command_name [12,16] "grep"
+            word [12,16] "grep"
+          word [17,18] "x"
+      heredoc_body [19,24] "body\n"
+        heredoc_content [19,24] "body\n"
+      heredoc_end [24,27] "EOF"
+===
+@known-diff heredoc-tail-statements: cat <<EOF && echo done
+cat <<EOF && echo done
+body
+EOF
+---
+hasError: false
+program [0,31] "cat <<EOF && echo done\nbody\nEOF"
+  redirected_statement [0,31] "cat <<EOF && echo done\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,31] "<<EOF && echo done\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      (&&) [10,12] "&&"
+      command [13,22] "echo done"
+        command_name [13,17] "echo"
+          word [13,17] "echo"
+        word [18,22] "done"
+      heredoc_body [23,28] "body\n"
+        heredoc_content [23,28] "body\n"
+      heredoc_end [28,31] "EOF"
+===
+@match: cmd <<< x > out
+cmd <<< x > out
+===
+@known-diff heredoc-multiple-on-line: cat <<A <<B
+cat <<A <<B
+ba
+A
+bb
+B
+---
+hasError: true
+program [0,21] "cat <<A <<B\nba\nA\nbb\nB"
+  redirected_statement [0,16] "cat <<A <<B\nba\nA"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,16] "<<A <<B\nba\nA"
+      (<<) [4,6] "<<"
+      heredoc_start [6,7] "A"
+      ERROR [8,11] "<<B"
+        (<<) [8,10] "<<"
+        word [10,11] "B"
+      heredoc_body [12,15] "ba\n"
+        heredoc_content [12,15] "ba\n"
+      heredoc_end [15,16] "A"
+  command [17,19] "bb"
+    command_name [17,19] "bb"
+      word [17,19] "bb"
+  command [20,21] "B"
+    command_name [20,21] "B"
+      word [20,21] "B"
+===
+@known-diff heredoc-tail-statements: cat <<EOF; echo x
+cat <<EOF; echo x
+body
+EOF
+---
+hasError: false
+program [0,26] "cat <<EOF; echo x\nbody\nEOF"
+  redirected_statement [0,26] "cat <<EOF; echo x\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,26] "<<EOF; echo x\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      (;) [9,10] ";"
+      command [11,17] "echo x"
+        command_name [11,15] "echo"
+          word [11,15] "echo"
+        word [16,17] "x"
+      heredoc_body [18,23] "body\n"
+        heredoc_content [18,23] "body\n"
+      heredoc_end [23,26] "EOF"
+===
+@known-diff heredoc-tail-statements: cat <<EOF &
+cat <<EOF &
+body
+EOF
+---
+hasError: false
+program [0,20] "cat <<EOF &\nbody\nEOF"
+  redirected_statement [0,20] "cat <<EOF &\nbody\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,20] "<<EOF &\nbody\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      (&) [10,11] "&"
+      heredoc_body [12,17] "body\n"
+        heredoc_content [12,17] "body\n"
+      heredoc_end [17,20] "EOF"
+===
+@known-diff heredoc-tail-statements: wc <<EOF | cat | sort
+wc <<EOF | cat | sort
+body
+EOF
+---
+hasError: false
+program [0,30] "wc <<EOF | cat | sort\nbody\nEOF"
+  redirected_statement [0,30] "wc <<EOF | cat | sort\nbody\nEOF"
+    command [0,2] "wc"
+      command_name [0,2] "wc"
+        word [0,2] "wc"
+    heredoc_redirect [3,30] "<<EOF | cat | sort\nbody\nEOF"
+      (<<) [3,5] "<<"
+      heredoc_start [5,8] "EOF"
+      pipeline [9,21] "| cat | sort"
+        (|) [9,10] "|"
+        pipeline [11,21] "cat | sort"
+          command [11,14] "cat"
+            command_name [11,14] "cat"
+              word [11,14] "cat"
+          (|) [15,16] "|"
+          command [17,21] "sort"
+            command_name [17,21] "sort"
+              word [17,21] "sort"
+      heredoc_body [22,27] "body\n"
+        heredoc_content [22,27] "body\n"
+      heredoc_end [27,30] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+# check out this regex '^EOF$'
+EOF
+---
+hasError: false
+program [0,44] "cat <<EOF\n# check out this regex '^EO..."
+  redirected_statement [0,44] "cat <<EOF\n# check out this regex '^EO..."
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,44] "<<EOF\n# check out this regex '^EOF$'\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,41] "# check out this regex '^EOF$'\n"
+        heredoc_content [10,41] "# check out this regex '^EOF$'\n"
+      heredoc_end [41,44] "EOF"
+===
+@match: a=$((6 % 7 ** 8 << 9 >> 10 & 11 | 12 ^ 13))
+a=$((6 % 7 ** 8 << 9 >> 10 & 11 | 12 ^ 13))
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+# comment
+EOF
+---
+hasError: false
+program [0,23] "cat <<EOF\n# comment\nEOF"
+  redirected_statement [0,23] "cat <<EOF\n# comment\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,23] "<<EOF\n# comment\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,20] "# comment\n"
+        heredoc_content [10,20] "# comment\n"
+      heredoc_end [20,23] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+has 'quote'
+EOF
+---
+hasError: false
+program [0,25] "cat <<EOF\nhas 'quote'\nEOF"
+  redirected_statement [0,25] "cat <<EOF\nhas 'quote'\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,25] "<<EOF\nhas 'quote'\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,22] "has 'quote'\n"
+        heredoc_content [10,22] "has 'quote'\n"
+      heredoc_end [22,25] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+has $dollar
+EOF
+---
+hasError: false
+program [0,25] "cat <<EOF\nhas $dollar\nEOF"
+  redirected_statement [0,25] "cat <<EOF\nhas $dollar\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,25] "<<EOF\nhas $dollar\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,22] "has $dollar\n"
+        heredoc_content [10,14] "has "
+        simple_expansion [14,21] "$dollar"
+          ($) [14,15] "$"
+          variable_name [15,21] "dollar"
+        heredoc_content [21,22] "\n"
+      heredoc_end [22,25] "EOF"
+===
+@known-diff heredoc-content-chunks: cat <<EOF
+cat <<EOF
+regex '^EOF$'
+EOF
+---
+hasError: false
+program [0,27] "cat <<EOF\nregex '^EOF$'\nEOF"
+  redirected_statement [0,27] "cat <<EOF\nregex '^EOF$'\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,27] "<<EOF\nregex '^EOF$'\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,24] "regex '^EOF$'\n"
+        heredoc_content [10,24] "regex '^EOF$'\n"
+      heredoc_end [24,27] "EOF"
+===
+@known-diff heredoc-body-dollar-quote: cat <<EOF
+cat <<EOF
+$'x'
+EOF
+---
+hasError: false
+program [0,18] "cat <<EOF\n$'x'\nEOF"
+  redirected_statement [0,18] "cat <<EOF\n$'x'\nEOF"
+    command [0,3] "cat"
+      command_name [0,3] "cat"
+        word [0,3] "cat"
+    heredoc_redirect [4,18] "<<EOF\n$'x'\nEOF"
+      (<<) [4,6] "<<"
+      heredoc_start [6,9] "EOF"
+      heredoc_body [10,15] "$'x'\n"
+        heredoc_content [10,15] "$'x'\n"
+      heredoc_end [15,18] "EOF"
+===
+@known-diff heredoc-at-statement-start: <<EOF cat
+<<EOF cat
+body
+EOF
+---
+hasError: false
+program [0,18] "<<EOF cat\nbody\nEOF"
+  redirected_statement [0,18] "<<EOF cat\nbody\nEOF"
+    heredoc_redirect [0,18] "<<EOF cat\nbody\nEOF"
+      (<<) [0,2] "<<"
+      heredoc_start [2,5] "EOF"
+      word [6,9] "cat"
+      heredoc_body [10,15] "body\n"
+        heredoc_content [10,15] "body\n"
+      heredoc_end [15,18] "EOF"
+===

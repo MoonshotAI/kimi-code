@@ -88,11 +88,11 @@ describe('makeProxy', () => {
   it('routes methods to call and onXxx members to listen', async () => {
     const seen = { calls: [] as [string, unknown[]][], listens: [] as string[] };
     const channel: IChannel = {
-      call: async <T,>(command: string, args?: unknown[]): Promise<T> => {
+      call: async <T>(command: string, args?: unknown[]): Promise<T> => {
         seen.calls.push([command, args ?? []]);
         return 'ret' as T;
       },
-      listen: <T,>(event: string): Event<T> => {
+      listen: <T>(event: string): Event<T> => {
         seen.listens.push(event);
         return () => ({ dispose: () => {} });
       },
@@ -137,9 +137,7 @@ describe('probeDebugSurface', () => {
 
   it('throws a --debug-endpoints hint when the surface is not mounted (HTTP 404)', async () => {
     stubProbeFetch(() => ({ ok: false, status: 404 }));
-    await expect(probeDebugSurface({ baseUrl: 'http://h:6' })).rejects.toThrow(
-      /--debug-endpoints/,
-    );
+    await expect(probeDebugSurface({ baseUrl: 'http://h:6' })).rejects.toThrow(/--debug-endpoints/);
   });
 
   it('throws an unreachable-server error when fetch itself fails', async () => {

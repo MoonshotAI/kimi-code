@@ -1,11 +1,11 @@
 /**
  * `/api/v1/files` end-to-end for the v2 server.
  *
- * Mirrors the v1 server's files e2e (upload → download → delete → 404, the
- * 50 MiB cap, unknown ids, index persistence across restart, the `name`
- * override, and the missing-file validation) but boots `startServer` from
- * server-v2 and drives it through Fastify `app.inject` with hand-built
- * multipart bodies.
+ * Mirrors the v1 server's files e2e (upload → download → delete → 404,
+ * large uploads with no size cap, unknown ids, index persistence across
+ * restart, the `name` override, and the missing-file validation) but boots
+ * `startServer` from server-v2 and drives it through Fastify `app.inject`
+ * with hand-built multipart bodies.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -168,7 +168,7 @@ describe('POST /api/v1/files (server-v2)', () => {
     expect((get2Res.json() as Envelope).code).toBe(40407);
   });
 
-  it('upload > 50MB → 41301', async () => {
+  it('uploads a file larger than the former 50 MiB cap', async () => {
     const r = await boot();
     const big = Buffer.alloc(51 * 1024 * 1024, 0);
     const mp = buildMultipart({
@@ -185,8 +185,19 @@ describe('POST /api/v1/files (server-v2)', () => {
       payload: mp.body,
       headers: { 'content-type': mp.contentType },
     });
-    expect(res.statusCode).toBe(413);
-    expect((res.json() as Envelope).code).toBe(41301);
+    expect(res.statusCode).toBe(200);
+    const env = res.json() as Envelope<{ id: string; size: number }>;
+    expect(env.code).toBe(0);
+    expect(env.data!.size).toBe(big.length);
+
+    const getRes = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/files/${env.data!.id}`,
+    });
+    expect(getRes.statusCode).toBe(200);
+    // `expect(buffer).toEqual(buffer)` deep-compares 51M elements and blows
+    // the heap — use the native memcmp instead.
+    expect(getRes.rawPayload.equals(big)).toBe(true);
   });
 
   it('GET / DELETE unknown file_id → 40407', async () => {

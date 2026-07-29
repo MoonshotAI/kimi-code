@@ -32,6 +32,7 @@ export type {
   SessionLogHandle,
 } from './logging/types';
 export { USER_PROMPT_ORIGIN } from './agent/context';
+export { parseAgentFileText, resolveAgentPath } from './profile/agentfile';
 export { renderToolResultForModel } from './agent/context/tool-result-render';
 export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {

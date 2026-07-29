@@ -6,6 +6,7 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
 import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -24,11 +25,36 @@ const BOX_OVERHEAD = LEFT_MARGIN + 2 + 2 * SIDE_PADDING;
 
 type Colorize = (text: string) => string;
 
+export interface ManagedUsageWindow {
+  readonly duration: number;
+  readonly unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
 export interface ManagedUsageRow {
-  readonly label: string;
+  readonly name?: string;
+  readonly window?: ManagedUsageWindow;
   readonly used: number;
   readonly limit: number;
-  readonly resetHint?: string;
+  readonly resetAt?: string;
+}
+
+function usageRowLabel(row: ManagedUsageRow): string {
+  const window = row.window;
+  if (window !== undefined) {
+    if (window.unit === 'week') return 'Weekly limit';
+    return `${String(window.duration)}${window.unit[0] ?? ''} limit`;
+  }
+  return row.name ?? 'Limit';
+}
+
+function usageRowResetHint(row: ManagedUsageRow): string | undefined {
+  const resetAt = row.resetAt;
+  if (resetAt === undefined) return undefined;
+  const parsed = Date.parse(resetAt);
+  if (!Number.isFinite(parsed)) return undefined;
+  const diffSec = Math.floor((parsed - Date.now()) / 1000);
+  if (diffSec <= 0) return 'reset';
+  return `resets in ${formatDuration(diffSec)}`;
 }
 
 export interface BoosterWalletInfo {
@@ -130,17 +156,20 @@ function buildManagedUsageSection(
   rows.push(...limits);
   const usedRatio = (r: ManagedUsageRow): number =>
     r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
-  const labelWidth = Math.max(10, ...rows.map((r) => r.label.length));
+  const labels = rows.map((r) => usageRowLabel(r));
+  const labelWidth = Math.max(10, ...labels.map((l) => l.length));
   const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
 
   const out: string[] = [accent('Plan usage')];
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
     const ratioUsed = usedRatio(row);
     const bar = renderProgressBar(ratioUsed, 20);
     const pct = `${Math.round(ratioUsed * 100)}% used`;
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratioUsed)), bar);
-    const label = row.label.padEnd(labelWidth, ' ');
-    const resetStr = row.resetHint ? `  ${muted(row.resetHint)}` : '';
+    const label = labels[i]!.padEnd(labelWidth, ' ');
+    const resetHint = usageRowResetHint(row);
+    const resetStr = resetHint !== undefined ? `  ${muted(resetHint)}` : '';
     out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
   }
   return out;

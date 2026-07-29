@@ -10,9 +10,8 @@
  * without a Refresh button.
  */
 
-import { useMemo, useState } from 'react';
-
 import { ISessionStateService } from '@moonshot-ai/agent-core-v2/session/state/sessionState';
+import { useMemo, useState } from 'react';
 
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
@@ -23,13 +22,7 @@ import { StateCard } from './StateCard';
 
 type Tab = 'services' | 'state';
 
-export function SessionPane({
-  sessionId,
-  ready,
-}: {
-  sessionId: string | null;
-  ready: boolean;
-}) {
+export function SessionPane({ sessionId, ready }: { sessionId: string | null; ready: boolean }) {
   const { klient } = useConnection();
   const [tab, setTab] = useState<Tab>('services');
 
@@ -77,9 +70,7 @@ export function SessionPane({
             queryKey={['sessionState', sessionId]}
             title="Session state"
             label="sessionStateService"
-            fetchSnapshot={() =>
-              klient.session(sessionId).service(ISessionStateService).snapshot()
-            }
+            fetchSnapshot={() => klient.session(sessionId).service(ISessionStateService).snapshot()}
           />
         )}
       </div>

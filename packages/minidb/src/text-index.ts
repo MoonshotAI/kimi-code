@@ -63,6 +63,15 @@ function stringLeaves(obj: unknown, acc: string[] = []): string[] {
 
 export interface TextIndexOptions {
   fields?: readonly string[] | null;
+  /** Custom tokenizer, applied to indexed documents (and to query text when
+   *  no `queryTokenizer` is given). Defaults to the built-in word/CJK
+   *  `tokenize`. */
+  tokenizer?: (text: string) => string[];
+  /** Custom tokenizer for query text in `search()`. Defaults to `tokenizer`.
+   *  Only diverges for the n-gram index: the query side emits fewer, more
+   *  selective terms (a length >= 3 query needs only its 3-grams), while the
+   *  index side indexes both widths so every query shape can match. */
+  queryTokenizer?: (text: string) => string[];
   /** Path to the postings file. If omitted, the index keeps its base postings
    *  in memory instead of on disk (used by read-only openers, which must not
    *  write to a live writer's directory). */
@@ -86,6 +95,8 @@ const EMPTY_MAP: ReadonlyMap<number, number> = new Map();
 
 export class TextIndex {
   private readonly fields: readonly string[] | null;
+  private readonly tokenizer: (text: string) => string[];
+  private readonly queryTokenizer: (text: string) => string[];
   private readonly path: string | null;
   private readonly cacheTerms: number;
 
@@ -117,6 +128,8 @@ export class TextIndex {
 
   constructor(opts: TextIndexOptions = {}) {
     this.fields = opts.fields ?? null;
+    this.tokenizer = opts.tokenizer ?? tokenize;
+    this.queryTokenizer = opts.queryTokenizer ?? this.tokenizer;
     this.path = opts.postingsPath ?? null;
     this.cacheTerms = opts.cacheTerms ?? 1024;
     if (!this.path) this.memBase = new Map();
@@ -168,7 +181,7 @@ export class TextIndex {
       const docID = newKeys.length;
       newKeys.push(key);
       newKeyToId.set(key, docID);
-      const tokens = tokenize(this.extract(value));
+      const tokens = this.tokenizer(this.extract(value));
       const counts = new Map<string, number>();
       for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
       for (const [t, c] of counts) {
@@ -241,7 +254,7 @@ export class TextIndex {
     const docID = this.keys.length;
     this.keys.push(key);
     this.keyToId.set(key, docID);
-    const tokens = tokenize(this.extract(doc));
+    const tokens = this.tokenizer(this.extract(doc));
     const counts = new Map<string, number>();
     for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
     for (const [t, c] of counts) {
@@ -306,7 +319,7 @@ export class TextIndex {
   }
 
   search(query: string, opts: SearchOptions = {}): SearchHit[] {
-    const qtokens = [...new Set(tokenize(query))];
+    const qtokens = [...new Set(this.queryTokenizer(query))];
     if (!qtokens.length) return [];
     const op = opts.op ?? 'AND';
     const limit = opts.limit ?? 50;

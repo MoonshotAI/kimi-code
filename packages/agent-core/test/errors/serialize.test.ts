@@ -1,4 +1,4 @@
-import { APIStatusError } from '@moonshot-ai/kosong';
+import { APIProviderQuotaExhaustedError, APIStatusError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import { toKimiErrorPayload } from '#/errors/serialize';
@@ -46,5 +46,23 @@ describe('toKimiErrorPayload — APIStatusError message sanitization', () => {
     expect(toKimiErrorPayload(new APIStatusError(401, 'Unauthorized')).code).toBe(
       'provider.auth_error',
     );
+  });
+});
+
+describe('toKimiErrorPayload — quota-exhausted 429', () => {
+  it('maps a quota-exhausted 429 to provider.api_error, not provider.rate_limit', () => {
+    // provider.rate_limit is retryable and re-minted as a rate-limit error
+    // across the wire boundary, which drives the swarm requeue/suspend loop;
+    // quota exhaustion must carry the non-retryable generic code instead.
+    const payload = toKimiErrorPayload(
+      new APIProviderQuotaExhaustedError(
+        'Your account is suspended due to insufficient balance, please recharge your account',
+        'req-quota',
+      ),
+    );
+    expect(payload.code).toBe('provider.api_error');
+    expect(payload.retryable).toBe(false);
+    expect(payload.message).toContain('recharge');
+    expect(payload.details).toMatchObject({ statusCode: 429, requestId: 'req-quota' });
   });
 });

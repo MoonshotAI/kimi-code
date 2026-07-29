@@ -167,6 +167,30 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('01');
   });
 
+  it('shows the bound model display name in the header', () => {
+    const component = createComponent();
+
+    component.setModelDisplay('kimi-k2-thinking');
+    const lines = renderLines(component);
+    const headerLine = lines.find((line) => line.includes('Agent Swarm'));
+
+    expect(headerLine).toBeDefined();
+    expect(headerLine).toContain('Review changed files ─ kimi-k2-thinking');
+  });
+
+  it('keeps the first reported model when later status updates differ', () => {
+    const component = createComponent();
+
+    component.setModelDisplay('kimi-k2-thinking');
+    component.setModelDisplay('other-model');
+    component.setModelDisplay('');
+
+    const output = renderText(component);
+
+    expect(output).toContain('kimi-k2-thinking');
+    expect(output).not.toContain('other-model');
+  });
+
   it('repaints from the active palette when the theme changes', () => {
     const previousLevel = chalk.level;
     chalk.level = 3; // force truecolor so palette differences surface as ANSI

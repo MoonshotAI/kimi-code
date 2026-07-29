@@ -14,6 +14,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
@@ -144,6 +145,10 @@ describe('classifyApiError', () => {
     });
     expect(classifyApiError(new APIProviderRateLimitError('Too many requests'))).toEqual({
       kind: 'rate_limit',
+      statusCode: 429,
+    });
+    expect(classifyApiError(new APIProviderQuotaExhaustedError('quota exhausted'))).toEqual({
+      kind: 'quota_exhausted',
       statusCode: 429,
     });
     expect(classifyApiError(new APIProviderOverloadedError(529, 'Overloaded'))).toEqual({

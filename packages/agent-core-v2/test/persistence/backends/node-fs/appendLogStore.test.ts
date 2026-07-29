@@ -34,6 +34,7 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
       for (const c of chunks) yield c;
     },
     write: async () => {},
+    writeStream: async () => {},
     append: async () => {},
     list: async () => [],
     delete: async () => {},

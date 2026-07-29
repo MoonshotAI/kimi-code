@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
 import { TextIndex } from '../src/text-index.js';
+import { normalizeLiteral, ngramTerm, createNgramTokenizer } from '../src/trigram.js';
 import {
   encodePostingList,
   decodePostingList,
@@ -270,6 +271,226 @@ test('MiniDb: compaction rebuilds postings (file reclaimed)', async () => {
     // after compaction the postings reflect the latest values only
     assert.equal(db.search('bio', 'hello').length, 30); // k50..k79
     assert.equal(db.search('bio', 'goodbye').length, 50); // k0..k49
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- trigram (n-gram literal tokenizer) ------------------------------------
+
+test('trigram: normalization (case, NFKC, code points)', () => {
+  assert.equal(normalizeLiteral('AbC'), 'abc');
+  // NFKC folds compatibility glyphs: fullwidth dollar -> ascii dollar
+  assert.equal(normalizeLiteral('＄100'), '$100');
+  // surrogate pairs count as one code point and survive normalization
+  assert.equal(Array.from(normalizeLiteral('A🙂')).length, 2);
+  assert.equal(normalizeLiteral('🙂'), '🙂');
+});
+
+test('trigram: hash terms are stable and width-tagged', () => {
+  // crc32 of the utf8 bytes, low 22 bits, base 36 — pinned so every process
+  // derives the same term for the same n-gram.
+  assert.equal(ngramTerm('ab'), '24m0d');
+  assert.equal(ngramTerm('abc'), '31exfm');
+  assert.equal(ngramTerm('🚀🎉'), '217syy');
+  // 2-grams and 3-grams live in different tag namespaces and can never alias
+  assert.ok(ngramTerm('ab').startsWith('2'));
+  assert.ok(ngramTerm('abc').startsWith('3'));
+  assert.notEqual(ngramTerm('ab'), ngramTerm('abc'));
+  assert.throws(() => ngramTerm('a'), /2- or 3-gram/);
+});
+
+test('trigram: index vs query tokenizer shapes', () => {
+  const ix = createNgramTokenizer();
+  const q = createNgramTokenizer({ forQuery: true });
+  // shorter than 2 normalized code points -> no terms (upper layer rejects)
+  assert.deepEqual(q('a'), []);
+  assert.deepEqual(ix('a'), []);
+  assert.deepEqual(q(''), []);
+  // length 2: both sides emit exactly the one 2-gram
+  assert.deepEqual(q('AB'), [ngramTerm('ab')]);
+  assert.deepEqual(ix('AB'), [ngramTerm('ab')]);
+  // length >= 3: query side only 3-grams; index side 3-grams + 2-grams
+  assert.deepEqual(q('abcd'), [ngramTerm('abc'), ngramTerm('bcd')]);
+  assert.deepEqual(ix('abcd').sort(), [ngramTerm('ab'), ngramTerm('abc'), ngramTerm('bc'), ngramTerm('bcd'), ngramTerm('cd')].sort());
+  // emoji are single code points: '🙂a' has length 2 -> one 2-gram, not a
+  // 3-gram over split UTF-16 surrogates
+  assert.deepEqual(q('🙂a'), [ngramTerm('🙂a')]);
+});
+
+test('trigram: normalization can change length (single ligature ﬀ becomes a legal query)', () => {
+  // 'ﬀ' (U+FB00) is one code point, but NFKC folds it to 'ff' — so the query
+  // side emits exactly one 2-gram and the search layer's >=2 check (judged
+  // after normalization) accepts what looks like a 1-character query.
+  assert.equal(normalizeLiteral('ﬀ'), 'ff');
+  assert.deepEqual(createNgramTokenizer({ forQuery: true })('ﬀ'), [ngramTerm('ff')]);
+});
+
+test('trigram: query of exactly 3 code points emits its single 3-gram', () => {
+  const q = createNgramTokenizer({ forQuery: true });
+  // the boundary where the query side switches from 2-grams to 3-grams
+  assert.deepEqual(q('abc'), [ngramTerm('abc')]);
+  assert.deepEqual(q('已通过'), [ngramTerm('已通过')]);
+  // the index side of a 3-char text still emits both widths
+  assert.deepEqual(
+    createNgramTokenizer()('abc').sort(),
+    [ngramTerm('abc'), ngramTerm('ab'), ngramTerm('bc')].sort(),
+  );
+});
+
+test('TextIndex: injected n-gram tokenizer matches symbol substrings', async () => {
+  const dir = await tmpDir();
+  try {
+    // Wired the same way MiniDb.createTextIndex(..., { tokenizer: 'ngram' })
+    // does: index side both widths, query side forQuery.
+    const ti = new TextIndex({
+      postingsPath: path.join(dir, 'tri.postings'),
+      tokenizer: createNgramTokenizer(),
+      queryTokenizer: createNgramTokenizer({ forQuery: true }),
+    });
+    ti.add('cpp', { text: 'modern C++ patterns' });
+    ti.add('arrow', { text: 'rewrite a->b safely' });
+    ti.add('dash', { text: 'a-b is not an arrow' }); // shares 'a-' but has no '->'
+    ti.add('done', { text: '检查项 **已通过** 审核' });
+    ti.add('latex', { text: 'inline math $\\frac{a}{b}$ here' });
+    ti.add('emoji', { text: 'launch 🚀🎉 today' });
+
+    assert.deepEqual(ti.search('C++').map((h) => h.key), ['cpp']);
+    assert.deepEqual(ti.search('c++').map((h) => h.key), ['cpp']); // case-insensitive
+    assert.deepEqual(ti.search('->').map((h) => h.key), ['arrow']); // 2-char query via 2-gram
+    assert.deepEqual(ti.search('a->b').map((h) => h.key), ['arrow']); // distractor 'a-b' excluded
+    assert.deepEqual(ti.search('已通过').map((h) => h.key), ['done']);
+    assert.deepEqual(ti.search('\\frac{a}{b}').map((h) => h.key), ['latex']);
+    assert.deepEqual(ti.search('🚀🎉').map((h) => h.key), ['emoji']);
+    // single character yields no terms, hence no hits
+    assert.deepEqual(ti.search('a'), []);
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: n-gram tokenizer delta add/remove/overwrite', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({
+      postingsPath: path.join(dir, 'tri.postings'),
+      tokenizer: createNgramTokenizer(),
+      queryTokenizer: createNgramTokenizer({ forQuery: true }),
+    });
+    ti.build([{ key: 'a', value: { text: 'C++ guide' } }]);
+    assert.deepEqual(ti.search('c++').map((h) => h.key), ['a']);
+
+    // writes after build land in the delta and stay searchable
+    ti.add('b', { text: 'C++ cookbook' });
+    assert.deepEqual(ti.search('c++').map((h) => h.key).sort(), ['a', 'b']);
+
+    ti.remove('a');
+    assert.deepEqual(ti.search('c++').map((h) => h.key), ['b']);
+    assert.equal(ti.N, 1);
+
+    // overwrite tombstones the old n-grams
+    ti.add('b', { text: 'plain c guide' });
+    assert.deepEqual(ti.search('c++').map((h) => h.key), []);
+    assert.deepEqual(ti.search('c guide').map((h) => h.key), ['b']);
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: queryTokenizer tokenizes searches when given, falls back otherwise', async () => {
+  const dir = await tmpDir();
+  try {
+    // Docs are indexed under the index tokenizer's term; a search must
+    // consult the QUERY tokenizer's term instead.
+    const ti = new TextIndex({
+      postingsPath: path.join(dir, 't.postings'),
+      tokenizer: () => ['idx-term'],
+      queryTokenizer: () => ['query-term'],
+    });
+    ti.add('a', { text: 'whatever' });
+    assert.deepEqual(ti.search('anything'), []); // looks up 'query-term', never indexed
+    ti.close();
+
+    // Without a queryTokenizer, search falls back to the index tokenizer.
+    const fallback = new TextIndex({
+      postingsPath: path.join(dir, 't2.postings'),
+      tokenizer: () => ['idx-term'],
+    });
+    fallback.add('a', { text: 'whatever' });
+    assert.deepEqual(fallback.search('anything').map((h) => h.key), ['a']);
+    fallback.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: n-gram text index tokenizes queries with the forQuery shape', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json' });
+    await db.createTextIndex('tri', { fields: ['text'], tokenizer: 'ngram' });
+    // 'ab only' shares the 2-gram 'ab' with the query 'abc' but none of its
+    // 3-grams. Under OR, an index-side query tokenizer (3-grams + 2-grams)
+    // would surface it via 'ab'; the forQuery side emits only the 'abc'
+    // 3-gram, so nothing matches.
+    await db.set('partial', { text: 'ab only' });
+    assert.deepEqual(db.search('tri', 'abc', { op: 'OR' }), []);
+    await db.set('full', { text: 'abc here' });
+    assert.deepEqual(db.search('tri', 'abc', { op: 'OR' }).map((r) => r.key), ['full']);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: n-gram text index persists tokenizer, survives reopen', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'json' });
+    await db.createTextIndex('tri', { fields: ['text'], tokenizer: 'ngram' });
+    await db.createTextIndex('body', { fields: ['text'] });
+    await db.set('a', { text: 'modern C++ patterns' });
+    await db.set('b', { text: 'plain c plus plus' });
+    await db.close();
+
+    // the sidecar records the tokenizer for the n-gram index; the default
+    // index keeps the legacy shape (no tokenizer field), which is also what
+    // definition files written before n-gram support look like.
+    const defs = JSON.parse(await fs.readFile(path.join(dir, 'db.textindexes.json'), 'utf8')) as {
+      name: string;
+      tokenizer?: string;
+    }[];
+    assert.equal(defs.find((d) => d.name === 'tri')!.tokenizer, 'ngram');
+    assert.ok(!('tokenizer' in defs.find((d) => d.name === 'body')!));
+
+    db = await MiniDb.open({ dir, valueCodec: 'json' });
+    // n-gram index restored as n-gram: 'C++' matches only the real substring
+    assert.deepEqual(db.search('tri', 'C++').map((r) => r.key), ['a']);
+    // default index restored as default: 'C++' still tokenizes to the word 'c'
+    assert.deepEqual(db.search('body', 'C++').map((r) => r.key).sort(), ['a', 'b']);
+
+    // delta writes after reopen use the restored tokenizer too
+    await db.set('c', { text: 'another C++ note' });
+    assert.deepEqual(db.search('tri', 'c++').map((r) => r.key).sort(), ['a', 'c']);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: createTextIndex rejects an unknown tokenizer', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json' });
+    await assert.rejects(
+      db.createTextIndex('x', { tokenizer: 'bogus' as 'ngram' }),
+      /unknown text index tokenizer/,
+    );
+    // the failed creation left nothing behind
+    assert.throws(() => db.search('x', 'q'), /no such text index/);
     await db.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

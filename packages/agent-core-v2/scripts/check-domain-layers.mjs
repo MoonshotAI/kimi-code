@@ -108,6 +108,11 @@ const DOMAIN_LAYER = new Map([
   // It wraps the `_base` `StateRegistry` and depends on nothing else, so any
   // domain may hold its plain-data state through it; sits in L1 beside `event`.
   ['state', 1],
+  // `bashParser` is the App-scope adapter over the pure
+  // `@moonshot-ai/tree-sitter-bash` package (bash source → syntax tree DTO).
+  // It injects no services, so it sits in L1 beside the other pure
+  // capabilities.
+  ['bashParser', 1],
   // persistence/ and os/ — the two-level scopes. `interface` holds contracts
   // (same layer as the old domains they replace); `backends` holds
   // implementations that may depend on cross-domain services at various layers.

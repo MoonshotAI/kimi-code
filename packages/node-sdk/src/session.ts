@@ -207,6 +207,18 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
+  /**
+   * Live-apply the persisted `[secondary_model]` recipe to this session
+   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
+   * first; this reloads the complete recipe and its synthesized derived entry
+   * before updating the session snapshot — mirroring the `/secondary_model`
+   * flow.
+   */
+  async applyPersistedSecondaryModel(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.applyPersistedSecondaryModel({ sessionId: this.id });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

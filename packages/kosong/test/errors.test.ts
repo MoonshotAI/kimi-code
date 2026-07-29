@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
@@ -584,6 +585,10 @@ describe('isImageFormatError', () => {
       ),
     ).toBe(true);
     expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
+    // Kimi standalone-sentence form (actual production message)
+    expect(
+      isImageFormatError(new APIStatusError(400, 'Unsupported image. Please try another one.')),
+    ).toBe(true);
     // Gemini
     expect(isImageFormatError(new APIStatusError(400, 'Unable to process input image'))).toBe(true);
     expect(
@@ -623,6 +628,11 @@ describe('isImageFormatError', () => {
     // model blind to the user's images — hiding the real error. They must
     // surface instead of triggering a media-stripped resend.
     expect(isImageFormatError(new APIStatusError(400, 'too many images in request'))).toBe(false);
+    // Qualifier-continuing phrasing: the standalone-sentence pattern must
+    // not swallow count/size variants of "unsupported image …".
+    expect(
+      isImageFormatError(new APIStatusError(400, 'unsupported image size exceeds the limit')),
+    ).toBe(false);
     expect(
       isImageFormatError(new APIStatusError(400, 'image dimension 5000 exceeds maximum 2048')),
     ).toBe(false);
@@ -676,5 +686,58 @@ describe('isImageFormatError', () => {
     expect(
       isRetryableGenerateError(new APIStatusError(400, 'unsupported image format')),
     ).toBe(false);
+  });
+});
+
+describe('APIProviderQuotaExhaustedError', () => {
+  it('extends APIStatusError and preserves HTTP details', () => {
+    const err = new APIProviderQuotaExhaustedError('quota exhausted', 'req-quota', 12_500);
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect(err).toBeInstanceOf(ChatProviderError);
+    expect(err).not.toBeInstanceOf(APIProviderRateLimitError);
+    expect(err.name).toBe('APIProviderQuotaExhaustedError');
+    expect(err.statusCode).toBe(429);
+    expect(err.requestId).toBe('req-quota');
+    expect(err.retryAfterMs).toBe(12_500);
+  });
+});
+
+describe('normalizeAPIStatusError: 429 stays vendor-neutral', () => {
+  // The shared normalization never decides what a vendor's 429 means: quota
+  // classification lives with the vendor (`classifyKimiQuotaError`, the
+  // OpenAI base's own insufficient_quota check), so even billing wordings
+  // normalize to a retryable rate limit here.
+  it.each([
+    'Too many requests',
+    'request reached user+model max RPM: 50',
+    'your token quota per minute was exceeded',
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
+  ])('normalizes 429 "%s" to APIProviderRateLimitError', (message) => {
+    const error = normalizeAPIStatusError(429, message);
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('keeps billing wording on other statuses a generic status error', () => {
+    const error = normalizeAPIStatusError(403, 'insufficient balance');
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(error.constructor).toBe(APIStatusError);
+  });
+});
+
+describe('quota-exhausted retry and rate-limit semantics', () => {
+  it('is not retryable while a plain rate limit stays retryable', () => {
+    expect(isRetryableGenerateError(new APIProviderQuotaExhaustedError('quota exhausted'))).toBe(
+      false,
+    );
+    expect(isRetryableGenerateError(new APIProviderRateLimitError('rate limited'))).toBe(true);
+    expect(isRetryableGenerateError(new APIStatusError(429, 'rate limited'))).toBe(true);
+  });
+
+  it('is not a provider rate limit despite carrying status 429', () => {
+    expect(isProviderRateLimitError(new APIProviderQuotaExhaustedError('quota exhausted'))).toBe(
+      false,
+    );
+    expect(isProviderRateLimitError(new APIProviderRateLimitError('rate limited'))).toBe(true);
   });
 });

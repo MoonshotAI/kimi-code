@@ -109,7 +109,7 @@ export const ErrorCode = {
   /** 临时文件已过期 */
   FILE_EXPIRED: 41003,
 
-  /** 上传超 50MB */
+  /** 文件过大（如 session 导出超限；/files 上传不设上限） */
   FILE_TOO_LARGE: 41301,
   /** fs.read 超 10MB */
   FS_TOO_LARGE: 41302,

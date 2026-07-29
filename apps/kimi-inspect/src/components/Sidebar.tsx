@@ -7,20 +7,25 @@
  * endpoint.
  */
 
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
+import {
+  ISessionIndex,
+  type SessionSummary,
+} from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import {
+  IWorkspaceService,
+  type Workspace,
+} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceService, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-
+import type { SessionWorkFacts } from '../activity/store';
+import { useSessionActivities } from '../activity/useSessionActivity';
 import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';
-import { useSessionActivities } from '../activity/useSessionActivity';
-import type { SessionWorkFacts } from '../activity/store';
 import { Badge, ErrorLine, relTime } from '../ui';
 
 /**
@@ -61,11 +66,17 @@ export function Sidebar({
     queryFn: () =>
       klient
         .core(ISessionIndex)
-        .list({ workspaceIds: workspaceId === null ? undefined : [workspaceId], includeArchived: true, limit: 200 }),
+        .list({
+          workspaceIds: workspaceId === null ? undefined : [workspaceId],
+          includeArchived: true,
+          limit: 200,
+        }),
     refetchInterval: 15_000,
   });
 
-  const sortedWorkspaces = (workspaces.data ?? []).toSorted((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+  const sortedWorkspaces = (workspaces.data ?? []).toSorted(
+    (a, b) => b.lastOpenedAt - a.lastOpenedAt,
+  );
   const sortedSessions = (sessions.data?.items ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt);
 
   const createSession = async (ws: Workspace | null) => {

@@ -44,6 +44,11 @@
  *       either at the top level (the base's default location) or inside
  *       `choices[0].usage`; returning `undefined` defers to the base default
  *       when neither position carries one;
+ *     - errors: `convertError` classifies Moonshot's quota/balance-exhausted
+ *       429s (structured `exceeded_current_quota_error` type/code, billing
+ *       wordings) as the non-retryable `APIProviderQuotaExhaustedError` via
+ *       `classifyKimiQuotaError` from `./kimi-errors`, before the base's own
+ *       classification would mint a retryable rate limit;
  *     - video upload: `uploadVideo` uploads through the Kimi files API
  *       (`KimiFiles` from `./kimi-files`), memoized per trait context with a
  *       WeakMap — one composition (one resolved ctx) gets one files client,
@@ -53,10 +58,12 @@
  *    `output_config.effort`, and the interleaved-thinking beta is stripped
  *    from the seeded beta list. The `keep` dimension needs no trait handling
  *    — the Anthropic base overlays the context-management edit itself. The
- *    trait deliberately does NOT declare `strictThinkingValidation`: over
- *    this foreign transport the backend may accept efforts the local catalog
- *    metadata does not list, so client-side validation stays lenient
- *    (warning + pass-through).
+ *    trait declares the same `convertError` quota classification as the
+ *    OpenAI registration (the classifier reads the SDK error structurally,
+ *    so it is transport-agnostic). It deliberately does NOT declare
+ *    `strictThinkingValidation`: over this foreign transport the backend may
+ *    accept efforts the local catalog metadata does not list, so client-side
+ *    validation stays lenient (warning + pass-through).
  *
  * Vendor-level facts — the endpoint fallback chain, full host-header
  * forwarding, and OAuth-catalog model discovery — are shared constants
@@ -82,6 +89,7 @@ import type {
 
 import { type OpenAIToolParam, toolToOpenAI } from '../../bases/openai/openai-common';
 import { registerProviderDefinition } from '../../providerDefinition';
+import { classifyKimiQuotaError } from './kimi-errors';
 import { KimiFiles } from './kimi-files';
 import { normalizeKimiToolSchema } from './kimi-schema';
 
@@ -175,6 +183,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
     baseUrlEnv: KIMI_BASE_URL_ENV,
     defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
   }),
+
+  convertError: (error) => classifyKimiQuotaError(error),
 
   cacheKey: (key) => ({ prompt_cache_key: key }),
 
@@ -274,6 +284,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
 };
 
 export const kimiAnthropicTrait: ProtocolTrait = {
+  convertError: (error) => classifyKimiQuotaError(error),
+
   withThinking: (effort, _options, generationKwargs) => {
     const seeded = generationKwargs['betaFeatures'];
     const betaFeatures = (Array.isArray(seeded) ? (seeded as string[]) : []).filter(

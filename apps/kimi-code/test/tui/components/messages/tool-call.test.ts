@@ -1033,6 +1033,34 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('summary fallback');
   });
 
+  it('shows the bound model in the subagent header and group snapshot once reported', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_model',
+        name: 'Agent',
+        args: { description: 'explore project' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_model_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · 0 tools');
+    expect(out).not.toContain('Kimi K2.5');
+
+    component.updateSubagentMetrics({ modelDisplay: 'Kimi K2.5' });
+
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · Kimi K2.5 · 0 tools');
+    expect(component.getSubagentSnapshot().model).toBe('Kimi K2.5');
+  });
+
   it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

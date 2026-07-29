@@ -1,5 +1,12 @@
+/**
+ * Scenario: KimiHarness session creation and resume transport behavior.
+ * Responsibilities: SDK options reach the in-process core and session identity remains stable.
+ * Wiring: the real SDK/core are used; model/network boundaries are configured but never called.
+ * Run: pnpm -C packages/node-sdk exec vitest run test/create-session-transport.test.ts
+ */
+
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,6 +54,16 @@ provider = "local"
 model = "${modelName}"
 max_context_size = 1000
 `,
+    'utf-8',
+  );
+}
+
+async function writeReviewerAgent(workDir: string): Promise<void> {
+  const agentDir = join(workDir, '.kimi-code', 'agents');
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(agentDir, 'reviewer.md'),
+    '---\nname: reviewer\ndescription: Reviews code.\nsubagents:\n  - explore\n---\n\nReview the requested change.\n',
     'utf-8',
   );
 }
@@ -553,6 +570,82 @@ effort = "medium"
     }
   });
 
+  it('does not persist a session record when the requested agent profile is missing', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await expect(
+        harness.createSession({
+          id: 'ses_missing_agent_profile',
+          workDir,
+          agentProfile: 'missing-agent',
+        }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'agent.not_found',
+      });
+      expect(await harness.listSessions({ workDir })).toEqual([]);
+      expect(existsSync(join(homeDir, 'session_index.jsonl'))).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('allows the session ID to be reused after agent profile selection fails', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await expect(
+        harness.createSession({
+          id: 'ses_reusable_after_missing_profile',
+          workDir,
+          agentProfile: 'missing-agent',
+        }),
+      ).rejects.toMatchObject({ code: 'agent.not_found' });
+
+      await expect(
+        harness.createSession({
+          id: 'ses_reusable_after_missing_profile',
+          workDir,
+        }),
+      ).resolves.toMatchObject({ id: 'ses_reusable_after_missing_profile' });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('does not persist a session record when an explicit agent file cannot be loaded', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await expect(
+        harness.createSession({
+          id: 'ses_missing_explicit_agent_file',
+          workDir,
+          agentFiles: [join(workDir, 'missing-agent.md')],
+        }),
+      ).rejects.toThrow(/missing-agent\.md/);
+      expect(await harness.listSessions({ workDir })).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('closes active runtime handles through closeSession, session.close, and close', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -771,6 +864,77 @@ effort = "medium"
       kaos,
       persistenceKaos: undefined,
     });
+  });
+
+  it('rejects an active session resume when the requested profile differs from its binding', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    await writeTestModelConfig(homeDir);
+    await writeReviewerAgent(workDir);
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const session = await harness.createSession({
+        id: 'ses_active_profile_identity',
+        workDir,
+        agentProfile: 'reviewer',
+      });
+
+      await expect(
+        harness.resumeSession({ id: session.id, agentProfile: 'agent' }),
+      ).rejects.toThrow(
+        'agent is already bound to profile "reviewer"; cannot switch to "agent" in this session',
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns the active session when the requested profile matches its binding', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    await writeTestModelConfig(homeDir);
+    await writeReviewerAgent(workDir);
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const session = await harness.createSession({
+        id: 'ses_matching_profile_identity',
+        workDir,
+        agentProfile: 'reviewer',
+      });
+
+      await expect(
+        harness.resumeSession({ id: session.id, agentProfile: 'reviewer' }),
+      ).resolves.toBe(session);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects a persisted session resume when the requested profile differs from its binding', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    await writeTestModelConfig(homeDir);
+    await writeReviewerAgent(workDir);
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const session = await harness.createSession({
+        id: 'ses_persisted_profile_identity',
+        workDir,
+        agentProfile: 'reviewer',
+      });
+      await session.close();
+
+      await expect(
+        harness.resumeSession({ id: session.id, agentProfile: 'agent' }),
+      ).rejects.toThrow(
+        'agent is already bound to profile "reviewer"; cannot switch to "agent" in this session',
+      );
+    } finally {
+      await harness.close();
+    }
   });
 });
 

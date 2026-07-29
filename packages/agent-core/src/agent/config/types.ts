@@ -6,6 +6,7 @@ export interface AgentConfigData {
   modelAlias?: string;
   modelCapabilities: ModelCapability;
   profileName?: string;
+  subagentNames?: readonly string[];
   thinkingEffort: string;
   systemPrompt: string;
 }
@@ -14,6 +15,7 @@ export type AgentConfigUpdateData = Partial<{
   cwd: string;
   modelAlias: string;
   profileName: string;
+  subagentNames: readonly string[];
   thinkingEffort: string;
   systemPrompt: string;
 }>;

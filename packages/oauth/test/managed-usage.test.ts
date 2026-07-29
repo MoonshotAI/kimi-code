@@ -3,7 +3,6 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   fetchManagedUsage,
   formatDuration,
-  formatResetTime,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
@@ -76,50 +75,87 @@ describe('parseManagedUsagePayload', () => {
     expect(parseManagedUsagePayload('nope')).toEqual({ summary: null, limits: [], extraUsage: null });
   });
 
-  it('extracts a summary from the `usage` object', () => {
+  it('parses the numeric strings the platform reports', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: '17', limit: '100', resetTime: '2030-01-01T00:00:00.000Z' },
+    });
+    expect(parsed.summary).toEqual({
+      used: 17,
+      limit: 100,
+      resetAt: '2030-01-01T00:00:00.000Z',
+      window: { duration: 1, unit: 'week' },
+    });
+  });
+
+  it('extracts a summary from the `usage` object and passes its name through', () => {
     const parsed = parseManagedUsagePayload({
       usage: { used: 40, limit: 1000, name: 'Weekly limit' },
     });
     expect(parsed.summary).toEqual({
-      label: 'Weekly limit',
+      name: 'Weekly limit',
+      window: { duration: 1, unit: 'week' },
       used: 40,
       limit: 1000,
     });
     expect(parsed.limits).toEqual([]);
   });
 
-  it('falls back to remaining=limit-used when used is absent', () => {
-    const parsed = parseManagedUsagePayload({ usage: { remaining: 200, limit: 1000 } });
-    expect(parsed.summary).toEqual({ label: 'Weekly limit', used: 800, limit: 1000 });
+  it('treats an unnamed summary as the weekly limit', () => {
+    const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10 } });
+    expect(parsed.summary).toEqual({
+      used: 1,
+      limit: 10,
+      window: { duration: 1, unit: 'week' },
+    });
   });
 
-  it('labels limits from window duration when no name is given', () => {
+  it('defaults used to 0 when absent', () => {
+    const parsed = parseManagedUsagePayload({ usage: { limit: 1000 } });
+    expect(parsed.summary).toMatchObject({ used: 0, limit: 1000 });
+  });
+
+  it('normalizes window duration and timeUnit from the window record', () => {
     const parsed = parseManagedUsagePayload({
       limits: [
-        { detail: { used: 1, limit: 100 }, window: { duration: 300, timeUnit: 'MINUTE' } },
-        { detail: { used: 2, limit: 50 }, window: { duration: 24, timeUnit: 'HOUR' } },
+        { detail: { used: 1, limit: 100 }, window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' } },
+        { detail: { used: 2, limit: 50 }, window: { duration: 24, timeUnit: 'TIME_UNIT_HOUR' } },
+        { detail: { used: 3, limit: 60 }, window: { duration: 7, timeUnit: 'TIME_UNIT_DAY' } },
+        { detail: { used: 4, limit: 30 }, window: { duration: 90, timeUnit: 'TIME_UNIT_MINUTE' } },
       ],
     });
-    expect(parsed.limits.map((l) => l.label)).toEqual(['5h limit', '24h limit']);
+    expect(parsed.limits.map((l) => l.window)).toEqual([
+      // Whole-hour minute windows fold to hours (300 MINUTE = the 5h limit).
+      { duration: 5, unit: 'hour' },
+      { duration: 24, unit: 'hour' },
+      { duration: 7, unit: 'day' },
+      // Non-hour-aligned minute windows stay in minutes.
+      { duration: 90, unit: 'minute' },
+    ]);
   });
 
-  it('prefers explicit item.name over window duration label', () => {
+  it('passes through `name` from the item or detail', () => {
     const parsed = parseManagedUsagePayload({
       limits: [
-        {
-          name: 'Daily cap',
-          detail: { used: 5, limit: 100 },
-          window: { duration: 1440, timeUnit: 'MINUTE' },
-        },
+        { name: 'Daily cap', detail: { used: 5, limit: 100 } },
+        { detail: { used: 1, limit: 10, name: 'Detail named' } },
       ],
     });
-    expect(parsed.limits[0]!.label).toBe('Daily cap');
+    expect(parsed.limits.map((l) => l.name)).toEqual(['Daily cap', 'Detail named']);
   });
 
-  it('surfaces reset hints from resetAt timestamps', () => {
-    const future = new Date(Date.now() + 3600_000).toISOString();
-    const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10, resetAt: future } });
-    expect(parsed.summary?.resetHint).toMatch(/resets in/);
+  it('skips limit rows without a detail record', () => {
+    const parsed = parseManagedUsagePayload({
+      limits: [{ used: 2, limit: 20 }],
+    });
+    expect(parsed.limits).toEqual([]);
+  });
+
+  it('passes the detail resetTime through as resetAt', () => {
+    const at = '2030-01-01T00:00:00.000Z';
+    const parsed = parseManagedUsagePayload({
+      limits: [{ detail: { used: 1, limit: 10, resetTime: at } }],
+    });
+    expect(parsed.limits[0]?.resetAt).toBe(at);
   });
 
   it('extracts extra usage from boosterWallet.balance', () => {
@@ -204,7 +240,7 @@ describe('fetchManagedUsage', () => {
     await expect(fetchManagedUsage('https://api.example/usages', 'access-token')).resolves.toEqual({
       kind: 'ok',
       parsed: {
-        summary: { label: 'Weekly limit', used: 1, limit: 10 },
+        summary: { used: 1, limit: 10, window: { duration: 1, unit: 'week' } },
         limits: [],
         extraUsage: null,
       },
@@ -279,21 +315,5 @@ describe('formatDuration', () => {
     expect(formatDuration(3600)).toBe('1h');
     expect(formatDuration(3661)).toBe('1h 1m');
     expect(formatDuration(86_400 + 7200 + 600)).toBe('1d 2h 10m');
-  });
-});
-
-describe('formatResetTime', () => {
-  it('returns "reset" for past timestamps', () => {
-    const past = new Date(Date.now() - 5000).toISOString();
-    expect(formatResetTime(past)).toBe('reset');
-  });
-
-  it('returns "resets in X" for future timestamps', () => {
-    const future = new Date(Date.now() + 3600_000).toISOString();
-    expect(formatResetTime(future)).toMatch(/^resets in /);
-  });
-
-  it('falls back when parsing fails', () => {
-    expect(formatResetTime('not-a-date')).toBe('resets at not-a-date');
   });
 });

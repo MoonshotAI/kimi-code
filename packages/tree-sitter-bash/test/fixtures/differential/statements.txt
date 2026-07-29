@@ -1,0 +1,391 @@
+@match: if true; then echo yes; fi
+if true; then echo yes; fi
+===
+@match: if a; then b; elif c; then d; else e; fi
+if a; then b; elif c; then d; else e; fi
+===
+@match: if a
+if a
+then
+  b
+fi
+===
+@match: until x; do y; done
+until x; do y; done
+===
+@match: foo() { echo hi; }
+foo() { echo hi; }
+===
+@match: function bar { echo hi; }
+function bar { echo hi; }
+===
+@match: function baz() { echo hi; return 0; }
+function baz() { echo hi; return 0; }
+===
+@match: foo() ( echo sub )
+foo() ( echo sub )
+===
+@match: { echo a; echo b; }
+{ echo a; echo b; }
+===
+@match: coproc myjob { echo hi; }
+coproc myjob { echo hi; }
+===
+@match: echo if for while
+echo if for while
+===
+@match: arr=(a b "c d")
+arr=(a b "c d")
+===
+@match: arr[0]=x
+arr[0]=x
+===
+@match: export FOO=bar BAZ
+export FOO=bar BAZ
+===
+@match: declare -r x=1
+declare -r x=1
+===
+@match: local y
+local y
+===
+@match: readonly z=2
+readonly z=2
+===
+@match: unset a b
+unset a b
+===
+@match: echo {1..10}
+echo {1..10}
+===
+@match: echo {1..10..2}
+echo {1..10..2}
+===
+@match: echo {a..z}
+echo {a..z}
+===
+@match: echo a{b,c}d
+echo a{b,c}d
+===
+@match: time ls -la
+time ls -la
+===
+@match: ls
+ls
+echo b
+===
+@match: echo [ x ]
+echo [ x ]
+===
+@match: if [ -f f ]; then x; fi
+if [ -f f ]; then x; fi
+===
+@match: foo() if a; then b; fi
+foo() if a; then b; fi
+===
+@match: if a; then b; fi | grep x
+if a; then b; fi | grep x
+===
+@match: if ! grep -q x f; then echo missing; fi
+if ! grep -q x f; then echo missing; fi
+===
+@match: x[1]+=2
+x[1]+=2
+===
+@match: until grep -q done log; do sleep 1; done &
+until grep -q done log; do sleep 1; done &
+===
+@match: ( (ls) )
+( (ls) )
+===
+@match: {ls;}
+{ls;}
+===
+@match: fi
+fi
+===
+@match: done
+done
+===
+@match: }
+}
+===
+@match: echo a{1..3}b
+echo a{1..3}b
+===
+@match: x={1..5}
+x={1..5}
+===
+@match: while x; do done
+while x; do done
+===
+@match: echo {a..z..2}
+echo {a..z..2}
+===
+@match: echo {10..1}
+echo {10..1}
+===
+@match: echo {-5..5}
+echo {-5..5}
+===
+@match: select x in; do y; done
+select x in; do y; done
+===
+@match: function f() if x; then y; fi
+function f() if x; then y; fi
+===
+@match: f () { x; }
+f () { x; }
+===
+@match: if a && b; then c; fi
+if a && b; then c; fi
+===
+@match: foo (ls)
+foo (ls)
+===
+@match: for f in a b
+for f in a b
+do x
+done
+===
+@match: while a; b; do x; done
+while a; b; do x; done
+===
+@match: if a; then b; fi && c
+if a; then b; fi && c
+===
+@match: if if a; then b; fi; then c; fi
+if if a; then b; fi; then c; fi
+===
+@match: x=1 if a; then b; fi
+x=1 if a; then b; fi
+===
+@match: echo hi | if a; then b; fi
+echo hi | if a; then b; fi
+===
+@match: ! while x; do y; done
+! while x; do y; done
+===
+@match: ! [ -f x ]
+! [ -f x ]
+===
+@match: x+=(c d)
+x+=(c d)
+===
+@match: declare -A m
+declare -A m
+===
+@match: {1..3}
+{1..3}
+===
+@match: echo {1..3}
+echo {1..3}
+===
+@match: if echo then; then x; fi
+if echo then; then x; fi
+===
+@match: while echo do; do x; done
+while echo do; do x; done
+===
+@match: for f in a; do echo done; done
+for f in a; do echo done; done
+===
+@match: { echo }; }
+{ echo }; }
+===
+@match: [1]
+[1]
+===
+@match: echo [1] a[2]b
+echo [1] a[2]b
+===
+@match: echo a[-5]b
+echo a[-5]b
+===
+@match: if a; then b; elif c; then d
+if a; then b; elif c; then d
+else e
+fi
+===
+@match: ls -la
+ls -la
+===
+@match: FOO=bar env | grep FOO && echo ok || echo fail
+FOO=bar env | grep FOO && echo ok || echo fail
+===
+@match: ! grep -q x file
+! grep -q x file
+===
+@match: # a comment
+# a comment
+echo hi # trailing
+===
+@match: (ls)
+(ls)
+===
+@match: FOO=bar ls
+FOO=bar ls
+===
+@known-diff trailing-connector: ls &&
+ls &&
+---
+hasError: true
+program [0,5] "ls &&"
+  list [0,5] "ls &&"
+    command [0,2] "ls"
+      command_name [0,2] "ls"
+        word [0,2] "ls"
+    (&&) [3,5] "&&"
+===
+@match: a & b &
+a & b &
+===
+@match: echo 123 45.6
+echo 123 45.6
+===
+@match: VAR=value
+VAR=value
+===
+@match: ls; echo a
+ls; echo a
+echo b
+===
+@match: FOO=1 BAR=2 cmd arg
+FOO=1 BAR=2 cmd arg
+===
+@match: ! a | b
+! a | b
+===
+@match: echo ""
+echo ""
+===
+@match: VAR=
+VAR=
+===
+@match: a|b|c
+a|b|c
+===
+@match: ls ;
+ls ;
+===
+@match: echo hi;# c
+echo hi;# c
+ls
+===
+@match: A=1 B=2
+A=1 B=2
+===
+@match: a && b && c
+a && b && c
+===
+@match: echo x\
+echo x\
+y
+===
+@match: echo {a,b}
+echo {a,b}
+===
+@known-diff trailing-connector: ls |
+ls |
+---
+hasError: true
+program [0,4] "ls |"
+  pipeline [0,4] "ls |"
+    command [0,2] "ls"
+      command_name [0,2] "ls"
+        word [0,2] "ls"
+    (|) [3,4] "|"
+===
+@match: time ls
+time ls
+===
+@match: FOO="a b" cmd
+FOO="a b" cmd
+===
+@match: FOO=a"b"c
+FOO=a"b"c
+===
+@known-diff escaped-space-argument: echo 1 \ 2 \ 3
+echo 1 \ 2 \ 3
+---
+hasError: false
+program [0,14] "echo 1 \\ 2 \\ 3"
+  command [0,14] "echo 1 \\ 2 \\ 3"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    number [5,6] "1"
+    word [7,10] "\\ 2"
+    word [11,14] "\\ 3"
+===
+@known-diff expansion-equals-operator: for c in ${=1}; do
+for c in ${=1}; do
+	echo c
+done
+---
+hasError: false
+program [0,31] "for c in ${=1}; do\n\techo c\ndone"
+  for_statement [0,31] "for c in ${=1}; do\n\techo c\ndone"
+    (for) [0,3] "for"
+    variable_name [4,5] "c"
+    (in) [6,8] "in"
+    expansion [9,14] "${=1}"
+      (${) [9,11] "${"
+      (=) [11,12] "="
+      word [12,13] "1"
+      (}) [13,14] "}"
+    (;) [14,15] ";"
+    do_group [16,31] "do\n\techo c\ndone"
+      (do) [16,18] "do"
+      command [20,26] "echo c"
+        command_name [20,24] "echo"
+          word [20,24] "echo"
+        word [25,26] "c"
+      (done) [27,31] "done"
+===
+@match: foo::bar() {
+foo::bar() {
+  echo what
+}
+===
+@match: echo "a "
+echo "a "
+===
+@match: echo 你好 && ls
+echo 你好 && ls
+===
+@match: echo "🎉 done" | grep 🎉 && echo ✓
+echo "🎉 done" | grep 🎉 && echo ✓
+===
+@known-diff nonascii-identifier-assignment: 变量=值 echo $变量
+变量=值 echo $变量
+---
+hasError: false
+program [0,13] "变量=值 echo $变量"
+  command [0,13] "变量=值 echo $变量"
+    command_name [0,4] "变量=值"
+      word [0,4] "变量=值"
+    word [5,9] "echo"
+    concatenation [10,13] "$变量"
+      ($) [10,11] "$"
+      word [11,13] "变量"
+===
+@known-diff escaped-space-argument: echo a\<TAB>b
+echo a\	b
+---
+hasError: false
+program [0,9] "echo a\\\tb"
+  command [0,9] "echo a\\\tb"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    word [5,9] "a\\\tb"
+===
+@known-diff escaped-space-argument: echo \<TAB>x
+echo \	x
+---
+hasError: false
+program [0,8] "echo \\\tx"
+  command [0,8] "echo \\\tx"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    word [5,8] "\\\tx"
+===

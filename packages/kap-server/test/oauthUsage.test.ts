@@ -88,8 +88,17 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
   it('maps the ok usage payload to the snake_case wire shape', async () => {
     const getManagedUsage = vi.fn(async () => ({
       kind: 'ok' as const,
-      summary: { label: 'Weekly limit', used: 40, limit: 1000, resetHint: 'resets in 2d' },
-      limits: [{ label: '5h limit', used: 1, limit: 100 }],
+      summary: {
+        name: 'Weekly limit',
+        window: { duration: 1, unit: 'week' as const },
+        used: 40,
+        limit: 1000,
+        resetAt: '2030-01-01T00:00:00.000Z',
+      },
+      limits: [
+        { name: '5h limit', window: { duration: 5, unit: 'hour' as const }, used: 1, limit: 100 },
+        { used: 2, limit: 50 },
+      ],
       extraUsage: {
         balanceCents: 500,
         totalCents: 1000,
@@ -103,8 +112,17 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
 
     expect(await getUsage()).toEqual({
       kind: 'ok',
-      summary: { label: 'Weekly limit', used: 40, limit: 1000, reset_hint: 'resets in 2d' },
-      limits: [{ label: '5h limit', used: 1, limit: 100 }],
+      summary: {
+        name: 'Weekly limit',
+        window: { duration: 1, unit: 'week' },
+        used: 40,
+        limit: 1000,
+        reset_at: '2030-01-01T00:00:00.000Z',
+      },
+      limits: [
+        { name: '5h limit', window: { duration: 5, unit: 'hour' }, used: 1, limit: 100 },
+        { used: 2, limit: 50 },
+      ],
       extra_usage: {
         balance_cents: 500,
         total_cents: 1000,

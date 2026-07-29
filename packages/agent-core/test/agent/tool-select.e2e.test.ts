@@ -277,6 +277,32 @@ describe('disclosure mode — top-level convergence and announcements', () => {
     expect(ctx.agent.context.history.filter(isLoadableToolsAnnouncement)).toHaveLength(1);
   });
 
+  it('honors a disallowedTools deny of select_tools itself', async () => {
+    const ctx = await disclosureAgent();
+    ctx.agent.tools.setActiveTools(['Read', 'mcp__*'], ['select_tools']);
+
+    // The denylist wins over the disclosure gate: select_tools leaves the
+    // executable table and reports inactive (mirrors agent-core-v2
+    // isToolActiveForDisclosure).
+    const loopNames = ctx.agent.tools.loopTools.map((t) => t.name);
+    expect(loopNames).not.toContain('select_tools');
+    expect(loopNames).toContain('Read');
+    expect(ctx.agent.tools.data().find((info) => info.name === 'select_tools')?.active).toBe(
+      false,
+    );
+
+    // The wire view drops it too, and a call lands on the missing-tool path.
+    ctx.mockNextResponse({ type: 'text', text: 'try' }, selectCall('call-1', [GRAFANA_TOOL]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await runTurn(ctx, 'load it');
+
+    expect(ctx.llmCalls[0]!.tools.map((t) => t.name)).not.toContain('select_tools');
+    expect(
+      ctx.agent.context.history.some((m) => m.role === 'tool' && m.isError === true),
+    ).toBe(true);
+    expect(schemaMessages(ctx)).toHaveLength(0);
+  });
+
   it('announces tools_removed at the next boundary after a server disconnects', async () => {
     const ctx = await disclosureAgent();
     ctx.mockNextResponse({ type: 'text', text: 'one' });

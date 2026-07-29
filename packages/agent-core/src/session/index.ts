@@ -36,13 +36,24 @@ import {
 } from '../mcp';
 import type { EnabledPluginSessionStart, PluginCommandDef } from '../plugin';
 import {
-  DEFAULT_AGENT_PROFILES,
+  AgentProfileCatalogSnapshotSchema,
+  DEFAULT_AGENT_PROFILE_NAME,
   DEFAULT_INIT_PROMPT,
+  SessionAgentProfileCatalog,
   loadAgentsMd,
   prepareSystemPromptContext,
+  type AgentProfileCatalogSnapshot,
   type ResolvedAgentProfile,
 } from '../profile';
 import type { ProviderManager } from './provider-manager';
+import {
+  resolveSecondaryModel,
+  wrapSubagentModelError,
+} from './subagent-binding';
+import {
+  SECONDARY_DERIVED_MODEL_ALIAS,
+  secondaryModelPatch,
+} from '../config/secondary-model';
 import {
   registerBuiltinSkills,
   SessionSkillRegistry,
@@ -58,6 +69,7 @@ import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { ImageLimits } from '../tools/support/image-limits';
 import { abortError } from '../utils/abort';
+import { resolveMainAgentProfile } from './main-agent-profile';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
@@ -74,6 +86,7 @@ export interface SessionOptions {
   readonly hooks?: readonly HookDef[];
   readonly permissionRules?: readonly PermissionRule[];
   readonly skills?: SessionSkillConfig;
+  readonly agents?: SessionAgentCatalogConfig;
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
@@ -100,6 +113,22 @@ export interface SessionSkillConfig {
   readonly pluginSkillRoots?: readonly SkillRoot[];
   readonly mergeAllAvailableSkills?: boolean;
   readonly builtinDir?: string;
+}
+
+/**
+ * File-defined agent (agentfile) discovery for a session. Mirrors the skill
+ * discovery layout: user brand dir `<kimiHomeDir>/agents` and
+ * `~/.agents/agents`, project `.kimi-code/agents` and `.agents/agents`, plus
+ * configured extra dirs and explicit single files (`--agent-file`, fatal
+ * when invalid). `profileName` selects the main agent's profile (`--agent`).
+ */
+export interface SessionAgentCatalogConfig {
+  readonly userHomeDir?: string;
+  readonly explicitFiles?: readonly string[];
+  readonly extraDirs?: readonly string[];
+  readonly profileName?: string;
+  /** Already-loaded catalog prepared before a persistent session is created. */
+  readonly catalog?: SessionAgentProfileCatalog;
 }
 
 export interface AgentMeta {
@@ -142,6 +171,11 @@ export interface SessionMeta {
   custom: Record<string, any>;
 }
 
+interface PersistedSessionState extends SessionMeta {
+  /** Internal catalog binding; deliberately excluded from public SessionMeta. */
+  readonly agentProfileCatalog?: unknown;
+}
+
 const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
 
@@ -181,6 +215,7 @@ export class Session {
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
+  readonly agentCatalog: SessionAgentProfileCatalog;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
@@ -197,11 +232,25 @@ export class Session {
     custom: {},
   };
   private writeMetadataPromise = Promise.resolve();
+  private agentProfileSnapshot: AgentProfileCatalogSnapshot | undefined;
   private agentsMdWarning: string | undefined;
   private printSteerDeadline: number | undefined;
   private printSteerTurns = 0;
+  /**
+   * The session's live config snapshot. Initialized from `options.config`;
+   * updated in place by {@link setSecondaryModelConfig} so mid-session secondary-model
+   * switches reach the spawn-binding and tool-description readers without
+   * recreating the session.
+   */
+  private runtimeConfig: KimiConfig | undefined;
+
+  /** The session's current config snapshot (see {@link Session.runtimeConfig}). */
+  get kimiConfig(): KimiConfig | undefined {
+    return this.runtimeConfig;
+  }
 
   constructor(public readonly options: SessionOptions) {
+    this.runtimeConfig = options.config;
     // Attach the per-session log sink up front so the constructor's
     // fire-and-forget `loadSkills` / `loadMcpServers` failures (and
     // anything else that races) land in the session log, not just global.
@@ -240,10 +289,27 @@ export class Session {
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
+    this.agentCatalog =
+      options.agents?.catalog ??
+      new SessionAgentProfileCatalog({
+        workDir: options.kaos.getcwd(),
+        brandHomeDir: options.kimiHomeDir ?? join(homedir(), '.kimi-code'),
+        osHomeDir: options.agents?.userHomeDir ?? homedir(),
+        extraDirs: options.agents?.extraDirs ?? options.config?.extraAgentDirs,
+        explicitFiles: options.agents?.explicitFiles,
+        warn: (message, error) => {
+          this.log.warn(message, error === undefined ? undefined : { error });
+        },
+      });
     this.skillsReady = this.loadSkills()
       .catch((error: unknown) => {
         this.log.error('skills load failed', error);
       })
+      // Agentfile discovery rides the same readiness gate: every createAgent
+      // caller already awaits it, so profile binding and the Agent tool's
+      // subagent list always see the fully merged catalog. A fatal source
+      // (an invalid --agent-file) rejects here and fails session creation.
+      .then(() => this.agentCatalog.ready)
       .then(() => {
         this.refreshAgentBuiltinTools();
       });
@@ -338,11 +404,27 @@ export class Session {
   }
 
   async createMain() {
+    // Await the catalog (chained into skillsReady) before resolving the
+    // profile so a fatal agentfile source surfaces here, and so `--agent`
+    // sees file-defined profiles.
+    await this.skillsReady;
+    this.agentProfileSnapshot = this.agentCatalog.snapshot();
+    const profile = resolveMainAgentProfile(
+      this.agentCatalog,
+      this.options.agents?.profileName,
+    );
     const { agent } = await this.createAgent({ type: 'main' }, {
-      profile: DEFAULT_AGENT_PROFILES['agent'],
+      profile,
     });
     if (this.options.drainAgentTasksOnStop) {
       agent.printDrainAgentTasksOnStop = true;
+    }
+    for (const warning of this.computeSecondaryModelWarnings()) {
+      agent.emitEvent({
+        type: 'warning',
+        message: warning.message,
+        code: warning.code,
+      });
     }
     await this.triggerSessionStart('startup');
     return agent;
@@ -370,12 +452,23 @@ export class Session {
     // default profile so the resumed session is usable. Native sessions always
     // replay a non-empty system prompt and never enter this branch.
     const main = this.getReadyAgent('main');
-    const profile = DEFAULT_AGENT_PROFILES['agent'];
-    if (main !== undefined && profile !== undefined && main.config.systemPrompt === '') {
+    const profile = this.agentCatalog.getDefault();
+    if (main !== undefined && main.config.systemPrompt === '') {
       await this.bootstrapAgentProfile(main, profile);
     }
     await this.triggerSessionStart('resume');
     return { warning };
+  }
+
+  async assertMainProfileSelection(requestedProfileName: string | undefined): Promise<void> {
+    if (requestedProfileName === undefined) return;
+    const main = await this.ensureAgentResumed('main');
+    const currentProfileName = main.config.profileName ?? DEFAULT_AGENT_PROFILE_NAME;
+    if (currentProfileName === requestedProfileName) return;
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `agent is already bound to profile "${currentProfileName}"; cannot switch to "${requestedProfileName}" in this session`,
+    );
   }
 
   async close(): Promise<void> {
@@ -675,7 +768,8 @@ export class Session {
       this.options.kimiHomeDir,
       { additionalDirs: this.additionalDirs },
     );
-    agent.useProfile(profile, context, this.options.kimiHomeDir);
+    const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
+    agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {
       this.agentsMdWarning = agentsMdWarning;
@@ -698,7 +792,106 @@ export class Session {
         severity: 'warning',
       });
     }
+    warnings.push(...this.computeSecondaryModelWarnings());
     return warnings;
+  }
+
+  /**
+   * Live-apply the core's fully resolved secondary-model config after a
+   * `[secondary_model]` change: the spawn
+   * binding (`subagent-host`), the startup-warning computation, and every live
+   * agent's `kimiConfig` (tool descriptions, loop control) all read the
+   * session snapshot, so a mid-session `/secondary_model` switch takes effect
+   * for the next subagent spawn without recreating the session. The core owns
+   * config reload, environment overlays, and derived-model synthesis. Copying
+   * that complete recipe and its model entries keeps spawn binding and provider
+   * resolution aligned without live-applying unrelated session settings.
+   */
+  setSecondaryModelConfig(config: KimiConfig): void {
+    const base = this.runtimeConfig;
+    if (base === undefined) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        'Cannot set the secondary model: the session has no config.',
+      );
+    }
+    const secondary = config.secondaryModel;
+    if (secondary?.model === undefined) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        'Cannot set the secondary model: persist its recipe before applying it to a session.',
+      );
+    }
+    try {
+      this.options.providerManager?.resolveProviderConfig(secondary.model);
+    } catch (error) {
+      throw wrapSubagentModelError(error, secondary.model, undefined);
+    }
+    const models = { ...base.models };
+    delete models[SECONDARY_DERIVED_MODEL_ALIAS];
+    const pointedModel = config.models?.[secondary.model];
+    if (pointedModel !== undefined) models[secondary.model] = pointedModel;
+    const derivedModel = config.models?.[SECONDARY_DERIVED_MODEL_ALIAS];
+    if (derivedModel !== undefined) models[SECONDARY_DERIVED_MODEL_ALIAS] = derivedModel;
+    const next = { ...base, models, secondaryModel: secondary };
+    this.runtimeConfig = next;
+    this.secondaryModelWarnings = undefined;
+    for (const [, entry] of this.agents) {
+      if (entry instanceof Agent) {
+        entry.updateKimiConfig(next);
+      } else {
+        // Resume in flight: push the update once the agent materializes (the
+        // rejection is owned by the resume caller, not by this tap).
+        void entry.then(({ agent }) => agent.updateKimiConfig(next)).catch(() => {});
+      }
+    }
+  }
+
+  private secondaryModelWarnings: SessionWarning[] | undefined;
+
+  /**
+   * Upfront validation of the `[secondary_model]` recipe, mirroring the v2
+   * warning service: the pointer is otherwise only validated lazily at spawn
+   * time, where a typo becomes a mid-conversation tool failure dumped on the
+   * parent model. Advisory only — spawn-time resolution (with the wrapped
+   * error) remains the backstop. Computed once per session.
+   */
+  private computeSecondaryModelWarnings(): SessionWarning[] {
+    if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
+    const warnings: SessionWarning[] = [];
+    const secondary = resolveSecondaryModel(this.kimiConfig, this.experimentalFlags);
+    if (secondary?.model !== undefined) {
+      const boundAlias =
+        secondaryModelPatch(secondary) === undefined
+          ? secondary.model
+          : SECONDARY_DERIVED_MODEL_ALIAS;
+      try {
+        const resolved = this.options.providerManager?.resolveProviderConfig(boundAlias);
+        const supported = resolved?.supportEfforts ?? [];
+        if (
+          secondary.defaultEffort !== undefined &&
+          supported.length > 0 &&
+          !supported.includes(secondary.defaultEffort)
+        ) {
+          warnings.push({
+            code: 'secondary-model-effort-not-listed',
+            message:
+              `Secondary model default_effort "${secondary.defaultEffort}" is not in the resolved model's ` +
+              `support_efforts (${supported.join(', ')}). Subagents will resolve thinking without it.`,
+            severity: 'warning',
+          });
+        }
+      } catch (error) {
+        const wrapped = wrapSubagentModelError(error, boundAlias, undefined);
+        warnings.push({
+          code: 'secondary-model-invalid',
+          message: `${wrapped instanceof Error ? wrapped.message : String(wrapped)} Subagent spawns will fail until this is fixed.`,
+          severity: 'warning',
+        });
+      }
+    }
+    this.secondaryModelWarnings = warnings;
+    return [...warnings];
   }
 
   private async computeAgentsMdWarning(): Promise<string | undefined> {
@@ -813,7 +1006,14 @@ export class Session {
   }
 
   writeMetadata() {
-    const text = JSON.stringify(this.metadata, null, 2);
+    const text = JSON.stringify(
+      {
+        ...this.metadata,
+        agentProfileCatalog: this.agentProfileSnapshot,
+      },
+      null,
+      2,
+    );
     const write = async () => {
       await this.persistenceKaos.mkdir(this.options.homedir, { parents: true, existOk: true });
       await this.persistenceKaos.writeText(this.metadataPath, text);
@@ -824,7 +1024,20 @@ export class Session {
 
   async readMetadata() {
     const text = await this.persistenceKaos.readText(this.metadataPath);
-    this.metadata = JSON.parse(text);
+    const persisted = JSON.parse(text) as PersistedSessionState;
+    const { agentProfileCatalog, ...metadata } = persisted;
+    this.metadata = metadata;
+    if (agentProfileCatalog !== undefined) {
+      const parsed = AgentProfileCatalogSnapshotSchema.safeParse(agentProfileCatalog);
+      if (parsed.success) {
+        this.agentProfileSnapshot = parsed.data;
+        this.agentCatalog.restoreSnapshot(parsed.data);
+      } else {
+        this.log.warn('stored agent profile catalog is invalid; using discovered profiles', {
+          error: parsed.error.message,
+        });
+      }
+    }
     return this.metadata;
   }
 
@@ -928,12 +1141,14 @@ export class Session {
     const parentAgent = parentAgentId !== null ? this.getReadyAgent(parentAgentId) : undefined;
     const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
     let agent!: Agent;
+    const subagentHost =
+      config.subagentHost ?? new SessionSubagentHost(this, id, () => agent);
     agent = new Agent({
       ...config,
       type,
       kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
-      config: this.options.config,
+      config: this.kimiConfig,
       homedir,
       // Session-level, shared across agents: originals persisted for
       // compression captions live with the session, not the agent.
@@ -942,7 +1157,7 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
+      subagentHost,
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: withTelemetryProperties(this.telemetry, { agent_id: id }),
@@ -1069,13 +1284,11 @@ export class Session {
     const profileName = agent.config.profileName;
     if (profileName === undefined) return undefined;
     if (meta.type === 'sub') {
-      const parentProfileName = parentAgent?.config.profileName;
-      return (
-        DEFAULT_AGENT_PROFILES[parentProfileName ?? 'agent']?.subagents?.[profileName] ??
-        DEFAULT_AGENT_PROFILES['agent']?.subagents?.[profileName]
-      );
+      return this.agentCatalog.delegatableSubagents(parentAgent?.config.profileName ?? 'agent')[
+        profileName
+      ];
     }
-    return DEFAULT_AGENT_PROFILES[profileName];
+    return this.agentCatalog.get(profileName);
   }
 
   private nextGeneratedAgentId(): string {
@@ -1111,6 +1324,7 @@ export class Session {
 }
 
 export * from './subagent-host';
+export * from './subagent-binding';
 export * from './store';
 
 function initCompletionReminder(agentsMd: string): string {

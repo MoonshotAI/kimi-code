@@ -45,7 +45,7 @@ function start() {
   console.error('[dev:server:restart] starting server…');
   child = spawn(tsxBin, tsxArgs, {
     cwd: APP_ROOT,
-    env: process.env,
+    env: { ...process.env, KIMI_CODE_DEV_SERVER: '1' },
     // Server does not read stdin; keep ours free for the Enter trigger.
     stdio: ['ignore', 'inherit', 'inherit'],
   });

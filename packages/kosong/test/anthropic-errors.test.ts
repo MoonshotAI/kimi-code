@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
@@ -8,6 +9,7 @@ import {
   isRetryableGenerateError,
 } from '#/errors';
 import { convertAnthropicError, AnthropicChatProvider } from '#/providers/anthropic';
+import { classifyKimiQuotaError } from '#/providers/kimi-errors';
 import {
   APIConnectionError as AnthropicConnectionError,
   APIConnectionTimeoutError as AnthropicTimeoutError,
@@ -463,5 +465,62 @@ describe('stream error propagation', () => {
 
     expect(caught).toBeInstanceOf(APIConnectionError);
     expect(isRetryableGenerateError(caught)).toBe(true);
+  });
+});
+
+describe('convertAnthropicError: quota-exhausted 429 via the convertError hook', () => {
+  const QUOTA_BODY = {
+    type: 'error',
+    error: {
+      type: 'exceeded_current_quota_error',
+      message:
+        'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
+    },
+  };
+
+  function quota429(): unknown {
+    return AnthropicAPIError.generate(429, QUOTA_BODY, 'Too many requests', new Headers());
+  }
+
+  it('keeps vendor quota signals a rate limit without the vendor hook', () => {
+    const result = convertAnthropicError(quota429());
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+
+  it('classifies the Kimi quota body as quota-exhausted through the hook', () => {
+    const result = convertAnthropicError(quota429(), classifyKimiQuotaError);
+    expect(result).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('passes already-converted errors through without re-consulting the hook', () => {
+    const calls: unknown[] = [];
+    const converted = new APIProviderQuotaExhaustedError('already classified');
+    const result = convertAnthropicError(converted, (error) => {
+      calls.push(error);
+      return new ChatProviderError('re-classified');
+    });
+    expect(result).toBe(converted);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('the provider threads options.convertError to its generate catch', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'k25',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      convertError: classifyKimiQuotaError,
+    });
+    (provider as any)._client.messages.create = vi.fn().mockRejectedValue(quota429());
+
+    await expect(
+      provider.generate(
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      ),
+    ).rejects.toThrow(APIProviderQuotaExhaustedError);
   });
 });

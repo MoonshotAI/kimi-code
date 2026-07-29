@@ -63,6 +63,10 @@ export interface CreateSessionPayload {
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
+  /** Main-agent profile name (`--agent`): a builtin or agentfile-defined profile. */
+  readonly agentProfile?: string;
+  /** Explicit agentfiles (`--agent-file`); an invalid file fails session creation. */
+  readonly agentFiles?: readonly string[];
 }
 
 export interface CloseSessionPayload {
@@ -81,6 +85,8 @@ export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**
@@ -521,6 +527,7 @@ export interface SessionAPI extends AgentAPIWithId {
 type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
+  applyPersistedSecondaryModel: (payload: EmptyPayload & { readonly sessionId: string }) => void;
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;

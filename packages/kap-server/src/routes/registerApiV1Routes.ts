@@ -32,6 +32,7 @@ import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerSearchRoutes } from './search';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
@@ -121,6 +122,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
+      registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerApprovalsRoutes(
         apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],

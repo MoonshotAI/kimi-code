@@ -19,17 +19,6 @@
  * derives from transcript state (`meta.activity` / running turns).
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
-
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import {
@@ -56,23 +45,50 @@ import {
   type TurnOrigin,
   type TurnState,
 } from '@moonshot-ai/transcript';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
-import { useConnection } from '../connection';
 import { AuditTrail } from '../audit/trail';
+import { useConnection } from '../connection';
+import type { SearchHit } from '../search/api';
 import { fetchTranscriptOps, fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '../transcript/api';
 import {
   createCoalescedRunner,
+  hasTurnId,
   oldestTurnId,
   recoverLoadedWindow,
   TranscriptChatStore,
 } from '../transcript/store';
 import { TranscriptWs } from '../transcript/ws';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { ChatSearchBar } from './ChatSearchBar';
 
 const noopSubscribe = () => () => {};
 
 /** Active session id for deeply nested interaction views (approve/answer buttons). */
 const SessionContext = createContext<string>('');
+
+/**
+ * A navigation request into the chat timeline (e.g. from a search hit). The
+ * channel pages backwards until the turn enters the loaded window, then
+ * scrolls it into view and flashes it briefly.
+ */
+export interface ChatJump {
+  /** Turn to locate (`t<N>`); omitted = switch session/agent only, no scroll. */
+  readonly turnId?: string | undefined;
+  /** Step within the turn (`t<N>.<M>`); falls back to the turn card. */
+  readonly stepId?: string | undefined;
+  /** Changes on every request so re-clicking the same hit re-triggers. */
+  readonly nonce: number;
+}
 
 interface TranscriptChannel {
   /** Null until the effect has created the store (pre-ready / no session). */
@@ -326,12 +342,21 @@ export function ChatView({
   agentId,
   ready,
   onTrailChange,
+  jump,
+  onJumpHandled,
+  onOpenSearchHit,
 }: {
   sessionId: string | null;
   agentId: string;
   ready: boolean;
   /** Hands the audit trail of the current channel up to the app shell (the audit panel lives in the right dock, not inside this view). */
   onTrailChange?: (trail: AuditTrail | null) => void;
+  /** Pending navigation into the timeline (search result click). */
+  jump?: ChatJump | null | undefined;
+  /** Called once the jump has been processed (or found un-actionable). */
+  onJumpHandled?: (() => void) | undefined;
+  /** Hands an in-chat search hit up to the app shell (agent switch + jump). */
+  onOpenSearchHit?: ((hit: SearchHit) => void) | undefined;
 }) {
   const { klient, baseUrl, config } = useConnection();
   const [input, setInput] = useState('');
@@ -343,6 +368,8 @@ export function ChatView({
   const anchorRef = useRef<number | null>(null);
   /** Whether the viewport was pinned to the bottom before the last update. */
   const stickBottomRef = useRef(true);
+  /** The jump target being flashed (cleared on a timer). */
+  const [flash, setFlash] = useState<{ turnId: string; stepId?: string | undefined } | null>(null);
 
   const captureAnchor = useCallback(() => {
     const el = scrollRef.current;
@@ -362,6 +389,82 @@ export function ChatView({
   useEffect(() => {
     onTrailChange?.(trail);
   }, [onTrailChange, trail]);
+
+  // Jump navigation (search result click): once the channel has loaded, page
+  // backwards until the target turn enters the window, then scroll to the
+  // step (or the turn card) and flash it briefly. A turn that never appears
+  // (cut by an undo) degrades to no scroll.
+  useEffect(() => {
+    if (jump === null || jump === undefined || !loaded || store === null || sessionId === null) {
+      return;
+    }
+    if (jump.turnId === undefined) {
+      onJumpHandled?.();
+      return;
+    }
+    let cancelled = false;
+    const turnId = jump.turnId;
+    const stepId = jump.stepId;
+    void (async () => {
+      stickBottomRef.current = false;
+      const token = config.token.trim();
+      let recoverBefore: string | undefined;
+      await recoverLoadedWindow(
+        store,
+        turnId,
+        (beforeTurn) => {
+          recoverBefore = beforeTurn;
+          return fetchTranscriptPage({
+            baseUrl,
+            token: token === '' ? undefined : token,
+            sessionId,
+            agentId,
+            beforeTurn,
+            pageSize: TRANSCRIPT_PAGE_SIZE,
+          });
+        },
+        () => cancelled,
+        (page) => {
+          trail?.recordRest(
+            { beforeTurn: recoverBefore, pageSize: TRANSCRIPT_PAGE_SIZE },
+            'prepend',
+            page,
+            store.getState(),
+          );
+        },
+      );
+      if (cancelled) return;
+      if (!hasTurnId(store.getState().items, turnId)) {
+        onJumpHandled?.();
+        return;
+      }
+      setFlash({ turnId, stepId });
+      // The prepend renders asynchronously; wait two frames before scrolling.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          const root = scrollRef.current;
+          const stepEl =
+            stepId !== undefined
+              ? root?.querySelector(`[data-step-id="${CSS.escape(stepId)}"]`)
+              : undefined;
+          const target = stepEl ?? root?.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`);
+          target?.scrollIntoView({ block: 'start' });
+        });
+      });
+      onJumpHandled?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jump, loaded, store, sessionId, agentId, baseUrl, config, trail, onJumpHandled]);
+
+  // The flash highlight clears itself after a short moment.
+  useEffect(() => {
+    if (flash === null) return;
+    const timer = setTimeout(() => setFlash(null), 2400);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -502,7 +605,9 @@ export function ChatView({
             <Badge tone="amber">{state.pendingInteractions.size} pending</Badge>
           ) : null}
         </div>
-  
+
+        <ChatSearchBar sessionId={sessionId} onOpenHit={onOpenSearchHit} />
+
         <div className="flex-1 overflow-y-auto px-4 py-3" ref={scrollRef} onScroll={onScroll}>
           {state.hasMoreOlder ? (
             <div ref={topSentinelRef} className="mb-3 flex justify-center">
@@ -545,10 +650,22 @@ export function ChatView({
               <div className="mb-1 text-neutral-500">todo (latest)</div>
               {latestTodo.items.map((entry, i) => (
                 <div key={i} className="flex gap-2">
-                  <span className={entry.status === 'done' ? 'text-green-500' : entry.status === 'in_progress' ? 'text-sky-400' : 'text-neutral-600'}>
+                  <span
+                    className={
+                      entry.status === 'done'
+                        ? 'text-green-500'
+                        : entry.status === 'in_progress'
+                          ? 'text-sky-400'
+                          : 'text-neutral-600'
+                    }
+                  >
                     {entry.status === 'done' ? '✔' : entry.status === 'in_progress' ? '◐' : '□'}
                   </span>
-                  <span className={entry.status === 'done' ? 'text-neutral-600 line-through' : 'text-neutral-300'}>
+                  <span
+                    className={
+                      entry.status === 'done' ? 'text-neutral-600 line-through' : 'text-neutral-300'
+                    }
+                  >
                     {entry.title}
                   </span>
                 </div>
@@ -569,6 +686,7 @@ export function ChatView({
                 tasks={state.tasks}
                 interactions={state.interactions}
                 attachments={state.attachments}
+                flash={flash}
               />
             </div>
           ))}
@@ -576,7 +694,7 @@ export function ChatView({
             <InteractionEntityView key={interaction.interactionId} interaction={interaction} />
           ))}
         </div>
-  
+
         <div className="border-t border-neutral-800 p-3">
           {sendError !== null ? (
             <div className="mb-2">
@@ -618,15 +736,26 @@ function ItemView({
   tasks,
   interactions,
   attachments,
+  flash,
 }: {
   item: TranscriptItem;
   tasks: ReadonlyMap<string, TranscriptTask>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
+  /** The jump target being flashed, if any. */
+  flash?: { turnId: string; stepId?: string | undefined } | null | undefined;
 }) {
   switch (item.kind) {
     case 'turn':
-      return <TurnView turn={item} tasks={tasks} interactions={interactions} attachments={attachments} />;
+      return (
+        <TurnView
+          turn={item}
+          tasks={tasks}
+          interactions={interactions}
+          attachments={attachments}
+          flash={flash}
+        />
+      );
     case 'marker':
       return <MarkerView marker={item} />;
     case 'taskref':
@@ -674,20 +803,31 @@ function TurnView({
   tasks,
   interactions,
   attachments,
+  flash,
 }: {
   turn: TranscriptTurn;
   tasks: ReadonlyMap<string, TranscriptTask>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
+  /** The jump target being flashed, if any. */
+  flash?: { turnId: string; stepId?: string | undefined } | null | undefined;
 }) {
+  const turnFlashed = flash?.turnId === turn.turnId && flash.stepId === undefined;
   return (
-    <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/30">
+    <div
+      data-turn-id={turn.turnId}
+      className={`mb-3 rounded-lg border bg-neutral-900/30 ${
+        turnFlashed ? 'border-sky-600' : 'border-neutral-800'
+      }`}
+    >
       <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
         <span className="font-mono text-[10px] text-neutral-500">{turn.turnId}</span>
         <Badge tone={turn.origin.kind === 'user' ? 'sky' : 'neutral'}>{turn.origin.kind}</Badge>
         <Badge tone={turnStateTone(turn.state)}>{turn.state}</Badge>
         {turn.startedAt !== undefined ? (
-          <span className="text-[10px] text-neutral-600">{relTime(Date.parse(turn.startedAt))}</span>
+          <span className="text-[10px] text-neutral-600">
+            {relTime(Date.parse(turn.startedAt))}
+          </span>
         ) : null}
         {turn.usage !== undefined ? (
           <span className="ml-auto text-[10px] text-neutral-600">{usageText(turn.usage)}</span>
@@ -701,7 +841,11 @@ function TurnView({
           <AttachmentChips ids={turn.attachmentIds} attachments={attachments} />
         ) : null}
         {turn.steps.map((step) => (
-          <div key={step.stepId}>
+          <div
+            key={step.stepId}
+            data-step-id={step.stepId}
+            className={flash?.stepId === step.stepId ? 'rounded bg-sky-900/20' : undefined}
+          >
             {step.frames.map((frame) => (
               <FrameView
                 key={frame.frameId}
@@ -760,7 +904,8 @@ function TaskRefView({
   task: TranscriptTask | undefined;
 }) {
   const failed =
-    task !== undefined && (task.state === 'failed' || task.state === 'timed_out' || task.state === 'lost');
+    task !== undefined &&
+    (task.state === 'failed' || task.state === 'timed_out' || task.state === 'lost');
   return (
     <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[11px]">
       <div className="flex items-center gap-2">
@@ -798,15 +943,21 @@ function AttachmentChips({
       {ids.map((id) => {
         const attachment = attachments.get(id);
         const label = attachment?.name ?? attachment?.mediaType ?? id;
-        const href =
-          attachment?.source?.kind === 'url' ? attachment.source.url : undefined;
+        const href = attachment?.source?.kind === 'url' ? attachment.source.url : undefined;
         return (
           <span
             key={id}
             className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-400"
             title={attachment?.mediaType}
           >
-            📎 {href !== undefined ? <a href={href} className="underline">{label}</a> : label}
+            📎{' '}
+            {href !== undefined ? (
+              <a href={href} className="underline">
+                {label}
+              </a>
+            ) : (
+              label
+            )}
           </span>
         );
       })}
@@ -892,7 +1043,9 @@ function ToolFrameView({
   return (
     <div className="mb-2 max-w-[85%] rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2 font-mono text-[11px]">
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <Badge tone={frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral'}>
+        <Badge
+          tone={frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral'}
+        >
           tool
         </Badge>
         <span className="text-neutral-300">{frame.name}</span>
@@ -906,11 +1059,15 @@ function ToolFrameView({
           </Badge>
         ))}
         {task !== undefined ? <span className="text-neutral-600">task: {task.state}</span> : null}
-        {frame.todoId !== undefined ? <span className="text-neutral-600">todo: {frame.todoId}</span> : null}
+        {frame.todoId !== undefined ? (
+          <span className="text-neutral-600">todo: {frame.todoId}</span>
+        ) : null}
       </div>
       {frame.input !== undefined ? (
         typeof frame.input === 'string' ? (
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-neutral-500">{frame.input}</pre>
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-neutral-500">
+            {frame.input}
+          </pre>
         ) : (
           <JsonView data={frame.input} />
         )
@@ -1009,10 +1166,12 @@ function InteractionEntityView({
       if (parts.length > 0) answers[question.question] = parts.join(', ');
     }
     // Mirror the TUI adapter: no answers at all resolves with null.
-    const result =
-      Object.keys(answers).length > 0 ? { answers, method: 'enter' as const } : null;
+    const result = Object.keys(answers).length > 0 ? { answers, method: 'enter' as const } : null;
     run(() =>
-      klient.session(sessionId).service(ISessionQuestionService).answer(interaction.interactionId, result),
+      klient
+        .session(sessionId)
+        .service(ISessionQuestionService)
+        .answer(interaction.interactionId, result),
     );
   };
 
@@ -1109,7 +1268,9 @@ function NoticeFrameView({ frame }: { frame: NoticeFrame }) {
         : 'bg-neutral-900/60 text-neutral-400';
   return (
     <div className={`mb-2 max-w-[85%] rounded px-3 py-1.5 text-[11px] ${tone}`}>
-      {frame.source !== undefined ? <span className="text-neutral-500">[{frame.source}] </span> : null}
+      {frame.source !== undefined ? (
+        <span className="text-neutral-500">[{frame.source}] </span>
+      ) : null}
       {frame.message}
       {frame.detail !== undefined ? <JsonView data={frame.detail} /> : null}
     </div>

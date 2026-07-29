@@ -15,6 +15,7 @@ export interface IBlobStore {
   readonly _serviceBrand: undefined;
 
   put(scope: string, key: string, data: Uint8Array): Promise<void>;
+  putStream(scope: string, key: string, source: AsyncIterable<Uint8Array>): Promise<void>;
   get(scope: string, key: string): Promise<Uint8Array | undefined>;
   getStream(scope: string, key: string, range?: BlobReadRange): AsyncIterable<Uint8Array>;
   has(scope: string, key: string): Promise<boolean>;

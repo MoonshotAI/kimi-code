@@ -73,6 +73,9 @@ export function composeOpenAIChatHooks(
     if (trait.convertTool !== undefined) {
       hooks.convertTool = (tool: Tool) => trait.convertTool!(tool, context);
     }
+    if (trait.convertError !== undefined) {
+      hooks.convertError = (error: unknown) => trait.convertError!(error, context);
+    }
     if (trait.toolCallIdPolicy !== undefined) {
       hooks.toolCallIdPolicy = () => trait.toolCallIdPolicy!(context);
     }

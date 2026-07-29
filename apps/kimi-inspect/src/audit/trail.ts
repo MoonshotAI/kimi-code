@@ -138,7 +138,11 @@ export class AuditTrail {
     });
   }
 
-  recordEvent(event: EventAuditEntry['event'], detail: string | undefined, state: AgentState): void {
+  recordEvent(
+    event: EventAuditEntry['event'],
+    detail: string | undefined,
+    state: AgentState,
+  ): void {
     const label =
       event === 'ack-refresh'
         ? 'subscribe ack → REST refresh'

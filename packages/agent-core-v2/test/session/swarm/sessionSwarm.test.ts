@@ -1385,6 +1385,7 @@ function profileService(data: ProfileData): IAgentProfileService {
     update: (changed) => {
       current = { ...current, ...changed };
     },
+    republishStatus: () => {},
   } as IAgentProfileService;
 }
 

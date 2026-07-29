@@ -27,6 +27,7 @@ import {
   type JsonType,
   type ToolArgsValidator,
 } from '#/tool/args-validator';
+import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
@@ -595,17 +596,13 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): Promise<ToolResult> {
-    if (call.kind === 'rejected') {
-      return result;
-    }
-
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
       signal: options.signal,
       trace: options.trace,
       toolCall: call.toolCall,
       toolCalls: [call.toolCall],
-      tool: call.tool,
+      tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
       result: result as ExecutableToolResult,
     };
@@ -754,24 +751,6 @@ function preflightToolCall(
     };
   }
   return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
-}
-
-export function parseToolCallArguments(raw: unknown): {
-  readonly data: unknown;
-  readonly parseFailed: boolean;
-  readonly error?: string;
-} {
-  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.length === 0)) {
-    return { data: {}, parseFailed: false };
-  }
-  if (typeof raw !== 'string') {
-    return { data: raw, parseFailed: false };
-  }
-  try {
-    return { data: JSON.parse(raw) as unknown, parseFailed: false };
-  } catch (error) {
-    return { data: {}, parseFailed: true, error: errorMessage(error) };
-  }
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

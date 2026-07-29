@@ -8,7 +8,9 @@
  * front-loads the same resolution to session start (main-agent creation): an
  * unresolvable model or an effort the model does not list becomes a `warning`
  * event on the main agent's event bus, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). Session-scoped — one instance per session.
+ * (`GET /sessions/{id}/warnings`). A mid-session `[secondary_model]` change
+ * (the SDK's `applyPersistedSecondaryModel` path) refreshes the cache through
+ * `recheckSecondaryModelWarning`. Session-scoped — one instance per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -24,6 +26,7 @@ export interface SecondaryModelWarning {
 export interface ISessionSecondaryModelWarningService {
   readonly _serviceBrand: undefined;
   getSecondaryModelWarning(): SecondaryModelWarning | undefined;
+  recheckSecondaryModelWarning(): SecondaryModelWarning | undefined;
 }
 
 export const ISessionSecondaryModelWarningService: ServiceIdentifier<ISessionSecondaryModelWarningService> =

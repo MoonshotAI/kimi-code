@@ -793,6 +793,61 @@ describe('Agent turn flow', () => {
     });
   });
 
+  it('force-stops a turn that keeps re-issuing the same validation-rejected call', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('bad'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    // 12 identical calls missing the required "command": each is rejected in
+    // preflight. If the breaker did not count them, the turn would keep going
+    // and consume the 13th scripted response.
+    for (let i = 0; i < 12; i += 1) {
+      ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(12);
+    const actions = records
+      .filter((entry) => entry.event === 'tool_call_repeat')
+      .map((entry) => entry.properties?.['action']);
+    expect(actions).toEqual([
+      'none', 'r1', 'r1', 'r2', 'r2', 'r2', 'r3', 'r3', 'r3', 'r3', 'stop',
+    ]);
+  });
+
+  it('does not force-stop when the malformed argument text keeps changing', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('bad'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    // 12 rejected calls, each with DIFFERENT malformed raw JSON: all normalize
+    // to {} on parse failure, but they are not repeats of the same call, so
+    // the turn must not be force-stopped.
+    for (let i = 0; i < 12; i += 1) {
+      ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'recovered' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(13);
+    expect(records.filter((entry) => entry.event === 'tool_call_repeat')).toHaveLength(0);
+  });
+
   it('fires PostToolUse for same-step dups with the original real output, not the dedup placeholder', async () => {
     // Hook command asserts the dup's PostToolUse payload carries the real
     // stdout ('dup'), not the placeholder ('').
@@ -2799,6 +2854,25 @@ function bashCallWithId(id: string, command: string): ToolCall {
   };
 }
 
+function invalidBashCallWithId(id: string): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name: 'Bash',
+    arguments: JSON.stringify({ timeout: 60 }),
+  };
+}
+
+function malformedBashCallWithId(id: string, variant: number): ToolCall {
+  // Invalid JSON (unquoted key), unique per variant.
+  return {
+    type: 'function',
+    id,
+    name: 'Bash',
+    arguments: `{"command_${String(variant)}: "ls"`,
+  };
+}
+
 function agentSwarmCall(): ToolCall {
   return {
     type: 'function',
@@ -2815,8 +2889,13 @@ function agentSwarmCall(): ToolCall {
 function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
-  return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
-    SessionSubagentHost;
+  return {
+    spawn: vi.fn(),
+    resume: vi.fn(),
+    runQueued: vi.fn(),
+    delegatableSubagents: vi.fn(() => ({})),
+    ...host,
+  } as unknown as T & SessionSubagentHost;
 }
 
 interface ApiErrorTelemetryCase {

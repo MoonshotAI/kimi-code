@@ -206,8 +206,7 @@ function parseWorkFacts(payload: unknown): SessionWorkFacts | undefined {
   return {
     busy: p['busy'],
     mainTurnActive: p['main_turn_active'] === true,
-    pendingInteraction:
-      pending === 'approval' || pending === 'question' ? pending : 'none',
+    pendingInteraction: pending === 'approval' || pending === 'question' ? pending : 'none',
     lastTurnReason:
       reason === 'completed' || reason === 'cancelled' || reason === 'failed' ? reason : undefined,
   };

@@ -18,7 +18,9 @@
  *   `waitUntil(promise)`; the executor awaits all of them before dispatching
  *   an allowed call (e.g. MCP initial load).
  * - `hooks.onDidExecuteTool` (ordered hook slot, `ToolDidExecuteContext`):
- *   post-execution result finalization, kept as an `OrderedHookSlot`.
+ *   post-execution result finalization, kept as an `OrderedHookSlot`. Every
+ *   call reaches it — including preflight-rejected ones (missing/unavailable
+ *   tool, guard denial, invalid args), which arrive without `tool` set.
  *
  * Participants such as `permissionGate`, `toolDedupe`, `externalHooks`,
  * `goal`, `plan`, `swarm`, `btw`, and `mcp` register through these surfaces.

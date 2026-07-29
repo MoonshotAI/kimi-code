@@ -31,6 +31,7 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
+  private _subagentNames: readonly string[] | undefined;
   // `undefined` until an effort has actually been resolved: a bare modelAlias
   // update must then fall through to the model's own default instead of
   // treating the never-chosen initial "off" as an explicit user choice.
@@ -99,6 +100,9 @@ export class ConfigState {
     if (changed.profileName) {
       this._profileName = changed.profileName;
     }
+    if (changed.subagentNames !== undefined) {
+      this._subagentNames = [...changed.subagentNames];
+    }
     if (unforcedThinkingEffort !== undefined && thinkingEffort !== undefined) {
       this._unforcedThinkingEffort = unforcedThinkingEffort;
       this._thinkingEffort = thinkingEffort;
@@ -137,6 +141,7 @@ export class ConfigState {
       modelAlias: this._modelAlias,
       modelCapabilities: resolved?.modelCapabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
+      subagentNames: this.subagentNames,
       thinkingEffort: this.thinkingEffort,
       systemPrompt: this.systemPrompt,
     };
@@ -247,6 +252,10 @@ export class ConfigState {
 
   get profileName(): string | undefined {
     return this._profileName;
+  }
+
+  get subagentNames(): readonly string[] | undefined {
+    return this._subagentNames;
   }
 
   get systemPrompt(): string {

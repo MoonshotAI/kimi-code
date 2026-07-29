@@ -93,6 +93,8 @@ export interface ToolCallSubagentSnapshot {
   readonly toolName: string;
   readonly toolCallDescription: string;
   readonly agentName: string | undefined;
+  /** Display name of the model the subagent is bound to, when known (live only). */
+  readonly model?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
   readonly elapsedSeconds: number | undefined;
@@ -595,6 +597,8 @@ export class ToolCallComponent extends Container {
   private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
   private subagentContextTokens: number | undefined;
   private subagentUsage: TokenUsage | undefined;
+  /** Display name of the model the subagent is bound to (from its `agent.status.updated`). */
+  private subagentModel: string | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;
   private streamingProgressTimer: ReturnType<typeof setInterval> | undefined;
@@ -898,6 +902,7 @@ export class ToolCallComponent extends Container {
       toolName: this.toolCall.name,
       toolCallDescription: str(this.toolCall.args['description']) || str(this.toolCall.description),
       agentName: this.subagentAgentName,
+      model: this.subagentModel,
       phase: derivedPhase,
       toolCount: finished,
       elapsedSeconds: this.getSubagentElapsedSeconds(),
@@ -1162,12 +1167,16 @@ export class ToolCallComponent extends Container {
   updateSubagentMetrics(payload: {
     contextTokens?: number | undefined;
     usage?: TokenUsage | undefined;
+    modelDisplay?: string | undefined;
   }): void {
     if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
       this.subagentContextTokens = payload.contextTokens;
     }
     if (payload.usage !== undefined) {
       this.subagentUsage = payload.usage;
+    }
+    if (payload.modelDisplay !== undefined) {
+      this.subagentModel = payload.modelDisplay;
     }
     this.headerText.setText(this.buildHeader());
     this.invalidate();
@@ -1784,9 +1793,9 @@ export class ToolCallComponent extends Container {
   }
 
   private formatSingleSubagentStatsText(): string {
-    const parts = [
-      `${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`,
-    ];
+    const parts: string[] = [];
+    if (this.subagentModel !== undefined) parts.push(this.subagentModel);
+    parts.push(`${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`);
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));
     const tokens =

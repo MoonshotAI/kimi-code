@@ -31,6 +31,12 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
       ),
+    model: z
+      .enum(['primary', 'secondary'])
+      .optional()
+      .describe(
+        'Model for every new subagent spawned from items: "secondary" uses the configured secondary model (the default when one is set), "primary" uses the model you are running on. Resumed subagents keep their bound model.',
+      ),
     prompt_template: z
       .string()
       .trim()
@@ -85,7 +91,7 @@ interface SwarmRunResult {
 
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly name = 'AgentSwarm' as const;
-  readonly description = AGENT_SWARM_DESCRIPTION;
+  readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
   constructor(
@@ -94,7 +100,13 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     // `0` = no timeout, preserved on purpose (`0 ?? DEFAULT` stays `0`);
     // SubagentBatch arms no timer for non-positive timeouts.
     private readonly subagentTimeoutMs?: number,
-  ) {}
+    subagentModelDescription?: string,
+  ) {
+    this.description =
+      subagentModelDescription === undefined
+        ? AGENT_SWARM_DESCRIPTION
+        : `${AGENT_SWARM_DESCRIPTION}\n\n${subagentModelDescription}`;
+  }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
     const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
@@ -149,6 +161,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         swarmItem: spec.item,
         signal,
         timeout: this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
+        modelChoice: args.model,
       };
       if (spec.kind === 'resume') {
         return {

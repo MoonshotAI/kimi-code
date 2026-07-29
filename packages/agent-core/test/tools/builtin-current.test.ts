@@ -81,6 +81,7 @@ function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
     resume: vi.fn(),
     runQueued: vi.fn(),
     getSwarmItem: vi.fn(),
+    delegatableSubagents: vi.fn(() => ({})),
     ...host,
   } as unknown as T & SessionSubagentHost;
 }

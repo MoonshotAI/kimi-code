@@ -6,6 +6,24 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.30.0 (2026-07-29)
+
+### Features
+
+- Add a customizable footer status line, configured via `[status_line]` in `tui.toml`.
+
+### Polish
+
+- Show a quota note after installing official plugins that bill against plan quota (such as Kimi Datasource).
+- Show a notice when an official plugin used in the session has an update available — run /plugins to update.
+- Remove the 50 MB size limit on file uploads to the built-in server.
+
+### Bug Fixes
+
+- Fail fast when account quota or balance is exhausted instead of silently retrying for ~3 minutes.
+- Stop the turn after repeated invalid tool calls instead of retrying indefinitely.
+- web: Fix garbled line numbers in code blocks.
+
 ## 0.29.2 (2026-07-27)
 
 ### Bug Fixes

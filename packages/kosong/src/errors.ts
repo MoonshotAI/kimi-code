@@ -120,6 +120,33 @@ export class APIProviderRateLimitError extends APIStatusError {
 }
 
 /**
+ * HTTP 429 that specifically means the account's quota or balance is
+ * exhausted, as opposed to a transient rate limit. Deliberately NOT a
+ * subclass of `APIProviderRateLimitError`: a rate limit clears on its own
+ * (retry/requeue helps), while quota exhaustion is deterministic until the
+ * account is recharged — so this class is excluded from retry and from the
+ * rate-limit requeue/suspend paths.
+ *
+ * Observed shapes: Moonshot returns `error.type =
+ * "exceeded_current_quota_error"` with wording that varies by account state
+ * ("You exceeded your current token quota: ... please check your account
+ * balance" vs "Your account ... is suspended due to insufficient balance,
+ * please recharge your account ..."); OpenAI uses `insufficient_quota` as
+ * both `error.type` and `error.code`.
+ */
+export class APIProviderQuotaExhaustedError extends APIStatusError {
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
+    this.name = 'APIProviderQuotaExhaustedError';
+  }
+}
+
+/**
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
@@ -191,6 +218,12 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // Quota/balance exhaustion is a 429 but deterministic until the account
+    // is recharged — retrying can never succeed, so it fails fast instead of
+    // burning the whole retry budget (~2-3 minutes of backoff).
+    if (error instanceof APIProviderQuotaExhaustedError) {
+      return false;
+    }
     // Transient statuses worth retrying: 408 (request timeout), 409
     // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
     // (provider overloaded — the "engine is currently overloaded" case).
@@ -239,6 +272,11 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   // Unsupported format — OpenAI / Moonshot "unsupported image …".
   /unsupported image (?:url|format|type)/,
+  // Standalone-sentence form — Kimi "Unsupported image. …". The
+  // lookahead keeps the deliberate boundary: phrasings that continue into a
+  // qualifier ("unsupported image size …", a count/size limit) must not
+  // match, so only punctuation- or end-terminated occurrences classify.
+  /unsupported image(?=\s*(?:[.!?]|$))/,
   // Undecodable / corrupt image data.
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
@@ -551,6 +589,9 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
+  // Quota exhaustion is a 429 but not a rate limit: the rate-limit reactions
+  // (retry, requeue, suspend) cannot help until the account is recharged.
+  if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
 
   const statusCode = getStatusCode(error);

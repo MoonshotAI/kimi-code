@@ -9,8 +9,8 @@
  * and a memo-created hub would stay closed for the rest of the page's life.
  */
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { useConnection } from '../connection';
 import { SessionActivityHub, SessionActivityStore, type SessionWorkFacts } from './store';

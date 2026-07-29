@@ -79,6 +79,12 @@ import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
+// Temporary feature: global message search. Importing this module registers
+// `IGlobalSearchService` (App scope) into the DI registry as a side effect, so
+// it MUST stay above any `bootstrap()` call — registration happens at module
+// evaluation time.
+import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+
 export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
@@ -344,6 +350,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
     try {
       core.dispose();
+      // `core.dispose()` triggers the search service's synchronous `dispose()`,
+      // whose minidb close is asynchronous — await it before releasing the
+      // instance registration (and before embedding hosts tear down homeDir).
+      await drainGlobalSearchDisposals();
     } finally {
       await registration.release();
     }
@@ -351,6 +361,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  // The global search service is DI-managed (App scope) while the transcript
+  // service is constructed here by hand — wire the former to the latter so
+  // container-scoped searches on live sessions scan the in-memory transcript.
+  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
@@ -387,6 +401,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
+          { name: 'search', description: 'Global message search' },
           { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },

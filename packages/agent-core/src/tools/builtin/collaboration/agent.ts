@@ -66,6 +66,12 @@ export const AgentToolInputSchema = z.preprocess(
       .describe(
         'One of the available agent types (see "Available agent types" in this tool description). Defaults to "coder" when omitted.',
       ),
+    model: z
+      .enum(['primary', 'secondary'])
+      .optional()
+      .describe(
+        'Model for the new subagent: "secondary" uses the configured secondary model (the default when one is set), "primary" uses the model you are running on. Only applies when spawning a new agent — a resumed agent keeps its bound model.',
+      ),
     resume: z
       .string()
       .optional()
@@ -116,6 +122,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       log?: Logger;
       allowBackground?: boolean | undefined;
       subagentTimeoutMs?: number | undefined;
+      subagentModelDescription?: string;
+      showModelPreferences?: boolean;
     },
   ) {
     const log = options?.log;
@@ -123,13 +131,21 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     // `0` is preserved (not normalized): `0 ?? DEFAULT_SUBAGENT_TIMEOUT_MS`
     // stays `0`, and the BackgroundManager arms no timer for it.
     this.subagentTimeoutMs = options?.subagentTimeoutMs;
-    const typeLines = buildSubagentDescriptions(subagents);
+    const typeLines = buildSubagentDescriptions(
+      subagents,
+      options?.showModelPreferences ?? false,
+    );
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
       this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
     }`;
-    this.description = typeLines
-      ? `${baseDescription}\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`
-      : baseDescription;
+    const sections = [baseDescription];
+    if (typeLines) {
+      sections.push(`Available agent types (pass via subagent_type):\n${typeLines}`);
+    }
+    if (options?.subagentModelDescription !== undefined) {
+      sections.push(options.subagentModelDescription);
+    }
+    this.description = sections.join('\n\n');
     this.log = log;
   }
 
@@ -212,6 +228,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
             ? await this.subagentHost.resume(resumeAgentId!, runOptions)
             : await this.subagentHost.spawn({
                 profileName: requestedProfileName ?? 'coder',
+                modelChoice: args.model,
                 ...runOptions,
               });
       } catch (error) {
@@ -373,7 +390,10 @@ function launchErrorMessage(error: unknown, signal: AbortSignal): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function buildSubagentDescriptions(subagents: ResolvedAgentProfile['subagents']): string {
+function buildSubagentDescriptions(
+  subagents: ResolvedAgentProfile['subagents'],
+  showModelPreferences: boolean,
+): string {
   if (subagents === undefined) return '';
   return Object.entries(subagents)
     .map(([name, subagent]) => {
@@ -381,8 +401,19 @@ function buildSubagentDescriptions(subagents: ResolvedAgentProfile['subagents'])
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${name}` : `- ${name}: ${details.join(' ')}`;
-      if (subagent.tools.length === 0) return header;
-      return `${header}\n  Tools: ${subagent.tools.join(', ')}`;
+      const deniedExact = new Set(
+        (subagent.disallowedTools ?? []).filter((tool) => !tool.startsWith('mcp__')),
+      );
+      const shownTools = subagent.tools.filter((tool) => !deniedExact.has(tool));
+      const lines = [header];
+      if (showModelPreferences && subagent.modelPreference !== undefined) {
+        lines.push(`  Model preference: ${subagent.modelPreference}`);
+      }
+      if (shownTools.length > 0) lines.push(`  Tools: ${shownTools.join(', ')}`);
+      if (subagent.disallowedTools !== undefined && subagent.disallowedTools.length > 0) {
+        lines.push(`  Disabled: ${subagent.disallowedTools.join(', ')}`);
+      }
+      return lines.join('\n');
     })
     .join('\n');
 }
