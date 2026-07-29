@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { Events, Methods } from "../../shared/bridge";
 import type { FileChange, ProjectFile } from "../../shared/types";
 import type { BaselineSession } from "../managers/baseline.manager";
+import { relativeFsPath } from "../utils/fs-path";
 import {
   isWorkspacePathContained,
   resolveWorkspacePath,
@@ -17,6 +18,7 @@ interface GetProjectFilesParams {
 }
 interface PickMediaParams { maxCount?: number; includeVideo?: boolean }
 interface FilePathParams { filePath: string }
+interface OpenFileParams { filePath: string; line?: number }
 interface OptionalFilePathParams { filePath?: string }
 interface PathsParams { paths: string[] }
 interface CheckFilesExistParams { paths: string[] }
@@ -68,12 +70,30 @@ const pickMedia: Handler<PickMediaParams, string[]> = async (params) => {
   return results;
 };
 
-const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
-  const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), filePath);
+const openFile: Handler<OpenFileParams, { ok: boolean }> = async ({ filePath, line }, ctx) => {
+  const workDirUri = ctx.requireWorkDirUri();
+  // Assistant output also links files by absolute path; relativize when the
+  // target lies inside the working directory so those links open, while
+  // out-of-workspace paths keep failing the containment check below.
+  const target = isAbsolutePathInput(filePath)
+    ? relativeFsPath(workDirUri.fsPath, filePath)
+    : filePath;
+  if (target === undefined) return { ok: false };
+  const resolved = await resolveExistingWorkspaceFile(workDirUri, target);
   if (resolved === undefined) return { ok: false };
-  await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  await vscode.commands.executeCommand(
+    "vscode.open",
+    resolved.uri,
+    line === undefined ? undefined : { selection: new vscode.Range(line - 1, 0, line - 1, 0) },
+  );
   return { ok: true };
 };
+
+function isAbsolutePathInput(input: string): boolean {
+  // Drive-relative inputs (`C:foo`) are not absolute: they fall through to
+  // resolveWorkspacePath, which rejects them the same way it always has.
+  return path.posix.isAbsolute(input.replaceAll("\\", "/")) || path.win32.isAbsolute(input);
+}
 
 const openFileDiff: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
   const sessionId = ctx.getSessionId();

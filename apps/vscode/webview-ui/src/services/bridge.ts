@@ -251,8 +251,8 @@ class Bridge {
     return this.call<Record<string, boolean>>(Methods.CheckFilesExist, { paths });
   }
 
-  openFile(filePath: string) {
-    return this.call<{ ok: boolean }>(Methods.OpenFile, { filePath });
+  openFile(filePath: string, line?: number) {
+    return this.call<{ ok: boolean }>(Methods.OpenFile, { filePath, line });
   }
 
   openFileDiff(filePath: string) {

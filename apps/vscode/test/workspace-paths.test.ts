@@ -70,6 +70,15 @@ const vscodeHost = vi.hoisted(() => {
     }
   }
 
+  class Range {
+    constructor(
+      readonly startLine: number,
+      readonly startCharacter: number,
+      readonly endLine: number,
+      readonly endCharacter: number,
+    ) {}
+  }
+
   class RelativePattern {
     readonly baseUri: Uri;
     readonly base: string;
@@ -89,6 +98,7 @@ const vscodeHost = vi.hoisted(() => {
 
   return {
     Uri,
+    Range,
     RelativePattern,
     readDirectory,
     stat,
@@ -102,6 +112,7 @@ const vscodeHost = vi.hoisted(() => {
 
 vi.mock("vscode", () => ({
   Uri: vscodeHost.Uri,
+  Range: vscodeHost.Range,
   RelativePattern: vscodeHost.RelativePattern,
   FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
   QuickPickItemKind: { Separator: -1 },
@@ -278,6 +289,62 @@ describe("Webview workspace paths (selected-directory containment)", () => {
 
     expect(result).toEqual({ ok: false });
     expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("opens an absolute path inside the selected working directory", async () => {
+    const workDir = join(root, "project");
+    await mkdir(workDir);
+    const inside = join(workDir, "notes.md");
+    await writeFile(inside, "notes");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: inside }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    const [command, uri] = vscodeHost.executeCommand.mock.calls[0]!;
+    expect(command).toBe("vscode.open");
+    expect(areSameFsPath((uri as vscode.Uri).fsPath, inside)).toBe(true);
+  });
+
+  it("refuses a drive-relative path", async () => {
+    const workDir = join(root, "project");
+    await mkdir(workDir);
+    await writeFile(join(workDir, "secret.txt"), "secret");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "C:secret.txt" }, ctx);
+
+    expect(result).toEqual({ ok: false });
+    expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("refuses an absolute path outside the selected working directory", async () => {
+    const workDir = join(root, "project");
+    await mkdir(workDir);
+    const outside = join(root, "outside.md");
+    await writeFile(outside, "secret");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: outside }, ctx);
+
+    expect(result).toEqual({ ok: false });
+    expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("opens a file at the requested line", async () => {
+    const workDir = join(root, "project");
+    await mkdir(join(workDir, "sub"), { recursive: true });
+    await writeFile(join(workDir, "sub", "file.md"), "content");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "sub/file.md", line: 33 }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    const call = vscodeHost.executeCommand.mock.calls[0]!;
+    expect(call[0]).toBe("vscode.open");
+    expect(call[2]).toMatchObject({
+      selection: { startLine: 32, startCharacter: 0, endLine: 32, endCharacter: 0 },
+    });
   });
 
   it("omits an outside symlink when an SDK Write event requests baseline capture", async () => {

@@ -207,6 +207,10 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
           || (Number.isInteger(params["maxCount"]) && (params["maxCount"] as number) >= 0))
         && isOptionalType(params["includeVideo"], "boolean");
     case Methods.OpenFile:
+      return hasString(params, "filePath")
+        && isPlainObject(params)
+        && (params["line"] === undefined
+          || (Number.isSafeInteger(params["line"]) && (params["line"] as number) >= 1));
     case Methods.OpenFileDiff:
     case Methods.CheckFileExists:
     case Methods.GetImageDataUri:
