@@ -454,9 +454,15 @@ export function renderImage(
 	}
 
 	if (caps.images === "iterm2") {
+		// Pin the height in cells instead of "auto". With "auto" the terminal
+		// derives the drawn height from its own cell metrics, which need not
+		// match the rows the TUI reserved (default cell dims, maxHeightCells
+		// caps, or emulators with different cell geometry) — the image then
+		// overflows or underfills its reservation and the post-draw cursor
+		// position no longer matches the TUI's row accounting.
 		const sequence = encodeITerm2(base64Data, {
 			width: size.columns,
-			height: "auto",
+			height: size.rows,
 			preserveAspectRatio: options.preserveAspectRatio ?? true,
 		});
 		return { sequence, rows: size.rows };

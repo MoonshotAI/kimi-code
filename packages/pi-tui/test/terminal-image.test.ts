@@ -453,10 +453,13 @@ describe("Kitty image cursor movement", () => {
 			const lines = image.render(4);
 			const imageId = image.getImageId();
 			assert.strictEqual(typeof imageId, "number");
-			assert.ok(lines[0].startsWith("\x1b_G"));
+			// The placement is wrapped in DEC save/restore cursor so terminals
+			// that move the cursor during placement despite C=1 cannot corrupt
+			// the TUI's row accounting.
+			assert.ok(lines[0].startsWith("\x1b7\x1b_G"));
 			assert.ok(lines[0].includes(",C=1,"));
 			assert.ok(lines[0].includes(`,i=${imageId}`));
-			assert.ok(lines[0].endsWith("\x1b\\"));
+			assert.ok(lines[0].endsWith("\x1b\\\x1b8"));
 			assert.deepStrictEqual(lines.slice(1, lines.length), [""]);
 		} finally {
 			resetCapabilitiesCache();
@@ -465,7 +468,81 @@ describe("Kitty image cursor movement", () => {
 	});
 });
 
-describe("hyperlink", () => {
+describe("iTerm2 inline image rendering", () => {
+	const iterm2Caps = { images: "iterm2", trueColor: true, hyperlinks: true } as const;
+
+	it("pins the drawn height in cells so it always matches the reserved rows", () => {
+		setCapabilities(iterm2Caps);
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			// 2000x1514 screenshot capped to 12 rows: with height=auto the
+			// terminal derives the height from its own cell metrics (13 rows
+			// with 9x18 cells), overflowing the 12 reserved rows.
+			const result = renderImage("AAAA", { widthPx: 2000, heightPx: 1514 }, { maxWidthCells: 40, maxHeightCells: 12 });
+			assert.ok(result);
+			assert.strictEqual(result.rows, 12);
+			assert.ok(!result.sequence.includes("height=auto"), "height must be explicit, not auto");
+			assert.ok(result.sequence.includes(`height=${result.rows}`), "height must equal the reserved rows");
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("Image component anchors the cursor with DEC save/restore around the draw", () => {
+		setCapabilities(iterm2Caps);
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 4 },
+				{ widthPx: 40, heightPx: 40 },
+			);
+			const lines = image.render(80);
+			// 40x40px at 10x10 cells capped to maxWidthCells=4 -> 4x4 cells.
+			assert.strictEqual(lines.length, 4);
+			assert.deepStrictEqual(lines.slice(0, 3), ["", "", ""]);
+			const drawLine = lines[3]!;
+			// Save cursor on the last reserved row, move to the first row, draw,
+			// restore: the cursor ends on the last reserved row no matter where
+			// the terminal leaves it after drawing (iTerm2 moves it below the
+			// image, some emulators don't move it at all).
+			assert.ok(drawLine.startsWith("\x1b7\x1b[3A"), "should save the cursor, then move up to the first row");
+			assert.ok(drawLine.includes("\x1b]1337;File="));
+			assert.ok(drawLine.endsWith("\x1b8"), "should restore the cursor after the draw");
+			// The wrapped line must still be recognized as an image line so the
+			// TUI skips width-truncation and style resets for it.
+			assert.ok(isImageLine(drawLine));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("single-row iTerm2 images omit the cursor-up but keep the save/restore anchor", () => {
+		setCapabilities(iterm2Caps);
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 1, maxHeightCells: 1 },
+				{ widthPx: 40, heightPx: 40 },
+			);
+			const lines = image.render(80);
+			assert.strictEqual(lines.length, 1);
+			const drawLine = lines[0]!;
+			assert.ok(drawLine.startsWith("\x1b7"));
+			assert.ok(!drawLine.includes("\x1b[1A"));
+			assert.ok(drawLine.endsWith("\x1b8"));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
 	it("wraps text in OSC 8 open and close sequences", () => {
 		const result = hyperlink("click me", "https://example.com");
 		assert.strictEqual(result, "\x1b]8;;https://example.com\x1b\\click me\x1b]8;;\x1b\\");
