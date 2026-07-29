@@ -52,6 +52,7 @@ const AgentProfileSnapshotSchema = z.object({
   subagents: z.array(z.string()),
   modelPreference: z.enum(['primary', 'secondary']).optional(),
   prompt: z.string(),
+  source: z.enum(['plugin', 'project', 'user', 'extra', 'explicit']).optional(),
 });
 
 /**

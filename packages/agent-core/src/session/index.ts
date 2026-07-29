@@ -130,6 +130,8 @@ export interface SessionAgentCatalogConfig {
   readonly profileName?: string;
   /** Agent directories contributed by enabled plugins (lowest file priority). */
   readonly pluginRoots?: readonly AgentFileRoot[];
+  /** Refresh only the plugin contribution when restoring the persisted catalog. */
+  readonly refreshPluginAgents?: boolean;
   /** Already-loaded catalog prepared before a persistent session is created. */
   readonly catalog?: SessionAgentProfileCatalog;
 }
@@ -1031,15 +1033,29 @@ export class Session {
     const persisted = JSON.parse(text) as PersistedSessionState;
     const { agentProfileCatalog, ...metadata } = persisted;
     this.metadata = metadata;
-    if (agentProfileCatalog !== undefined) {
+    if (agentProfileCatalog === undefined) {
+      if (this.options.agents?.refreshPluginAgents === true) {
+        this.agentProfileSnapshot = this.agentCatalog.snapshot();
+      }
+    } else {
       const parsed = AgentProfileCatalogSnapshotSchema.safeParse(agentProfileCatalog);
       if (parsed.success) {
-        this.agentProfileSnapshot = parsed.data;
-        this.agentCatalog.restoreSnapshot(parsed.data);
+        if (this.options.agents?.refreshPluginAgents === true) {
+          await this.agentCatalog.restoreSnapshotRefreshingPlugins(
+            parsed.data,
+            this.options.agents.pluginRoots ?? [],
+          );
+        } else {
+          this.agentCatalog.restoreSnapshot(parsed.data);
+        }
+        this.agentProfileSnapshot = this.agentCatalog.snapshot();
       } else {
         this.log.warn('stored agent profile catalog is invalid; using discovered profiles', {
           error: parsed.error.message,
         });
+        if (this.options.agents?.refreshPluginAgents === true) {
+          this.agentProfileSnapshot = this.agentCatalog.snapshot();
+        }
       }
     }
     return this.metadata;
