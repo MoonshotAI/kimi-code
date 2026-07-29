@@ -60,6 +60,7 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import {
   ISessionPluginContributionService,
+  PLUGIN_CONVERGENCE_TIMEOUT_MS,
   type SessionPluginContributionChangedEvent,
 } from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -890,7 +891,7 @@ describe('AgentLifecycleService', () => {
         created = true;
         return handle;
       });
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
       const handle = await pending;
 
       expect(created).toBe(true);

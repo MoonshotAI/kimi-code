@@ -13,9 +13,12 @@
  * session — a later change queues behind an in-flight one, so the fan-out
  * emitter never interleaves deliveries — and each completed convergence
  * advances the `generation` counter that Agent bootstrap compares against
- * to catch up on rounds it missed. Each change's wait is bounded by
- * a timeout so a hung participant cannot block the App mutation queue
- * forever; convergence is a full recompute rather than a delta, so a later
+ * to catch up on rounds it missed. Each convergence is bounded by
+ * a timeout: a wedged participant delays its round (and whatever it
+ * blocks drains on a later change, since the emitter delivers queued
+ * entries oldest-first), but it can never stop the pipeline or block the
+ * App mutation queue forever. Convergence
+ * is a full recompute rather than a delta, so a later
  * mutation retries whatever an earlier failure left stale, and failures
  * surface through `log`. Bound at Session scope.
  */
@@ -85,7 +88,7 @@ export class SessionPluginContributionService
       if (timer !== undefined) clearTimeout(timer);
       if (result === 'timeout') {
         this.log.warn(
-          'Plugin contribution convergence timed out; a later plugin change retries once the stalled work clears',
+          'Plugin contribution convergence timed out; a later plugin change retries it',
         );
       }
     });
@@ -99,7 +102,24 @@ export class SessionPluginContributionService
         `Plugin skill reload failed during convergence: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    await this.changeEmitter.fireAsync({}, new AbortController().signal);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => {
+        resolve('timeout');
+      }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
+    });
+    const result = await Promise.race([
+      this.changeEmitter
+        .fireAsync({}, new AbortController().signal)
+        .then(() => 'done' as const),
+      expired,
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (result === 'timeout') {
+      this.log.warn(
+        'Plugin contribution fan-out timed out; blocked participants are delivered on later changes',
+      );
+    }
     this.completedGenerations += 1;
   }
 }

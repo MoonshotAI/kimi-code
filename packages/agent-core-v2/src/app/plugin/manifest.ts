@@ -277,7 +277,9 @@ async function readSystemPrompt(
   if (pathValue !== undefined) {
     if (typeof pathValue !== 'string') {
       diagnostics.push({ severity: 'warn', message: '"systemPromptPath" must be a string' });
-    } else if (pathValue.trim().length > 0) {
+    } else if (pathValue.trim().length === 0) {
+      diagnostics.push({ severity: 'warn', message: '"systemPromptPath" must not be blank' });
+    } else {
       const resolved = await resolvePluginPathField({
         pluginRoot,
         field: 'systemPromptPath',

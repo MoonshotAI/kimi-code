@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -178,6 +178,64 @@ describe('plugin manifest parser', () => {
     expect(notAFile.diagnostics.map((d) => d.message)).toEqual([
       '"systemPromptPath" is not a file (./docs)',
     ]);
+  });
+
+  it('warns on a blank systemPromptPath', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: '   ' }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.systemPrompt).toBe('Inline.');
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" must not be blank',
+    ]);
+  });
+
+  it('rejects systemPromptPath values that escape the plugin root', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: './../outside.md' }),
+      'utf8',
+    );
+
+    const traversal = await parseManifest(dir);
+    expect(traversal.manifest?.systemPrompt).toBeUndefined();
+    expect(traversal.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" path resolves outside the plugin (./../outside.md)',
+    ]);
+
+    const absolute = join(tmpdir(), 'outside-absolute.md');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: absolute }),
+      'utf8',
+    );
+
+    const absoluteResult = await parseManifest(dir);
+    expect(absoluteResult.manifest?.systemPrompt).toBeUndefined();
+    expect(absoluteResult.diagnostics.map((d) => d.message)).toEqual([
+      `"systemPromptPath" path must start with "./" (got "${absolute}")`,
+    ]);
+
+    const outsideDir = await mkdtemp(join(tmpdir(), 'plugin-outside-'));
+    await writeFile(join(outsideDir, 'secret.md'), 'outside content', 'utf8');
+    await symlink(join(outsideDir, 'secret.md'), join(dir, 'linked.md'));
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', systemPromptPath: './linked.md' }),
+      'utf8',
+    );
+
+    const linked = await parseManifest(dir);
+    expect(linked.manifest?.systemPrompt).toBeUndefined();
+    expect(linked.diagnostics.map((d) => d.message)).toEqual([
+      '"systemPromptPath" path resolves outside the plugin (./linked.md)',
+    ]);
+    await rm(outsideDir, { recursive: true, force: true });
   });
 
   it('ignores an oversized inline systemPrompt with a warning', async () => {

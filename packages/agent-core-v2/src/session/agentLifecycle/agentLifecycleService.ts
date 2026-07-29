@@ -32,6 +32,7 @@
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
@@ -73,14 +74,14 @@ import {
 
 let nextAgentId = 0;
 
-async function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
+async function withTimeout(promise: Promise<void>, ms: number): Promise<'done' | 'timeout'> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
+    return await Promise.race([
+      promise.then(() => 'done' as const),
+      new Promise<'timeout'>((resolve) => {
         timer = setTimeout(() => {
-          resolve();
+          resolve('timeout');
         }, ms);
       }),
     ]);
@@ -116,6 +117,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
@@ -246,7 +248,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     generationAtCreate: number,
   ): Promise<void> {
     const contributions = handle.accessor.get(ISessionPluginContributionService);
-    await withTimeout(contributions.settled(), PLUGIN_CONVERGENCE_TIMEOUT_MS);
+    const joined = await withTimeout(contributions.settled(), PLUGIN_CONVERGENCE_TIMEOUT_MS);
+    if (joined === 'timeout') {
+      this.log.warn(
+        'Timed out waiting for plugin contribution convergence during agent bootstrap; continuing',
+      );
+    }
     const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
       await profile.bind(opts.binding);

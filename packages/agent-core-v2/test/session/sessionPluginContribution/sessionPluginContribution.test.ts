@@ -41,6 +41,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import {
   ISessionPluginContributionService,
+  PLUGIN_CONVERGENCE_TIMEOUT_MS,
 } from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { SessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContributionService';
 
@@ -304,10 +305,55 @@ describe('SessionPluginContributionService', () => {
             settled = true;
           });
 
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
         await fired;
 
         expect(settled).toBe(true);
+      } finally {
+        host.dispose();
+        change.dispose();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drains blocked participants on later changes without stopping the pipeline', async () => {
+    vi.useFakeTimers();
+    try {
+      const change = new AsyncEmitter<PluginChangedEvent>();
+      const { host, session } = makeHost({ change, skillRoots: [] });
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        const coordinator = session.accessor.get(ISessionPluginContributionService);
+        await catalog.load();
+
+        coordinator.onDidChange((event) => {
+          event.waitUntil(new Promise(() => {}));
+        });
+        const firstFire = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
+        await firstFire;
+        await vi.advanceTimersByTimeAsync(1);
+
+        let second = 0;
+        coordinator.onDidChange((event) => {
+          second += 1;
+          event.waitUntil(Promise.resolve());
+        });
+        const secondFire = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
+        await secondFire;
+        await vi.advanceTimersByTimeAsync(1);
+        expect(second).toBe(0);
+
+        const thirdFire = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
+        await thirdFire;
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(second).toBe(1);
+        expect(coordinator.generation()).toBe(3);
       } finally {
         host.dispose();
         change.dispose();
@@ -336,7 +382,7 @@ describe('SessionPluginContributionService', () => {
         const firstFire = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
 
         await firstCalled.promise;
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
         await firstFire;
 
         let second = 0;
@@ -354,7 +400,7 @@ describe('SessionPluginContributionService', () => {
         await vi.advanceTimersByTimeAsync(0);
         expect(second).toBe(0);
 
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
         await secondFire;
         expect(secondSettled).toBe(true);
         expect(second).toBe(0);
