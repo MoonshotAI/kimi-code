@@ -1,5 +1,27 @@
 # kimi-code-app
 
+## 0.0.13
+
+### Patch Changes
+
+- [#150](https://github.com/MoonshotAI/kimi-code-app/pull/150) [`9e0e486`](https://github.com/MoonshotAI/kimi-code-app/commit/9e0e4863573eadf47a59096888e3285dbd2362f9) - 桌面端现在会读取 shell 环境中的 KIMI_CODE_HOME 等环境变量。
+
+- [#148](https://github.com/MoonshotAI/kimi-code-app/pull/148) [`6720944`](https://github.com/MoonshotAI/kimi-code-app/commit/6720944aeddf174ab680c602aa6c6efea63f836e) - 修复打开已被删除或移动的文件时提示「无法读取这个文件」的问题。
+
+- [#145](https://github.com/MoonshotAI/kimi-code-app/pull/145) [`2aa50b5`](https://github.com/MoonshotAI/kimi-code-app/commit/2aa50b5c094a9e65d7fc1cfee75206a14a0e4693) - 修复使用自定义 OpenAI 兼容服务商的模型时，重新打开会话后长回复变成竖排文字的问题。
+
+- [#109](https://github.com/MoonshotAI/kimi-code-app/pull/109) [`5c22dc9`](https://github.com/MoonshotAI/kimi-code-app/commit/5c22dc91d70f1aac29b098c3c212b7bae7dea349) - 重连后自动同步所有会话的工作状态，避免侧栏“工作中”提示停留。
+
+- [#146](https://github.com/MoonshotAI/kimi-code-app/pull/146) [`a1702a5`](https://github.com/MoonshotAI/kimi-code-app/commit/a1702a54ba96aad09012dfd64636e514cf341648) - 修复调用 skill 会把「已工作」记录拆成两段的问题。
+
+- [#148](https://github.com/MoonshotAI/kimi-code-app/pull/148) [`6720944`](https://github.com/MoonshotAI/kimi-code-app/commit/6720944aeddf174ab680c602aa6c6efea63f836e) - 修复再次点击文件改动卡片里的文件时右侧改动面板无法收起的问题。
+
+- [#148](https://github.com/MoonshotAI/kimi-code-app/pull/148) [`6720944`](https://github.com/MoonshotAI/kimi-code-app/commit/6720944aeddf174ab680c602aa6c6efea63f836e) - 去掉文件改动卡片底部「还有 N 个文件」按钮按下时的压缩效果。
+
+- [#148](https://github.com/MoonshotAI/kimi-code-app/pull/148) [`6720944`](https://github.com/MoonshotAI/kimi-code-app/commit/6720944aeddf174ab680c602aa6c6efea63f836e) - 修复一轮对话末尾文件改动卡片里的文件无法点击打开的问题。
+
+- [#148](https://github.com/MoonshotAI/kimi-code-app/pull/148) [`6720944`](https://github.com/MoonshotAI/kimi-code-app/commit/6720944aeddf174ab680c602aa6c6efea63f836e) - 修复文件改动卡片里文件链接 hover 时下划线过深的问题。
+
 ## 0.0.12
 
 ### Patch Changes
