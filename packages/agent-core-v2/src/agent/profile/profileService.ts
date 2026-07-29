@@ -42,12 +42,14 @@
  * catalog by name on the first refresh, rebinding the whole slice (prompt /
  * `disallowedTools` / active tools, but not the bind-time `subagents`,
  * which `config.update` cannot carry) atomically — with a warning and no
- * change when the name is gone. A refresh requested while the Agent's wire
+ * change when the name is gone, and with the session-added user-tool
+ * overlay replayed onto the rebound base when the tool set is reset. A refresh requested while the Agent's wire
  * log is still replaying is skipped; the bootstrap join re-renders after
- * restore instead. Renders reuse the Agent's first-render
- * `now` of the current process (a restored Agent re-anchors once on its
- * first live refresh), and no `config.update` is dispatched when nothing
- * changed, so steady-state convergence never churns the wire.
+ * restore instead. Renders reuse the Agent's first-render `now` of the
+ * current UTC day (re-anchored when the date rolls over, so the model's
+ * clock never goes stale across days), and no `config.update` is
+ * dispatched when nothing changed, so steady-state convergence never
+ * churns the wire.
  * `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled rejection
@@ -311,12 +313,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get renderedNow(): string {
-    let value = this.states.get(profileRenderedNowKey);
-    if (value === undefined) {
-      value = new Date().toISOString();
-      this.states.set(profileRenderedNowKey, value);
+    const now = new Date().toISOString();
+    const anchored = this.states.get(profileRenderedNowKey);
+    if (anchored !== undefined && anchored.slice(0, 10) === now.slice(0, 10)) {
+      return anchored;
     }
-    return value;
+    this.states.set(profileRenderedNowKey, now);
+    return now;
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -562,7 +565,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
     const persistedTools = this.wire.getModel(ActiveToolsModel) as ActiveToolsState;
     if (!sameToolSet(persistedTools, profile.tools)) {
+      const extras = (this.activeToolNamesOverlay ?? []).filter(
+        (name) => !(persistedTools ?? []).includes(name) && !(profile.tools ?? []).includes(name),
+      );
       this.setActiveTools(profile.tools);
+      if (profile.tools !== undefined && extras.length > 0) {
+        this.activeToolNamesOverlay = [...profile.tools, ...extras];
+      }
     }
   }
 
@@ -1010,13 +1019,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       parts.push(block);
     }
     if (skipped.length > 0) {
-      const signature = JSON.stringify(skipped);
-      if (!this.emittedPluginBudgetWarnings.has(signature)) {
-        this.emittedPluginBudgetWarnings.add(signature);
+      const newlySkipped = skipped.filter((id) => !this.emittedPluginBudgetWarnings.has(id));
+      if (newlySkipped.length > 0) {
+        for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
         this.eventBus.publish({
           type: 'warning',
           message:
-            `Plugin system-prompt contributions from ${skipped.map((id) => `"${id}"`).join(', ')} ` +
+            `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
             `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,
           code: 'plugin-sections-oversized',
         });

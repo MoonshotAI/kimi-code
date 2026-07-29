@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AsyncEmitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -249,12 +249,13 @@ describe('AgentProfileService.applyProfile', () => {
     );
     svc.update({ profileName: 'plugin-profile', systemPrompt: 'old prompt', disallowedTools: [] });
     svc.update({ activeToolNames: ['OldTool'] });
+    svc.addActiveTool('custom-tool');
 
     await converge.fireAsync({}, new AbortController().signal);
 
     expect(svc.data().systemPrompt).toBe('v2:<!-- From: plugin demo -->\nP');
     expect(svc.data().disallowedTools).toEqual(['Bash']);
-    expect(svc.getActiveToolNames()).toEqual(['Read']);
+    expect(svc.getActiveToolNames()).toEqual(['Read', 'custom-tool']);
     converge.dispose();
   });
 
@@ -274,6 +275,16 @@ describe('AgentProfileService.applyProfile', () => {
 
     expect(first).toMatch(/^now:\d{4}-\d{2}-\d{2}T/);
     expect(svc.data().systemPrompt).toBe(first);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
+      await converge.fireAsync({}, new AbortController().signal);
+      expect(svc.data().systemPrompt).not.toBe(first);
+      expect(svc.data().systemPrompt).toMatch(/^now:\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      vi.useRealTimers();
+    }
     converge.dispose();
   });
 

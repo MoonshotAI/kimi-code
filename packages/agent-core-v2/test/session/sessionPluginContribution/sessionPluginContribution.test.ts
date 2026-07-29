@@ -318,6 +318,46 @@ describe('SessionPluginContributionService', () => {
     }
   });
 
+  it('continues the convergence with the previous catalog when the skill reload hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const change = new AsyncEmitter<PluginChangedEvent>();
+      let hangReads = false;
+      const boundary: PluginBoundary = {
+        change,
+        skillRoots: async () => {
+          if (hangReads) return new Promise<readonly SkillRoot[]>(() => {});
+          return [];
+        },
+      };
+      const { host, session } = makeHost(boundary);
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        const coordinator = session.accessor.get(ISessionPluginContributionService);
+        await catalog.load();
+        hangReads = true;
+
+        let participants = 0;
+        const subscription = coordinator.onDidChange(() => {
+          participants += 1;
+        });
+        const fired = change.fireAsync({ kind: 'catalog' }, new AbortController().signal);
+
+        await vi.advanceTimersByTimeAsync(PLUGIN_CONVERGENCE_TIMEOUT_MS);
+        await fired;
+
+        expect(participants).toBe(1);
+        expect(coordinator.generation()).toBe(1);
+        subscription.dispose();
+      } finally {
+        host.dispose();
+        change.dispose();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drains blocked participants on later changes without stopping the pipeline', async () => {
     vi.useFakeTimers();
     try {

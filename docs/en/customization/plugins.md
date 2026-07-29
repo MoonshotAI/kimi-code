@@ -174,7 +174,7 @@ Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` a
 
 ### System-prompt instructions
 
-Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep longer instructions in a file inside the plugin root. If both fields are present, the inline text appears first, followed by the file content. For example:
+Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep longer instructions in a file inside the plugin root. If both fields are present, the inline text appears first, followed by the file content. The file content is read when the plugin is installed or reloaded, so edits take effect only after `/plugins reload`. For example:
 
 ```json
 {

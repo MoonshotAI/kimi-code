@@ -78,14 +78,7 @@ export class SessionPluginContributionService
       () => undefined,
       () => undefined,
     );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => {
-        resolve('timeout');
-      }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
-    });
-    return Promise.race([run.then(() => 'done' as const), expired]).then((result) => {
-      if (timer !== undefined) clearTimeout(timer);
+    return this.raceTimeout(() => run).then((result) => {
       if (result === 'timeout') {
         this.log.warn(
           'Plugin contribution convergence timed out; a later plugin change retries it',
@@ -95,32 +88,45 @@ export class SessionPluginContributionService
   }
 
   private async converge(): Promise<void> {
-    try {
-      await this.skillCatalog.reloadSource(PLUGIN_SKILL_SOURCE_ID);
-    } catch (error) {
+    const reloaded = await this.raceTimeout(async () => {
+      try {
+        await this.skillCatalog.reloadSource(PLUGIN_SKILL_SOURCE_ID);
+      } catch (error) {
+        this.log.warn(
+          `Plugin skill reload failed during convergence: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    });
+    if (reloaded === 'timeout') {
       this.log.warn(
-        `Plugin skill reload failed during convergence: ${error instanceof Error ? error.message : String(error)}`,
+        'Plugin skill reload timed out during convergence; continuing with the previous catalog',
       );
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => {
-        resolve('timeout');
-      }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
-    });
-    const result = await Promise.race([
-      this.changeEmitter
-        .fireAsync({}, new AbortController().signal)
-        .then(() => 'done' as const),
-      expired,
-    ]);
-    if (timer !== undefined) clearTimeout(timer);
-    if (result === 'timeout') {
+    const fannedOut = await this.raceTimeout(() =>
+      this.changeEmitter.fireAsync({}, new AbortController().signal),
+    );
+    if (fannedOut === 'timeout') {
       this.log.warn(
         'Plugin contribution fan-out timed out; blocked participants are delivered on later changes',
       );
     }
     this.completedGenerations += 1;
+  }
+
+  private async raceTimeout(work: () => Promise<unknown>): Promise<'done' | 'timeout'> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work().then(() => 'done' as const),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => {
+            resolve('timeout');
+          }, PLUGIN_CONVERGENCE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 }
 
