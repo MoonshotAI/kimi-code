@@ -1107,11 +1107,11 @@ function handleDraftWorkspaceSelect(workspaceId: string): void {
   focusComposerAfterDraft();
 }
 
-// Sidebar / mobile-switcher session clicks: intent is set at the leaf entry
-// points (Sidebar's onSelectSession / onSearchSelectSession); anything else
-// falls back to 'sidebar' at consume time.
-function handleSelectSession(sessionId: string): void {
-  void client.selectSession(sessionId);
+function handleSelectSession(selection: {
+  sessionId: string;
+  source: SessionCreatedSource;
+}): void {
+  void client.selectSession(selection.sessionId, { source: selection.source });
 }
 
 // Chat header: open a GitHub PR in a new tab.

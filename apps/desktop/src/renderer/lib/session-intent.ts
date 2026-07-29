@@ -1,7 +1,6 @@
-// Pending source for the next session_created event. Entry points (sidebar,
-// shortcut, tray, ...) declare why a session is about to be opened; the
-// creation/selection site consumes it exactly once so a stale intent never
-// leaks into a later, unrelated session switch.
+// A new-session draft can outlive the click that opened it: the session is not
+// created until the first prompt is sent. Keep that draft source until the
+// creation site can claim it.
 
 import type { SessionCreatedSource } from '../../shared/track-events';
 

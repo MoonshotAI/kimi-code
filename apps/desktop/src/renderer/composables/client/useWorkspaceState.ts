@@ -42,6 +42,7 @@ import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import { track } from '../../lib/track';
 import { consumeSessionIntent } from '../../lib/session-intent';
+import type { SessionCreatedSource } from '../../../shared/track-events';
 import type {
   ActivityState,
   ConversationStatus,
@@ -1506,8 +1507,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function selectSession(
     sessionId: string,
-    opts?: { urlMode?: SessionUrlMode; skipTrack?: boolean },
+    opts?: {
+      urlMode?: SessionUrlMode;
+      skipTrack?: boolean;
+      source?: SessionCreatedSource;
+    },
   ): Promise<void> {
+    const sessionSource = opts?.source ?? 'sidebar';
     // Jumps can target a session outside the loaded pages — a tray menu entry
     // kept across a window restart, or a notification for a session the
     // recency window paged out. The workspace sync and the snapshot sync
@@ -1520,14 +1526,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // older target. In-list sessions keep the fully synchronous path below,
       // so their rapid-click URL ordering is unaffected.
       const serial = ++selectSerial;
-      // Dead ends still consume the pending intent — leaving it would
-      // attribute this entry to whatever session opens next.
       if (!(await fetchSessionIntoList(sessionId))) {
-        consumeSessionIntent('sidebar');
         return;
       }
       if (serial !== selectSerial) {
-        consumeSessionIntent('sidebar');
         return;
       }
     }
@@ -1552,7 +1554,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // createDraftSession selects its own fresh session internally and already
       // reported the 'new' event — skip the duplicate resume there.
       if (!opts?.skipTrack && isResumedNavigation) {
-        track('session_created', { kind: 'resumed', source: consumeSessionIntent('sidebar') });
+        track('session_created', { kind: 'resumed', source: sessionSource });
       }
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {

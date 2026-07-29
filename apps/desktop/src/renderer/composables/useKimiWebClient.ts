@@ -16,7 +16,6 @@ import {
 } from '../lib/workspaceOrder';
 import { logError, logWarn } from '../lib/log';
 import { track } from '../lib/track';
-import { setSessionIntent } from '../lib/session-intent';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -3036,8 +3035,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
       promptId: finishedPromptId,
       onClick: () => {
-        setSessionIntent('notification');
-        void workspaceState.selectSession(sid);
+        void workspaceState.selectSession(sid, { source: 'notification' });
       },
     });
   }
@@ -3060,8 +3058,7 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     questionPreview: preview,
     questionId: question.questionId,
     onClick: () => {
-      setSessionIntent('notification');
-      void workspaceState.selectSession(sid);
+      void workspaceState.selectSession(sid, { source: 'notification' });
     },
   });
 }
@@ -3074,8 +3071,7 @@ function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
     toolName: approval.toolName,
     approvalId: approval.approvalId,
     onClick: () => {
-      setSessionIntent('notification');
-      void workspaceState.selectSession(sid);
+      void workspaceState.selectSession(sid, { source: 'notification' });
     },
   });
 }

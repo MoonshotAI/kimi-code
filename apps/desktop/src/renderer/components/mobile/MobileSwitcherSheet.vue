@@ -9,7 +9,7 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { setSessionIntent } from '../../lib/session-intent';
+import type { SessionCreatedSource } from '../../../shared/track-events';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
@@ -34,7 +34,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:modelValue': [open: boolean];
-  select: [sessionId: string];
+  select: [selection: { sessionId: string; source: SessionCreatedSource }];
   create: [];
   createInWorkspace: [workspaceId: string];
   addWorkspace: [];
@@ -50,8 +50,7 @@ function close(): void {
 }
 
 function onSelectSession(id: string): void {
-  setSessionIntent('sidebar');
-  emit('select', id);
+  emit('select', { sessionId: id, source: 'sidebar' });
   close();
 }
 

@@ -35,7 +35,7 @@ import { isDesktop, isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag'
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { track } from '../lib/track';
-import { setSessionIntent } from '../lib/session-intent';
+import type { SessionCreatedSource } from '../../shared/track-events';
 import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -117,7 +117,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  select: [sessionId: string];
+  select: [selection: { sessionId: string; source: SessionCreatedSource }];
   create: [];
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
@@ -370,15 +370,11 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 }
 
 function onSelectSession(sessionId: string): void {
-  setSessionIntent('sidebar');
-  emit('select', sessionId);
+  emit('select', { sessionId, source: 'sidebar' });
 }
 
-// A pick from the search dialog is a search-sourced resume; intent is set at
-// the leaf entry points, so this overrides the plain-click value above.
 function onSearchSelectSession(sessionId: string): void {
-  setSessionIntent('search');
-  emit('select', sessionId);
+  emit('select', { sessionId, source: 'search' });
 }
 
 // ---------------------------------------------------------------------------
