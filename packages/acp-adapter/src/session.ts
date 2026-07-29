@@ -285,6 +285,33 @@ export class AcpSession {
   }
 
   /**
+   * Forward an ACP `_session/steering` extension request to the
+   * underlying SDK session's {@link Session.steer} method.
+   *
+   * Steer injects the given prompt parts into the currently running
+   * turn without starting a new one — the output of the steered content
+   * continues to stream through the existing {@link prompt} call's
+   * `session/update` notifications.
+   *
+   * When no turn is currently active, the method returns
+   * `{ outcome: 'noActiveTurn' }` so the ACP host can fall back to a
+   * regular `session/prompt` instead of the adapter starting a detached
+   * turn whose lifecycle the host cannot control. This avoids the
+   * `startedNewTurn` problem observed in other ACP adapters (see
+   * kimi-code issue #2370).
+   */
+  async steer(blocks: readonly ContentBlock[]): Promise<{ outcome: string }> {
+    const parts = acpBlocksToPromptParts(blocks);
+
+    if (this.currentTurnId === undefined) {
+      return { outcome: 'noActiveTurn' };
+    }
+
+    await this.session.steer(parts);
+    return { outcome: 'injected' };
+  }
+
+  /**
    * Seed the per-session `slash command name → skill name` map used by
    * {@link prompt} to intercept `/skill:<name> ...` inputs. Called by
    * {@link AcpServer.emitAvailableCommandsUpdate} from the same

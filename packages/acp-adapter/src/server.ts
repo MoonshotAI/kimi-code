@@ -20,6 +20,7 @@ import {
   type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
+  type ContentBlock,
   type Implementation,
   type InitializeRequest,
   type InitializeResponse,
@@ -335,6 +336,7 @@ export class AcpServer implements Agent {
           : TERMINAL_AUTH_METHOD,
       ],
       ...(this.agentInfo ? { agentInfo: this.agentInfo } : {}),
+      _meta: { steering: { supported: true } },
     };
   }
 
@@ -843,8 +845,23 @@ export class AcpServer implements Agent {
    */
   async extMethod(
     method: string,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (method === '_session/steering') {
+      const sessionId = params['sessionId'] as string | undefined;
+      const prompt = params['prompt'] as readonly ContentBlock[] | undefined;
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throw RequestError.invalidParams(undefined, 'Missing or invalid sessionId');
+      }
+      const acpSession = this.sessions.get(sessionId);
+      if (!acpSession) {
+        throw RequestError.invalidParams(undefined, `Unknown sessionId: ${sessionId}`);
+      }
+      if (!Array.isArray(prompt) || prompt.length === 0) {
+        throw RequestError.invalidParams(undefined, 'Steering requires at least one content block');
+      }
+      return acpSession.steer(prompt);
+    }
     throw RequestError.methodNotFound(method);
   }
 
