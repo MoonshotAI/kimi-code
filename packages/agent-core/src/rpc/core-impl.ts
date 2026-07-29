@@ -346,6 +346,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         );
       }
     };
+    await this.pluginsReady;
     const agentCatalog = new SessionAgentProfileCatalog({
       workDir,
       brandHomeDir: this.homeDir,
