@@ -39,7 +39,8 @@ describe('Session lifecycle hooks', () => {
       ],
     });
 
-    await session.createMain();
+    const main = await session.createMain();
+    main.permission.setMode('yolo');
     await session.close();
 
     expect(await readHookPayloads(logPath)).toMatchObject([
@@ -48,12 +49,14 @@ describe('Session lifecycle hooks', () => {
         session_id: 'session-123',
         cwd: workDir,
         source: 'startup',
+        permission_mode: 'manual',
       },
       {
         hook_event_name: 'SessionEnd',
         session_id: 'session-123',
         cwd: workDir,
         reason: 'exit',
+        permission_mode: 'yolo',
       },
     ]);
   });

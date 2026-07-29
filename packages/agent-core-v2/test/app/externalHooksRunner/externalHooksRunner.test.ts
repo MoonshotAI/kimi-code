@@ -1,3 +1,9 @@
+/**
+ * Scenario: configured external hook matching and process dispatch.
+ * Responsibilities: matcher selection, stdin payloads, process outcomes, and fail-open behavior.
+ * Wiring: real runner and host process service with config/plugin inputs stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/externalHooksRunner/externalHooksRunner.test.ts
+ */
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -140,6 +146,51 @@ describe('ExternalHooksRunnerService', () => {
 
     const results = await runner.trigger('SessionStart', { sessionId: 'ses_123' });
     expect(results[0]?.stdout?.trim()).toBe('SessionStart ses_123 /tmp');
+  });
+
+  it('serializes the trigger permission mode as permission_mode', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'PreToolUse',
+        command: nodeCommand([
+          'let input = "";',
+          'process.stdin.on("data", (chunk) => { input += chunk; });',
+          'process.stdin.on("end", () => {',
+          '  process.stdout.write(String(JSON.parse(input).permission_mode));',
+          '});',
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const results = await runner.trigger('PreToolUse', {
+      permissionMode: 'auto',
+      inputData: { permissionMode: 'manual', permission_mode: 'yolo' },
+    });
+
+    expect(results[0]?.stdout).toBe('auto');
+  });
+
+  it('omits permission_mode when no effective permission mode is available', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'SessionStart',
+        command: nodeCommand([
+          'let input = "";',
+          'process.stdin.on("data", (chunk) => { input += chunk; });',
+          'process.stdin.on("end", () => {',
+          '  process.stdout.write(String(Object.hasOwn(JSON.parse(input), "permission_mode")));',
+          '});',
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const results = await runner.trigger('SessionStart', {
+      inputData: { permissionMode: 'spoofed', permission_mode: 'spoofed' },
+    });
+
+    expect(results[0]?.stdout).toBe('false');
   });
 
   it('runs hooks with per-hook cwd and env overrides', async () => {

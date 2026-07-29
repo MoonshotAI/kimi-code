@@ -22,14 +22,13 @@
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { userCancellationReason } from '#/_base/utils/abort';
+import { isAbortError, userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventBus } from '#/app/event/eventBus';
-import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
@@ -140,6 +139,7 @@ export async function mirrorAgentRun(
     };
     try {
       await subagents?.hooks.onWillStartAgentTask.run({
+        requesterAgentId: requester.id,
         agentName: options.profileName,
         prompt: options.prompt,
         signal: options.signal,
@@ -162,6 +162,7 @@ export async function mirrorAgentRun(
       contextTokens,
     });
     subagents?.notifyAgentTaskStopped({
+      requesterAgentId: requester.id,
       agentName: options.profileName,
       response: result.summary,
     });

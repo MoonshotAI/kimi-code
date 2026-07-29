@@ -12,6 +12,7 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { HookBlockDecision, HookMatcherValue, HookResult } from '#/agent/externalHooks/types';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 
 export interface ExternalHooksRunnerTriggerArgs {
   readonly matcherValue?: HookMatcherValue;
@@ -19,6 +20,7 @@ export interface ExternalHooksRunnerTriggerArgs {
   readonly signal?: AbortSignal;
   readonly cwd?: string;
   readonly sessionId?: string;
+  readonly permissionMode?: PermissionMode;
 }
 
 export interface IExternalHooksRunnerService {

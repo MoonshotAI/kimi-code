@@ -1,3 +1,9 @@
+/**
+ * Scenario: Agent tool contracts and end-to-end tool execution behavior.
+ * Responsibilities: tool visibility, policy, execution, external hooks, and observable results.
+ * Wiring: real scoped Agent services with only model, process, and cross-agent boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/tool/tool.test.ts
+ */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1147,6 +1153,7 @@ describe('Agent tool execution contract', () => {
 
   it('mirrors v1-compatible subagent lifecycle event fields', async () => {
     const lifecycle = createAgentLifecycleStub();
+    const startHook = vi.spyOn(lifecycle.hooks.onWillStartAgentTask, 'run');
     const events: DomainEvent[] = [];
     const eventBus = {
       _serviceBrand: undefined,
@@ -1177,6 +1184,7 @@ describe('Agent tool execution contract', () => {
         get: ((serviceId: unknown) => {
           if (serviceId === IEventBus) return eventBus;
           if (serviceId === IAgentLifecycleService) return lifecycle;
+          if (serviceId === ISessionSubagentService) return lifecycle;
           if (serviceId === ITelemetryService) {
             return {
               ...noopTelemetryService,
@@ -1228,6 +1236,18 @@ describe('Agent tool execution contract', () => {
       subagentId: 'agent-child',
       resultSummary: 'child result',
       contextTokens: 321,
+    });
+    expect(startHook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requesterAgentId: 'main',
+        agentName: 'explore',
+        prompt: 'Investigate',
+      }),
+    );
+    expect(lifecycle.notifyAgentTaskStopped).toHaveBeenCalledWith({
+      requesterAgentId: 'main',
+      agentName: 'explore',
+      response: 'child result',
     });
   });
 
@@ -2747,6 +2767,45 @@ describe('Agent tools', () => {
     });
   });
 
+  describe('runtime permission mode hook payload', () => {
+    let resolved: Array<[string, string, string]>;
+
+    beforeEach(async () => {
+      resolved = [];
+      const hookEngine = makeHookRunner(
+        [
+          {
+            event: 'PreToolUse',
+            matcher: 'Bash',
+            command: hookPermissionModeAssertCommand('yolo'),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(
+        execEnvServices({ processRunner: createCommandRunner('hook-output') }),
+        externalHookServices(hookEngine),
+      );
+      profile = ctx.get(IAgentProfileService);
+      profile.update({ activeToolNames: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+    });
+
+    it('passes the current runtime permission mode to PreToolUse hooks', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Bash returned hook-output.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+
+      await ctx.untilTurnEnd();
+
+      expect(resolved).toEqual([['PreToolUse', 'Bash', 'allow']]);
+    });
+  });
+
   describe('failed Bash hook flow', () => {
     let resolved: Array<[string, string, string]>;
 
@@ -3245,6 +3304,20 @@ function hookErrorMessageAssertCommand(expected: string): string {
     '  const payload = JSON.parse(input);',
     `  if (payload.error?.message === ${JSON.stringify(expected)}) process.exit(0);`,
     "  console.error(payload.error?.message ?? '<missing>');",
+    '  process.exit(2);',
+    '});',
+  ].join('');
+  return `node -e ${JSON.stringify(script)}`;
+}
+
+function hookPermissionModeAssertCommand(expected: string): string {
+  const script = [
+    "let input = '';",
+    "process.stdin.on('data', (chunk) => { input += chunk; });",
+    "process.stdin.on('end', () => {",
+    '  const payload = JSON.parse(input);',
+    `  if (payload.permission_mode === ${JSON.stringify(expected)}) process.exit(0);`,
+    "  console.error(payload.permission_mode ?? '<missing>');",
     '  process.exit(2);',
     '});',
   ].join('');

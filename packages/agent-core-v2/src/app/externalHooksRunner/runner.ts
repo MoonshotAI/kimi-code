@@ -68,12 +68,19 @@ export async function runMatchedHooks(
     callbacks.onTriggered?.(event, matcherValue, matched.length);
   } catch {}
 
-  const inputData = toHookInputData({
+  const eventInputData = { ...args.inputData };
+  delete eventInputData['permissionMode'];
+  delete eventInputData['permission_mode'];
+  const rawInputData: Record<string, unknown> = {
     hookEventName: event,
     sessionId: args.sessionId ?? '',
     cwd,
-    ...args.inputData,
-  });
+    ...eventInputData,
+  };
+  if (args.permissionMode !== undefined) {
+    rawInputData['permissionMode'] = args.permissionMode;
+  }
+  const inputData = toHookInputData(rawInputData);
 
   const startedAt = Date.now();
   const results = await Promise.all(

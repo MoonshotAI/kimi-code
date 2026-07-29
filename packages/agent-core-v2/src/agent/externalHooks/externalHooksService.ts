@@ -12,8 +12,8 @@
  * the `agentLifecycle` run slots hosted on `IAgentLifecycleService`. Appends
  * UserPromptSubmit hook results through `contextMemory`, drives Stop hook
  * continuations by enqueueing a mergeable `StepRequest` onto `loop`, and
- * passes the current session id from `sessionContext`
- * into hook runner payloads. The one mutable latch
+ * passes the current session id from `sessionContext` and the effective mode
+ * from `permissionMode` into hook runner payloads. The one mutable latch
  * (`stopHookContinuationUsed`, the Stop-hook re-entry guard) is registered
  * into `agentState` (`IAgentStateService`) and read/written through it; the
  * hook listener registrations stay ordinary disposables on the instance.
@@ -27,6 +27,7 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
@@ -84,6 +85,8 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentPermissionModeService
+    private readonly permissionMode: IAgentPermissionModeService,
   ) {
     super();
     this.states.register(externalHooksStopHookContinuationUsedKey);
@@ -109,6 +112,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         matcherValue,
         signal,
         sessionId: this.sessionContext.sessionId,
+        permissionMode: this.permissionMode.mode,
         inputData,
       });
     } catch {}
@@ -251,6 +255,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
       sessionId: this.sessionContext.sessionId,
+      permissionMode: this.permissionMode.mode,
       inputData: {
         toolName: ctx.toolCall.name,
         toolInput,
@@ -290,6 +295,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
       matcherValue: input,
       signal,
       sessionId: this.sessionContext.sessionId,
+      permissionMode: this.permissionMode.mode,
       inputData: { prompt: input, isSteer: ctx.isSteer },
     });
     signal.throwIfAborted();
@@ -358,6 +364,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
       sessionId: this.sessionContext.sessionId,
+      permissionMode: this.permissionMode.mode,
       inputData: { stopHookActive: false },
     });
     ctx.signal.throwIfAborted();
@@ -371,6 +378,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
       matcherValue: ctx.trigger,
       signal,
       sessionId: this.sessionContext.sessionId,
+      permissionMode: this.permissionMode.mode,
       inputData: {
         trigger: ctx.trigger,
         tokenCount: ctx.tokenCount,

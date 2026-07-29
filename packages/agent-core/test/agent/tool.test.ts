@@ -98,6 +98,31 @@ describe('Agent tools', () => {
     expect(triggered).toEqual([['PostToolUse', 'Bash', 1]]);
   });
 
+  it('passes the current runtime permission mode to PreToolUse hooks', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash boundary reached'));
+    const hookEngine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        matcher: 'Bash',
+        command: hookPermissionModeAssertCommand('yolo'),
+      },
+    ]);
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      hookEngine,
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    ctx.mockNextResponse({ type: 'text', text: 'The Bash boundary failed.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+
+    await ctx.untilTurnEnd();
+
+    expect(execWithEnv).toHaveBeenCalledOnce();
+  });
+
   it('uses builtin descriptions on tool call start events', async () => {
     const ctx = testAgent({
       kaos: createCommandKaos('ok'),
@@ -706,6 +731,20 @@ function hookErrorMessageAssertCommand(expected: string): string {
     '  const payload = JSON.parse(input);',
     `  if (payload.error?.message === ${JSON.stringify(expected)}) process.exit(0);`,
     "  console.error(payload.error?.message ?? '<missing>');",
+    '  process.exit(2);',
+    '});',
+  ].join('');
+  return `node -e ${JSON.stringify(script)}`;
+}
+
+function hookPermissionModeAssertCommand(expected: string): string {
+  const script = [
+    "let input = '';",
+    "process.stdin.on('data', (chunk) => { input += chunk; });",
+    "process.stdin.on('end', () => {",
+    '  const payload = JSON.parse(input);',
+    `  if (payload.permission_mode === ${JSON.stringify(expected)}) process.exit(0);`,
+    "  console.error(payload.permission_mode ?? '<missing>');",
     '  process.exit(2);',
     '});',
   ].join('');

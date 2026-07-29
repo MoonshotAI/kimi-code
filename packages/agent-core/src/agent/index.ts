@@ -204,7 +204,6 @@ export class Agent {
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
-    this.hooks = options.hookEngine;
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
@@ -236,6 +235,10 @@ export class Agent {
     this.turn = new TurnFlow(this);
     this.injection = new InjectionManager(this);
     this.permission = new PermissionManager(this, options.permission);
+    this.hooks =
+      typeof options.hookEngine?.withPermissionMode === 'function'
+        ? options.hookEngine.withPermissionMode(() => this.permission.mode)
+        : options.hookEngine;
     this.planMode = new PlanMode(this);
     this.swarmMode = new SwarmMode(this);
     this.usage = new UsageRecorder(this);

@@ -1,3 +1,9 @@
+/**
+ * Scenario: external hook adapters and configured hook commands across App, Session, and Agent scopes.
+ * Responsibilities: event translation, runtime payload context, blocking, lifecycle, and config round-trips.
+ * Wiring: real scoped adapters/runner with process, config, plugin, and behavior-domain boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/externalHooksRunner/integration.test.ts
+ */
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,8 +11,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import type { ISessionScopeHandle } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  type ISessionScopeHandle,
+  LifecycleScope,
+} from '#/_base/di/scope';
 import {
   createServices,
   type TestInstantiationService,
@@ -32,6 +43,8 @@ import { AgentExternalHooksService } from '#/agent/externalHooks/externalHooksSe
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -51,6 +64,7 @@ import {
 } from '#/app/sessionLifecycle/sessionLifecycle';
 import { createHooks } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   type AgentTaskHooks,
   type AgentTaskStopHookContext,
@@ -63,6 +77,7 @@ import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -153,6 +168,7 @@ function appendHookLogCommand(path: string): string {
     '    reason: parsed.reason,',
     '    sessionId: parsed.session_id,',
     '    cwd: parsed.cwd,',
+    '    permissionMode: parsed.permission_mode,',
     '  }) + "\\n",',
     ');',
   ].join('\n'));
@@ -179,6 +195,26 @@ function stubSessionContext(): ISessionContext {
       subKey === undefined || subKey === ''
         ? 'sessions/workspace-1/session-1'
         : `sessions/workspace-1/session-1/${subKey}`,
+  };
+}
+
+function agentHandleWithPermissionMode(
+  agentId: string,
+  mode: () => PermissionMode,
+): IAgentScopeHandle {
+  const permissionMode = stubPermissionModeService(mode);
+  return {
+    id: agentId,
+    kind: LifecycleScope.Agent,
+    accessor: {
+      get: <T>(id: ServiceIdentifier<T>): T => {
+        if (id !== IAgentPermissionModeService) {
+          throw new Error(`Unexpected Agent service: ${String(id)}`);
+        }
+        return permissionMode as unknown as T;
+      },
+    },
+    dispose: () => {},
   };
 }
 
@@ -293,6 +329,10 @@ describe('IExternalHooksRunnerService integration', () => {
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.defineInstance(
+            IAgentPermissionModeService,
+            stubPermissionModeService(() => 'manual'),
+          );
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -364,18 +404,24 @@ describe('IExternalHooksRunnerService integration', () => {
         event: string;
         matcherValue?: unknown;
         inputData?: unknown;
+        permissionMode?: unknown;
       }> = [];
       const hookEngine = {
         trigger: async () => [],
         triggerBlock: async () => undefined,
         fireAndForgetTrigger: async (
           event: string,
-          args: { matcherValue?: unknown; inputData?: unknown },
+          args: {
+            matcherValue?: unknown;
+            inputData?: unknown;
+            permissionMode?: unknown;
+          },
         ) => {
           fired.push({
             event,
             matcherValue: args.matcherValue,
             inputData: args.inputData,
+            permissionMode: args.permissionMode,
           });
         },
       };
@@ -397,6 +443,10 @@ describe('IExternalHooksRunnerService integration', () => {
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.defineInstance(
+            IAgentPermissionModeService,
+            stubPermissionModeService(() => 'manual'),
+          );
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -435,6 +485,7 @@ describe('IExternalHooksRunnerService integration', () => {
           event: 'PermissionRequest',
           matcherValue: 'Bash',
           inputData: requestContext,
+          permissionMode: 'manual',
         },
         {
           event: 'PermissionResult',
@@ -444,6 +495,7 @@ describe('IExternalHooksRunnerService integration', () => {
             decision: 'approved',
             selectedLabel: 'Approve once',
           },
+          permissionMode: 'manual',
         },
       ]);
     } finally {
@@ -460,35 +512,49 @@ describe('IExternalHooksRunnerService integration', () => {
         event: string;
         matcherValue?: unknown;
         inputData?: unknown;
+        permissionMode?: unknown;
       }> = [];
       const triggered: Array<{
         event: string;
         matcherValue?: unknown;
         inputData?: unknown;
         signal?: unknown;
+        permissionMode?: unknown;
       }> = [];
+      const mainAgent = agentHandleWithPermissionMode('main', () => 'auto');
       const hookEngine = {
         trigger: async (
           event: string,
-          args: { matcherValue?: unknown; inputData?: unknown; signal?: unknown },
+          args: {
+            matcherValue?: unknown;
+            inputData?: unknown;
+            signal?: unknown;
+            permissionMode?: unknown;
+          },
         ) => {
           triggered.push({
             event,
             matcherValue: args.matcherValue,
             inputData: args.inputData,
             signal: args.signal,
+            permissionMode: args.permissionMode,
           });
           return [];
         },
         triggerBlock: async () => undefined,
         fireAndForgetTrigger: async (
           event: string,
-          args: { matcherValue?: unknown; inputData?: unknown },
+          args: {
+            matcherValue?: unknown;
+            inputData?: unknown;
+            permissionMode?: unknown;
+          },
         ) => {
           fired.push({
             event,
             matcherValue: args.matcherValue,
             inputData: args.inputData,
+            permissionMode: args.permissionMode,
           });
           return [];
         },
@@ -513,6 +579,9 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, stubSessionLifecycle());
+          reg.definePartialInstance(IAgentLifecycleService, {
+            get: (agentId) => (agentId === 'main' ? mainAgent : undefined),
+          });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -526,11 +595,13 @@ describe('IExternalHooksRunnerService integration', () => {
       const subagents = ix.get(ISessionSubagentService);
 
       await subagents.hooks.onWillStartAgentTask.run({
+        requesterAgentId: 'main',
         agentName: 'coder',
         prompt: 'Fix the bug',
         signal: new AbortController().signal,
       });
       stopAgentTask.fire({
+        requesterAgentId: 'main',
         agentName: 'coder',
         response: 'Bug fixed',
       });
@@ -541,6 +612,7 @@ describe('IExternalHooksRunnerService integration', () => {
           matcherValue: 'coder',
           inputData: { agentName: 'coder', prompt: 'Fix the bug' },
           signal: expect.any(AbortSignal),
+          permissionMode: 'auto',
         },
       ]);
 
@@ -551,6 +623,7 @@ describe('IExternalHooksRunnerService integration', () => {
           event: 'SubagentStop',
           matcherValue: 'coder',
           inputData: { agentName: 'coder', response: 'Bug fixed' },
+          permissionMode: 'auto',
         },
       ]);
     } finally {
@@ -601,6 +674,10 @@ describe('IExternalHooksRunnerService integration', () => {
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.defineInstance(
+            IAgentPermissionModeService,
+            stubPermissionModeService(() => 'manual'),
+          );
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -830,6 +907,8 @@ describe('IExternalHooksRunnerService integration', () => {
       const command = appendHookLogCommand(path);
       const cwd = mkdtempSync(join(tmpdir(), 'session-external-hooks-cwd-'));
       const handle = {} as ISessionScopeHandle;
+      let permissionMode: PermissionMode = 'manual';
+      const mainAgent = agentHandleWithPermissionMode('main', () => permissionMode);
 
       ix = createServices(disposables, {
         strict: true,
@@ -848,6 +927,9 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, lifecycle);
+          reg.definePartialInstance(IAgentLifecycleService, {
+            get: (agentId) => (agentId === 'main' ? mainAgent : undefined),
+          });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -894,6 +976,7 @@ describe('IExternalHooksRunnerService integration', () => {
         handle,
         source: 'startup',
       });
+      permissionMode = 'yolo';
       await lifecycle.hooks.onWillCloseSession.run({
         sessionId: 'session-1',
         handle,
@@ -906,18 +989,21 @@ describe('IExternalHooksRunnerService integration', () => {
           source: 'startup',
           sessionId: 'session-1',
           cwd,
+          permissionMode: 'manual',
         },
         {
           event: 'SessionStart',
           source: 'resume',
           sessionId: 'session-1',
           cwd,
+          permissionMode: 'manual',
         },
         {
           event: 'SessionEnd',
           reason: 'exit',
           sessionId: 'session-1',
           cwd,
+          permissionMode: 'yolo',
         },
       ]);
     } finally {
