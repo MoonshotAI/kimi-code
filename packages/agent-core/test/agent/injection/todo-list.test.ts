@@ -42,9 +42,27 @@ function todoAgent(stub: TodoAgentStub): Agent {
 }
 
 function assistantMessage(): ContextMessage {
+  // Mid-turn assistant step: a tool call is still in flight, so the turn has
+  // not ended.
   return {
     role: 'assistant',
     content: [{ type: 'text', text: 'working' }],
+    toolCalls: [
+      {
+        type: 'function',
+        id: 'call_bash',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'true' }),
+      },
+    ],
+  };
+}
+
+function turnEndedMessage(): ContextMessage {
+  // Final assistant step of a completed turn: no tool calls remain.
+  return {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'done for now' }],
     toolCalls: [],
   };
 }
@@ -168,5 +186,92 @@ describe('TodoListReminderInjector', () => {
     await injector.inject();
 
     expect(lastReminderText(history)).toContain('The TodoList tool has not been updated recently');
+  });
+
+  it('reminds at the next step when a turn ends with unfinished todos and no write', async () => {
+    const todos: TodoItem[] = [
+      { title: 'Implement feature', status: 'done' },
+      { title: 'Mark todo done', status: 'in_progress' },
+    ];
+    // Only 3 turns since the last write — far below the cadence threshold —
+    // but the latest assistant step closed the turn without a TodoList write.
+    const history = [
+      todoListWrite(todos),
+      ...Array.from({ length: 3 }, () => assistantMessage()),
+      turnEndedMessage(),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    const text = lastReminderText(history);
+    expect(text).toContain('The previous turn ended with unfinished todo items');
+    expect(text).toContain('Unfinished todo items:');
+    expect(text).toContain('1. [in_progress] Mark todo done');
+    expect(text).not.toContain('Implement feature');
+  });
+
+  it('does not fire the turn-end rule mid-turn (tool calls still in flight)', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
+    const history = [todoListWrite(todos), ...Array.from({ length: 3 }, () => assistantMessage())];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    expect(history).toHaveLength(4);
+  });
+
+  it('does not fire the turn-end rule when the final step was a TodoList write', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
+    const history = [
+      ...Array.from({ length: 3 }, () => assistantMessage()),
+      todoListWrite(todos),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    expect(history).toHaveLength(4);
+  });
+
+  it('does not fire the turn-end rule when every todo is done', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'done' }];
+    const history = [
+      todoListWrite(todos),
+      ...Array.from({ length: 3 }, () => assistantMessage()),
+      turnEndedMessage(),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    expect(history).toHaveLength(5);
+  });
+
+  it('spaces out turn-end reminders', async () => {
+    const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
+    const history = [
+      todoListWrite(todos),
+      priorTodoReminder(),
+      ...Array.from({ length: 1 }, () => assistantMessage()),
+      turnEndedMessage(),
+    ];
+    const agent = todoAgent({ history, todos, todoListActive: true });
+    const injector = new TodoListReminderInjector(agent);
+
+    await injector.inject();
+
+    // Only 2 assistant turns since the last reminder — below the spacing.
+    expect(history).toHaveLength(4);
+
+    history.push(...Array.from({ length: 2 }, () => assistantMessage()), turnEndedMessage());
+    await injector.inject();
+
+    const text = lastReminderText(history);
+    expect(text).toContain('The previous turn ended with unfinished todo items');
   });
 });

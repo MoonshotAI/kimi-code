@@ -11,6 +11,12 @@ import { DynamicInjector } from './injector';
 const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
 const TODO_LIST_REMINDER_TURNS_SINCE_WRITE = 10;
 const TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS = 10;
+/**
+ * Turn-end reconciliation spacing: the turn-end rule may fire again after
+ * this many assistant turns since the last reminder (looser than the
+ * cadence rule, tighter than nagging every turn).
+ */
+const TODO_LIST_REMINDER_TURN_END_SPACING = 3;
 
 interface TodoListReminderTurnCounts {
   readonly turnsSinceLastWrite: number;
@@ -25,13 +31,27 @@ export class TodoListReminderInjector extends DynamicInjector {
 
     const counts = getTodoListReminderTurnCounts(this.agent.context.history);
     if (
-      counts.turnsSinceLastWrite < TODO_LIST_REMINDER_TURNS_SINCE_WRITE ||
-      counts.turnsSinceLastReminder < TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS
+      counts.turnsSinceLastWrite >= TODO_LIST_REMINDER_TURNS_SINCE_WRITE &&
+      counts.turnsSinceLastReminder >= TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS
     ) {
-      return undefined;
+      return renderTodoListReminder(this.currentTodos());
     }
 
-    return renderTodoListReminder(this.currentTodos());
+    // Turn-end reconciliation: the previous turn ended (the latest assistant
+    // step made no tool calls) with unfinished todos and no TodoList write on
+    // the way out — the classic "work finished, bookkeeping forgotten" case,
+    // which the cadence rule above can miss for up to 10 turns. Nudge at the
+    // next step instead.
+    if (
+      counts.turnsSinceLastReminder >= TODO_LIST_REMINDER_TURN_END_SPACING &&
+      turnEndedWithoutTodoWrite(this.agent.context.history)
+    ) {
+      const unfinished = this.currentTodos().filter((todo) => todo.status !== 'done');
+      if (unfinished.length > 0) {
+        return renderTurnEndReminder(unfinished);
+      }
+    }
+    return undefined;
   }
 
   private isTodoListActive(): boolean {
@@ -102,6 +122,31 @@ function isTodoListReminder(message: ContextMessage): boolean {
   return (
     message.origin?.kind === 'injection' && message.origin.variant === TODO_LIST_REMINDER_VARIANT
   );
+}
+
+/**
+ * The previous turn ended without a final TodoList write: the most recent
+ * assistant message made no tool calls (turn complete, control back with the
+ * user) and was not itself a TodoList update. Mid-turn history (latest
+ * assistant step still has tool calls in flight) does not qualify.
+ */
+function turnEndedWithoutTodoWrite(history: readonly ContextMessage[]): boolean {
+  const lastAssistant = history.findLast((message) => message.role === 'assistant');
+  if (lastAssistant === undefined) return false;
+  if (lastAssistant.toolCalls.length > 0) return false;
+  return true;
+}
+
+function renderTurnEndReminder(todos: readonly TodoItem[]): string {
+  let message =
+    'The previous turn ended with unfinished todo items. If the work is actually complete, update the TodoList to mark them done (or clear/rewrite the list if it is stale); otherwise continue with the remaining items. Make sure that you NEVER mention this reminder to the user.';
+
+  const items = renderTodoItems(todos);
+  if (items.length > 0) {
+    message += `\n\nUnfinished todo items:\n${items}`;
+  }
+
+  return message;
 }
 
 function renderTodoListReminder(todos: readonly TodoItem[]): string {
