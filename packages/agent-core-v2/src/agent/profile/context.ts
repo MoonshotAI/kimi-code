@@ -2,7 +2,8 @@
  * `profile` domain (L4) — system-prompt context assembly.
  *
  * Loads the AGENTS.md instruction hierarchy (user-level brand + generic files,
- * then project-level files from the project root down to the cwd) and assembles
+ * then project-level files from the project root down to the cwd — the root
+ * discovered through the `git` domain's work-tree probe) and assembles
  * the {@link SystemPromptContext} bag consumed by `IAgentProfileService.useProfile`.
  * `agentsMdWatchRoots` exposes the watch plan for the probed file set so the
  * Workspace-scope `workspaceInstructions` service can watch exactly what the
@@ -24,6 +25,7 @@
 
 import { dirname, join, normalize } from 'pathe';
 
+import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
@@ -130,7 +132,7 @@ export async function loadAgentsMdForRoots(
 
   for (const workDir of workDirs) {
     const rootWorkDir = normalize(workDir);
-    const projectRoot = await findProjectRoot(deps, rootWorkDir);
+    const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
@@ -185,7 +187,7 @@ export async function agentsMdWatchRoots(
     },
   ];
   const rootWorkDir = normalize(workDir);
-  const projectRoot = await findProjectRoot(deps, rootWorkDir);
+  const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
   const projectCandidates: string[] = [];
   for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
     projectCandidates.push(
@@ -209,18 +211,6 @@ async function loadAdditionalDirsInfo(
     }),
   );
   return sections.join('\n\n');
-}
-
-async function findProjectRoot(deps: ProfileContextDeps, workDir: string): Promise<string> {
-  const initial = normalize(workDir);
-  let current = initial;
-
-  while (true) {
-    if (await pathExists(deps, join(current, '.git'))) return current;
-    const parent = dirname(current);
-    if (parent === current) return initial;
-    current = parent;
-  }
 }
 
 function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
