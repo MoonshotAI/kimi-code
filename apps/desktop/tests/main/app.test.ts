@@ -165,6 +165,18 @@ describe('app second-instance routing', () => {
     onBeforeQuit?.(second);
     expect(second.preventDefault).not.toHaveBeenCalled();
   });
+
+  it('quits even when the telemetry flush rejects', async () => {
+    mocks.shutdownServerTelemetry.mockReturnValue(Promise.reject(new Error('flush failed')));
+    main();
+
+    const onBeforeQuit = mocks.listeners.get('before-quit');
+    const event = { preventDefault: vi.fn() };
+    onBeforeQuit?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mocks.app.quit).toHaveBeenCalledOnce());
+  });
 });
 
 describe('app startup telemetry', () => {

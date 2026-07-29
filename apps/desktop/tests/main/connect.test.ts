@@ -453,6 +453,19 @@ describe('classifyConnectFailure', () => {
     expect(fn(new Error('request timeout'), 'server_start')).toBe('timeout');
   });
 
+  it('matches Electron ERR_TIMED_OUT and ignores tokens inside the failing URL', async () => {
+    const fn = await classify();
+    expect(
+      fn(new Error("ERR_TIMED_OUT (-7) loading 'http://127.0.0.1:58627/#token=abc123'"), 'load_url'),
+    ).toBe('timeout');
+    expect(
+      fn(
+        new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://127.0.0.1:58627/#token=abc123'"),
+        'load_url',
+      ),
+    ).toBe('handshake');
+  });
+
   it('handles non-Error rejections', async () => {
     const fn = await classify();
     expect(fn('plain failure', 'server_start')).toBe('spawn');

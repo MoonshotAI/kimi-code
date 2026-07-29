@@ -90,9 +90,12 @@ export function main(): void {
       if (flush !== null) {
         telemetryFlushArmed = false;
         event.preventDefault();
-        void flush.finally(() => {
-          app.quit();
-        });
+        // Quit either way: a rejected flush (failed startup, telemetry
+        // internals) must not become an unhandled rejection on the quit path.
+        void flush.then(
+          () => app.quit(),
+          () => app.quit(),
+        );
       }
     }
   });

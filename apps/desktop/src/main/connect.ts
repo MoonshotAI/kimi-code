@@ -33,12 +33,15 @@ export type ConnectFailureStage = 'server_start' | 'load_url';
 
 type ConnectFailurePhase = NonNullable<StartupConnectResultEvent['failure_phase']>;
 
-/** Heuristic failure_phase for startup_connect_result: message signals
-    (auth/timeout) win over the stage default (spawn/port vs. handshake). */
+/** Heuristic failure_phase for startup_connect_result: Electron ERR_* codes
+    and auth signals win over the stage default (spawn/port vs. handshake).
+    The URL is stripped first — external-mode URLs carry `#token=…`, which
+    would otherwise make every external failure look like auth. */
 export function classifyConnectFailure(error: unknown, stage: ConnectFailureStage): ConnectFailurePhase {
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw.replace(/'[^']*'|"[^"]*"|https?:\/\/\S+/g, ' ').toLowerCase();
   if (/401|unauthorized|token/.test(message)) return 'auth';
-  if (/timeout|etimedout/.test(message)) return 'timeout';
+  if (/err_timed_out|timeout|etimedout/.test(message)) return 'timeout';
   if (stage === 'server_start') {
     return /eaddrinuse|port/.test(message) ? 'port' : 'spawn';
   }
