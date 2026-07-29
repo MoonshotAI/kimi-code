@@ -50,7 +50,7 @@ export class StdioMcpClient implements MCPClient {
     this.transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: mergeStdioEnv(config.env),
+      env: mergeStdioEnv(config.env, undefined, config.command),
       cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
       stderr: 'pipe',
     });
@@ -184,13 +184,22 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
 export function mergeStdioEnv(
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
+  command?: string,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value !== undefined) merged[key] = value;
   }
   if (configEnv !== undefined) Object.assign(merged, configEnv);
-  Object.assign(merged, proxyEnvForChild(merged));
-  reconcileChildNoProxy(merged, configEnv);
+  const isNode = isNodeCommand(command);
+  Object.assign(merged, proxyEnvForChild(merged, isNode));
+  reconcileChildNoProxy(merged, configEnv, isNode);
   return merged;
+}
+
+/** True when the command is a Node.js runtime (node, npx, tsx, etc.). */
+function isNodeCommand(command?: string): boolean {
+  if (command === undefined) return false;
+  const base = command.replaceAll('\\', '/').split('/').pop()?.replace(/\.(exe|cmd|bat)$/i, '').toLowerCase();
+  return base === 'node' || base === 'npx' || base === 'tsx' || base === 'ts-node';
 }

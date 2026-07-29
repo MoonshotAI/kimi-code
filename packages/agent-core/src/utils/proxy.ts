@@ -30,6 +30,13 @@ export interface SocksProxyConfig {
 // normalizes brackets away — so including both covers every path.
 const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1', '[::1]'] as const;
 
+// Child processes (e.g. stdio MCP servers) must NOT receive the bracketed `[::1]`:
+// Non-Node child processes (e.g. Python stdio MCP servers) must NOT receive the
+// bracketed `[::1]`: Python's httpx parses `all://[::1]` and treats `:1]` as the
+// port, raising `httpx.InvalidURL`. Node children (with NODE_USE_ENV_PROXY=1)
+// still need the bracketed form because undici mis-parses bare `::1`.
+const LOOPBACK_NO_PROXY_NON_NODE_CHILD = ['localhost', '127.0.0.1', '::1'] as const;
+
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
 /** Lowercase URL scheme (without the trailing colon), or undefined if absent. */
@@ -130,6 +137,22 @@ export function isProxyConfigured(env: Env = process.env): boolean {
  * through the proxy.
  */
 export function resolveNoProxy(env: Env = process.env): string {
+  return resolveNoProxyWith(env, LOOPBACK_NO_PROXY);
+}
+
+/**
+ * Like {@link resolveNoProxy} but selects the loopback list based on the child
+ * runtime. Node children (undici via NODE_USE_ENV_PROXY) need the bracketed
+ * `[::1]`; non-Node children (Python httpx, Go, etc.) crash on it and only
+ * accept bare `::1`.
+ *
+ * @see https://github.com/MoonshotAI/kimi-code/issues/1931
+ */
+export function resolveNoProxyForChild(env: Env = process.env, isNodeRuntime = false): string {
+  return resolveNoProxyWith(env, isNodeRuntime ? LOOPBACK_NO_PROXY : LOOPBACK_NO_PROXY_NON_NODE_CHILD);
+}
+
+function resolveNoProxyWith(env: Env, loopbacks: readonly string[]): string {
   // Prefer the first non-blank casing; an empty `no_proxy=''` must not mask a
   // populated `NO_PROXY` (`??` would, since `''` is not nullish).
   const raw = [env['no_proxy'], env['NO_PROXY']].find((value) => (value?.trim() ?? '').length > 0) ?? '';
@@ -138,7 +161,7 @@ export function resolveNoProxy(env: Env = process.env): string {
     .map((host) => host.trim())
     .filter((host) => host.length > 0);
   if (hosts.includes('*')) return '*';
-  for (const loopback of LOOPBACK_NO_PROXY) {
+  for (const loopback of loopbacks) {
     if (!hosts.includes(loopback)) hosts.push(loopback);
   }
   return hosts.join(',');
@@ -333,9 +356,9 @@ export function installGlobalProxyDispatcher(
  * an http-scheme `ALL_PROXY` is synthesized into the scheme-specific variables
  * so an `ALL_PROXY`-only parent still proxies the child.
  */
-export function proxyEnvForChild(env: Env = process.env): Record<string, string> {
+export function proxyEnvForChild(env: Env = process.env, isNodeRuntime = false): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveNoProxyForChild(env, isNodeRuntime);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -361,18 +384,19 @@ export function proxyEnvForChild(env: Env = process.env): Record<string, string>
  *
  * Uses the first NON-blank casing (a blank `no_proxy=''` must not mask a
  * populated `NO_PROXY`, mirroring {@link resolveNoProxy}) and runs the value
- * back through {@link resolveNoProxy} so the loopback bypass is preserved and
+ * back through {@link resolveNoProxyForChild} so the loopback bypass is preserved and
  * `*` passes through verbatim. No-op when config sets no usable `NO_PROXY`.
  */
 export function reconcileChildNoProxy(
   childEnv: Record<string, string>,
   configEnv?: Record<string, string>,
+  isNodeRuntime = false,
 ): void {
   const override = [configEnv?.['no_proxy'], configEnv?.['NO_PROXY']].find(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveNoProxyForChild({ no_proxy: override, NO_PROXY: override }, isNodeRuntime);
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }

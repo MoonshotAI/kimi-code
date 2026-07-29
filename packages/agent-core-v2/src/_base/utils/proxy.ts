@@ -1,6 +1,10 @@
 /**
  * Resolve and install proxy configuration for outbound `fetch` and spawned
  * child processes (HTTP/HTTPS and SOCKS, honoring `NO_PROXY`).
+ *
+ * Child NO_PROXY is runtime-aware: Node children (undici) require the bracketed
+ * `[::1]` loopback entry, while non-Node children (Python httpx, Go) crash on
+ * it and only accept bare `::1` (#1931).
  */
 
 import {
@@ -23,6 +27,7 @@ export interface SocksProxyConfig {
 }
 
 const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1', '[::1]'] as const;
+const LOOPBACK_NO_PROXY_NON_NODE_CHILD = ['localhost', '127.0.0.1', '::1'] as const;
 
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
@@ -91,13 +96,21 @@ export function isProxyConfigured(env: Env): boolean {
 }
 
 export function resolveNoProxy(env: Env): string {
+  return resolveNoProxyWith(env, LOOPBACK_NO_PROXY);
+}
+
+export function resolveNoProxyForChild(env: Env, isNodeRuntime = false): string {
+  return resolveNoProxyWith(env, isNodeRuntime ? LOOPBACK_NO_PROXY : LOOPBACK_NO_PROXY_NON_NODE_CHILD);
+}
+
+function resolveNoProxyWith(env: Env, loopbacks: readonly string[]): string {
   const raw = [env['no_proxy'], env['NO_PROXY']].find((value) => (value?.trim() ?? '').length > 0) ?? '';
   const hosts = raw
     .split(',')
     .map((host) => host.trim())
     .filter((host) => host.length > 0);
   if (hosts.includes('*')) return '*';
-  for (const loopback of LOOPBACK_NO_PROXY) {
+  for (const loopback of loopbacks) {
     if (!hosts.includes(loopback)) hosts.push(loopback);
   }
   return hosts.join(',');
@@ -230,9 +243,9 @@ export function installGlobalProxyDispatcher(
   return true;
 }
 
-export function proxyEnvForChild(env: Env): Record<string, string> {
+export function proxyEnvForChild(env: Env, isNodeRuntime = false): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveNoProxyForChild(env, isNodeRuntime);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -253,12 +266,13 @@ export function proxyEnvForChild(env: Env): Record<string, string> {
 export function reconcileChildNoProxy(
   childEnv: Record<string, string>,
   configEnv?: Record<string, string>,
+  isNodeRuntime = false,
 ): void {
   const override = [configEnv?.['no_proxy'], configEnv?.['NO_PROXY']].find(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveNoProxyForChild({ no_proxy: override, NO_PROXY: override }, isNodeRuntime);
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }
