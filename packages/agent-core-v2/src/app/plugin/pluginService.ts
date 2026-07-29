@@ -7,16 +7,13 @@
  * `provider` plus the startup snapshot from `bootstrap`. Exposes plugin
  * contributions through the hook, MCP, skill, and system-prompt contracts.
  * Mutations serialize through `mutationQueue` and consumption reads wait on
- * it, so the `onDidChange` barrier rides a separate `pluginChangeQueue`:
- * participants issuing consumption reads while the barrier is open only
- * join the mutation tail, never the queue their own wait feeds. Bound at
- * App scope.
+ * it. Bound at App scope.
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { AsyncEmitter, Emitter, type Event } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2, PluginErrors } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -31,8 +28,6 @@ import {
   type GetPluginInfoInput,
   type InstallPluginInput,
   IPluginService,
-  type PluginChangeKind,
-  type PluginChangedEvent,
   type RemovePluginInput,
   type SetPluginEnabledInput,
   type SetPluginMcpServerEnabledInput,
@@ -62,11 +57,8 @@ export class PluginService extends Disposable implements IPluginService {
   private hasLoadedSnapshot = false;
   private loadError: Error | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
-  private pluginChangeQueue: Promise<void> = Promise.resolve();
-  private readonly onDidChangeEmitter = this._register(new AsyncEmitter<PluginChangedEvent>());
   private readonly onDidReloadEmitter = this._register(new Emitter<ReloadSummary>());
 
-  readonly onDidChange: Event<PluginChangedEvent> = this.onDidChangeEmitter.event;
   readonly onDidReload: Event<ReloadSummary> = this.onDidReloadEmitter.event;
 
   constructor(
@@ -90,46 +82,34 @@ export class PluginService extends Disposable implements IPluginService {
   }
 
   installPlugin(input: InstallPluginInput): Promise<PluginSummary> {
-    return this.completePluginChange(
-      this.runSerializedOperation(async () => {
-        const record = await this.manager.install(input.source);
-        const info = this.manager.info(record.id);
-        if (info === undefined) throw new Error(`Plugin "${record.id}" missing right after install`);
-        return info;
-      }),
-      'catalog',
-    );
+    return this.runSerializedOperation(async () => {
+      const record = await this.manager.install(input.source);
+      const info = this.manager.info(record.id);
+      if (info === undefined) throw new Error(`Plugin "${record.id}" missing right after install`);
+      return info;
+    });
   }
 
   setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
-    return this.completePluginChange(
-      this.runSerializedOperation(async () => {
-        await this.manager.setEnabled(input.id, input.enabled);
-      }),
-      'catalog',
-    );
+    return this.runSerializedOperation(async () => {
+      await this.manager.setEnabled(input.id, input.enabled);
+    });
   }
 
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void> {
-    return this.completePluginChange(
-      this.runSerializedOperation(async () => {
-        await this.manager.setMcpServerEnabled(input.id, input.server, input.enabled);
-      }),
-      'mcp',
-    );
+    return this.runSerializedOperation(async () => {
+      await this.manager.setMcpServerEnabled(input.id, input.server, input.enabled);
+    });
   }
 
   removePlugin(input: RemovePluginInput): Promise<void> {
-    return this.completePluginChange(
-      this.runSerializedOperation(async () => {
-        await this.manager.remove(input.id);
-      }),
-      'catalog',
-    );
+    return this.runSerializedOperation(async () => {
+      await this.manager.remove(input.id);
+    });
   }
 
   reloadPlugins(): Promise<ReloadSummary> {
-    const mutation = this.enqueueMutation(async () => {
+    const reload = this.enqueueMutation(async () => {
       try {
         const summary = await this.manager.reload();
         this.hasLoadedSnapshot = true;
@@ -145,7 +125,6 @@ export class PluginService extends Disposable implements IPluginService {
         );
       }
     });
-    const reload = this.completePluginChange(mutation, 'catalog');
     this.initialLoadPromise ??= reload.then(
       () => undefined,
       () => undefined,
@@ -208,19 +187,6 @@ export class PluginService extends Disposable implements IPluginService {
       this.assertLoaded();
       return operation();
     });
-  }
-
-  private completePluginChange<T>(operation: Promise<T>, kind: PluginChangeKind): Promise<T> {
-    const result = this.pluginChangeQueue.then(async () => {
-      const value = await operation;
-      await this.onDidChangeEmitter.fireAsync({ kind }, new AbortController().signal);
-      return value;
-    });
-    this.pluginChangeQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
   }
 
   private async runManagementRead<T>(operation: () => Promise<T>): Promise<T> {

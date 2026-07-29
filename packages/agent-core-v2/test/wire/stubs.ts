@@ -99,7 +99,6 @@ export function stubAgentWire(
     dispatch: () => {},
     seal: async () => {},
     restore: async () => {},
-    isRestoring: () => false,
     flush,
     getModel: (model) => model.initial() as never,
   };

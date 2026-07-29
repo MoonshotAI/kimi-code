@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -46,7 +46,6 @@ function pluginServiceStub(options: PluginServiceStubOptions): IPluginService {
   const reloadEmitter = options.reloadEmitter;
   return {
     _serviceBrand: undefined,
-    onDidChange: Event.None as IPluginService['onDidChange'],
     onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,

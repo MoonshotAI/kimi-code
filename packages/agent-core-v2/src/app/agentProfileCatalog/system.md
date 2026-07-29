@@ -82,7 +82,7 @@ The operating environment is not in a sandbox. Any actions you do will immediate
 
 ## Date and Time
 
-The current date in ISO format is `${now}` — a day-precision UTC timestamp (midnight) anchored at the most recent prompt render. It does not track wall-clock time within the day and only advances on later renders, so in a long or resumed session it may be hours or days stale. Treat it only as a rough reference; whenever the real current time matters (web-result freshness, age or expiry checks, anything time-sensitive), get it fresh from the environment — for example by running `date` if you have a shell tool — instead of trusting this value.
+The current date and time in ISO format is `${now}`. This was captured when the session started and does not update as the session continues, so in a long or resumed session it may be hours or days stale. Treat it only as a rough reference; whenever the real current time matters (web-result freshness, age or expiry checks, anything time-sensitive), get it fresh from the environment — for example by running `date` if you have a shell tool — instead of trusting this value.
 
 ## Working Directory
 

@@ -4,23 +4,20 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AsyncEmitter, Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import {
-  ISessionPluginContributionService,
-  type SessionPluginContributionChangedEvent,
-} from '#/session/sessionPluginContribution/sessionPluginContribution';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 
 import {
   appService,
   createTestAgent,
   execEnvServices,
   hostEnvironmentServices,
-  InMemoryWireRecordPersistence,
   sessionService,
   type TestAgentContext,
   type TestAgentOptions,
@@ -163,44 +160,25 @@ describe('AgentProfileService.applyProfile', () => {
     );
   });
 
-  it('refreshes the system prompt when session plugin contributions converge', async () => {
+  it('refreshes the system prompt when the plugin skill source reloads', async () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
     };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const change = new Emitter<string>();
     const { profile: svc } = buildContext(
       appService(IPluginService, pluginStub(sections)),
-      pluginConvergenceService(converge),
+      skillCatalogWithChange(change),
     );
     await svc.applyProfile(pluginProfile);
     expect(svc.data().systemPrompt).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
-    await converge.fireAsync({}, new AbortController().signal);
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
 
-    expect(svc.data().systemPrompt).toContain('V2');
-    converge.dispose();
-  });
-
-  it('dispatches no config record when a plugin-driven refresh changes nothing', async () => {
-    const persistence = new InMemoryWireRecordPersistence();
-    const sections = {
-      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
-    };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    const { profile: svc } = buildContext(
-      { persistence },
-      appService(IPluginService, pluginStub(sections)),
-      pluginConvergenceService(converge),
-    );
-    await svc.applyProfile(pluginProfile);
-    const recordsAfterBind = persistence.records.length;
-
-    await converge.fireAsync({}, new AbortController().signal);
-
-    expect(persistence.records.length).toBe(recordsAfterBind);
-    expect(svc.data().systemPrompt).toContain('V1');
-    converge.dispose();
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toContain('V2');
+    });
+    change.dispose();
   });
 
   it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
@@ -211,16 +189,23 @@ describe('AgentProfileService.applyProfile', () => {
         { pluginId: 'second', content: large },
       ] as readonly EnabledPluginSystemPrompt[],
     };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
+    const change = new Emitter<string>();
     const { ctx: context, profile: svc } = buildContext(
       appService(IPluginService, pluginStub(sections)),
-      pluginConvergenceService(converge),
+      skillCatalogWithChange(change),
     );
 
     await svc.applyProfile(pluginProfile);
-    await converge.fireAsync({}, new AbortController().signal);
-
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
+    expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
+
+    // A reload-driven re-render applies the budget again but does not warn twice.
+    sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toContain('<!-- From: plugin third -->');
+    });
+
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
     const events = context.newEvents() as readonly {
       event: string;
@@ -230,145 +215,25 @@ describe('AgentProfileService.applyProfile', () => {
       (entry) => entry.event === 'warning' && entry.args?.code === 'plugin-sections-oversized',
     );
     expect(warnings).toHaveLength(1);
-    converge.dispose();
-  });
-
-  it('rebinds the full profile slice when a restored agent refreshes', async () => {
-    const rebound: ResolvedAgentProfile = {
-      name: 'plugin-profile',
-      systemPrompt: (context) =>
-        `v2:${typeof context['pluginSections'] === 'string' ? context['pluginSections'] : ''}`,
-      tools: ['Read'],
-      disallowedTools: ['Bash'],
-    };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    const { profile: svc } = buildContext(
-      appService(IPluginService, pluginStub({ value: [{ pluginId: 'demo', content: 'P' }] })),
-      pluginConvergenceService(converge),
-      agentProfileCatalogService([rebound]),
-    );
-    svc.update({ profileName: 'plugin-profile', systemPrompt: 'old prompt', disallowedTools: [] });
-    svc.update({ activeToolNames: ['OldTool'] });
-    svc.addActiveTool('custom-tool');
-
-    await converge.fireAsync({}, new AbortController().signal);
-
-    expect(svc.data().systemPrompt).toBe('v2:<!-- From: plugin demo -->\nP');
-    expect(svc.data().disallowedTools).toEqual(['Bash']);
-    expect(svc.getActiveToolNames()).toEqual(['Read', 'custom-tool']);
-    converge.dispose();
-  });
-
-  it('lands the plugin-sections baseline without changing a plugin-free custom prompt', async () => {
-    const constantProfile: ResolvedAgentProfile = {
-      name: 'constant-profile',
-      systemPrompt: () => 'constant prompt',
-      tools: [],
-    };
-    const sections = {
-      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
-    };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    const { profile: svc } = buildContext(
-      appService(IPluginService, pluginStub(sections)),
-      pluginConvergenceService(converge),
-    );
-    await svc.applyProfile(constantProfile);
-    expect(svc.data().pluginSections).toBe('<!-- From: plugin demo -->\nV1');
-
-    sections.value = [{ pluginId: 'demo', content: 'V2' }];
-    await converge.fireAsync({}, new AbortController().signal);
-
-    expect(svc.data().systemPrompt).toBe('constant prompt');
-    expect(svc.data().pluginSections).toBe('<!-- From: plugin demo -->\nV2');
-    converge.dispose();
-  });
-
-  it('anchors the rendered timestamp at the first render and reuses it across refreshes', async () => {
-    const nowProfile: ResolvedAgentProfile = {
-      name: 'now-profile',
-      systemPrompt: (context) => `now:${context.now ?? ''}`,
-      tools: [],
-    };
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    const { profile: svc } = buildContext(pluginConvergenceService(converge));
-    await svc.applyProfile(nowProfile);
-    const first = svc.data().systemPrompt;
-
-    await converge.fireAsync({}, new AbortController().signal);
-    await converge.fireAsync({}, new AbortController().signal);
-
-    expect(first).toMatch(/^now:\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
-    expect(svc.data().systemPrompt).toBe(first);
-
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
-      await converge.fireAsync({}, new AbortController().signal);
-      expect(svc.data().systemPrompt).not.toBe(first);
-      expect(svc.data().systemPrompt).toMatch(/^now:\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
-    } finally {
-      vi.useRealTimers();
-    }
-    converge.dispose();
-  });
-
-  it('keeps the persisted binding and warns when the bound profile no longer exists', async () => {
-    const converge = new AsyncEmitter<SessionPluginContributionChangedEvent>();
-    const { ctx: context, profile: svc } = buildContext(
-      pluginConvergenceService(converge),
-      agentProfileCatalogService([]),
-    );
-    svc.update({ profileName: 'ghost', systemPrompt: 'old prompt', disallowedTools: [] });
-
-    await converge.fireAsync({}, new AbortController().signal);
-    await converge.fireAsync({}, new AbortController().signal);
-
-    expect(svc.data().systemPrompt).toBe('old prompt');
-    const events = context.newEvents() as readonly {
-      event: string;
-      args?: { code?: string };
-    }[];
-    const warnings = events.filter(
-      (entry) =>
-        entry.event === 'warning' &&
-        entry.args?.code === 'system-prompt-refresh-profile-missing',
-    );
-    expect(warnings).toHaveLength(1);
-    converge.dispose();
+    change.dispose();
   });
 });
 
-function pluginConvergenceService(
-  converge: AsyncEmitter<SessionPluginContributionChangedEvent>,
-): TestAgentServiceOverride {
-  return sessionService(ISessionPluginContributionService, {
+function skillCatalogWithChange(change: Emitter<string>): TestAgentServiceOverride {
+  return sessionService(ISessionSkillCatalog, {
     _serviceBrand: undefined,
-    onDidChange: converge.event,
-    settled: () => Promise.resolve(),
-  });
-}
-
-function agentProfileCatalogService(
-  profiles: readonly ResolvedAgentProfile[],
-): TestAgentServiceOverride {
-  return sessionService(ISessionAgentProfileCatalog, {
-    _serviceBrand: undefined,
+    catalog: new InMemorySkillCatalog(),
     ready: Promise.resolve(),
-    onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
-    get: (name: string) => profiles.find((profile) => profile.name === name),
-    getDefault: () => profiles[0],
-    list: () => profiles,
+    onDidChange: change.event,
     load: async () => {},
     reload: async () => {},
-  } as unknown as ISessionAgentProfileCatalog);
+  });
 }
 
 function pluginStub(sections: {
   value: readonly EnabledPluginSystemPrompt[];
 }): IPluginService {
   return {
-    onDidChange: Event.None as IPluginService['onDidChange'],
     onDidReload: Event.None as IPluginService['onDidReload'],
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],

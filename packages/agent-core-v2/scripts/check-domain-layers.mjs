@@ -149,7 +149,6 @@ const DOMAIN_LAYER = new Map([
   ['sessionSkillCatalog', 3],
   ['sessionAgentProfileCatalog', 3],
   ['sessionToolPolicy', 3],
-  ['sessionPluginContribution', 3],
   ['permissionGate', 3],
   ['toolApproval', 3],
   ['flag', 3],

@@ -31,40 +31,15 @@
  * in the synchronous segment before the first dispatch, so concurrent binds
  * cannot both pass (an edge-level guard always leaves an interleaving
  * window); a same-name rebind keeps the persisted thinking effort unless the
- * caller explicitly overrides it.
- * A restored Agent replays its persisted binding untouched; bootstrap then
- * re-converges it only against drift-free inputs — the catalog profile's
- * tool set and denylist, and the persisted plugin-sections baseline
- * (piggybacked on the `profile.bind` / `config.update` payloads; sections
- * are read live through `plugin`'s consumption plane under the shared
- * convergence timeout) — and
- * refreshes only when one of them changed while the session was cold, so
- * quiet restores stay wire-neutral while cwd, AGENTS.md, and date drift
- * wait for the live triggers below. `refreshSystemPrompt`
- * (driven by the Session tool-policy fan-out, the `[tools]` config watcher,
- * and `sessionPluginContribution` after plugin changes converge) re-renders
- * from the pinned in-memory profile while the Agent lives; a fork pins its
- * source Agent's profile object at fork time. Only a genuinely cold binding
- * (a restore, or a fork of one) re-resolves the profile from the Session
- * catalog by name, rebinding the whole slice (prompt /
- * `disallowedTools` / active tools, but not the bind-time `subagents`,
- * which `config.update` cannot carry) atomically — with a warning and no
- * change when the name is gone, and with the session-added user-tool
- * overlay replayed onto the rebound base when the tool set is reset. A
- * refresh requested while the Agent's wire log is still replaying is
- * skipped; the bootstrap refresh catches up after restore instead. Renders
- * reuse the Agent's day-precision `now` (the current UTC date at 00:00,
- * re-anchored when the date rolls over, so the model's clock never goes
- * stale across days while steady-state renders stay byte-stable within a
- * day), and no `config.update` is dispatched when nothing changed, so
- * steady-state convergence never churns the wire.
- * `refreshSystemPrompt` never rejects: a
+ * caller explicitly overrides it. Prompt builds inject the enabled plugins'
+ * system-prompt sections (budget-capped, see `PLUGIN_SECTIONS_MAX_BYTES`);
+ * plugin changes reach the prompt when the session skill catalog re-pulls
+ * its plugin source on explicit plugin reload — the same point where plugin
+ * skills take effect. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher fires it voided (an unhandled rejection
- * would crash kap-server), while plugin changes and the Session tool-policy
- * fan-out await it across agents. Refreshes serialize per Agent through a
- * tail, so overlapping triggers cannot write prompts out of order.
- * Tool-policy entries that can never activate
+ * because the `[tools]` config watcher fires it voided (an unhandled
+ * rejection would crash kap-server) and the Session tool-policy fan-out
+ * awaits it across agents. Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
  * `mcp__` literals) surface as `warning` events instead of silently shrinking
  * the tool set; the known-name vocabulary is the live registry plus
@@ -73,8 +48,7 @@
  * flag-gated tools (which every builtin profile lists) stay "known" even when
  * unregistered.
  * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
- * / the four emitted-warning dedupe sets / the day-anchored `now`) is
- * registered into `agentState`
+ * / the three emitted-warning dedupe sets) is registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
  * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
  * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
@@ -113,14 +87,10 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IPluginService } from '#/app/plugin/plugin';
-import {
-  ISessionPluginContributionService,
-  PLUGIN_CONVERGENCE_TIMEOUT_MS,
-} from '#/session/sessionPluginContribution/sessionPluginContribution';
-import { raceValueOutcome } from '#/_base/utils/promise';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 
@@ -184,18 +154,6 @@ function describeInactiveToolPattern(
   }
 }
 
-function sameStringList(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-function sameToolSet(
-  a: readonly string[] | undefined,
-  b: readonly string[] | undefined,
-): boolean {
-  if (a === undefined || b === undefined) return a === b;
-  return sameStringList(a.toSorted(), b.toSorted());
-}
-
 export const PLUGIN_SECTIONS_MAX_BYTES = 64 * 1024;
 
 export const profileActiveToolNamesOverlayKey = defineState<readonly string[] | undefined>(
@@ -214,17 +172,9 @@ export const profileEmittedToolPatternWarningsKey = defineState<Set<string>>(
   'profile.emittedToolPatternWarnings',
   () => new Set(),
 );
-export const profileEmittedMissingProfileWarningsKey = defineState<Set<string>>(
-  'profile.emittedMissingProfileWarnings',
-  () => new Set(),
-);
 export const profileEmittedPluginBudgetWarningsKey = defineState<Set<string>>(
   'profile.emittedPluginBudgetWarnings',
   () => new Set(),
-);
-export const profileRenderedNowKey = defineState<string | undefined>(
-  'profile.renderedNow',
-  () => undefined as string | undefined,
 );
 
 export class AgentProfileService extends Disposable implements IAgentProfileService {
@@ -240,7 +190,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
-  private refreshTail: Promise<void> = Promise.resolve();
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -263,17 +212,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostIdentity private readonly hostIdentity: IHostIdentity,
     @IPluginService private readonly plugins: IPluginService,
-    @ISessionPluginContributionService
-    private readonly pluginContributions: ISessionPluginContributionService,
   ) {
     super();
     this.states.register(profileActiveToolNamesOverlayKey);
     this.states.register(profileAgentsMdWarningKey);
     this.states.register(profileEmittedThinkingEffortWarningsKey);
     this.states.register(profileEmittedToolPatternWarningsKey);
-    this.states.register(profileEmittedMissingProfileWarningsKey);
     this.states.register(profileEmittedPluginBudgetWarningsKey);
-    this.states.register(profileRenderedNowKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
@@ -288,9 +233,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
+    // Plugin system-prompt sections (and the plugin skill listing) reach the
+    // prompt on explicit plugin reload: the sink re-pulls the plugin source
+    // and only then fires this event, so the re-render reads both fresh.
     this._register(
-      this.pluginContributions.onDidChange((event) => {
-        event.waitUntil(this.refreshSystemPrompt());
+      this.skillCatalog.onDidChange((sourceId) => {
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+          void this.refreshSystemPrompt();
+        }
       }),
     );
   }
@@ -319,23 +269,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.states.get(profileEmittedToolPatternWarningsKey);
   }
 
-  private get emittedMissingProfileWarnings(): Set<string> {
-    return this.states.get(profileEmittedMissingProfileWarningsKey);
-  }
-
   private get emittedPluginBudgetWarnings(): Set<string> {
     return this.states.get(profileEmittedPluginBudgetWarningsKey);
-  }
-
-  private get renderedNow(): string {
-    const today = new Date().toISOString().slice(0, 10);
-    const anchored = this.states.get(profileRenderedNowKey);
-    if (anchored !== undefined && anchored.slice(0, 10) === today) {
-      return anchored;
-    }
-    const value = `${today}T00:00:00.000Z`;
-    this.states.set(profileRenderedNowKey, value);
-    return value;
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -363,8 +298,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
-  applyBindingSnapshot(snapshot: ProfileBindingSnapshot, profile?: ResolvedAgentProfile): void {
-    this.activeProfile = profile;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
+    this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(
       profileBind({
@@ -376,7 +311,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
         subagents: snapshot.subagents,
-        pluginSections: snapshot.pluginSections,
       }),
     );
     this.afterConfigDispatch({
@@ -440,7 +374,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
-      pluginSections: context.pluginSections,
     }));
     this.afterConfigDispatch({
       cwd: input.cwd,
@@ -510,7 +443,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
       disallowedTools: profile.disallowedTools ?? [],
-      pluginSections: context.pluginSections,
     });
     this.setActiveTools(profile.tools);
   }
@@ -524,146 +456,31 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async refreshSystemPrompt(): Promise<void> {
-    const run = this.refreshTail.then(() => this.doRefreshSystemPrompt());
-    this.refreshTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
+    const profile = this.resolveActiveProfile();
+    if (profile === undefined) return;
 
-  private async doRefreshSystemPrompt(): Promise<void> {
+    let context: SystemPromptContext;
     try {
-      if (this.wire.isRestoring()) return;
-      let profile = this.activeProfile;
-      let rebind = false;
-      if (profile === undefined) {
-        const profileName = this.profileName;
-        if (profileName === undefined) return;
-        await this.catalog.ready;
-        profile = this.catalog.get(profileName);
-        if (profile === undefined) {
-          this.publishMissingProfileWarning(profileName);
-          return;
-        }
-        rebind = true;
-      }
-      const context = await this.buildSystemPromptContext(profile, this.cwd);
-      this.activeProfile = profile;
-      if (rebind) {
-        this.rebindProfileSlice(profile, context);
-      } else {
-        const systemPrompt = profile.systemPrompt(context);
-        if (profile.name !== this.profileName || systemPrompt !== this.systemPrompt) {
-          this.update({
-            profileName: profile.name,
-            systemPrompt,
-            pluginSections: context.pluginSections,
-          });
-        }
-      }
-      if (context.pluginSections !== this.profileState.pluginSections) {
-        this.update({ pluginSections: context.pluginSections });
-      }
-      this.cacheAgentsMdWarning(context);
-      this.publishAgentsMdWarning();
+      context = await this.buildSystemPromptContext(profile, this.cwd);
     } catch (error) {
       this.eventBus.publish({
         type: 'warning',
         message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
         code: 'system-prompt-refresh-failed',
       });
+      return;
     }
-  }
-
-  async convergeRestoredPrompt(): Promise<void> {
-    try {
-      const profileName = this.profileName;
-      if (profileName === undefined) return;
-      await this.catalog.ready;
-      const profile = this.catalog.get(profileName);
-      if (profile === undefined) {
-        this.publishMissingProfileWarning(profileName);
-        return;
-      }
-      const sliceChanged =
-        !sameToolSet(profile.tools, this.wire.getModel(ActiveToolsModel) as ActiveToolsState) ||
-        !sameStringList(profile.disallowedTools ?? [], this.profileState.disallowedTools ?? []);
-      const sectionsRead = await raceValueOutcome(
-        this.resolvePluginSections(),
-        PLUGIN_CONVERGENCE_TIMEOUT_MS,
-      );
-      if (sectionsRead === 'timeout') {
-        this.eventBus.publish({
-          type: 'warning',
-          message:
-            'Restored prompt convergence timed out reading plugin sections; ' +
-            'skipping the check (a pending plugin change still reaches this agent live).',
-          code: 'system-prompt-refresh-failed',
-        });
-        return;
-      }
-      const sectionsChanged = sectionsRead.value !== (this.profileState.pluginSections ?? '');
-      if (sliceChanged || sectionsChanged) {
-        await this.refreshSystemPrompt();
-      }
-    } catch (error) {
-      this.eventBus.publish({
-        type: 'warning',
-        message: `Restored prompt convergence skipped: ${error instanceof Error ? error.message : String(error)}`,
-        code: 'system-prompt-refresh-failed',
-      });
-    }
-  }
-
-  private publishMissingProfileWarning(profileName: string): void {
-    if (this.emittedMissingProfileWarnings.has(profileName)) return;
-    this.emittedMissingProfileWarnings.add(profileName);
-    this.eventBus.publish({
-      type: 'warning',
-      message:
-        `System prompt refresh skipped: agent profile "${profileName}" no longer exists; ` +
-        'the persisted prompt and tool binding are kept.',
-      code: 'system-prompt-refresh-profile-missing',
+    this.activeProfile = profile;
+    this.update({
+      profileName: profile.name,
+      systemPrompt: profile.systemPrompt(context),
     });
-  }
-
-  private rebindProfileSlice(
-    profile: ResolvedAgentProfile,
-    context: SystemPromptContext,
-  ): void {
-    const systemPrompt = profile.systemPrompt(context);
-    const disallowedTools = profile.disallowedTools ?? [];
-    if (
-      profile.name !== this.profileName ||
-      systemPrompt !== this.systemPrompt ||
-      !sameStringList(disallowedTools, this.profileState.disallowedTools ?? [])
-    ) {
-      this.update({
-        profileName: profile.name,
-        systemPrompt,
-        disallowedTools,
-        pluginSections: context.pluginSections,
-      });
-    }
-    const persistedTools = this.wire.getModel(ActiveToolsModel) as ActiveToolsState;
-    if (!sameToolSet(persistedTools, profile.tools)) {
-      const extras = (this.activeToolNamesOverlay ?? []).filter(
-        (name) => !(persistedTools ?? []).includes(name) && !(profile.tools ?? []).includes(name),
-      );
-      this.setActiveTools(profile.tools);
-      if (profile.tools !== undefined && extras.length > 0) {
-        this.activeToolNamesOverlay = [...profile.tools, ...extras];
-      }
-    }
+    this.cacheAgentsMdWarning(context);
+    this.publishAgentsMdWarning();
   }
 
   getAgentsMdWarning(): string | undefined {
     return this.agentsMdWarning;
-  }
-
-  getPinnedProfile(): ResolvedAgentProfile | undefined {
-    return this.activeProfile;
   }
 
   data(): ProfileData {
@@ -679,7 +496,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
       subagents:
         this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
-      pluginSections: this.profileState.pluginSections,
     };
   }
 
@@ -783,7 +599,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (changed.disallowedTools !== undefined) {
       payload.disallowedTools = [...changed.disallowedTools];
     }
-    if (changed.pluginSections !== undefined) payload.pluginSections = changed.pluginSections;
     return payload;
   }
 
@@ -970,6 +785,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
+  private resolveActiveProfile(): ResolvedAgentProfile | undefined {
+    if (this.activeProfile !== undefined) return this.activeProfile;
+    const profileName = this.profileName;
+    if (profileName === undefined) return undefined;
+    return this.catalog.get(profileName);
+  }
+
   private cacheAgentsMdWarning(context: Pick<SystemPromptContext, 'agentsMdWarning'>): void {
     this.agentsMdWarning = context.agentsMdWarning;
   }
@@ -1054,7 +876,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       osKind: this.env.osKind,
       shellName: this.env.shellName,
       shellPath: this.env.shellPath,
-      now: this.renderedNow,
+      now: new Date().toISOString(),
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),

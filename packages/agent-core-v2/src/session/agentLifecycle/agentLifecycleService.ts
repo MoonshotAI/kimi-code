@@ -7,17 +7,10 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
  * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Restore itself
- * never re-renders; bootstrap then checks the drift-free inputs (the
- * catalog profile's tool slice and the persisted plugin-sections baseline)
- * after a bounded join of any in-flight plugin convergence — the timeout
- * keeps a wedged convergence from blocking creation — and refreshes only
- * when they changed while the session was cold, so quiet restores stay
- * wire-neutral. Removal awaits
- * the agent task manager's graceful exit policy before
- * draining turns and full compaction, then disposing the child scope. Fans
- * session-level permission-mode switches out to every live agent. Bound at
- * Session scope.
+ * envelope while non-empty unversioned logs are rejected. Removal awaits the
+ * agent task manager's graceful exit policy before draining turns and full
+ * compaction, then disposing the child scope. Fans session-level
+ * permission-mode switches out to every live agent. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -31,7 +24,6 @@
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { ILogService } from '#/_base/log/log';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
@@ -49,12 +41,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import {
-  ISessionPluginContributionService,
-  PLUGIN_CONVERGENCE_TIMEOUT_MS,
-} from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { raceOutcome } from '#/_base/utils/promise';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
@@ -101,7 +88,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ILogService private readonly log: ILogService,
   ) {
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
@@ -227,21 +213,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
   ): Promise<void> {
-    const contributions = handle.accessor.get(ISessionPluginContributionService);
-    const joined = await raceOutcome(
-      contributions.settled(),
-      PLUGIN_CONVERGENCE_TIMEOUT_MS,
-    );
-    if (joined === 'timeout') {
-      this.log.warn(
-        'Timed out waiting for plugin contribution convergence during agent bootstrap; continuing',
-      );
-    }
-    const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
-      await profile.bind(opts.binding);
-    } else {
-      await profile.convergeRestoredPrompt();
+      await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
     // Apply the configured default only when restore found no persisted mode.
     // A resumed Agent's journal owns its permission posture; callers that need
@@ -263,8 +236,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
 
-    const sourceProfile = source.accessor.get(IAgentProfileService);
-    const sourceData = sourceProfile.data();
+    const sourceData = source.accessor.get(IAgentProfileService).data();
     const childProfile = child.accessor.get(IAgentProfileService);
     const override = opts?.binding;
     if (override?.profile !== undefined) {
@@ -275,7 +247,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         cwd: override?.cwd ?? sourceData.cwd,
       });
     } else {
-      childProfile.applyBindingSnapshot(sourceData, sourceProfile.getPinnedProfile());
+      childProfile.applyBindingSnapshot(sourceData);
       if (override?.model !== undefined) await childProfile.setModel(override.model);
       if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
       if (override?.cwd !== undefined) childProfile.update({ cwd: override.cwd });

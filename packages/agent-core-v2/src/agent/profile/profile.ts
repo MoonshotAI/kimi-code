@@ -62,7 +62,6 @@ export interface ProfileData extends AgentConfigData {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
-  readonly pluginSections?: string;
 }
 
 export type ProfileUpdateData = Partial<{
@@ -73,7 +72,6 @@ export type ProfileUpdateData = Partial<{
   systemPrompt: string;
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
-  pluginSections: string;
 }>;
 
 export interface ProfileBindingSnapshot {
@@ -85,7 +83,6 @@ export interface ProfileBindingSnapshot {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
-  readonly pluginSections?: string;
 }
 
 export interface ProfileServiceOptions {
@@ -126,7 +123,7 @@ export interface IAgentProfileService {
 
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
-  applyBindingSnapshot(snapshot: ProfileBindingSnapshot, profile?: ResolvedAgentProfile): void;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
@@ -134,9 +131,7 @@ export interface IAgentProfileService {
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
   refreshSystemPrompt(): Promise<void>;
-  convergeRestoredPrompt(): Promise<void>;
   getAgentsMdWarning(): string | undefined;
-  getPinnedProfile(): ResolvedAgentProfile | undefined;
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;

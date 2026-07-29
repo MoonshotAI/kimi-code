@@ -20,7 +20,7 @@ import {
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
@@ -105,7 +105,6 @@ function pluginStub(
 ): IPluginService {
   return {
     _serviceBrand: undefined,
-    onDidChange: Event.None as IPluginService['onDidChange'],
     onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,

@@ -25,7 +25,7 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IPluginService, type PluginChangeKind } from '#/app/plugin/plugin';
+import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -139,32 +139,6 @@ async function makePluginDir(
 
 describe('PluginService (plugin boundary)', () => {
   const createdDirs: string[] = [];
-
-  async function expectAwaitsPluginChange(
-    svc: IPluginService,
-    expectedKind: PluginChangeKind,
-    operation: () => Promise<unknown>,
-  ): Promise<void> {
-    const observed = deferred<void>();
-    const release = deferred<void>();
-    const kinds: PluginChangeKind[] = [];
-    const subscription = svc.onDidChange((event) => {
-      kinds.push(event.kind);
-      observed.resolve(undefined);
-      event.waitUntil(release.promise);
-    });
-    let settled = false;
-    const result = operation().then(() => {
-      settled = true;
-    });
-
-    await observed.promise;
-    expect(settled).toBe(false);
-    release.resolve(undefined);
-    await result;
-    expect(kinds).toEqual([expectedKind]);
-    subscription.dispose();
-  }
 
   async function makeHome(): Promise<string> {
     const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
@@ -294,120 +268,6 @@ describe('PluginService (plugin boundary)', () => {
       await expect(svc.enabledSystemPrompts()).resolves.toEqual([
         { pluginId: 'prompt-demo', content: 'Always cite sources.' },
       ]);
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('installPlugin waits for plugin-change participants before returning', async () => {
-    const home = await makeHome();
-    await writeValidInstalledFile(home);
-    const pluginRoot = await makePluginDir('install-change', {});
-    createdDirs.push(pluginRoot);
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-
-      await expectAwaitsPluginChange(svc, 'catalog', () => svc.installPlugin({ source: pluginRoot }));
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('setPluginEnabled waits for plugin-change participants before returning', async () => {
-    const home = await makeHome();
-    const pluginRoot = await makePluginDir('enable-change', {});
-    createdDirs.push(pluginRoot);
-    await writeInstalledFile(home, JSON.stringify(installedFile('enable-change', pluginRoot)));
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      await svc.listPlugins();
-
-      await expectAwaitsPluginChange(svc, 'catalog', () =>
-        svc.setPluginEnabled({ id: 'enable-change', enabled: false }),
-      );
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('announces MCP server toggles with the mcp change kind', async () => {
-    const home = await makeHome();
-    const pluginRoot = await makePluginDir('mcp-change', {
-      mcpServers: { docs: { url: 'https://example.com/mcp' } },
-    });
-    createdDirs.push(pluginRoot);
-    await writeInstalledFile(home, JSON.stringify(installedFile('mcp-change', pluginRoot)));
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      await svc.listPlugins();
-
-      await expectAwaitsPluginChange(svc, 'mcp', () =>
-        svc.setPluginMcpServerEnabled({ id: 'mcp-change', server: 'docs', enabled: false }),
-      );
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('lets plugin-change participants read committed state during concurrent mutations', async () => {
-    const home = await makeHome();
-    const pluginRoot = await makePluginDir('concurrent-change', {
-      systemPrompt: 'Current instructions.',
-    });
-    createdDirs.push(pluginRoot);
-    await writeInstalledFile(home, JSON.stringify(installedFile('concurrent-change', pluginRoot)));
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      await svc.listPlugins();
-      const observed: Array<readonly string[]> = [];
-      const subscription = svc.onDidChange((event) => {
-        event.waitUntil(
-          svc.enabledSystemPrompts().then((sections) => {
-            observed.push(sections.map((section) => section.content));
-          }),
-        );
-      });
-
-      await Promise.all([
-        svc.setPluginEnabled({ id: 'concurrent-change', enabled: false }),
-        svc.setPluginEnabled({ id: 'concurrent-change', enabled: true }),
-      ]);
-
-      expect(observed).toEqual([['Current instructions.'], ['Current instructions.']]);
-      subscription.dispose();
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('removePlugin waits for plugin-change participants before returning', async () => {
-    const home = await makeHome();
-    const pluginRoot = await makePluginDir('remove-change', {});
-    createdDirs.push(pluginRoot);
-    await writeInstalledFile(home, JSON.stringify(installedFile('remove-change', pluginRoot)));
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      await svc.listPlugins();
-
-      await expectAwaitsPluginChange(svc, 'catalog', () => svc.removePlugin({ id: 'remove-change' }));
-    } finally {
-      host.dispose();
-    }
-  });
-
-  it('reloadPlugins waits for plugin-change participants before returning', async () => {
-    const home = await makeHome();
-    await writeValidInstalledFile(home);
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-
-      await expectAwaitsPluginChange(svc, 'catalog', () => svc.reloadPlugins());
     } finally {
       host.dispose();
     }

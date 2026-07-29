@@ -28,7 +28,6 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISessionPluginContributionService } from '#/session/sessionPluginContribution/sessionPluginContribution';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
@@ -216,18 +215,15 @@ function buildHost(key: string): {
   host.stub(IHostIdentity, stubUnused());
   host.stub(IPluginService, {
     _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
     onDidReload: () => ({ dispose: () => {} }),
   });
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
   host.stub(ISessionAgentProfileCatalog, stubUnused());
-  host.stub(ISessionSkillCatalog, stubUnused());
-  host.stub(ISessionPluginContributionService, {
+  host.stub(ISessionSkillCatalog, {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
-    settled: () => Promise.resolve(),
   });
   host.stub(ISessionToolPolicy, {
     _serviceBrand: undefined,
