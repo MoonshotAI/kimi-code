@@ -106,6 +106,10 @@ class FakeMcpManager {
     };
   }
 
+  onChannelMessage(): () => void {
+    return () => {};
+  }
+
   setResolved(
     name: string,
     client: MCPClient,
