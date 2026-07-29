@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Show an update notice when a turn that used an outdated plugin ends and the Official Marketplace has a newer version; each new version is announced once. Run /plugins to install the latest version.
+Show an update notice when an official plugin used in the session has a newer version available. Run /plugins to install it.

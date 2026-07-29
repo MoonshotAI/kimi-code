@@ -2,4 +2,4 @@
 '@moonshot-ai/kimi-code': minor
 ---
 
-Customizable footer status line: compose built-in slots via `[status_line] items` in `tui.toml`, or render the first stdout line of a user script via `[status_line] command`.
+Add a customizable footer status line: compose built-in slots or render a script's output via `[status_line]` in `tui.toml`.
