@@ -77,6 +77,14 @@ export type {
   ProvisionManagedKimiCodeConfigOptions,
 } from './managed-kimi-code';
 
+export { fetchManagedUserInfo, kimiCodeUserInfoUrl, parseManagedUserInfoPayload } from './managed-userinfo';
+export type {
+  FetchManagedUserInfoError,
+  FetchManagedUserInfoResult,
+  ManagedUserInfo,
+  ManagedUserInfoPhone,
+} from './managed-userinfo';
+
 export {
   fetchManagedUsage,
   formatDuration,
@@ -153,6 +161,7 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,

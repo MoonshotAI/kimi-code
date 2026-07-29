@@ -8,7 +8,9 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  managedUserInfoResultSchema,
   managedUsageResultSchema,
+  type ManagedUserInfoResult,
   type ManagedUsageResult,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,6 +61,7 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
       status: async () => ({ loggedIn: false }),
       refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
       getManagedUsage,
+      getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
     };
@@ -148,5 +151,130 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
       status: 401,
     });
     expect(getManagedUsage).toHaveBeenCalledWith('managed:kimi-code');
+  });
+});
+
+describe('server-v2 GET /api/v1/oauth/userinfo', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-oauth-userinfo-'));
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function oauthStub(getManagedUserInfo: IOAuthServiceType['getManagedUserInfo']): IOAuthServiceType {
+    return {
+      _serviceBrand: undefined,
+      startLogin: async () => {
+        throw new Error('unused');
+      },
+      getFlow: () => undefined,
+      cancelLogin: async () => {
+        throw new Error('unused');
+      },
+      logout: async () => {
+        throw new Error('unused');
+      },
+      status: async () => ({ loggedIn: false }),
+      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
+      getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
+      getManagedUserInfo,
+      resolveTokenProvider: () => undefined,
+      getCachedAccessToken: async () => undefined,
+    };
+  }
+
+  async function boot(seeds: ScopeSeed): Promise<void> {
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  }
+
+  async function getUserInfo(query = ''): Promise<ManagedUserInfoResult> {
+    const res = await fetch(`${base}/api/v1/oauth/userinfo${query}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Envelope<ManagedUserInfoResult>;
+    expect(body.code).toBe(0);
+    return managedUserInfoResultSchema.parse(body.data);
+  }
+
+  it('maps the ok profile payload to the snake_case wire shape', async () => {
+    const getManagedUserInfo = vi.fn(async () => ({
+      kind: 'ok' as const,
+      userInfo: {
+        userId: 'u_123',
+        nickname: 'moonwalker',
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        userLevel: 30,
+        userLevelName: 'Vivace',
+        domain: 1,
+        domainName: 'DOMAIN_EXAMPLE',
+        globalId: 'u_123',
+        avatar: 'https://example.com/avatar.png',
+        username: 'moonwalker2333',
+        email: 'user@example.com',
+        phone: { countryCode: '86', number: '176****0000' },
+        createdTime: '2026-06-11T13:26:47.561184Z',
+        lastLoginTime: '2026-07-16T03:12:03.033412Z',
+      },
+    }));
+    await boot([[IOAuthService, oauthStub(getManagedUserInfo)]] as unknown as ScopeSeed);
+
+    expect(await getUserInfo()).toEqual({
+      kind: 'ok',
+      user_info: {
+        user_id: 'u_123',
+        nickname: 'moonwalker',
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        user_level: 30,
+        user_level_name: 'Vivace',
+        domain: 1,
+        domain_name: 'DOMAIN_EXAMPLE',
+        global_id: 'u_123',
+        avatar: 'https://example.com/avatar.png',
+        username: 'moonwalker2333',
+        email: 'user@example.com',
+        phone: { country_code: '86', number: '176****0000' },
+        created_time: '2026-06-11T13:26:47.561184Z',
+        last_login_time: '2026-07-16T03:12:03.033412Z',
+      },
+    });
+  });
+
+  it('passes through the error payload and forwards the provider query', async () => {
+    const getManagedUserInfo = vi.fn(async (_provider?: string) => ({
+      kind: 'error' as const,
+      message: 'Authorization failed.',
+      status: 401,
+    }));
+    await boot([[IOAuthService, oauthStub(getManagedUserInfo)]] as unknown as ScopeSeed);
+
+    expect(await getUserInfo('?provider=managed%3Akimi-code')).toEqual({
+      kind: 'error',
+      message: 'Authorization failed.',
+      status: 401,
+    });
+    expect(getManagedUserInfo).toHaveBeenCalledWith('managed:kimi-code');
   });
 });
