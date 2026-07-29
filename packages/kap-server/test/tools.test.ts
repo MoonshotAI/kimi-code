@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
@@ -134,7 +134,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so IToolRegistry / IMcpService resolve.
   async function ensureMainAgent(sessionId: string) {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     let agent = session.accessor.get(IAgentLifecycleService).get('main');
     agent ??= await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
@@ -214,7 +214,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       // Set the session-scope denylist directly: this harness's model catalog is
       // a throwing stub, so the REST prompt path (which requires a bound profile)
       // is unavailable here. The composed gate read by the route is the same.
-      const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+      const session = getLiveSessionById(server!.core.accessor, id);
       if (session === undefined) throw new Error(`session ${id} not found`);
       await session.accessor.get(ISessionToolPolicy).setDisabledTools(['Bash']);
 

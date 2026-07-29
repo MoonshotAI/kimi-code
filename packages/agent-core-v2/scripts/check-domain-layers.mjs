@@ -85,6 +85,12 @@ const DOMAIN_LAYER = new Map([
   // (`sessionId`/`workspaceId`/`sessionDir`/`metaScope`/`cwd`); a pure seed
   // with no IO, so it sits in L1.
   ['sessionContext', 1],
+  // `sessionLifecycleHooks` is the per-session lifecycle hook-slots seed
+  // (created by the Workspace-scope `workspaceHandler`, registered into by
+  // Session-scope adapters such as `externalHooks`) plus the shared
+  // create-source/close-reason vocabulary; a pure contract with no IO, so it
+  // sits in L1 beside `sessionContext`.
+  ['sessionLifecycleHooks', 1],
   // `scopeContext` is the Agent-scope seeded immutable facts value
   // (`agentId` plus a persistence scope helper); a pure seed with no IO, so it
   // sits in L1 beside `sessionContext`.
@@ -95,6 +101,10 @@ const DOMAIN_LAYER = new Map([
   // `IHostFileSystem`; besides those host bridges it depends only on `_base`
   // and the `errors` facade, so it sits in L1 beside the other host bridges.
   ['git', 1],
+  // `workspaceContext` covers two same-layer seeds: the Session-scope
+  // read-only workspace view (`session/workspaceContext`) and the
+  // Workspace-scope seeded handler facts (`workspace/workspaceContext`) —
+  // one domain name per scope tier, same pattern as `state`.
   ['workspaceContext', 1],
   ['protocol', 1],
   ['hooks', 1],
@@ -221,12 +231,21 @@ const DOMAIN_LAYER = new Map([
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
+  // `workspaceHandler` is the Workspace-scope anchor of one materialized
+  // workspace: it owns the session lifecycle (create/resume/fork/close) of
+  // that workspace's sessions as its child scopes — the re-scoped heir of
+  // the deleted App-scope `sessionLifecycle` domain — so it sits in L6.
+  ['workspaceHandler', 6],
+  // `workspaceLifecycle` is the App-scope owner of the live handler registry
+  // (create-or-get + in-flight join, handlers never closed). It coordinates
+  // the `workspace` catalog, `sessionIndex`, and the `workspaceHandler`
+  // domain, so it sits in L6 beside them.
+  ['workspaceLifecycle', 6],
   // `subagent` drives turns on other agents (`run`) and hosts the
   // requester-side run hook/event surface (`SubagentStart`/`SubagentStop`).
   // Its highest real dependency is `agentLifecycle` (target lookup), so it
   // sits in L6 beside it.
   ['subagent', 6],
-  ['sessionLifecycle', 6],
   ['externalHooks', 6],
   ['externalHooksRunner', 6],
   ['sessionExport', 6],
@@ -285,7 +304,7 @@ const V1_PACKAGE = '@moonshot-ai/agent-core';
  * Scope directories introduced by the `src/{scope}/{domain}` layout. A path's
  * first segment is a scope tier, not a domain; the domain is the next segment.
  */
-const SCOPE_DIRS = new Set(['app', 'session', 'agent', 'persistence', 'os', 'kosong']);
+const SCOPE_DIRS = new Set(['app', 'workspace', 'session', 'agent', 'persistence', 'os', 'kosong']);
 
 /**
  * Two-level scope directories: `persistence` and `os` use `{scope}/{tier}`
@@ -293,6 +312,30 @@ const SCOPE_DIRS = new Set(['app', 'session', 'agent', 'persistence', 'os', 'kos
  * uses `{scope}/{layer}` (e.g. `kosong/contract`) the same way.
  */
 const TWO_LEVEL_SCOPES = new Set(['persistence', 'os', 'kosong']);
+
+/**
+ * Scope-direction hard constraint (red line): Session- and Agent-tier code
+ * must never import Workspace-tier code (`src/workspace/**`) or the App-tier
+ * workspace lifecycle domain (`src/app/workspaceLifecycle/**`). Workspace
+ * capabilities reach sessions only through session-domain contracts + scope
+ * seeds. The numeric layers cannot express this (the workspace domains sit
+ * at L6 beside their consumers), so it is checked directly.
+ */
+const SESSION_AGENT_TIERS = new Set(['session', 'agent']);
+const WORKSPACE_LIFECYCLE_PREFIX = 'app/workspaceLifecycle/';
+
+/**
+ * The scope tier (`app` / `workspace` / `session` / `agent` / …) of an
+ * absolute path under `src/`, or `undefined` for files outside the tier
+ * layout (top-level facades, kosong/persistence/os internals).
+ * @param {string} absPath
+ */
+function scopeTierOf(absPath) {
+  const rel = relative(SRC_ROOT, absPath);
+  if (rel.startsWith('..') || rel === '') return undefined;
+  const seg = rel.split(/[\\/]/)[0];
+  return SCOPE_DIRS.has(seg) ? seg : undefined;
+}
 
 /**
  * Kosong-internal layer order: contract ← protocol ← provider/model.
@@ -630,6 +673,22 @@ export function checkSource(source, absFile) {
         });
       }
       continue;
+    }
+
+    // Rule 2b: scope direction — Session/Agent tiers never import the
+    // Workspace tier (`src/workspace/**` or `src/app/workspaceLifecycle/**`).
+    const sourceTier = scopeTierOf(absFile);
+    if (SESSION_AGENT_TIERS.has(sourceTier)) {
+      const targetTier = scopeTierOf(targetAbs);
+      const targetRel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
+      if (targetTier === 'workspace' || targetRel.startsWith(WORKSPACE_LIFECYCLE_PREFIX)) {
+        violations.push({
+          file: absFile,
+          line,
+          message: `scope violation: '${sourceTier}' tier must not import Workspace-tier code ('${targetRel}' via '${specifier}') — workspace capabilities reach sessions only through session-domain contracts + scope seeds`,
+        });
+        continue;
+      }
     }
 
     // Rule 3b: kosong-internal layering. Runs even for same-domain imports

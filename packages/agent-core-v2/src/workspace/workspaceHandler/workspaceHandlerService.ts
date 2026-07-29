@@ -1,26 +1,31 @@
 /**
- * `sessionLifecycle` domain (L6) — `ISessionLifecycleService` implementation.
+ * `workspaceHandler` domain (L6) — `IWorkspaceHandlerService` implementation.
  *
- * Owns the process-wide registry of open Session child scopes, creating them
- * through the DI scope tree and seeding each with its identity and storage
- * addressing, running lifecycle hook slots, and tearing them down on
- * close/archive — archiving flags the session's `sessionMetadata`, removes
- * its `agentLifecycle` agents, restoring clears the archived flag, and
- * broadcasts through `event`; session start and resume failures are reported
- * through `telemetry`. Each Session scope receives a telemetry view bound to
- * its session id, while failures before a scope is available use an ephemeral
- * context view.
+ * Owns the registry of THIS handler's open Session child scopes, creating
+ * them through the DI scope tree (children of the handler's Workspace
+ * scope) and seeding each with its identity, storage addressing derived
+ * from the handler's `workspaceContext.persistenceScope`, and a per-session
+ * `sessionLifecycleHooks` slots instance it runs around create/close,
+ * tearing sessions down on close/archive — archiving flags the session's
+ * `sessionMetadata`, removes its `agentLifecycle` agents, restoring clears
+ * the archived flag, and broadcasts through `event`; session start and
+ * resume failures are reported through `telemetry`. Each Session scope
+ * receives a telemetry view bound to its session id, while failures before
+ * a scope is available use an ephemeral context view. Closing a session
+ * never touches the handler itself.
  * Materializes the session's initial metadata on
- * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
- * sessions are discovered through the `sessionIndex` read model, and workspace
- * roots are remembered through `workspace`. On create / fork the
+ * creation by resolving `sessionMetadata`. Bound at Workspace scope.
+ * Persisted sessions are discovered through the `sessionIndex` read model.
+ * On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
  * (TUI, export) can discover sessions created by the v2 engine; the entry is
- * indexed under the registry-resolved workspace id — the same id seeding the
+ * indexed under the handler's workspace id — the same id seeding the
  * session's storage scope — so an alias spelling of the workDir cannot split
  * the session into a bucket v1 readers never look in. Fork flushes
  * live Agent wire journals, normalizes a missing protocol envelope, and
- * appends the fork boundary before restoring the target Agent. On
+ * appends the fork boundary before restoring the target Agent; fork is
+ * confined to this handler (source and target share the workspace bucket).
+ * On
  * materialize, the session's metadata, tool policy, and agent-profile catalog
  * are awaited before the handle is published — agent-file discovery is local-
  * fs and cheap, and a resumed session's first turn must see file-defined
@@ -63,7 +68,6 @@ import {
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { IWorkspaceService } from '#/app/workspace/workspace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { createHooks } from '#/hooks';
@@ -76,6 +80,11 @@ import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import {
+  ISessionLifecycleHooks,
+  sessionLifecycleHooksSeed,
+  type SessionLifecycleHookSlots,
+} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -86,7 +95,9 @@ import {
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
+import { agentScopeOf, sessionDirOf, sessionScopeOf } from './addressing';
 import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,
@@ -96,17 +107,15 @@ import {
   type SessionClosedEvent,
   type SessionCreatedEvent,
   type SessionForkedEvent,
-  type SessionLifecycleHooks,
   type SessionWillCloseEvent,
-  ISessionLifecycleService,
-} from './sessionLifecycle';
+  IWorkspaceHandlerService,
+} from './workspaceHandler';
 
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
-  readonly workspaceId?: string;
 };
 
-export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
+export class WorkspaceHandlerService extends Disposable implements IWorkspaceHandlerService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
@@ -117,14 +126,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly onDidArchiveSession: Event<SessionArchivedEvent> = this._onDidArchiveSession.event;
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
-  readonly hooks = createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-    'onDidCreateSession',
-    'onWillCloseSession',
-  ]);
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IWorkspaceContext private readonly workspaceContext: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
@@ -133,13 +139,20 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @IProjectLocalConfigService
     private readonly projectLocalConfig: IProjectLocalConfigService,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
+  }
+
+  private get workspaceId(): string {
+    return this.workspaceContext.workspaceId;
+  }
+
+  private get handlerScope(): string {
+    return this.workspaceContext.persistenceScope;
   }
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
@@ -157,15 +170,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         const planAgent = main ?? (await ensureMainAgent(handle));
         await planAgent.accessor.get(IAgentPlanService).enter();
       }
-      // Index the session under the workspace id the registry actually resolved
-      // (the same one seeding the session's storage scope), not a recomputed
+      // Index the session under the handler's workspace id (the same one
+      // seeding the session's storage scope), not a recomputed
       // `encodeWorkDirKey` — with root folding the two can diverge.
-      await this.appendSessionIndexEntry(
-        sessionId,
-        opts.workDir,
-        handle.accessor.get(ISessionContext).workspaceId,
-      );
+      await this.appendSessionIndexEntry(sessionId, opts.workDir);
     } catch (error) {
+      // Roll back ONLY the session directory — the handler stays live.
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
@@ -178,10 +188,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
-    const workspace = await this.workspaces.createOrTouch(opts.workDir);
-    const workspaceId = opts.workspaceId ?? workspace.id;
-    const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
-    const sessionDir = this.bootstrap.sessionDir(workspaceId, opts.sessionId);
+    const workspaceId = this.workspaceId;
+    const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
+    const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
     const localWorkspaceDirs = await this.projectLocalConfig.readAdditionalDirs(opts.workDir);
     const callerAdditionalDirs = await this.projectLocalConfig.resolveAdditionalDirs(
@@ -200,6 +209,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
+    const hooks = createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
+      'onDidCreateSession',
+      'onWillCloseSession',
+    ]);
     await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
@@ -208,6 +221,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       {
         extra: [
           ...sessionContextSeed(ctx),
+          ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
         ],
       },
@@ -227,18 +241,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   /**
-   * Append one entry to the v1-compatible `session_index.jsonl`. `workspaceId`
-   * must be the SAME id the session was materialized with (registry-resolved,
-   * possibly folded from an alias spelling) — recomputing
+   * Append one entry to the v1-compatible `session_index.jsonl`. The entry's
+   * `sessionDir` derives from THIS handler's persistence scope, so the bucket
+   * is structurally the same workspace id the session was materialized with
+   * (possibly folded from an alias spelling) — recomputing
    * `encodeWorkDirKey(workDir)` here could mint a different bucket and orphan
    * the session for v1 readers.
    */
-  private async appendSessionIndexEntry(
-    sessionId: string,
-    workDir: string,
-    workspaceId: string,
-  ): Promise<void> {
-    const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
+  private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
+    const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId);
     this.appendLogStore.append('', 'session_index.jsonl', {
       sessionId,
       sessionDir,
@@ -248,7 +259,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
-    await this.hooks.onDidCreateSession.run(event);
+    await event.handle.accessor
+      .get(ISessionLifecycleHooks)
+      .onDidCreateSession.run({ source: event.source });
     this._onDidCreateSession.fire(event);
     event.handle.accessor
       .get(ITelemetryService)
@@ -287,16 +300,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (live !== undefined) return live;
 
     const summary = await this.index.get(sessionId);
-    if (summary === undefined) return undefined;
-    const workspace =
-      summary.cwd === undefined ? await this.workspaces.get(summary.workspaceId) : undefined;
-    const workDir = summary.cwd ?? workspace?.root;
-    if (workDir === undefined) return undefined;
+    // A handler resumes only its own workspace's sessions.
+    if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
+    const workDir = summary.cwd ?? this.workspaceContext.cwd;
 
     const handle = await this.materializeSession({
       sessionId,
       workDir,
-      workspaceId: summary.workspaceId,
       additionalDirs: opts?.additionalDirs,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
@@ -349,7 +359,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
-    await this.hooks.onWillCloseSession.run(event);
+    await event.handle.accessor
+      .get(ISessionLifecycleHooks)
+      .onWillCloseSession.run({ reason: event.reason });
   }
 
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
@@ -364,13 +376,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     const sourceHandle = this.sessions.get(sourceId);
     const indexSummary = await this.index.get(sourceId);
-    if (sourceHandle === undefined && indexSummary === undefined) {
+    if (
+      (sourceHandle === undefined && indexSummary === undefined) ||
+      (indexSummary !== undefined && indexSummary.workspaceId !== this.workspaceId)
+    ) {
+      // Fork never crosses handlers: the source must live in this workspace.
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
-    const workspaceId =
-      sourceHandle !== undefined
-        ? sourceHandle.accessor.get(ISessionContext).workspaceId
-        : indexSummary!.workspaceId;
 
     // Fork is unconditional — it never rejects on the source being busy.
     // Copying a live journal yields a torn prefix (a turn cut mid-flight),
@@ -383,15 +395,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
-      const workspace = await this.workspaces.get(workspaceId);
-      if (workspace === undefined) {
-        throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`);
-      }
-
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
-          : await this.readMetaFromDisk(workspaceId, sourceId);
+          : await this.readMetaFromDisk(sourceId);
 
       targetId = opts.newSessionId ?? createSessionId();
       if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
@@ -401,15 +408,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      targetSessionDir = this.bootstrap.sessionDir(workspaceId, targetId);
+      targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);
       await this.copySessionFiles(
-        this.bootstrap.sessionDir(workspaceId, sourceId),
+        sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sourceId),
         targetSessionDir,
       );
 
       target = await this.materializeSession({
         sessionId: targetId,
-        workDir: workspace.root,
+        workDir: this.workspaceContext.cwd,
       });
       const targetCtx = target.accessor.get(ISessionContext);
       const targetMeta = target.accessor.get(ISessionMetadata);
@@ -419,10 +426,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       for (const agentId of agentIds) {
         await this.copyAgentWire({
           sourceHandle,
-          sourceWorkspaceId: workspaceId,
           sourceSessionId: sourceId,
           agentId,
-          targetWorkspaceId: targetCtx.workspaceId,
           targetSessionId: targetCtx.sessionId,
         });
       }
@@ -437,7 +442,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
-      await this.duplicateCronTasks(workspaceId, sourceId, targetId);
+      await this.duplicateCronTasks(sourceId, targetId);
 
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
@@ -448,7 +453,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      await this.appendSessionIndexEntry(targetId, workspace.root, targetCtx.workspaceId);
+      await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,
@@ -500,10 +505,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async copyAgentWire(args: {
     readonly sourceHandle: ISessionScopeHandle | undefined;
-    readonly sourceWorkspaceId: string;
     readonly sourceSessionId: string;
     readonly agentId: string;
-    readonly targetWorkspaceId: string;
     readonly targetSessionId: string;
   }): Promise<void> {
     if (args.sourceHandle !== undefined) {
@@ -517,11 +520,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     const records = await collect(
       this.appendLogStore.read<WireRecord>(
-        this.bootstrap.agentScope(
-          args.sourceWorkspaceId,
-          args.sourceSessionId,
-          args.agentId,
-        ),
+        agentScopeOf(sessionScopeOf(this.handlerScope, args.sourceSessionId), args.agentId),
         AGENT_WIRE_RECORD_KEY,
       ),
     );
@@ -533,11 +532,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     records.push(forkedRecord());
 
     await this.appendLogStore.rewrite(
-      this.bootstrap.agentScope(
-        args.targetWorkspaceId,
-        args.targetSessionId,
-        args.agentId,
-      ),
+      agentScopeOf(sessionScopeOf(this.handlerScope, args.targetSessionId), args.agentId),
       AGENT_WIRE_RECORD_KEY,
       records,
     );
@@ -586,12 +581,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  private async duplicateCronTasks(
-    workspaceId: string,
-    sourceId: string,
-    targetId: string,
-  ): Promise<void> {
-    const tasks = await this.cronStore.list({ workspaceId });
+  private async duplicateCronTasks(sourceId: string, targetId: string): Promise<void> {
+    const tasks = await this.cronStore.list({ workspaceId: this.workspaceId });
     for (const task of tasks) {
       if (task.tags?.[CRON_SESSION_TAG] !== sourceId) continue;
       const clone: CronTask = {
@@ -599,27 +590,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         id: ulid(),
         tags: { ...task.tags, [CRON_SESSION_TAG]: targetId },
       };
-      await this.cronStore.save(workspaceId, clone);
+      await this.cronStore.save(this.workspaceId, clone);
     }
   }
 
-  private async readMetaFromDisk(
-    workspaceId: string,
-    sessionId: string,
-  ): Promise<SessionMeta | undefined> {
-    return this.docs.get<SessionMeta>(
-      this.bootstrap.sessionScope(workspaceId, sessionId),
-      'state.json',
-    );
+  private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {
+    return this.docs.get<SessionMeta>(sessionScopeOf(this.handlerScope, sessionId), 'state.json');
   }
 }
 
 registerScopedService(
-  LifecycleScope.App,
-  ISessionLifecycleService,
-  SessionLifecycleService,
+  LifecycleScope.Workspace,
+  IWorkspaceHandlerService,
+  WorkspaceHandlerService,
   ScopeActivation.OnScopeCreated,
-  'sessionLifecycle',
+  'workspaceHandler',
 );
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {

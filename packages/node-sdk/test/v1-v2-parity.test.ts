@@ -17,8 +17,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ISessionApprovalService,
-  ISessionLifecycleService,
   ISessionQuestionService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
 import {
@@ -3998,7 +3998,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_approval' });
       const sessionId = 'session_parity_events_approval';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Approvals = v2Session!.accessor.get(ISessionApprovalService);
       const requestInput = {
@@ -4077,7 +4077,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_question' });
       const sessionId = 'session_parity_events_question';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Questions = v2Session!.accessor.get(ISessionQuestionService);
       const requestInput = {

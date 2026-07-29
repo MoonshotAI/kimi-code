@@ -90,7 +90,7 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `questions` | `answer` | IQuestionService.answer | POST |
 | `interactions` | `listPending` | IInteractionService.listPending | GET |
 | `interactions` | `respond` | IInteractionService.respond | POST |
-| `workspace` | `setWorkDir` / `addAdditionalDir` / `removeAdditionalDir` / `resolve` | IWorkspaceContext.* | GET/POST |
+| `workspace` | `workDir` / `additionalDirs` / `resolve` | IWorkspaceContext.* | GET |
 
 ### Agent (`/api/v2/session/:sid/agent/:aid/:resource:action`)
 

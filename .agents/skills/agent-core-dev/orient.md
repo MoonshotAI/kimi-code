@@ -12,21 +12,23 @@ When writing business code you declare three things; the container handles the r
 
 Classes talk only to interfaces and never care how an implementation is constructed.
 
-## The three `LifecycleScope` tiers
+## The four `LifecycleScope` tiers
 
 Lifetimes form a tree, from longest to shortest:
 
 ```text
-App (0)         process-wide, single global instance
- └── Session (1)    one session
-      └── Agent (2)    one agent
+App (0)             process-wide, single global instance
+ └── Workspace (1)     one workspace handler (a materialized workspace root)
+      └── Session (2)    one session
+           └── Agent (3)    one agent
 ```
 
 ```ts
 export enum LifecycleScope {
   App = 0,
-  Session = 1,
-  Agent = 2,
+  Workspace = 1,
+  Session = 2,
+  Agent = 3,
 }
 ```
 
@@ -51,7 +53,7 @@ Deterministic: **child scopes die first; within one scope, instances dispose in 
 
 The `Ln` in a file-header identity line is the domain's **dependency layer** (L0–L7), **not** its `LifecycleScope`. They are easy to confuse because both are small integers, but they answer different questions:
 
-- `LifecycleScope` (App=0 / Session=1 / Agent=2) — **lifetime & visibility** (this stage).
+- `LifecycleScope` (App=0 / Workspace=1 / Session=2 / Agent=3) — **lifetime & visibility** (this stage).
 - Dependency layer `Ln` (L0–L7) — **who may import whom**: a domain at layer `L` may import only domains at layer `<= L`. Enforced by `lint:domain` from the authoritative `DOMAIN_LAYER` map in `scripts/check-domain-layers.mjs`.
 
 So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but lives at **L6**. When you write the header, read the number from the layer map, not from the scope.

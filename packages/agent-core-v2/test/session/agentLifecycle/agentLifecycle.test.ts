@@ -35,7 +35,6 @@ import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/agent/toolDedupe/toolDedupeService';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import '#/app/event/eventBusService';
@@ -176,7 +175,11 @@ describe('AgentLifecycleService', () => {
       workspaceId: 'ws_test',
       sessionDir: '/tmp/kimi-agentLifecycle-test',
       metaScope: 'test',
-    });
+      scope: (subKey?: string) =>
+        subKey === undefined || subKey === ''
+          ? 'sessions/ws_test/sess_test'
+          : `sessions/ws_test/sess_test/${subKey}`,
+    } as unknown as ISessionContext);
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -191,10 +194,6 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
-      agentScope: (_ws: string, _session: string, agentId: string) =>
-        `test/agents/${agentId}`,
-      agentHomedir: (workspaceId: string, sessionId: string, agentId: string) =>
-        `/tmp/kimi-agentLifecycle-home/sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
     } as unknown as IBootstrapService);
     ix.stub(ISessionWorkspaceContext, {
       _serviceBrand: undefined,

@@ -24,6 +24,7 @@
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { join } from 'pathe';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
@@ -152,16 +153,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
     const mcpReady = this.sessionMcp.ensureMcpReady();
-    const agentHomedir = this.bootstrap.agentHomedir(
-      this.ctx.workspaceId,
-      this.ctx.sessionId,
-      agentId,
-    );
-    const agentScope = this.bootstrap.agentScope(
-      this.ctx.workspaceId,
-      this.ctx.sessionId,
-      agentId,
-    );
+    // Agent persistence addressing derives from the session's scope string
+    // (itself handler-bound): `{sessionScope}/agents/{agentId}` — identical
+    // to the layout the pre-Workspace engine wrote.
+    const agentScope = this.ctx.scope(`agents/${agentId}`);
+    const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Agent,

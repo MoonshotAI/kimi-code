@@ -34,7 +34,7 @@ describe('BootstrapService (scoped)', () => {
     const svc = host.app.accessor.get(IBootstrapService);
     expect(svc.homeDir).toBe('/tmp/kimi-home');
     expect(svc.configPath).toBe('/tmp/kimi-home/config.toml');
-    expect(svc.sessionsDir).toBe('/tmp/kimi-home/sessions');
+    expect(svc.scope('sessions')).toBe('sessions');
     host.dispose();
   });
 

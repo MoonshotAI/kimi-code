@@ -20,7 +20,8 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
   ISkillCatalogRuntimeOptions,
   ITelemetryService,
   type DomainEvent,
@@ -179,6 +180,17 @@ function makeFakeHarness() {
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
+  const handlerServices = new Map<unknown, unknown>([
+    [
+      IWorkspaceHandlerService,
+      {
+        create: vi.fn(async () => session),
+        resume: vi.fn(async () => session),
+      },
+    ],
+  ]);
+  const workspace = fakeScope('wd_v2', handlerServices);
+
   const appServices = new Map<unknown, unknown>([
     [
       IConfigService,
@@ -193,13 +205,25 @@ function makeFakeHarness() {
       },
     ],
     [
-      ISessionLifecycleService,
+      IWorkspaceLifecycleService,
       {
-        create: vi.fn(async () => session),
-        resume: vi.fn(async () => session),
+        handlerFor: vi.fn(async () => workspace),
       },
     ],
-    [ISessionIndex, { list: vi.fn(async () => ({ items: [] })) }],
+    [
+      ISessionIndex,
+      {
+        list: vi.fn(async () => ({ items: [] })),
+        get: vi.fn(async (id: string) => ({
+          id,
+          workspaceId: 'wd_v2',
+          cwd: process.cwd(),
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+        })),
+      },
+    ],
     [
       IBootstrapService,
       {
@@ -232,7 +256,7 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, profileState };
+  return { app, agent, session, agentServices, appServices, handlerServices, profileState };
 }
 
 describe('runV2Print', () => {
@@ -306,7 +330,7 @@ describe('runV2Print', () => {
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -321,7 +345,7 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: ['/agents/reviewer.md'] });
 
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
+    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
       create: ReturnType<typeof vi.fn>;
     };
     expect(lifecycle.create).toHaveBeenCalledWith({
@@ -342,7 +366,7 @@ describe('runV2Print', () => {
     );
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -356,7 +380,7 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: [agentFile] });
 
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
+    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
       create: ReturnType<typeof vi.fn>;
     };
     expect(lifecycle.create).toHaveBeenCalledWith({
@@ -371,8 +395,8 @@ describe('runV2Print', () => {
   it('does not materialize a main agent after fresh profile binding fails', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, appServices } = makeFakeHarness();
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
+    const { app, handlerServices } = makeFakeHarness();
+    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
       create: ReturnType<typeof vi.fn>;
     };
     lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));

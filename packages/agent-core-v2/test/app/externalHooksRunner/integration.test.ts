@@ -46,10 +46,10 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import {
-  ISessionLifecycleService,
-  type SessionLifecycleHooks,
-} from '#/app/sessionLifecycle/sessionLifecycle';
-import { createHooks } from '#/hooks';
+  ISessionLifecycleHooks,
+  type SessionLifecycleHookSlots,
+} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+import { createHooks, type Hooks } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   type AgentTaskHooks,
@@ -182,33 +182,11 @@ function stubSessionContext(): ISessionContext {
   };
 }
 
-function stubSessionLifecycle(): ISessionLifecycleService {
-  return {
-    _serviceBrand: undefined,
-    hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-      'onDidCreateSession',
-      'onWillCloseSession',
-    ]),
-    onDidCreateSession: Event.None as ISessionLifecycleService['onDidCreateSession'],
-    onDidCloseSession: Event.None as ISessionLifecycleService['onDidCloseSession'],
-    onDidArchiveSession: Event.None as ISessionLifecycleService['onDidArchiveSession'],
-    onDidForkSession: Event.None as ISessionLifecycleService['onDidForkSession'],
-    create: async () => {
-      throw new Error('not implemented');
-    },
-    get: () => undefined,
-    list: () => [],
-    resume: async () => undefined,
-    close: async () => {},
-    archive: async () => {},
-    restore: async () => undefined,
-    fork: async () => {
-      throw new Error('not implemented');
-    },
-    createChild: async () => {
-      throw new Error('not implemented');
-    },
-  };
+function stubSessionLifecycleHooks(): Hooks<SessionLifecycleHookSlots> {
+  return createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
+    'onDidCreateSession',
+    'onWillCloseSession',
+  ]);
 }
 
 describe('IExternalHooksRunnerService integration', () => {
@@ -512,7 +490,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 ? 'sessions/workspace-1/session-1'
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
-          reg.defineInstance(ISessionLifecycleService, stubSessionLifecycle());
+          reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -825,11 +803,10 @@ describe('IExternalHooksRunnerService integration', () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;
     try {
-      const lifecycle = stubSessionLifecycle();
+      const lifecycleHooks = stubSessionLifecycleHooks();
       const path = hookLogPath();
       const command = appendHookLogCommand(path);
       const cwd = mkdtempSync(join(tmpdir(), 'session-external-hooks-cwd-'));
-      const handle = {} as ISessionScopeHandle;
 
       ix = createServices(disposables, {
         strict: true,
@@ -847,7 +824,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 ? 'sessions/workspace-1/session-1'
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
-          reg.defineInstance(ISessionLifecycleService, lifecycle);
+          reg.defineInstance(ISessionLifecycleHooks, lifecycleHooks);
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -874,31 +851,10 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
       ix.get(ISessionExternalHooksService);
 
-      await lifecycle.hooks.onDidCreateSession.run({
-        sessionId: 'session-1',
-        handle,
-        source: 'startup',
-      });
-      await lifecycle.hooks.onDidCreateSession.run({
-        sessionId: 'session-1',
-        handle,
-        source: 'resume',
-      });
-      await lifecycle.hooks.onDidCreateSession.run({
-        sessionId: 'session-1',
-        handle,
-        source: 'fork',
-      });
-      await lifecycle.hooks.onDidCreateSession.run({
-        sessionId: 'other-session',
-        handle,
-        source: 'startup',
-      });
-      await lifecycle.hooks.onWillCloseSession.run({
-        sessionId: 'session-1',
-        handle,
-        reason: 'exit',
-      });
+      await lifecycleHooks.onDidCreateSession.run({ source: 'startup' });
+      await lifecycleHooks.onDidCreateSession.run({ source: 'resume' });
+      await lifecycleHooks.onDidCreateSession.run({ source: 'fork' });
+      await lifecycleHooks.onWillCloseSession.run({ reason: 'exit' });
 
       expect(readHookLog(path)).toEqual([
         {

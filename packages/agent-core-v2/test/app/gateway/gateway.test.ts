@@ -11,7 +11,8 @@ import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
@@ -87,12 +88,34 @@ describe('RestGateway', () => {
       dispose: () => {},
     };
 
-    ix.stub(ISessionLifecycleService, {
+    const handlerService: IWorkspaceHandlerService = {
       _serviceBrand: undefined,
+      onDidCreateSession: () => ({ dispose: () => {} }),
+      onDidCloseSession: () => ({ dispose: () => {} }),
+      onDidArchiveSession: () => ({ dispose: () => {} }),
+      onDidForkSession: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(sessionHandle),
-      get: (id) => (id === 's1' ? sessionHandle : undefined),
+      get: (id: string) => (id === 's1' ? sessionHandle : undefined),
       list: () => [sessionHandle],
+      resume: () => Promise.resolve(sessionHandle),
       close: () => Promise.resolve(),
+      archive: () => Promise.resolve(),
+      restore: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionHandle),
+      createChild: () => Promise.resolve(sessionHandle),
+    };
+    const handlerHandle = {
+      id: 'wd_stub',
+      kind: LifecycleScope.Workspace,
+      accessor: makeAccessor([[IWorkspaceHandlerService, handlerService]]),
+      dispose: () => {},
+    } as const;
+    ix.stub(IWorkspaceLifecycleService, {
+      _serviceBrand: undefined,
+      onDidMaterializeHandler: () => ({ dispose: () => {} }),
+      handlerFor: () => Promise.resolve(handlerHandle),
+      handlers: { list: () => [handlerHandle] },
+      sessions: { list: () => ['s1'] },
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

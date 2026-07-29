@@ -22,7 +22,9 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -40,6 +42,43 @@ function accessor(
       throw new Error(`Unexpected service request: ${String(id)}`);
     },
   };
+}
+
+/** Stub the index → handler → session-lifecycle chain for one live session. */
+function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHandle): void {
+  const handler = {
+    id: 'wd',
+    kind: LifecycleScope.Workspace,
+    accessor: accessor([
+      [
+        IWorkspaceHandlerService,
+        {
+          resume: () => Promise.resolve(session),
+          get: () => session,
+        },
+      ],
+    ]),
+    dispose: () => {},
+  } as const;
+  ix.stub(ISessionIndex, {
+    get: (id: string) =>
+      Promise.resolve(
+        id === session.id
+          ? {
+              id: session.id,
+              workspaceId: 'wd',
+              cwd: '/workspace',
+              createdAt: 1,
+              updatedAt: 1,
+              archived: false,
+            }
+          : undefined,
+      ),
+  });
+  ix.stub(IWorkspaceLifecycleService, {
+    handlerFor: () => Promise.resolve(handler),
+    handlers: { list: () => [handler] },
+  });
 }
 
 describe('Session legacy status (best-effort runtime state)', () => {
@@ -104,10 +143,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     const status = await ix.get(ISessionLegacyService).status('session-test');
@@ -182,10 +218,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     const status = await ix.get(ISessionLegacyService).status('session-capped');
@@ -231,10 +264,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     await ix.get(ISessionLegacyService).updateProfile('session-test', {

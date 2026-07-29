@@ -27,7 +27,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   ISkillCatalogRuntimeOptions,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -108,7 +108,7 @@ describe('server-v2 /api/v1 skills', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so skill activation can start a turn.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });

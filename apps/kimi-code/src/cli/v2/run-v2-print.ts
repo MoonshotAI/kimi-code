@@ -32,7 +32,8 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -41,6 +42,7 @@ import {
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
+  resumeSessionById,
   hostRequestHeadersSeed,
   logSeed,
   parseAgentFileText,
@@ -256,7 +258,7 @@ async function resolveNativeSession(
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const lifecycle = app.accessor.get(ISessionLifecycleService);
+  const workspaceLifecycle = app.accessor.get(IWorkspaceLifecycleService);
   const index = app.accessor.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
@@ -304,7 +306,7 @@ async function resolveNativeSession(
   };
 
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
-    const session = await lifecycle.resume(id);
+    const session = await resumeSessionById(app.accessor, id);
     if (session === undefined) {
       throw new Error(`Session "${id}" not found.`);
     }
@@ -374,7 +376,8 @@ async function resolveNativeSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const session = await lifecycle.create({
+  const handler = await workspaceLifecycle.handlerFor({ root: workDir });
+  const session = await handler.accessor.get(IWorkspaceHandlerService).create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {

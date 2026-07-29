@@ -12,9 +12,10 @@ import {
   IEventService,
   IPluginService,
   ISessionIndex,
-  ISessionLifecycleService,
   ISessionMetadata,
+  IWorkspaceHandlerService,
   IWorkspaceService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -60,12 +61,14 @@ interface GoalToolResultWire {
 // name — exactly how the typed client composes URLs, so the test never hardcodes
 // a channel name that could drift from the token.
 function rpc(
-  scope: 'core' | 'session' | 'agent',
+  scope: 'core' | 'workspace' | 'session' | 'agent',
   service: ServiceIdentifier<unknown>,
   method: string,
-  ids: { sid?: string; aid?: string } = {},
+  ids: { wid?: string; sid?: string; aid?: string } = {},
 ): string {
   if (scope === 'core') return `/api/v1/debug/${String(service)}/${method}`;
+  if (scope === 'workspace')
+    return `/api/v1/debug/workspace/${ids.wid}/${String(service)}/${method}`;
   if (scope === 'session') return `/api/v1/debug/session/${ids.sid}/${String(service)}/${method}`;
   return `/api/v1/debug/session/${ids.sid}/agent/${ids.aid}/${String(service)}/${method}`;
 }
@@ -132,13 +135,13 @@ describe('server-v2 /api/v1/debug RPC', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so the agent-scope dispatch resolves.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
   async function createSubagent(sessionId: string, agentId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId });
   }
@@ -290,8 +293,16 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('archives a session', async () => {
     const id = await createSession(home as string);
-    const { body } = await call<null>('POST', rpc('session', ISessionLifecycleService, 'archive', { sid: id }), id);
+    const workspaceId = (await server!.core.accessor.get(ISessionIndex).get(id))!.workspaceId;
+    const { body } = await call<null>(
+      'POST',
+      rpc('workspace', IWorkspaceHandlerService, 'archive', { wid: workspaceId }),
+      id,
+    );
     expect(body.code).toBe(0);
+    // archive is a method on the handler's session lifecycle service; its
+    // single argument is the session id.
+    expect(body.data).toBeNull();
   });
 
   // --- Agent scope ----------------------------------------------------------

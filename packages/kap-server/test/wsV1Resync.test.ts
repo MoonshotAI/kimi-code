@@ -12,7 +12,7 @@ import {
   type DomainEvent,
   IEventBus,
   IAgentLifecycleService,
-  ISessionLifecycleService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -145,7 +145,7 @@ describe('server-v2 /api/v1/ws resync', () => {
   }
 
   async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) {
@@ -158,7 +158,7 @@ describe('server-v2 /api/v1/ws resync', () => {
   }
 
   function emitAgentEvent(sessionId: string, event: DomainEvent): void {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     const main = agents.get('main');
@@ -261,7 +261,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     await ensureMainAgent(sid);
 
     // Add a second agent to the same session so we can distinguish sources.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     const sub = await agents.create({ agentId: 'agent-0' });

@@ -14,7 +14,8 @@ import { createReadStream } from 'node:fs';
 import {
   ErrorCodes,
   ISessionFsService,
-  ISessionLifecycleService,
+  getLiveSessionById,
+  resumeSessionById,
   isError2,
   Error2,
   type Scope,
@@ -100,7 +101,7 @@ type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
 function resolveFs(core: Scope, sessionId: string): ISessionFsService {
-  const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+  const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
@@ -154,7 +155,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       // need the work dir) do not 404 on a freshly-opened session. Matches v1,
       // which reads the persisted cwd. `resume` returns undefined only when the
       // session is unknown or its workspace is gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -251,7 +252,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       // Cold-load so a freshly-opened (persisted but not live) session can still
       // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),

@@ -14,7 +14,8 @@
  * search (`SearchView`) whose hits navigate back into the chat timeline.
  */
 
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { IWorkspaceHandlerService } from '@moonshot-ai/agent-core-v2/workspace/workspaceHandler/workspaceHandler';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
@@ -45,15 +46,21 @@ export function App() {
   const [jump, setJump] = useState<ChatJump | null>(null);
 
   // Resume (materialize) the session on the server when it is selected, so
-  // session / agent scoped Services become reachable.
+  // session / agent scoped Services become reachable. Session lifecycle lives
+  // on the workspace handler (Workspace scope): the index yields the
+  // session's workspaceId, then the handler resumes it.
   useEffect(() => {
     if (sessionId === null) return;
     let cancelled = false;
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionLifecycleService)
-      .resume(sessionId)
+      .core(ISessionIndex)
+      .get(sessionId)
+      .then((summary) => {
+        if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
+        return klient.workspace(summary.workspaceId).service(IWorkspaceHandlerService).resume(sessionId);
+      })
       .then(() => {
         if (!cancelled) setReady(true);
       })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -10,7 +11,8 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { type IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IWireService } from '#/wire/wire';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -72,10 +74,25 @@ function buildService(opts: {
     dispose: () => {},
   } as unknown as ISessionScopeHandle;
 
-  const lifecycle = {
-    resume: (sessionId: string) =>
-      Promise.resolve(sessionId === opts.summary.id ? sessionHandle : undefined),
-  } as unknown as ISessionLifecycleService;
+  const workspaceLifecycle = {
+    handlerFor: () =>
+      Promise.resolve({
+        id: opts.summary.workspaceId,
+        kind: LifecycleScope.Workspace,
+        accessor: {
+          get: (token: unknown): unknown => {
+            if (token === IWorkspaceHandlerService) {
+              return {
+                resume: (sessionId: string) =>
+                  Promise.resolve(sessionId === opts.summary.id ? sessionHandle : undefined),
+              };
+            }
+            throw new Error('unexpected workspace service access');
+          },
+        },
+        dispose: () => {},
+      }),
+  } as unknown as IWorkspaceLifecycleService;
 
   const index = {
     get: (sessionId: string) => Promise.resolve(sessionId === opts.summary.id ? opts.summary : undefined),
@@ -93,7 +110,10 @@ function buildService(opts: {
     acquire: () => toDisposable(() => {}),
   };
 
-  return new MessageLegacyService(lifecycle, index, appendLog);
+  const instantiation = new TestInstantiationService();
+  instantiation.stub(ISessionIndex, index);
+  instantiation.stub(IWorkspaceLifecycleService, workspaceLifecycle);
+  return new MessageLegacyService(instantiation, index, appendLog);
 }
 
 describe('MessageLegacyService', () => {

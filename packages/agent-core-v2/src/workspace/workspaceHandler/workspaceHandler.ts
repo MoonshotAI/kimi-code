@@ -1,17 +1,20 @@
 /**
- * `sessionLifecycle` domain (L6) — creates and tracks sessions at the process root.
+ * `workspaceHandler` domain (L6) — per-handler session lifecycle contract.
  *
- * Defines the public contract of session lifecycle: the `CreateSessionOptions`,
- * `ForkSessionOptions`, `CreateChildSessionOptions`, `ResumeSessionOptions`,
- * and the `ISessionLifecycleService` used to create sessions (`create`), look up the
- * live ones (`get` / `list`), close them (`close`), archive/restore them,
- * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
- * lifecycle transitions through ordered hook slots plus
- * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
- * `onDidForkSession`. App-scoped — a single
- * process-wide instance owns the live session scope tree. Persisted
- * sessions (open or closed) are the `sessionIndex` read model; per-session
- * behaviour lives in the Session-scoped domains.
+ * Defines the public contract of one workspace handler: the
+ * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
+ * `ResumeSessionOptions`, and the `IWorkspaceHandlerService` used to create
+ * sessions (`create`), look up the live ones (`get` / `list`), close them
+ * (`close`), archive/restore them, fork them (`fork`), and fork-then-tag
+ * them as direct children (`createChild`) — always as child scopes of THIS
+ * handler's Workspace scope, so a handler owns exactly the sessions of one
+ * workspace and fork never crosses handlers. Announces lifecycle transitions
+ * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
+ * / `onDidForkSession`; the ordered hook slots are per-session seeds
+ * (`sessionLifecycleHooks`). Workspace-scoped — one instance per
+ * materialized handler. Persisted sessions (open or closed) are the
+ * `sessionIndex` read model; per-session behaviour lives in the
+ * Session-scoped domains.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -19,7 +22,12 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { BindAgentInput } from '#/agent/profile/profile';
-import type { Hooks } from '#/hooks';
+import type {
+  SessionCloseReason,
+  SessionCreateSource,
+} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+
+export type { SessionCloseReason, SessionCreateSource };
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
@@ -62,20 +70,11 @@ export interface SessionClosedEvent {
   readonly sessionId: string;
 }
 
-export type SessionCreateSource = 'startup' | 'resume' | 'fork';
-
-export type SessionCloseReason = 'exit';
-
 export interface SessionWillCloseEvent {
   readonly sessionId: string;
   readonly handle: ISessionScopeHandle;
   readonly reason: SessionCloseReason;
 }
-
-export type SessionLifecycleHooks = {
-  readonly onDidCreateSession: SessionCreatedEvent;
-  readonly onWillCloseSession: SessionWillCloseEvent;
-};
 
 export interface SessionArchivedEvent {
   readonly sessionId: string;
@@ -87,14 +86,13 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
-export interface ISessionLifecycleService {
+export interface IWorkspaceHandlerService {
   readonly _serviceBrand: undefined;
 
   readonly onDidCreateSession: Event<SessionCreatedEvent>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
-  readonly hooks: Hooks<SessionLifecycleHooks>;
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
@@ -106,5 +104,5 @@ export interface ISessionLifecycleService {
   createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
 }
 
-export const ISessionLifecycleService: ServiceIdentifier<ISessionLifecycleService> =
-  createDecorator<ISessionLifecycleService>('sessionLifecycleService');
+export const IWorkspaceHandlerService: ServiceIdentifier<IWorkspaceHandlerService> =
+  createDecorator<IWorkspaceHandlerService>('workspaceHandlerService');

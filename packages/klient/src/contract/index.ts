@@ -30,7 +30,10 @@ import { sessionsContract } from './global/sessions.js';
 import { workspacesContract } from './global/workspaces.js';
 import { sessionApprovalContract } from './session/approval.js';
 import { sessionInteractionContract } from './session/interaction.js';
-import { sessionLifecycleContract } from './session/lifecycle.js';
+import {
+  workspaceHandlerContract,
+  workspaceLifecycleContract,
+} from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
 import { sessionQuestionContract } from './session/question.js';
 
@@ -49,8 +52,10 @@ export const globalContract: KlientContract = {
   pluginService: pluginsContract,
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
-  // session scope (+ the app-registered lifecycle service)
-  sessionLifecycleService: sessionLifecycleContract,
+  // workspace scope (+ the app-registered handler registry)
+  workspaceLifecycleService: workspaceLifecycleContract,
+  workspaceHandlerService: workspaceHandlerContract,
+  // session scope
   sessionMetadata: sessionMetadataContract,
   sessionInteractionService: sessionInteractionContract,
   sessionApprovalService: sessionApprovalContract,

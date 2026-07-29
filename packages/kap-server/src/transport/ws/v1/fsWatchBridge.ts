@@ -29,8 +29,8 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   ISessionFsWatchService,
-  ISessionLifecycleService,
   ISessionWorkspaceContext,
+  getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/agent-core-v2/session/sessionFs/fsWatch';
@@ -176,7 +176,7 @@ export class FsWatchBridge {
   private resolveSession(sessionId: string): SessionWatch | undefined {
     const existing = this.bySession.get(sessionId);
     if (existing !== undefined) return existing;
-    const session = this.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.core.accessor, sessionId);
     if (session === undefined) return undefined;
     const sw: SessionWatch = {
       id: sessionId,
