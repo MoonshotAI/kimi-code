@@ -13,9 +13,9 @@ import { dirname, join } from 'node:path';
 
 import { app, dialog } from 'electron';
 
-// track.ts is type-only at import time (its agent-core-v2 imports are
-// `import type`, erased at build), so pulling it in here adds no runtime
-// module to this file's deliberately tiny load-time graph.
+// track.ts itself stays cheap to load: its agent-core-v2 import is
+// `import type` (erased at build) and the zod schema from shared/track-events
+// is a small pure module — this file's load-time graph stays tiny by design.
 import { trackDesktopEvent } from './track';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;

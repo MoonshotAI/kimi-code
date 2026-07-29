@@ -93,7 +93,21 @@ export function closeServerHandle(): Promise<void> {
 // telemetry.shutdown itself) — awaiting the full server close reintroduces
 // the quit hang that made the barrier fire-and-forget.
 export function shutdownServerTelemetry(): Promise<void> | null {
-  return serverHandle?.shutdownTelemetry() ?? null;
+  if (serverHandle !== null) return serverHandle.shutdownTelemetry();
+  // Server start still in flight (shell-env probe can take seconds): bound
+  // the wait so a quit during startup doesn't outlast the flush itself.
+  const initialization = serverInitialization;
+  if (initialization === null) return null;
+  return (async () => {
+    const handle = await Promise.race([
+      initialization,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 2_000);
+        timer.unref?.();
+      }),
+    ]);
+    await handle?.shutdownTelemetry();
+  })();
 }
 
 // --- connect flow -------------------------------------------------------------

@@ -1520,8 +1520,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // older target. In-list sessions keep the fully synchronous path below,
       // so their rapid-click URL ordering is unaffected.
       const serial = ++selectSerial;
-      if (!(await fetchSessionIntoList(sessionId))) return;
-      if (serial !== selectSerial) return;
+      // Dead ends still consume the pending intent — leaving it would
+      // attribute this entry to whatever session opens next.
+      if (!(await fetchSessionIntoList(sessionId))) {
+        consumeSessionIntent('sidebar');
+        return;
+      }
+      if (serial !== selectSerial) {
+        consumeSessionIntent('sidebar');
+        return;
+      }
     }
     const messagesLoaded = hasLoadedMessages(sessionId);
     // Only sessions created locally in this client are trusted to be empty.

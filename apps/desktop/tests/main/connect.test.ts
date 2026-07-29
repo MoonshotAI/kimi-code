@@ -309,6 +309,54 @@ describe('connect', () => {
   });
 });
 
+describe('shutdownServerTelemetry', () => {
+  it('returns null when no server exists or is starting', async () => {
+    const { shutdownServerTelemetry } = await importConnect();
+    expect(shutdownServerTelemetry()).toBeNull();
+  });
+
+  it('flushes the live handle immediately', async () => {
+    const { connect, shutdownServerTelemetry } = await importConnect();
+    const handle = fakeHandle();
+    mocks.startDesktopServer.mockResolvedValue(handle);
+    await connect(fakeWindow() as unknown as BrowserWindow);
+
+    await shutdownServerTelemetry();
+
+    expect(handle.shutdownTelemetry).toHaveBeenCalledOnce();
+  });
+
+  it('waits (bounded) for an in-flight start, then flushes', async () => {
+    const { connect, shutdownServerTelemetry } = await importConnect();
+    const handle = fakeHandle();
+    let resolveServer!: (h: DesktopServerHandle) => void;
+    mocks.startDesktopServer.mockImplementationOnce(
+      () =>
+        new Promise<DesktopServerHandle>((resolve) => {
+          resolveServer = resolve;
+        }),
+    );
+    const connectPromise = connect(fakeWindow() as unknown as BrowserWindow);
+    await vi.waitFor(() => expect(mocks.startDesktopServer).toHaveBeenCalledOnce());
+
+    let settled = false;
+    const flush = shutdownServerTelemetry();
+    expect(flush).not.toBeNull();
+    const flushPromise = flush!.then(() => {
+      settled = true;
+    });
+    // The start is still in flight: no immediate settle.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    expect(settled).toBe(false);
+
+    resolveServer(handle);
+    await Promise.all([connectPromise, flushPromise]);
+    expect(handle.shutdownTelemetry).toHaveBeenCalledOnce();
+  });
+});
+
 describe('startup_connect_result', () => {
   it('counts consecutive failures as retry_count and resets on success', async () => {
     const { connect } = await importConnect();

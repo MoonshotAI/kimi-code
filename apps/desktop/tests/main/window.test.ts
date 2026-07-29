@@ -422,6 +422,22 @@ describe('window lifecycle telemetry', () => {
       exit_code: -1,
     });
   });
+
+  it('folds memory-eviction into oom and skips clean-exit teardowns', async () => {
+    const { showMainWindow } = await import('../../src/main/window');
+    showMainWindow();
+    const win = lastWindow() as unknown as { webContents: { emit(event: string, ...args: unknown[]): void } };
+    mocks.trackDesktopEvent.mockClear();
+
+    win.webContents.emit('render-process-gone', {}, { reason: 'clean-exit', exitCode: 0 });
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalledWith('renderer_crashed', expect.anything());
+
+    win.webContents.emit('render-process-gone', {}, { reason: 'memory-eviction', exitCode: 1 });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('renderer_crashed', {
+      reason: 'oom',
+      exit_code: 1,
+    });
+  });
 });
 
 describe('Windows taskbar identity', () => {

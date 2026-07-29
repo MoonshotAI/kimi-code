@@ -9,6 +9,7 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { setSessionIntent } from '../../lib/session-intent';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
@@ -49,6 +50,7 @@ function close(): void {
 }
 
 function onSelectSession(id: string): void {
+  setSessionIntent('sidebar');
   emit('select', id);
   close();
 }

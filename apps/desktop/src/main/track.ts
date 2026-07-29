@@ -25,8 +25,14 @@ export function setDesktopTrackImpl(next: TrackImpl | null): void {
   }
   const replay = pending;
   pending = [];
+  // A single bad event must not abort the replay (and the telemetry wiring
+  // it happens inside): drop it and keep going.
   for (const { event, properties } of replay) {
-    impl(event, properties);
+    try {
+      impl(event, properties);
+    } catch {
+      // Telemetry must never break startup.
+    }
   }
 }
 

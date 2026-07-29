@@ -43,23 +43,38 @@ export function daysSince(birthtimeMs: number, nowMs: number): number {
 
 // Install age is the device_id file's birth time (oauth identity.ts creates
 // it on first launch). Undefined when unreadable — the field is dropped.
+// Cached briefly: the value advances while long-running (sleep/wake) desktop
+// sessions span days, but per-event statSync would be wasteful.
+const DAYS_SINCE_INSTALL_TTL_MS = 3_600_000;
+let daysSinceInstallCache: { at: number; value: number | undefined } | undefined;
+
 function readDaysSinceInstall(): number | undefined {
+  const now = Date.now();
+  if (
+    daysSinceInstallCache !== undefined &&
+    now - daysSinceInstallCache.at < DAYS_SINCE_INSTALL_TTL_MS
+  ) {
+    return daysSinceInstallCache.value;
+  }
+  let value: number | undefined;
   try {
     const { birthtimeMs } = statSync(join(resolveKimiHome(), 'device_id'));
     // Filesystems without btime (some Linux mounts) report 0.
-    if (birthtimeMs <= 0) return undefined;
-    return daysSince(birthtimeMs, Date.now());
+    if (birthtimeMs > 0) value = daysSince(birthtimeMs, now);
   } catch {
-    return undefined;
+    value = undefined;
   }
+  daysSinceInstallCache = { at: now, value };
+  return value;
+}
+
+export function resetDaysSinceInstallCacheForTests(): void {
+  daysSinceInstallCache = undefined;
 }
 
 // Super properties merged into every desktop event. Undefined values are
 // dropped; event-own fields always win the merge.
-function withSuperProperties(
-  daysSinceInstall: number | undefined,
-  properties: TelemetryProperties | undefined,
-): TelemetryProperties {
+function withSuperProperties(properties: TelemetryProperties | undefined): TelemetryProperties {
   const injected: Record<string, string | number> = {
     // Same epoch as the app_crashed/app_launched events' own uptime field.
     app_uptime_ms: Math.round(process.uptime() * 1000),
@@ -67,6 +82,7 @@ function withSuperProperties(
   };
   const serverMode = getServerMode();
   if (serverMode !== undefined) injected['server_mode'] = serverMode;
+  const daysSinceInstall = readDaysSinceInstall();
   if (daysSinceInstall !== undefined) injected['days_since_install'] = daysSinceInstall;
   const locale = getRuntimeLocale();
   if (locale !== undefined) injected['locale'] = locale;
@@ -121,9 +137,8 @@ export async function wireDesktopTelemetry(
       getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
     });
     telemetry.setAppender(appender);
-    const daysSinceInstall = readDaysSinceInstall();
     setDesktopTrackImpl((event, properties) => {
-      telemetry.track(event, withSuperProperties(daysSinceInstall, properties));
+      telemetry.track(event, withSuperProperties(properties));
     });
     appender.startPeriodicFlush();
     void appender.retryDiskEvents().catch(() => {});

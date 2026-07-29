@@ -109,6 +109,9 @@ export function useOAuthLoginFlow(options: UseOAuthLoginFlowOptions) {
     pollTimer = setTimeout(async () => {
       const result = await options.onPollOAuthLogin();
       if (disposed) return;
+      // A user-initiated cancel is terminal; a poll already in flight when it
+      // lands must not double-report or silently resume polling.
+      if (flowCancelled) return;
       if (result === null) {
         // Poll failed (or no active flow). Keep polling through transient
         // blips, but give up with an explicit error after several in a row.

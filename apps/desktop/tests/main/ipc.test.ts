@@ -157,3 +157,24 @@ describe('native_ipc_used telemetry', () => {
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
   });
 });
+
+describe('kimi:track renderer event forwarding', () => {
+  it('forwards events that pass the whitelist schema verbatim', async () => {
+    const { asRendererTrackEvent } = await import('../../src/main/track');
+    vi.mocked(asRendererTrackEvent).mockReturnValue({ event: 'logout', properties: {} });
+
+    listener(IPC.track)({}, 'logout', {});
+
+    expect(asRendererTrackEvent).toHaveBeenCalledWith('logout', {});
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('logout', {});
+  });
+
+  it('drops events the whitelist rejects without touching the pipeline', async () => {
+    const { asRendererTrackEvent } = await import('../../src/main/track');
+    vi.mocked(asRendererTrackEvent).mockReturnValue(null);
+
+    listener(IPC.track)({}, 'not-an-event', { junk: true });
+
+    expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+  });
+});

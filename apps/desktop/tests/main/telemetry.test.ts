@@ -35,6 +35,7 @@ vi.mock('../../src/main/system-metrics', () => ({
 import {
   daysSince,
   isTelemetryConsentEnabled,
+  resetDaysSinceInstallCacheForTests,
   wireDesktopTelemetry,
 } from '../../src/main/telemetry';
 import { setDesktopTrackImpl, trackDesktopEvent } from '../../src/main/track';
@@ -225,6 +226,31 @@ describe('wireDesktopTelemetry', () => {
     expect(appender.stopPeriodicFlush).toHaveBeenCalledOnce();
     expect(telemetryService.shutdown).toHaveBeenCalledOnce();
   });
+
+  it('shutdown resolves within 3s even when the telemetry service never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const appender = makeAppender();
+      createCloudAppenderMock.mockReturnValue(appender);
+      const { core, telemetryService } = makeCore(undefined);
+      telemetryService.shutdown.mockReturnValue(new Promise<void>(() => {}));
+
+      const handle = await wireDesktopTelemetry(core as never, EXISTING_DEVICE);
+      expect(handle).not.toBeNull();
+      let settled = false;
+      const shutdownPromise = handle!.shutdown().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await shutdownPromise;
+
+      expect(settled).toBe(true);
+      expect(appender.stopPeriodicFlush).toHaveBeenCalledOnce();
+      setDesktopTrackImpl(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('daysSince', () => {
@@ -248,6 +274,7 @@ describe('super properties injection', () => {
     nativeThemeMock.shouldUseDarkColors = false;
     setServerMode(undefined);
     setRuntimeLocale(undefined);
+    resetDaysSinceInstallCacheForTests();
     homeDir = await mkdtemp(join(tmpdir(), 'kimi-telemetry-'));
     resolveKimiHomeMock.mockReturnValue(homeDir);
   });
