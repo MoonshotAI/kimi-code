@@ -9,6 +9,8 @@
  * the transcript audit and the agent inspector under Audit / Agent tabs;
  * the `models` view is the full-width model catalog; the `services` view is
  * the full-width app-scope Service reflection (`AppServicesView`); the
+ * `workspace` view is the workspace-scope counterpart
+ * (`WorkspaceServicesView`, with a workspace picker on top); the
  * `bash` view is the full-width `IBashParserService` playground
  * (`BashParserView`); the `search` view is the full-width global message
  * search (`SearchView`) whose hits navigate back into the chat timeline.
@@ -29,6 +31,7 @@ import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
 import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
+import { WorkspaceServicesView } from './components/WorkspaceServicesView';
 import { useConnection } from './connection';
 import type { SearchHit } from './search/api';
 import { errorMessage } from './ui';
@@ -111,6 +114,8 @@ export function App() {
         <NavRail view={view} onChange={setView} />
         {view === 'services' ? (
           <AppServicesView />
+        ) : view === 'workspace' ? (
+          <WorkspaceServicesView />
         ) : view === 'bash' ? (
           <BashParserView />
         ) : view === 'models' ? (
