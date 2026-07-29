@@ -26,6 +26,22 @@ export interface UnexpectedCloseReason {
 
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 
+/**
+ * Internal control-flow error raised when a sessionful MCP transport says the
+ * current session no longer exists. The original SDK error is kept as the
+ * cause so callers can recover without losing the server's diagnostics.
+ */
+export class McpSessionInvalidError extends Error {
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'McpSessionInvalidError';
+  }
+}
+
+export function isMcpSessionInvalidError(error: unknown): error is McpSessionInvalidError {
+  return error instanceof McpSessionInvalidError;
+}
+
 export interface McpRequestOptions {
   readonly timeout?: number;
   readonly signal?: AbortSignal;
