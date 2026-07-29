@@ -74,6 +74,12 @@ export interface CronMissedOrigin {
   readonly count: number;
 }
 
+export interface McpChannelOrigin {
+  readonly kind: 'mcp_channel';
+  readonly server: string;
+  readonly chatId?: string;
+}
+
 export interface HookResultOrigin {
   readonly kind: 'hook_result';
   readonly event: string;
@@ -96,6 +102,7 @@ export type PromptOrigin =
   | TaskOrigin
   | CronJobOrigin
   | CronMissedOrigin
+  | McpChannelOrigin
   | HookResultOrigin
   | RetryOrigin;
 

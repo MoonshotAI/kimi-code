@@ -160,6 +160,7 @@ export function compactionUserMessageDisposition(
     case 'task':
     case 'cron_job':
     case 'cron_missed':
+    case 'mcp_channel':
     case 'hook_result':
     case 'retry':
       return 'drop';
