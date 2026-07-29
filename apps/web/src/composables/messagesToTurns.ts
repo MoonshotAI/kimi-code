@@ -571,6 +571,22 @@ function parsePlanSavedPath(output: string[] | undefined): string | undefined {
   return undefined;
 }
 
+/** Dedup signature for message content: adjacent same-kind parts are chunks
+ *  of one segment, so merge them before signing — a chunked copy of a message
+ *  must match its assembled copy. Thinking's renderer-only timing (startedAt /
+ *  durationMs) never persists, so it is dropped from the signature. */
+function contentSig(content: AppMessage['content']): string {
+  const parts: AppMessage['content'][number][] = [];
+  for (const c of content) {
+    const prev = parts.at(-1);
+    if (c.type === 'text' && prev?.type === 'text') prev.text += c.text;
+    else if (c.type === 'thinking' && prev?.type === 'thinking') prev.thinking += c.thinking;
+    else if (c.type === 'thinking') parts.push({ type: 'thinking', thinking: c.thinking });
+    else parts.push({ ...c });
+  }
+  return JSON.stringify(parts);
+}
+
 export function messagesToTurns(
   messages: AppMessage[],
   approvals: AppApprovalRequest[],
@@ -661,24 +677,31 @@ export function messagesToTurns(
   }
 
   function absorbContent(g: Group, content: AppMessage['content']): void {
+    // Adjacent same-kind parts within ONE message are stream chunks of a
+    // single segment — concatenate verbatim; only a message or non-text
+    // boundary earns a '\n'.
+    let prevKind: 'text' | 'thinking' | null = null;
     for (const c of content) {
       if (c.type === 'text') {
         if (c.text) {
-          g.textParts.push(c.text);
+          if (prevKind === 'text') g.textParts[g.textParts.length - 1]! += c.text;
+          else g.textParts.push(c.text);
           // Append to a trailing text block, else open a new one — so a tool
           // call between two text segments splits them into separate blocks.
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'text') last.text += '\n' + c.text;
+          if (last && last.kind === 'text') last.text += (prevKind === 'text' ? '' : '\n') + c.text;
           else g.blocks.push({ kind: 'text', text: c.text });
+          prevKind = 'text';
         }
       } else if (c.type === 'thinking') {
         if (c.thinking) {
-          g.thinkingParts.push(c.thinking);
+          if (prevKind === 'thinking') g.thinkingParts[g.thinkingParts.length - 1]! += c.thinking;
+          else g.thinkingParts.push(c.thinking);
           // Ordered block too: thinking renders WHERE it happened in the turn,
           // merging consecutive segments (same rule as text blocks above).
           const last = g.blocks.at(-1);
           if (last && last.kind === 'thinking') {
-            last.thinking += '\n' + c.thinking;
+            last.thinking += (prevKind === 'thinking' ? '' : '\n') + c.thinking;
             // Merge timing across the boundary: keep the earliest start and the
             // latest closed end; if either side is still open, the merged block
             // is open too.
@@ -704,8 +727,10 @@ export function messagesToTurns(
               durationMs: c.durationMs,
             });
           }
+          prevKind = 'thinking';
         }
       } else if (c.type === 'toolUse') {
+        prevKind = null;
         // Single `Agent` subagent spawns and all other tools render as a normal
         // tool card: the card shows the fixed args (prompt / description) plus
         // the final result when expanded, while a subagent's live progress
@@ -739,6 +764,7 @@ export function messagesToTurns(
           g.approvalId = pendingApproval.approvalId;
         }
       } else if (c.type === 'toolResult') {
+        prevKind = null;
         // Update the matching tool call status within this group (both the flat
         // tools[] and the ordered block that renders it).
         const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
@@ -762,6 +788,8 @@ export function messagesToTurns(
           const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
           if (blk && blk.kind === 'tool') blk.tool = updated;
         }
+      } else {
+        prevKind = null;
       }
     }
   }
@@ -1074,7 +1102,7 @@ export function messagesToTurns(
     // Drop an assistant message whose content was already folded into this group
     // (a duplicate streamed-vs-persisted copy sharing the promptId), so the turn
     // doesn't render the same text + tools twice.
-    const sig = JSON.stringify(msg.content);
+    const sig = contentSig(msg.content);
     if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
     group.seenSigs.add(sig);
     group.sources.push(msg);
