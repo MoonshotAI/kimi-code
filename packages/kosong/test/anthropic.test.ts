@@ -1074,6 +1074,88 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('omits tools with unsupported root combinators and keeps compatible tools', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Process resource' }], toolCalls: [] },
+      ];
+      const tools: Tool[] = [
+        {
+          name: 'one_of_tool',
+          description: 'Uses oneOf.',
+          parameters: { oneOf: [{ required: ['resource_id'] }] },
+        },
+        {
+          name: 'any_of_tool',
+          description: 'Uses anyOf.',
+          parameters: { anyOf: [{ required: ['resource_id'] }] },
+        },
+        {
+          name: 'all_of_tool',
+          description: 'Uses allOf.',
+          parameters: { allOf: [{ required: ['resource_id'] }] },
+        },
+        {
+          name: 'compatible_tool',
+          description: 'Uses a regular object schema.',
+          parameters: {
+            type: 'object',
+            properties: { resource_id: { type: 'string' } },
+          },
+        },
+      ];
+      const originalTools = structuredClone(tools);
+
+      const body = await captureRequestBody(provider, '', tools, history);
+      const wireTools = body['tools'] as Array<{ name: string }>;
+
+      expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+      expect(tools).toEqual(originalTools);
+
+      const customProvider = new AnthropicChatProvider({
+        model: 'compatible-model',
+        apiKey: 'test-key',
+        baseUrl: 'https://compatible.example.test',
+        defaultMaxTokens: 1024,
+        stream: false,
+      });
+      const customBody = await captureRequestBody(customProvider, '', tools, history);
+      const customTools = customBody['tools'] as Array<{ name: string }>;
+      expect(customTools.map((tool) => tool.name)).toEqual(tools.map((tool) => tool.name));
+    });
+
+    it.each(['https://api.anthropic.com', 'https://api.anthropic.com/'])(
+      'filters unsupported tools for explicit official endpoint %s',
+      async (baseUrl) => {
+        const provider = new AnthropicChatProvider({
+          model: 'claude-opus-4-6',
+          apiKey: 'test-key',
+          baseUrl,
+          defaultMaxTokens: 1024,
+          stream: false,
+        });
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Process resource' }], toolCalls: [] },
+        ];
+        const tools: Tool[] = [
+          {
+            name: 'incompatible_tool',
+            description: 'Uses oneOf.',
+            parameters: { oneOf: [{ required: ['resource_id'] }] },
+          },
+          {
+            name: 'compatible_tool',
+            description: 'Uses a regular object schema.',
+            parameters: { type: 'object' },
+          },
+        ];
+
+        const body = await captureRequestBody(provider, '', tools, history);
+        const wireTools = body['tools'] as Array<{ name: string }>;
+        expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+      },
+    );
+
     it('tool call and tool result (Anthropic wire format)', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {

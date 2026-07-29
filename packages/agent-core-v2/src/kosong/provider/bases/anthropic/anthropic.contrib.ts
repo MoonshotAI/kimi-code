@@ -37,6 +37,7 @@ registerProtocolBase({
             ? undefined
             : { ...config.providerOptions.metadata },
         hooks: composeAnthropicHooks(traits),
+        filterUnsupportedRootSchemas: traits.length === 0 ? undefined : false,
       }),
     });
   },
