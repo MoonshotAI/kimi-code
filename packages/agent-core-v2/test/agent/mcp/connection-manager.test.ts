@@ -32,7 +32,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
-import { McpConnectionManager, type McpServerEntry } from '#/agent/mcp/connection-manager';
+import {
+  McpConnectionManager,
+  type McpChannelMessage,
+  type McpServerEntry,
+} from '#/agent/mcp/connection-manager';
 import { MCP_SECTION, type McpSection } from '#/agent/mcp/configSection';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -46,6 +50,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { stubLog } from '../../_base/log/stubs';
 import {
+  channelStdioFixture,
   closeServer,
   crashAfterConnectFixture,
   createMemoryMcpOAuthStore,
@@ -829,6 +834,19 @@ describe('McpConnectionManager', () => {
       await closeServer(server);
     }
   }, 15000);
+
+  it('forwards MCP channel notifications tagged with the originating server name', async () => {
+    const cm = new McpConnectionManager();
+    const received: McpChannelMessage[] = [];
+    cm.onChannelMessage((message) => received.push(message));
+    try {
+      await cm.connectAll({ discord: stdioConfig([channelStdioFixture]) });
+      await sleep(50);
+      expect(received).toEqual([{ server: 'discord', text: 'New Discord message', chatId: 'chat-1' }]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
 });
 
 describe('Session MCP initialization', () => {

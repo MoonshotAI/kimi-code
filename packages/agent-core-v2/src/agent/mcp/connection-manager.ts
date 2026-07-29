@@ -26,6 +26,14 @@ import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
 
+export interface McpChannelMessage {
+  readonly server: string;
+  readonly text: string;
+  readonly chatId?: string;
+}
+
+export type McpChannelMessageListener = (message: McpChannelMessage) => void;
+
 export interface McpServerEntry {
   readonly name: string;
   readonly transport: McpServerConfig['transport'];
@@ -80,6 +88,7 @@ export interface McpConnectionManagerOptions {
 export class McpConnectionManager {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
+  private readonly channelMessageListeners = new Set<McpChannelMessageListener>();
   private readonly inFlightReconnects = new Map<string, Promise<void>>();
   private initialLoad: Promise<void> = Promise.resolve();
   private initialLoadAttemptId = 0;
@@ -109,6 +118,13 @@ export class McpConnectionManager {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  onChannelMessage(listener: McpChannelMessageListener): () => void {
+    this.channelMessageListeners.add(listener);
+    return () => {
+      this.channelMessageListeners.delete(listener);
     };
   }
 
@@ -291,6 +307,7 @@ export class McpConnectionManager {
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
       entry.status = 'connected';
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
+      this.watchForChannelMessages(entry, startupClient, attemptId);
     } catch (error) {
       if (!this.isCurrent(entry, attemptId)) {
         if (client !== undefined) {
@@ -330,6 +347,24 @@ export class McpConnectionManager {
       entry.client = undefined;
       void this.closeRuntimeClient(client);
       this.emit(entry);
+    });
+  }
+
+  private watchForChannelMessages(
+    entry: InternalEntry,
+    client: RuntimeMcpClient,
+    attemptId: number,
+  ): void {
+    client.onChannelMessage((raw) => {
+      if (!this.isCurrent(entry, attemptId)) return;
+      if (entry.client !== client) return;
+      const message: McpChannelMessage = { server: entry.name, text: raw.text, chatId: raw.chatId };
+      for (const listener of this.channelMessageListeners) {
+        try {
+          listener(message);
+        } catch {
+        }
+      }
     });
   }
 

@@ -37,6 +37,10 @@ export const stderrThenExitFixture = new URL(
   './fixtures/stderr-then-exit-stdio-server.mjs',
   import.meta.url,
 ).pathname;
+export const channelStdioFixture = new URL(
+  './fixtures/channel-stdio-server.mjs',
+  import.meta.url,
+).pathname;
 
 export function createMemoryMcpOAuthStore(): McpOAuthStore {
   const data = new Map<string, unknown>();
