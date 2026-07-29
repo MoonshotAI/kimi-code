@@ -168,6 +168,12 @@ export interface TranscriptEntry {
   turnId?: string;
   renderMode: 'markdown' | 'plain' | 'notice';
   content: string;
+  /** Bounded presentation data for a completed foreground shell command. */
+  shellOutputDisplay?: {
+    readonly stdoutTail: string;
+    readonly stderrTail: string;
+    readonly isError?: boolean;
+  };
   /**
    * True only for entries holding real model-authored text (created by the
    * assistant stream). Derived cards — hook results, goal completions, goal

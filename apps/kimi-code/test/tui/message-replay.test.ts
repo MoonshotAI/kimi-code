@@ -1,3 +1,9 @@
+/**
+ * Scenario: resume records are projected into the interactive TUI transcript.
+ * Responsibilities: restore visible messages, bounded presentation, grouping, and replay state.
+ * Wiring: real KimiTUI/controllers/components with an in-memory SDK Session boundary.
+ * Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/message-replay.test.ts
+ */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
@@ -23,6 +29,7 @@ import {
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
 } from '#/tui/utils/transcript-window';
+import { getTranscriptComponentEntry } from '#/tui/utils/transcript-component-metadata';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
@@ -334,6 +341,40 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).toContain('pre</bash-stdout>post');
+  });
+
+  it('bounds replayed shell frames while retaining the complete transcript content', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text:
+              `<bash-stdout>${'  x\n'.repeat(49_999)}  final line\n</bash-stdout>` +
+              '<bash-stderr></bash-stderr>',
+          },
+        ],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+
+    const shellEntry = driver.state.transcriptEntries.find(
+      (entry) => entry.shellOutputDisplay !== undefined,
+    );
+    const shellComponent = driver.state.transcriptContainer.children.find(
+      (component) => getTranscriptComponentEntry(component)?.id === shellEntry?.id,
+    );
+    const rendered = shellComponent?.render(120) ?? [];
+    const transcript = stripAnsi(rendered.join('\n'));
+
+    expect(shellEntry?.content.length).toBeGreaterThan(200_000);
+    expect(stripAnsi(shellEntry?.content ?? '')).toMatch(/^  x/);
+    expect(shellEntry?.shellOutputDisplay?.stdoutTail).toContain('\n  final line');
+    expect(rendered.length).toBeLessThanOrEqual(10);
+    expect(rendered.join('\n').length).toBeLessThanOrEqual(2_048);
+    expect(transcript).toContain('... (49995 earlier lines)');
+    expect(transcript).toContain('final line');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {

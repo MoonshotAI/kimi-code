@@ -10,6 +10,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
+import { shellOutputDisplay } from '../components/messages/shell-run';
 import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
 import { currentTheme } from '../theme';
 import type { TodoItem } from '../components/chrome/todo-panel';
@@ -288,10 +289,13 @@ export class SessionReplayRenderer {
           }),
         );
       } else {
-        const stdout = (extractBashTag(text, 'bash-stdout') ?? '').trim();
-        const stderr = (extractBashTag(text, 'bash-stderr') ?? '').trim();
+        const stdout = extractBashTag(text, 'bash-stdout') ?? '';
+        const stderr = extractBashTag(text, 'bash-stderr') ?? '';
         const out = formatBashOutputForDisplay(stdout, stderr, message.origin.isError);
-        this.host.appendTranscriptEntry(replayEntry(context, 'status', out, 'plain'));
+        this.host.appendTranscriptEntry({
+          ...replayEntry(context, 'status', out, 'plain'),
+          shellOutputDisplay: shellOutputDisplay(stdout, stderr, message.origin.isError),
+        });
       }
       return;
     }

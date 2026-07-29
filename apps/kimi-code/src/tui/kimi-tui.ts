@@ -1949,6 +1949,14 @@ export class KimiTUI {
         if (entry.backgroundAgentStatus !== undefined) {
           return new BackgroundAgentStatusComponent(entry.backgroundAgentStatus);
         }
+        if (entry.shellOutputDisplay !== undefined) {
+          return new ShellRunComponent(
+            () => {
+              this.state.ui.requestRender();
+            },
+            entry.shellOutputDisplay,
+          );
+        }
         return entry.renderMode === 'notice'
           ? new NoticeMessageComponent(entry.content, entry.detail)
           : new StatusMessageComponent(entry.content, entry.color);
