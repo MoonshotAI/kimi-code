@@ -207,6 +207,15 @@ onUnmounted(() => {
 });
 
 function onGlobalKeydown(e: KeyboardEvent): void {
+  // Swallow Ctrl+S / Cmd+S app-wide, in capture phase: the composer advertises
+  // the shortcut for steering into the running turn, but its own keydown only
+  // fires while the composer is focused. Without this the browser opens its
+  // Save Page dialog whenever the shortcut is pressed anywhere else. Steering
+  // itself stays in the composer's handler.
+  if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    return;
+  }
   if (e.key !== 'Escape') return;
   // A modal dialog open on top of the side panel owns Escape — leave the event
   // alone so the dialog can close itself instead of the panel behind it.
