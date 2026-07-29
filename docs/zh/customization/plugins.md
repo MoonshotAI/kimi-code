@@ -183,7 +183,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 }
 ```
 
-系统提示词贡献在 agent-core-v2 引擎上生效：`kimi web`，以及 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的所有 CLI 界面（交互式 TUI 或 `kimi -p`）。默认 v1 路径——未开启该 flag 的 TUI 与 `kimi -p`——会忽略这两个字段。
+系统提示词贡献在两个 Agent 引擎上都生效：交互式 TUI 与 `kimi -p`（v1 引擎）、`kimi web`，以及 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的所有 CLI 界面（v2 引擎）。
 
 `systemPrompt` 字段与 `systemPromptPath` 文件各限制为 32 KB（UTF-8 字节）：超限内容会被忽略，并显示在 plugin 的 diagnostics 中。一次提示词构建最多注入所有已启用 plugin 合计 64 KB 的指令；超出预算的贡献会被跳过并给出警告——单个 plugin 的内联文本与文件合计超过该预算时同样整体跳过。
 

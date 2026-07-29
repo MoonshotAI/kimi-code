@@ -34,7 +34,7 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
-import type { EnabledPluginSessionStart, PluginCommandDef } from '../plugin';
+import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
@@ -78,6 +78,7 @@ export interface SessionOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
+  readonly pluginSystemPrompts?: readonly EnabledPluginSystemPrompt[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   /** Owner-scoped [image] limits, threaded from the owning core into every agent. */
@@ -186,6 +187,7 @@ export class Session {
   private additionalDirs: readonly string[];
   private sessionAdditionalDirs: readonly string[] = [];
   private readonly pluginCommands: readonly PluginCommandDef[];
+  private pluginSystemPrompts: readonly EnabledPluginSystemPrompt[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -227,6 +229,7 @@ export class Session {
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
     this.pluginCommands = options.pluginCommands ?? [];
+    this.pluginSystemPrompts = options.pluginSystemPrompts ?? [];
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
@@ -918,6 +921,24 @@ export class Session {
     }
   }
 
+  /**
+   * Replace the enabled plugins' system-prompt contributions on every ready
+   * agent and re-render prompts. The owning core calls this after an explicit
+   * plugin reload — installing, enabling, disabling, or removing a plugin
+   * without a reload deliberately leaves live prompts unchanged.
+   */
+  async setPluginSystemPrompts(sections: readonly EnabledPluginSystemPrompt[]): Promise<void> {
+    this.pluginSystemPrompts = sections;
+    for (const agent of this.readyAgents()) {
+      agent.setPluginSystemPrompts(sections);
+      try {
+        await agent.refreshSystemPrompt();
+      } catch (error) {
+        this.log.warn('failed to refresh system prompt after plugin reload', { error });
+      }
+    }
+  }
+
   private instantiateAgent(
     id: string,
     homedir: string,
@@ -949,6 +970,7 @@ export class Session {
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,
+      pluginSystemPrompts: this.pluginSystemPrompts,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,

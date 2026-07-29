@@ -183,7 +183,7 @@ Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep
 }
 ```
 
-System-prompt contributions are consumed on the agent-core-v2 engine: under `kimi web`, and under any CLI surface (the interactive TUI or `kimi -p`) with `KIMI_CODE_EXPERIMENTAL_FLAG=1`. The default v1 paths — the TUI and `kimi -p` without the flag — ignore both fields.
+System-prompt contributions take effect on both agent engines: the interactive TUI and `kimi -p` (the v1 engine), `kimi web`, and any CLI surface with `KIMI_CODE_EXPERIMENTAL_FLAG=1` (the v2 engine).
 
 Each field — the inline `systemPrompt` and the `systemPromptPath` file — is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning, including a single plugin whose inline text and file together exceed that budget.
 

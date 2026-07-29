@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseManifest } from '../../src/plugin/manifest';
+import { parseManifest, PLUGIN_SYSTEM_PROMPT_MAX_BYTES } from '../../src/plugin/manifest';
 
 async function makePlugin(
   files: Record<string, string>,
@@ -487,5 +487,199 @@ describe('parseManifest', () => {
     const result = await parseManifest(root);
     expect(result.manifest?.commands).toBeUndefined();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
+  });
+
+  it('reads the systemPrompt field, trimming surrounding whitespace', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: '\nAlways cite sources.\n' }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('treats a missing, blank, or non-string systemPrompt as absent', async () => {
+    const blank = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: '   ' }),
+    });
+    const blankResult = await parseManifest(blank);
+    expect(blankResult.manifest?.systemPrompt).toBeUndefined();
+
+    const nonString = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: 42 }),
+    });
+    const nonStringResult = await parseManifest(nonString);
+    expect(nonStringResult.manifest?.systemPrompt).toBeUndefined();
+    expect(nonStringResult.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warn', message: '"systemPrompt" must be a string' }),
+    );
+  });
+
+  it('strips a UTF-8 BOM from the systemPromptPath file before trimming', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'PROMPT.md': '\uFEFFAlways cite sources.\n',
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('reads the systemPromptPath file, trimming surrounding whitespace', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'PROMPT.md': '\nAlways cite sources.\n',
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Always cite sources.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('combines systemPrompt and systemPromptPath, inline first', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        systemPrompt: 'Inline.',
+        systemPromptPath: './PROMPT.md',
+      }),
+      'PROMPT.md': 'From file.',
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Inline.\n\nFrom file.');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('warns on invalid systemPromptPath and keeps the inline systemPrompt', async () => {
+    const nonString = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: 'Inline.', systemPromptPath: 42 }),
+    });
+    const nonStringResult = await parseManifest(nonString);
+    expect(nonStringResult.manifest?.systemPrompt).toBe('Inline.');
+    expect(nonStringResult.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warn', message: '"systemPromptPath" must be a string' }),
+    );
+
+    const noPrefix = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        systemPrompt: 'Inline.',
+        systemPromptPath: 'PROMPT.md',
+      }),
+    });
+    const noPrefixResult = await parseManifest(noPrefix);
+    expect(noPrefixResult.manifest?.systemPrompt).toBe('Inline.');
+    expect(noPrefixResult.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"systemPromptPath" path must start with "./" (got "PROMPT.md")',
+      }),
+    );
+
+    const notAFile = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({
+          name: 'demo',
+          systemPrompt: 'Inline.',
+          systemPromptPath: './docs',
+        }),
+      },
+      { dirs: ['docs'] },
+    );
+    const notAFileResult = await parseManifest(notAFile);
+    expect(notAFileResult.manifest?.systemPrompt).toBe('Inline.');
+    expect(notAFileResult.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"systemPromptPath" is not a file (./docs)',
+      }),
+    );
+  });
+
+  it('warns on a blank systemPromptPath', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        systemPrompt: 'Inline.',
+        systemPromptPath: '   ',
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Inline.');
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warn', message: '"systemPromptPath" must not be blank' }),
+    );
+  });
+
+  it('rejects systemPromptPath values that escape the plugin root', async () => {
+    const traversal = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPromptPath: './../outside.md' }),
+    });
+    const traversalResult = await parseManifest(traversal);
+    expect(traversalResult.manifest?.systemPrompt).toBeUndefined();
+    expect(traversalResult.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"systemPromptPath" path resolves outside the plugin (./../outside.md)',
+      }),
+    );
+
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPromptPath: './linked.md' }),
+    });
+    const outsideDir = await mkdtemp(path.join(tmpdir(), 'plugin-outside-'));
+    await writeFile(path.join(outsideDir, 'secret.md'), 'outside content', 'utf8');
+    await symlink(path.join(outsideDir, 'secret.md'), path.join(root, 'linked.md'));
+    const linkedResult = await parseManifest(root);
+    expect(linkedResult.manifest?.systemPrompt).toBeUndefined();
+    expect(linkedResult.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"systemPromptPath" path resolves outside the plugin (./linked.md)',
+      }),
+    );
+  });
+
+  it('ignores an oversized inline systemPrompt with a warning', async () => {
+    const oversized = 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1);
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: oversized }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: `"systemPrompt" is ${PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1} bytes, exceeding the 32 KB limit; the field is ignored`,
+      }),
+    );
+  });
+
+  it('ignores an oversized systemPromptPath file with a warning and keeps the inline field', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        systemPrompt: 'Inline.',
+        systemPromptPath: './PROMPT.md',
+      }),
+      'PROMPT.md': 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('Inline.');
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: `"systemPromptPath" is ${PLUGIN_SYSTEM_PROMPT_MAX_BYTES + 1} bytes, exceeding the 32 KB limit; the file is ignored (./PROMPT.md)`,
+      }),
+    );
+  });
+
+  it('accepts system-prompt content exactly at the byte limit', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPromptPath: './PROMPT.md' }),
+      'PROMPT.md': 'x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.systemPrompt).toBe('x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES));
+    expect(result.diagnostics).toEqual([]);
   });
 });
