@@ -246,7 +246,7 @@ If A needs B while being created and B needs A while being created, the containe
 
 ### Why cycles are disallowed
 
-- Scope layering makes normal dependencies a DAG (Agent → Session → App, resolving upward); a cycle is almost always a design smell.
+- Scope layering makes normal dependencies a DAG (Agent → Session → Workspace → App, resolving upward); a cycle is almost always a design smell.
 - "Making the cycle happen to work" turns construction order into an implicit contract — hard to debug.
 
 v2's stance: **the dependency graph must be acyclic.**

@@ -226,8 +226,8 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     // across all sessions of this workspace, §6.1) — the workspace dirs
     // service owns the local.toml set and its watch; sessions read the
     // combined view through the `ISessionWorkspaceInfo` seed below. Await
-    // the initial local.toml load first so the ctx snapshot and the seed
-    // both start from the assembled set.
+    // the initial local.toml load first so the seed starts from the
+    // assembled set.
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -237,7 +237,6 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
       sessionDir,
       metaScope,
       cwd: opts.workDir,
-      additionalDirs: this.workspaceDirs.additionalDirs,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };

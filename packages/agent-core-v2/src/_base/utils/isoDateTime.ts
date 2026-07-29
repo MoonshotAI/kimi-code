@@ -6,7 +6,7 @@ const ISO_8601_REGEX =
 /**
  * Wire-schema primitive for ISO 8601 datetime strings: validates the shape and
  * normalizes to `Date#toISOString()` output. Shared by the edge DTO schemas
- * (`sessionFs`, `file`, `terminal`, `auth`, …) that expose timestamps.
+ * (`workspaceFs`, `file`, `terminal`, `auth`, …) that expose timestamps.
  */
 export const isoDateTimeSchema = z
   .string()

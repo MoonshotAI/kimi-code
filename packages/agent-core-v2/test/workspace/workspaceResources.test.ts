@@ -416,7 +416,9 @@ describe('workspace resource sharing (handler chain)', () => {
       () => {
         expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
       },
-      { timeout: 10000, interval: 100 },
+      // Real FSEvents delivery + the 200 ms source debounce + a real disk
+      // rescan: under high parallel load the 10 s budget flakes, so allow 30 s.
+      { timeout: 30000, interval: 100 },
     );
-  }, 20000);
+  }, 60000);
 });

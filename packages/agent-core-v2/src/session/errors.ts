@@ -1,6 +1,6 @@
 /**
  * `session` domain error codes — shared across the session layer
- * (`sessionLifecycle` / `sessionLegacy` / `messageLegacy`).
+ * (`workspaceHandler` / `sessionLegacy` / `messageLegacy`).
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

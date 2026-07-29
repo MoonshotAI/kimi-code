@@ -2,6 +2,10 @@
 
 > New agent engine built on the DI Scope architecture — work-in-progress port of `packages/agent-core`. Design: `plan/PLAN.md`. Porting status: `GAP_ANALYSIS.md`.
 
+## Scopes
+
+Four `LifecycleScope` tiers — `App` (0) / `Workspace` (1) / `Session` (2) / `Agent` (3) (`src/_base/di/scope.ts`). The `workspace/` domain owns the Workspace tier: the App-scope `workspaceLifecycle` holds the live handler registry (one handler per workspaceId, create-or-get + join, never closed), and each handler's `workspaceHandler` owns the session lifecycle (create/resume/fork/close) as its child scopes. Workspace-scope services (`workspaceSkillCatalog` / `workspaceAgentProfileCatalog` / `workspaceInstructions` / `workspaceMcp` / `workspaceDirs` / `workspaceFs` / `workspaceFsWatch` / `workspaceProcess` / `workspaceGit` / `workspaceToolPolicy`) hold the handler-shared resources — loaded once at handler materialization, then refreshed by fs watch — and sessions consume them through session-domain seed contracts with change events. Dependency red line: **Session/Agent never import the Workspace domain**; the App-level `ISessionLifecycleService` / `ISessionMcpService` / `ISessionFsService` are gone — compose `sessionIndex` → `workspaceLifecycle.handlerFor` → the handler instead.
+
 ## Examples
 
 > The runnable examples have moved to the standalone `kimi-code-mini-bench` package at `../kimi-code-mini-bench`. They are wired to `agent-core-v2` through a pnpm `link:` dependency and run as a separate Vitest project.

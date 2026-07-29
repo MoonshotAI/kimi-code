@@ -228,7 +228,7 @@ const DOMAIN_LAYER = new Map([
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no
   // authoritative state (turn mechanics live in `loop`, admission/drain in
-  // `sessionLifecycle`, background bookkeeping in `agentLifecycle`).
+  // `workspaceHandler`, background bookkeeping in `agentLifecycle`).
   ['activityView', 4],
   ['context', 4],
   ['message', 4],

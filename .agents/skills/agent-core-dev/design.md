@@ -20,6 +20,7 @@ A Service = a bundle of **state** + a set of **behaviors**, bound to a **lifetim
 | Scope | State identity (keyed by) | Lifetime |
 |---|---|---|
 | `App` | none (single global instance) | the process |
+| `Workspace` | `workspaceId` | one workspace handler (materialized once per workspace, never closed — dies with the process) |
 | `Session` | `sessionId` | one session |
 | `Agent` | `agentId` | one agent |
 
@@ -33,6 +34,7 @@ A Service = a bundle of **state** + a set of **behaviors**, bound to a **lifetim
 **Q2. What is the identity of that state?**
 
 - one global instance → **`App`**
+- one per workspace (shared by every session of that workspace) → **`Workspace`**
 - one per session → **`Session`**
 - one per agent → **`Agent`**
 - a mix (a global registry *and* per-instance state) → **split it** (see §3).
@@ -70,7 +72,7 @@ The standard split is "global registry / factory" + "per-instance":
 | Tier | Role | Naming tends to |
 |---|---|---|
 | `App` | global registry / catalog / factory — knows "all of them" and how to create one | `XxxStore` / `XxxRegistry` / `XxxCatalog` |
-| `Session` / `Agent` | one instance — only the state of "this one" | `XxxService` / `ISessionXxx` / `IAgentXxx` |
+| `Workspace` / `Session` / `Agent` | one instance — only the state of "this one" | `XxxService` / `IWorkspaceXxx` / `ISessionXxx` / `IAgentXxx` |
 
 Canonical splits in the codebase:
 
@@ -189,8 +191,9 @@ domain: `<name>`   (owning scope: <Scope>)
 │   └─ (accessor) <ConsumerDomain>   @<Scope>   — <what they use me for>
 ├─ exposes (interfaces I provide, by scope)
 │   ├─ App       : <IXxxRegistry>   — <role>
-│   ├─ Session  : <ISessionXxx>    — <role>
-│   └─ Agent    : <IAgentXxx>      — <role>
+│   ├─ Workspace : <IWorkspaceXxx>  — <role>
+│   ├─ Session   : <ISessionXxx>    — <role>
+│   └─ Agent     : <IAgentXxx>      — <role>
 └─ depends (what I inject)           tag = calling style
     └─ <DepDomain>  @<Scope>   direct/event/hook  — <what for>
 ```
@@ -225,47 +228,54 @@ Read it as:
 - `──holds──►` = the ancestor owns a handle to the child scope (it stores the key, not the service). DI allows this.
 - `accessor.get(...)` = a **runtime borrow**, not a dependency edge. It must cross an `IScopeHandle`, run on demand, never be cached, and finish before the child scope is disposed.
 
-Worked example — `sessionLifecycle`:
+Worked example — `workspaceHandler`:
 
 ```text
-domain: `sessionLifecycle`   (owning scope: App)
+domain: `workspaceHandler`   (owning scope: Workspace)
 ├─ serves (who uses me)
-│   ├─ (inject)   — (none yet)
+│   ├─ (inject)   — (none)
 │   └─ (accessor)
 │       ├─ sessionLegacy     @App(edge)  — v1-compatible create/fork/archive/…
 │       └─ gateway / rpc     @App(edge)  — native v2 session lifecycle actions
 ├─ exposes (interfaces I provide, by scope)
-│   ├─ App       : ISessionLifecycleService — owns the live session scope tree
+│   ├─ Workspace : IWorkspaceHandlerService — owns this workspace's live session scope tree
 │   ├─ Session   : —                    — (per-session state lives in sessionMetadata / agentLifecycle / …)
 │   └─ Agent     : —                    — (per-agent state lives in agentLifecycle)
 └─ depends (what I inject)
-    ├─ bootstrap         @App  direct  — addresses session storage
-    ├─ hostEnvironment   @App  direct  — gates scope creation on the probe
-    ├─ sessionIndex      @App  direct  — persisted read model for cold resumes
-    ├─ storage           @App  direct  — atomic docs + append logs
-    ├─ workspace        @App  direct  — resolves a session's workspace
-    └─ event             @App  direct  — broadcasts session-level facts (e.g. archived)
+    ├─ workspaceContext  @Workspace  seed    — handler identity + persistence scope
+    ├─ bootstrap         @App        direct  — addresses session storage
+    ├─ hostEnvironment   @App        direct  — gates scope creation on the probe
+    ├─ sessionIndex      @App        direct  — persisted read model for cold resumes
+    ├─ storage           @App        direct  — atomic docs + append logs
+    ├─ workspaceDirs / workspaceSkillCatalog / workspaceMcp / …
+    │                    @Workspace  direct  — the handler's shared resource services
+    └─ event             @App        direct  — broadcasts session-level facts (e.g. archived)
 ```
 
-Cross-scope borrow for `sessionLifecycle`:
+Cross-scope borrow for `workspaceHandler`:
 
 ```text
 App scope
-  SessionLifecycleService ──holds──┐
-  GatewayService ───────────holds──┼──► IScopeHandle(sessionId)
-                                        │
-                                        │  accessor.get(ISessionMetadata) …
-                                        │   └── resolve runs inside the Session scope
-                                        ▼
-                                  Session scope (sessionId)
-                                    sessionMetadata / agentLifecycle / …  ← per-session services live here
+  WorkspaceLifecycleService ──holds──► IScopeHandle(workspaceId)   (one per live handler)
+                                            │
+                                            │  accessor.get(IWorkspaceHandlerService)
+                                            │   └── resolve runs inside the Workspace scope
+                                            ▼
+                                      Workspace scope (workspaceId)
+                                        WorkspaceHandlerService ──holds──► IScopeHandle(sessionId)
+                                                                              │
+                                                                              │  accessor.get(ISessionMetadata) …
+                                                                              │   └── resolve runs inside the Session scope
+                                                                              ▼
+                                                                        Session scope (sessionId)
+                                                                          sessionMetadata / agentLifecycle / …  ← per-session services live here
 ```
 
 How the three lenses shaped it:
 
-- **Scope (§2)** → the live registry of session scopes is process-wide, so it is App-scoped; per-session data stays in Session-scoped services, reached through the handle's `accessor`.
-- **Dependency direction (§5)** → `sessionLifecycle` is consumed by the edge via `accessor` borrows; it never imports the edge. Every downward arrow lands on a peer or a more foundational Service.
-- **Extension points (§4)** → new per-session behavior plugs into the Session-scoped services (`sessionMetadata`, `agentLifecycle`, `sessionActivity`); new transports stay at the edge. Neither edits `sessionLifecycle`.
+- **Scope (§2)** → the live registry of one workspace's session scopes is per-handler, so it is Workspace-scoped; the process-wide handler registry lives in the App-scoped `workspaceLifecycle`; per-session data stays in Session-scoped services, reached through the handle's `accessor`.
+- **Dependency direction (§5)** → `workspaceHandler` is consumed by the edge via `accessor` borrows; it never imports the edge. Every downward arrow lands on a peer or a more foundational Service.
+- **Extension points (§4)** → new per-session behavior plugs into the Session-scoped services (`sessionMetadata`, `agentLifecycle`, `sessionActivity`); new transports stay at the edge. Neither edits `workspaceHandler`.
 
 For a multi-scope split, the `exposes` block fills more than one scope — see the `records` pattern in §3.
 

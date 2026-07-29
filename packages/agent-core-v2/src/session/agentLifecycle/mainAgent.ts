@@ -12,7 +12,7 @@
  * and returns an already-created main agent as-is — so concurrent
  * bootstrappers always receive the same, fully-bootstrapped handle (activity
  * lane `idle`). Session services activated when their scope is created (cron,
- * external hooks) are materialized by `sessionLifecycle.materializeSession`;
+ * external hooks) are materialized by `workspaceHandler.materializeSession`;
  * the default permission posture is
  * applied in `bindBootstrap`.
  *

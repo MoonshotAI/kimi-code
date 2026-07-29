@@ -3,7 +3,7 @@
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
  * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `ISessionLifecycleService` / `IAgentLifecycleService` exactly like the
+ * `IWorkspaceLifecycleService` / `IAgentLifecycleService` exactly like the
  * server's `resolveScope`. Every argument, result, and event payload passes
  * through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed

@@ -154,9 +154,11 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
    * Watch the project root recursively, pruned to the `local.toml`
    * candidate: watching the file directly never fires when its parent
    * `.kimi-code` directory does not exist yet either.
+   *
+   * Runs only after `ready` resolves, so `reloadFromDisk` has already
+   * populated `projectRoot` / `configPath`.
    */
   private watchLocalToml(): void {
-    if (this.configPath === '') return;
     try {
       const handle = this.fsWatch.watch(this.projectRoot, {
         recursive: true,

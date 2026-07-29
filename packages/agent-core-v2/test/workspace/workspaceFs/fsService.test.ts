@@ -371,7 +371,7 @@ function makeSession(
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
 describe('WorkspaceFsService.gitStatus', () => {
-  it('delegates to IGitService with the session cwd and a confined filter', async () => {
+  it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
     const calls: Array<{ cwd: string; filter: ReadonlySet<string> | undefined }> = [];
     const git: IGitService = {
       _serviceBrand: undefined,
@@ -413,7 +413,7 @@ describe('WorkspaceFsService.gitStatus', () => {
 });
 
 describe('WorkspaceFsService.diff', () => {
-  it('delegates to IGitService with confined rel and abs paths', async () => {
+  it('delegates to IWorkspaceGitService with confined rel and abs paths', async () => {
     const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
     const git: IGitService = {
       _serviceBrand: undefined,

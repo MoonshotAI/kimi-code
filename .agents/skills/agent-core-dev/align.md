@@ -14,7 +14,7 @@ v1 is a **VSCode-style singleton container**: services self-register with `regis
 |---|---|---|
 | Registration | `registerSingleton(IX, X, InstantiationType.Delayed)` | `registerScopedService(LifecycleScope.X, IX, X, ScopeActivation.OnDemand, 'domain')` |
 | DI import | `from '../../di'` | `from '#/_base/di/scope'` / `'#/_base/di/instantiation'` / `'#/_base/di/lifecycle'` |
-| Lifetime | implicit singleton-per-container | explicit `LifecycleScope` (App/Session/Agent) — see orient.md |
+| Lifetime | implicit singleton-per-container | explicit `LifecycleScope` (App/Workspace/Session/Agent) — see orient.md |
 | Domain granularity | coarse (`session`, `tool`, `loop`) | fine, split by scope + responsibility |
 | Test import | `from '@moonshot-ai/agent-core/di/test'` | `from '#/_base/di/test'` |
 | Resolve SUT in tests | `ix.createInstance(Impl)` (common) | `ix.get(IX)` by interface — see test.md |
@@ -63,7 +63,7 @@ Worked example — v1 `ISessionService` (one class, ~600 lines) holds:
 - this session's metadata → **per-session** unit → v2 `sessionMetaStore` (`ISessionMetaStore`, Session);
 - this session's activity / status → **per-session** unit → v2 `sessionActivity`;
 - this session's context projection → **per-session** unit → v2 `sessionContext`;
-- child-agent lifecycle driven by a session → **per-session** unit → v2 `agentLifecycle`; create/close/archive/fork of the session itself → **global** unit → v2 `sessionLifecycle` (App).
+- child-agent lifecycle driven by a session → **per-session** unit → v2 `agentLifecycle`; create/close/archive/fork of the session itself → **per-workspace** unit → v2 `workspaceHandler` (Workspace, one per live workspace handler).
 
 A v1 class that maps cleanly to one v1 decorator often becomes **three to five** v2 Services. That is expected and correct — do not try to keep the v1 class shape.
 

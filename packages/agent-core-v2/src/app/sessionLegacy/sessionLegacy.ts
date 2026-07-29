@@ -5,12 +5,12 @@
  * metadata merge, and the cross-domain `agent_config` patch),
  * `GET /sessions/{id}/status` (`status`), and `GET /sessions/{id}/goal`
  * (`goal`) on top of the native v2 services
- * (`ISessionLifecycleService`, `IAgentProfileService`, …).
+ * (`IWorkspaceHandlerService`, `IAgentProfileService`, …).
  *
  * The thin pass-through actions (`fork` / `compact` / `abort` / `archive`), the
  * `:undo` action, and the `/sessions/{id}/children` endpoints are deliberately
  * NOT wrapped here: the edge route calls the native services directly —
- * `ISessionLifecycleService.fork` / `archive` / `createChild`,
+ * `IWorkspaceHandlerService.fork` / `archive` / `createChild`,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`,
  * `IAgentPromptService.undo`, and `ISessionIndex.list({ childOf })` — because
  * none of them carries v1-only projection worth centralizing beyond what the

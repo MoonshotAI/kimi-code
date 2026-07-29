@@ -3,8 +3,8 @@
  *
  * Defines the `IHostFolderBrowser` used by the program side (TUI / server) to
  * let the user browse the real local filesystem when choosing a workspace
- * folder. Distinct from the Session-side `sessionFs`, which is sandboxed and may
- * be remote. App-scoped.
+ * folder. Distinct from the Workspace-side `workspaceFs`, which is sandboxed and
+ * may be remote. App-scoped.
  *
  * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are defined here as
  * zod schemas so the `/api/v1` and `/api/v2` transports share one contract.

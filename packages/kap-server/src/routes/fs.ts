@@ -537,7 +537,7 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      // hostFs errors that escaped the sessionFs layer keep their `os.fs.*`
+      // hostFs errors that escaped the workspaceFs layer keep their `os.fs.*`
       // code; map them onto the closest v1 wire code (ENOTDIR collapses into
       // path-not-found, matching `mapFsError`).
       case ErrorCodes.OS_FS_NOT_FOUND:
