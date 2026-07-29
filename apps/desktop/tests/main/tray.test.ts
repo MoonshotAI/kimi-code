@@ -14,6 +14,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   trackDesktopEvent: vi.fn(),
+  setRuntimeLocale: vi.fn(),
   buildFromTemplate: vi.fn((template: unknown) => template),
 }));
 
@@ -40,6 +41,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../../src/main/track', () => ({
   trackDesktopEvent: mocks.trackDesktopEvent,
+  setRuntimeLocale: mocks.setRuntimeLocale,
 }));
 
 // createTray reads process.resourcesPath (undefined outside Electron; typed
