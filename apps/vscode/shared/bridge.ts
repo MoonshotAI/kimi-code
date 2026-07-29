@@ -147,7 +147,6 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.GetRegisteredWorkDirs:
     case Methods.BrowseWorkDir:
     case Methods.ClearTrackedFiles:
-    case Methods.OpenPlanFile:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
       return params === undefined;
@@ -213,6 +212,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.CheckFileExists:
     case Methods.GetImageDataUri:
       return hasString(params, "filePath");
+    case Methods.OpenPlanFile:
+      return hasNonEmptyString(params, "reference");
     case Methods.CheckFilesExist:
     case Methods.TrackFiles:
       return hasStringArray(params, "paths");

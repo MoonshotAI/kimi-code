@@ -41,6 +41,7 @@ export interface PlanBlock {
   type: 'plan';
   plan: string;
   path?: string;
+  reference?: string;
 }
 
 export interface UnknownBlock {

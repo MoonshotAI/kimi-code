@@ -263,20 +263,24 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
   });
 
   it('preserves a plan review body and path in a dedicated display block', () => {
-    const started = adaptSdkEvent(createEventAdapterState(), {
-      type: 'tool.call.started',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'plan-1',
-      name: 'ExitPlanMode',
-      args: {},
-      display: {
-        kind: 'plan_review',
-        plan: '# Refactor plan\n\n- Verify the change',
-        path: '/tmp/kimi-code/plans/refactor.md',
+    const started = adaptSdkEvent(
+      createEventAdapterState(),
+      {
+        type: 'tool.call.started',
+        sessionId: 'session-1',
+        agentId: 'main',
+        turnId: 7,
+        toolCallId: 'plan-1',
+        name: 'ExitPlanMode',
+        args: {},
+        display: {
+          kind: 'plan_review',
+          plan: '# Refactor plan\n\n- Verify the change',
+          path: '/tmp/kimi-code/plans/refactor.md',
+        },
       },
-    });
+      { registerPlanFile: () => 'reviewed-plan' },
+    );
     const finished = adaptSdkEvent(started.state, {
       type: 'tool.result',
       sessionId: 'session-1',
@@ -294,6 +298,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
             type: 'plan',
             plan: '# Refactor plan\n\n- Verify the change',
             path: '/tmp/kimi-code/plans/refactor.md',
+            reference: 'reviewed-plan',
           }],
         },
       },

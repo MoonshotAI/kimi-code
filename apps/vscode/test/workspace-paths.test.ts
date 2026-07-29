@@ -280,28 +280,36 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(vscodeHost.executeCommand).not.toHaveBeenCalled();
   });
 
-  it("opens the current session plan outside the workspace through the plan-only RPC", async () => {
+  it("opens the reviewed plan outside the workspace even when the active plan has changed", async () => {
     const workDir = join(root, "project");
     const planPath = join(root, "kimi-home", ".kimi-code", "plans", "refactor.md");
     await mkdir(workDir);
     await mkdir(join(root, "kimi-home", ".kimi-code", "plans"), { recursive: true });
     await writeFile(planPath, "# Refactor plan");
     const getPlan = vi.fn(async () => ({
-      id: "plan-1",
-      content: "# Refactor plan",
-      path: planPath,
+      id: "plan-2",
+      content: "# Newer plan",
+      path: join(root, "kimi-home", ".kimi-code", "plans", "newer.md"),
     }));
+    const resolvePlanFile = vi.fn((reference: string) => (
+      reference === "reviewed-plan" ? planPath : undefined
+    ));
     const ctx = {
       ...createContext(vscodeHost.Uri.file(workDir)),
+      runtime: { resolvePlanFile } as unknown as HandlerContext["runtime"],
       getSession: () => ({ session: { getPlan } }) as unknown as SessionRuntime,
     } as HandlerContext;
 
     const genericResult = await fileHandlers[Methods.OpenFile]!({ filePath: planPath }, ctx);
-    const planResult = await fileHandlers[Methods.OpenPlanFile]!(undefined, ctx);
+    const unknownResult = await fileHandlers[Methods.OpenPlanFile]!({ reference: "forged" }, ctx);
+    const planResult = await fileHandlers[Methods.OpenPlanFile]!({ reference: "reviewed-plan" }, ctx);
 
     expect(genericResult).toEqual({ ok: false });
+    expect(unknownResult).toEqual({ ok: false });
     expect(planResult).toEqual({ ok: true });
-    expect(getPlan).toHaveBeenCalledOnce();
+    expect(getPlan).not.toHaveBeenCalled();
+    expect(resolvePlanFile).toHaveBeenCalledWith("forged");
+    expect(resolvePlanFile).toHaveBeenCalledWith("reviewed-plan");
     expect(vscodeHost.executeCommand).toHaveBeenCalledOnce();
     expect(vscodeHost.executeCommand).toHaveBeenCalledWith(
       "vscode.open",

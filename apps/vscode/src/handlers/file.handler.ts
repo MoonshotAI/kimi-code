@@ -17,6 +17,7 @@ interface GetProjectFilesParams {
 }
 interface PickMediaParams { maxCount?: number; includeVideo?: boolean }
 interface FilePathParams { filePath: string }
+interface PlanReferenceParams { reference: string }
 interface OptionalFilePathParams { filePath?: string }
 interface PathsParams { paths: string[] }
 interface CheckFilesExistParams { paths: string[] }
@@ -75,13 +76,11 @@ const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, 
   return { ok: true };
 };
 
-const openPlanFile: Handler<void, { ok: boolean }> = async (_, ctx) => {
-  const runtime = ctx.getSession();
-  if (runtime === undefined) return { ok: false };
-  const plan = await runtime.session.getPlan();
-  if (plan === null) return { ok: false };
+const openPlanFile: Handler<PlanReferenceParams, { ok: boolean }> = async ({ reference }, ctx) => {
+  const planPath = ctx.runtime.resolvePlanFile(reference);
+  if (planPath === undefined) return { ok: false };
 
-  const uri = vscode.Uri.file(plan.path);
+  const uri = vscode.Uri.file(planPath);
   try {
     await vscode.workspace.fs.stat(uri);
   } catch {

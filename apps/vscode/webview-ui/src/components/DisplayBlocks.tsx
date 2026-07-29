@@ -206,11 +206,11 @@ interface PlanBlockProps {
 export function PlanBlockView({ block, maxHeight = "max-h-40" }: PlanBlockProps) {
   return (
     <div className="text-xs border border-border rounded-md overflow-hidden">
-      {block.path && (
+      {block.path && block.reference && (
         <button
           type="button"
           onClick={() => {
-            void bridge.openPlanFile();
+            void bridge.openPlanFile(block.reference!);
           }}
           className="flex items-center gap-1.5 w-full px-2 py-1 bg-muted/50 border-b border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
           title="Open plan file"
