@@ -1560,14 +1560,15 @@ grid-template-rows: minmax(0, 1fr) auto;
             </ul>
 
             <h3 class="sub">Show more &amp; collapse</h3>
-            <p>The "load more / show less" control at the bottom of each workspace group is a session-row-shaped compact list control (same family as search, New chat, inline rename — not a Button). It doubles as the pagination trigger and the in-group expand / collapse toggle.</p>
+            <p>The "expand / collapse" controls at the bottom of each workspace group are compact list controls (same family as search, New chat, inline rename — not Buttons) sharing one row: expand (chevron-down) first, collapse (chevron-up) after a faint middot when both are present. Expanding reveals the next batch of sessions, fetching the next page from the server only when the locally loaded rows can't cover it — the control never exposes whether a reveal came from memory or the network.</p>
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; padding:8px …</code>, <b>no fixed/min height</b> (font-driven, ≈32px like a session row), same padding as a session row, <code>radius-sm</code>; hover = <code>--sb-hover</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
-                <tr><td class="tk">Lead slot</td><td>empty, <code>--sb-gutter</code> wide, so the label's start x aligns with the session titles (<code>--sb-pad-x + --sb-gutter + --sb-gap</code>)</td></tr>
-                <tr><td class="tk">Label</td><td><code>font-ui</code>, <code>text-xs</code>, <code>--color-text</code>; flex:1, truncated</td></tr>
-                <tr><td class="tk">Behavior</td><td>"Load more" fetches the next page and auto-expands; once more than the first page is loaded, "Show less" appears and collapses back to the first page (view-layer trim — data is kept, no refetch); "Show all" re-expands</td></tr>
+                <tr><td class="tk">Row</td><td>a single flex row holding the controls, all content-width — hover washes just the button as a snug pill, never the full row. Font-driven height (≈32px like a session row), <code>radius-sm</code>; hover = <code>--sb-hover</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
+                <tr><td class="tk">Chevron</td><td>sm (down = expand, up = collapse); the row indents by <code>--sb-gutter + --sb-gap</code> so the first button's chevron starts exactly at the session-title x, lining the control's leading edge up with the titles above</td></tr>
+                <tr><td class="tk">Label</td><td><code>font-ui</code>, <code>text-xs</code>, <code>--color-text-muted</code>; truncated</td></tr>
+                <tr><td class="tk">Separator</td><td>faint middot (<code>--color-text-faint</code>) with <code>--space-1</code> side margins, rendered only when both controls are present</td></tr>
+                <tr><td class="tk">Behavior</td><td>each group keeps a display cap starting at the first page; "Show more" steps it up by one batch (5) and fetches the next page only when the loaded rows fall short (busy = "Loading…", disabled); "Show less" resets the cap to the first page (view-layer trim — data is kept, no refetch). "Show more" exists while undisplayed loaded rows remain or the server has more; "Show less" appears once past the first page</td></tr>
               </tbody>
             </table>
 

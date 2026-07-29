@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/WorkspaceGroup.vue -->
 <!-- One workspace group in the sidebar: the workspace header (folder icon,
      name / inline rename, kebab, add button), the path line, and that group's
-     session rows (with show-more truncation + empty state). State, menus,
+     session rows (with expand/collapse truncation + empty state). State, menus,
      search and the header stay in Sidebar; this component renders a single
      group and forwards every interaction back up. -->
 <script setup lang="ts">
@@ -27,9 +27,9 @@ const props = defineProps<{
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
   isCollapsed: (id: string) => boolean;
-  /** When true, render all loaded sessions; otherwise only the first page
-   *  (`group.initialCount`). Drives the in-group show-more / show-less toggle. */
-  isExpanded: (id: string) => boolean;
+  /** Rows-per-group display cap (undefined = the first page,
+   *  `group.initialCount`). Drives the in-group expand / collapse controls. */
+  visibleLimit: (id: string) => number | undefined;
   /** The pinned session currently being dragged back (null when idle). Only
    *  its home workspace is a drop target; see the drag handlers below. */
   pinnedDragSession?: { id: string; workspaceId: string } | null;
@@ -47,8 +47,8 @@ const emit = defineEmits<{
   exportSession: [id: string];
   pinSession: [id: string];
   dropPinnedSession: [id: string];
-  loadMore: [workspaceId: string];
-  toggleExpand: [workspaceId: string];
+  expand: [workspaceId: string];
+  collapse: [workspaceId: string];
   confirmRename: [];
   cancelRename: [];
   updateRenameValue: [value: string];
@@ -99,31 +99,32 @@ function onPinnedDragLeave(event: DragEvent): void {
   pinnedDropHover.value = false;
 }
 
-// Sessions to render: all when expanded, otherwise only the first page. The
-// collapse is a pure view-layer trim — data, cursor and hasMore stay intact, so
-// re-expanding never refetches. When collapsed, the active session is always
-// kept visible: an older session selected via Cmd/Ctrl-K search or a URL deep
-// link would otherwise be hidden past the first page, so navigation would land
-// on a missing row. It appends in newest-first order (older than the head).
+// Sessions to render: the loaded rows up to the group's display limit (the
+// first page until expanded). The cap is a pure view-layer trim — data, cursor
+// and hasMore stay intact, so re-expanding after a collapse never refetches.
+// When the active session sits past the cap (selected via Cmd/Ctrl-K search or
+// a URL deep link), it is appended to keep the selection visible; it lands in
+// newest-first order (older than the head).
+const displayLimit = computed(
+  () => props.visibleLimit(props.group.workspace.id) ?? props.group.initialCount,
+);
 const visibleSessions = computed(() => {
-  if (props.isExpanded(props.group.workspace.id)) return props.group.sessions;
-  const head = props.group.sessions.slice(0, props.group.initialCount);
+  const head = props.group.sessions.slice(0, displayLimit.value);
   if (props.activeId && !head.some((s) => s.id === props.activeId)) {
     const active = props.group.sessions.find((s) => s.id === props.activeId);
     if (active) return [...head, active];
   }
   return head;
 });
-// True once more than the first page is loaded — gates the show-less/show-all toggle.
-const canToggleExpand = computed(
-  () => props.group.sessions.length > props.group.initialCount,
+// More rows can be revealed while undisplayed loaded rows remain or the server
+// has another page (loadingMore keeps the button up in its busy state).
+const canExpand = computed(
+  () =>
+    props.group.sessions.length > displayLimit.value ||
+    props.group.hasMore ||
+    props.group.loadingMore,
 );
-function showMoreCount(): number {
-  return Math.max(0, props.group.workspace.sessionCount - props.group.sessions.length);
-}
-function showAllCount(): number {
-  return props.group.sessions.length - props.group.initialCount;
-}
+const canCollapse = computed(() => displayLimit.value > props.group.initialCount);
 
 // Hand the rename input element back to the parent's ref so Sidebar keeps
 // owning focus (startRenameWorkspace focuses renameInputRef on nextTick). Only
@@ -266,29 +267,28 @@ function onSessionDragStart(id: string, event: DragEvent): void {
         @export="emit('exportSession', $event)"
         @pin="emit('pinSession', $event)"
       />
-      <button
-        v-if="group.hasMore || group.loadingMore"
-        class="show-more"
-        :disabled="group.loadingMore"
-        @click.stop="emit('loadMore', group.workspace.id)"
-      >
-        <span class="show-more-lead" aria-hidden="true"></span>
-        <span class="show-more-label">{{
-          group.loadingMore ? t('sidebar.loadingMore') : t('sidebar.showMore', { count: showMoreCount() })
-        }}</span>
-      </button>
-      <button
-        v-if="canToggleExpand"
-        class="show-more"
-        @click.stop="emit('toggleExpand', group.workspace.id)"
-      >
-        <span class="show-more-lead" aria-hidden="true"></span>
-        <span class="show-more-label">{{
-          isExpanded(group.workspace.id)
-            ? t('sidebar.showLess')
-            : t('sidebar.showAll', { count: showAllCount() })
-        }}</span>
-      </button>
+      <div v-if="canExpand || canCollapse" class="show-more-row">
+        <button
+          v-if="canExpand"
+          class="show-more"
+          :disabled="group.loadingMore"
+          @click.stop="emit('expand', group.workspace.id)"
+        >
+          <Icon name="chevron-down" size="sm" />
+          <span class="show-more-label">{{
+            group.loadingMore ? t('sidebar.loadingMore') : t('sidebar.showMore')
+          }}</span>
+        </button>
+        <span v-if="canExpand && canCollapse" class="show-more-sep" aria-hidden="true">·</span>
+        <button
+          v-if="canCollapse"
+          class="show-more"
+          @click.stop="emit('collapse', group.workspace.id)"
+        >
+          <Icon name="chevron-up" size="sm" />
+          <span class="show-more-label">{{ t('sidebar.showLess') }}</span>
+        </button>
+      </div>
       <div v-if="group.sessions.length === 0" class="group-empty">{{
         group.pinnedCount > 0
           ? t('sidebar.allPinned', { count: group.pinnedCount })
@@ -458,18 +458,26 @@ function onSessionDragStart(id: string, event: DragEvent): void {
      text-selectable. */
   user-select: none;
 }
-/* Show-more / show-less — a session-row-shaped compact list control (§07). The
-   empty lead slot mirrors a session row's status gutter, so the label text lands
-   at the exact same x as the session titles (--sb-pad-x + --sb-gutter + --sb-gap
-   from the sidebar edge). Hover washes the row in the shared row hover fill,
-   matching New chat / session rows; no text recolor. */
+/* Show-more / show-less — compact list controls sharing one row (§07): expand
+   (chevron-down) on the left, collapse (chevron-up) right after it, with a
+   faint middot between them when both are present. The row's own indent lands
+   the first button's chevron exactly at the session-title x (--sb-gutter +
+   --sb-gap past the row padding), so buttons stay content-width and hover
+   washes just the button as a snug pill — never the full row. */
+.show-more-row {
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--sb-gutter) + var(--sb-gap));
+}
 .show-more {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
-  width: 100%;
   margin: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  /* Let the pill shrink at the narrowest sidebar widths so the label
+     truncates instead of the row overflowing the group. */
+  min-width: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -482,7 +490,19 @@ function onSessionDragStart(id: string, event: DragEvent): void {
 }
 .show-more:hover { background: var(--sb-hover, var(--color-hover)); }
 .show-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.show-more-lead { width: var(--sb-gutter); flex: none; }
+.show-more-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.show-more-sep {
+  margin: 0 var(--space-1);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  user-select: none;
+}
 .show-more-label {
   flex: 1;
   min-width: 0;

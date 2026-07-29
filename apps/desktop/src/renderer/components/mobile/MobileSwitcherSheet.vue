@@ -9,6 +9,7 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { SESSIONS_EXPAND_BATCH } from '../../composables/client/useWorkspaceState';
 import type { SessionCreatedSource } from '../../../shared/track-events';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
@@ -89,26 +90,22 @@ function toggleCollapse(id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// In-group expand / collapse (show-more pagination) — mirrors the desktop
+// In-group expand / collapse (session pagination) — mirrors the desktop
 // sidebar. Local to the sheet; a refresh reloads only the first page.
 // ---------------------------------------------------------------------------
-const expandedIds = ref<Set<string>>(new Set());
+// Per-group display cap (rows); absent = the first page (`initialCount`).
+// Expanding steps the cap up by one batch and fetches the next page only when
+// the locally loaded rows can't cover the step — the user can't tell whether
+// a reveal came from memory or the server.
+const visibleLimits = ref<Map<string, number>>(new Map());
 
-function isExpanded(id: string): boolean {
-  return expandedIds.value.has(id);
-}
-
-function toggleExpand(id: string): void {
-  const next = new Set(expandedIds.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  expandedIds.value = next;
+function displayLimitFor(g: WorkspaceGroup): number {
+  return visibleLimits.value.get(g.workspace.id) ?? g.initialCount;
 }
 
 function visibleSessions(g: WorkspaceGroup): Session[] {
-  if (isExpanded(g.workspace.id)) return g.sessions;
-  const head = g.sessions.slice(0, g.initialCount);
-  // Keep the active session visible when it's beyond the first page (e.g.
+  const head = g.sessions.slice(0, displayLimitFor(g));
+  // Keep the active session visible when it's beyond the display cap (e.g.
   // selected via search or a deep link), mirroring the desktop sidebar.
   if (props.activeId && !head.some((s) => s.id === props.activeId)) {
     const active = g.sessions.find((s) => s.id === props.activeId);
@@ -117,14 +114,34 @@ function visibleSessions(g: WorkspaceGroup): Session[] {
   return head;
 }
 
-function onLoadMore(id: string): void {
-  // Loading more should reveal the new rows immediately.
-  if (!expandedIds.value.has(id)) {
-    const next = new Set(expandedIds.value);
-    next.add(id);
-    expandedIds.value = next;
+// More rows can be revealed while undisplayed loaded rows remain or the server
+// has another page (loadingMore keeps the button up in its busy state).
+function canExpand(g: WorkspaceGroup): boolean {
+  return g.sessions.length > displayLimitFor(g) || g.hasMore || g.loadingMore;
+}
+
+function canCollapse(g: WorkspaceGroup): boolean {
+  return displayLimitFor(g) > g.initialCount;
+}
+
+function onExpand(id: string): void {
+  const group = props.groups.find((g) => g.workspace.id === id);
+  if (!group) return;
+  const next = displayLimitFor(group) + SESSIONS_EXPAND_BATCH;
+  const limits = new Map(visibleLimits.value);
+  limits.set(id, next);
+  visibleLimits.value = limits;
+  // Locally loaded rows can't cover the new cap — pull the next page.
+  if (group.sessions.length < next && group.hasMore) {
+    emit('loadMore', id);
   }
-  emit('loadMore', id);
+}
+
+function onCollapse(id: string): void {
+  if (!visibleLimits.value.has(id)) return;
+  const limits = new Map(visibleLimits.value);
+  limits.delete(id);
+  visibleLimits.value = limits;
 }
 
 function wsAttention(id: string): number {
@@ -273,31 +290,28 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
               <MenuItem size="lg" @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
             </Menu>
           </div>
-          <button
-            v-if="g.hasMore || g.loadingMore"
-            type="button"
-            class="mshow-more"
-            :disabled="g.loadingMore"
-            @click.stop="onLoadMore(g.workspace.id)"
-          >
-            {{
-              g.loadingMore
-                ? t('sidebar.loadingMore')
-                : t('sidebar.showMore', { count: Math.max(0, g.workspace.sessionCount - g.sessions.length) })
-            }}
-          </button>
-          <button
-            v-if="g.sessions.length > g.initialCount"
-            type="button"
-            class="mshow-more"
-            @click.stop="toggleExpand(g.workspace.id)"
-          >
-            {{
-              isExpanded(g.workspace.id)
-                ? t('sidebar.showLess')
-                : t('sidebar.showAll', { count: g.sessions.length - g.initialCount })
-            }}
-          </button>
+          <div v-if="canExpand(g) || canCollapse(g)" class="mshow-more-row">
+            <button
+              v-if="canExpand(g)"
+              type="button"
+              class="mshow-more"
+              :disabled="g.loadingMore"
+              @click.stop="onExpand(g.workspace.id)"
+            >
+              <Icon name="chevron-down" size="sm" />
+              {{ g.loadingMore ? t('sidebar.loadingMore') : t('sidebar.showMore') }}
+            </button>
+            <span v-if="canExpand(g) && canCollapse(g)" class="mshow-more-sep" aria-hidden="true">·</span>
+            <button
+              v-if="canCollapse(g)"
+              type="button"
+              class="mshow-more"
+              @click.stop="onCollapse(g.workspace.id)"
+            >
+              <Icon name="chevron-up" size="sm" />
+              {{ t('sidebar.showLess') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -491,20 +505,33 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 }
 
 /* "Show more" — same indent as session rows, 44px tap target */
+.mshow-more-row {
+  display: flex;
+  align-items: center;
+  /* Indent so the first button's chevron lands at the session-title x while
+     the buttons stay content-width (active wash = snug pill, not full row). */
+  padding-left: calc(var(--m-indent) - var(--space-3));
+}
 .mshow-more {
   display: flex;
   align-items: center;
-  width: 100%;
+  gap: var(--space-2);
   min-height: 44px;
-  padding: var(--space-1) var(--m-pad) var(--space-1) var(--m-indent);
+  padding: var(--space-1) var(--space-3);
   background: none;
   border: none;
+  border-radius: var(--radius-md);
   color: var(--color-text-muted);
   font-size: var(--text-base);
   cursor: pointer;
   text-align: left;
 }
 .mshow-more:active { color: var(--color-accent-hover); background: var(--color-hover); }
+.mshow-more-sep {
+  margin: 0 var(--space-1);
+  color: var(--color-text-faint);
+  user-select: none;
+}
 
 .newrow { font-family: var(--sans); }
 .mlist .srow {

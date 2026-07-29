@@ -32,6 +32,7 @@ import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
+import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -254,33 +255,39 @@ const allCollapsed = computed(
 );
 
 // ---------------------------------------------------------------------------
-// In-group expand / collapse (show-more pagination)
+// In-group expand / collapse (session pagination)
 // ---------------------------------------------------------------------------
-// Tracks which workspace groups are "expanded" past their first page. Ephemeral
-// (not persisted): a refresh reloads only the first page, so everything starts
-// collapsed. Loading more expands automatically; the user can collapse back to
-// the first page without losing the already-loaded data.
-const expandedIds = ref<Set<string>>(new Set());
+// Per-group display cap (rows); absent = the first page (`initialCount`).
+// Ephemeral (not persisted): a refresh reloads only the first page, so every
+// group starts collapsed. Expanding steps the cap up by one batch and fetches
+// the next page only when the locally loaded rows can't cover the step — the
+// user can't tell whether a reveal came from memory or the server. Collapsing
+// resets to the first page without losing the already-loaded data.
+const visibleLimits = ref<Map<string, number>>(new Map());
 
-function isExpanded(id: string): boolean {
-  return expandedIds.value.has(id);
+function visibleLimit(id: string): number | undefined {
+  return visibleLimits.value.get(id);
 }
 
-function toggleExpand(id: string): void {
-  const next = new Set(expandedIds.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  expandedIds.value = next;
-}
-
-function onLoadMore(id: string): void {
-  // Loading more should reveal the new rows immediately.
-  if (!expandedIds.value.has(id)) {
-    const next = new Set(expandedIds.value);
-    next.add(id);
-    expandedIds.value = next;
+function onExpand(id: string): void {
+  const group = props.groups.find((g) => g.workspace.id === id);
+  if (!group) return;
+  const next = (visibleLimits.value.get(id) ?? group.initialCount) + SESSIONS_EXPAND_BATCH;
+  const limits = new Map(visibleLimits.value);
+  limits.set(id, next);
+  visibleLimits.value = limits;
+  // Locally loaded rows can't cover the new cap — pull the next page. The
+  // fetch appends in place, so the rows show up under the same expanded cap.
+  if (group.sessions.length < next && group.hasMore) {
+    emit('loadMoreSessions', id);
   }
-  emit('loadMoreSessions', id);
+}
+
+function onCollapse(id: string): void {
+  if (!visibleLimits.value.has(id)) return;
+  const limits = new Map(visibleLimits.value);
+  limits.delete(id);
+  visibleLimits.value = limits;
 }
 
 // ---------------------------------------------------------------------------
@@ -968,7 +975,7 @@ onBeforeUnmount(() => {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
-              :is-expanded="isExpanded"
+              :visible-limit="visibleLimit"
               :pinned-drag-session="pinnedDragSession"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
@@ -981,8 +988,8 @@ onBeforeUnmount(() => {
               @export-session="(id) => emit('export', id)"
               @pin-session="(id) => emit('pin', id)"
               @drop-pinned-session="onDropPinnedSession"
-              @load-more="onLoadMore"
-              @toggle-expand="toggleExpand"
+              @expand="onExpand"
+              @collapse="onCollapse"
               @confirm-rename="confirmRenameWorkspace"
               @cancel-rename="cancelRenameWorkspace"
               @update-rename-value="onUpdateRenameValue"

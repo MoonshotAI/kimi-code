@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>侧边栏「展开 / 收起」统一交互原型</title>
+<style>
+/* ===========================================================================
+   Tokens —— 对齐 packages/web-ui/src/style.css 的 token 值（light / dark）。
+   字体在真实应用中是自托管 Schibsted Grotesk + Noto Sans SC Variable，
+   原型退回系统字体栈（仅影响字腔，不影响节奏/颜色/层级）。
+   =========================================================================== */
+:root {
+  --color-bg: #ffffff;
+  --color-sidebar-bg: #f9fbfc;
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-strong: #000000;
+  --color-text-muted: rgba(0, 0, 0, 0.6);
+  --color-text-faint: rgba(0, 0, 0, 0.45);
+  --color-line: rgba(0, 0, 0, 0.13);
+  --color-subtle: rgba(0, 0, 0, 0.05);
+  --color-selected: rgba(0, 0, 0, 0.05);
+  --color-hover: rgba(0, 0, 0, 0.03);
+  --color-accent: #1783ff;
+  --color-accent-soft: #e8f3ff;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+
+  --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px;
+  --leading-tight: 1.25; --leading-normal: 1.5;
+  --weight-regular: 400; --weight-medium: 500;
+
+  --font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, monospace;
+
+  /* Sidebar 内部几何（对齐 Sidebar.vue 的 --sb-* 约定） */
+  --sb-inset: var(--space-2);
+  --sb-pad-x: var(--space-4);
+  --sb-gutter: 16px;
+  --sb-gap: var(--space-2);
+}
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --color-bg: #121212;
+  --color-sidebar-bg: #0d0d0d;
+  --color-text: rgba(255, 255, 255, 0.84);
+  --color-text-strong: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.56);
+  --color-text-faint: rgba(255, 255, 255, 0.42);
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-subtle: rgba(255, 255, 255, 0.05);
+  --color-selected: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(255, 255, 255, 0.05);
+  --color-accent: #1a88ff;
+  --color-accent-soft: rgba(26, 136, 255, 0.1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+button { font-family: inherit; }
+
+/* --- 页面骨架 ------------------------------------------------------------- */
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) 64px;
+}
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+.page-head h1 { font-size: 20px; font-weight: var(--weight-medium); letter-spacing: -0.01em; }
+.page-head p {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 640px;
+  line-height: var(--leading-normal);
+}
+.controls { display: flex; gap: var(--space-2); }
+.ctl {
+  padding: 5px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.ctl:hover { background: var(--color-hover); color: var(--color-text); }
+
+.stage {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+.frame-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  margin-bottom: var(--space-2);
+  font-family: var(--font-mono);
+}
+
+/* --- 侧边栏模拟（对齐 Sidebar.vue / WorkspaceGroup.vue / SessionRow.vue） -- */
+.sidebar {
+  width: 264px;
+  background: var(--color-sidebar-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-scroll {
+  max-height: 520px;
+  overflow-y: auto;
+  padding: var(--space-2) 0 var(--space-3);
+}
+
+/* New chat（装饰，还原 .btn-new-chat 的几何） */
+.btn-new-chat {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  margin: var(--space-1) var(--sb-inset) var(--space-2);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.btn-new-chat:hover { background: var(--color-hover); }
+.btn-new-chat .ic { width: 16px; flex: none; display: flex; color: var(--color-text-muted); }
+
+/* Workspace 组 */
+.group { margin: 0 var(--sb-inset); }
+.gh {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  user-select: none;
+  cursor: pointer;
+}
+.gh:hover { background: var(--color-hover); }
+.gh-folder { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
+.gh-name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--color-text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 会话行（还原 SessionRow.vue 的 .se/.row 几何） */
+.se {
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+}
+.se:hover { background: var(--color-hover); }
+.se.on { background: var(--color-selected); }
+.se .row {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+}
+.se .lead { width: var(--sb-gutter); flex: none; display: flex; align-items: center; justify-content: center; }
+.se .left { flex: 1; min-width: 0; display: flex; align-items: center; }
+.se .t {
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.se .ts {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+
+/* 新插入行的入场动画（仅原型演示标注新增行，真实应用无行级动画） */
+@keyframes row-enter {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+.se.enter { animation: row-enter var(--duration-base) var(--ease-out); }
+
+/* 展开更多 / 收起按钮（逐字还原 WorkspaceGroup.vue 的 .show-more-row/.show-more） */
+.show-more-row {
+  display: flex;
+  align-items: center;
+  /* 整行缩进，让第一个按钮的 chevron 落在 session title 的 x（gutter + gap），
+     按钮保持内容宽，hover 是贴合按钮的小 pill */
+  padding-left: calc(var(--sb-gutter) + var(--sb-gap));
+}
+.show-more {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  margin: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+}
+.show-more:hover:not(:disabled) { background: var(--color-hover); }
+.show-more:disabled { cursor: default; opacity: 0.7; }
+.show-more-sep {
+  margin: 0 var(--space-1);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  user-select: none;
+}
+.show-more-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 加载中的小 spinner（loading 时替代 chevron 位置） */
+.mini-spinner {
+  width: 10px; height: 10px;
+  border: 1.5px solid var(--color-line);
+  border-top-color: var(--color-text-muted);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.group-empty {
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset) + var(--sb-gutter) + var(--sb-gap));
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  user-select: none;
+}
+
+/* 静态组标注 */
+.group-note {
+  padding: 0 calc(var(--sb-pad-x) - var(--sb-inset) + var(--sb-gutter) + var(--sb-gap)) var(--space-1);
+  font-size: 11px;
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+/* --- 右侧面板：内部状态 + 事件日志 ---------------------------------------- */
+.panel { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.state-box {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+.state-box h3, .log-box h3 {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-3);
+}
+.state-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-sm);
+}
+.state-grid dt { color: var(--color-text-muted); white-space: nowrap; }
+.state-grid dd { font-family: var(--font-mono); font-size: var(--text-xs); align-self: center; }
+.state-grid dd .hl { color: var(--color-accent); }
+
+.log-box {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  min-height: 200px;
+}
+.log-list { display: flex; flex-direction: column; gap: var(--space-2); max-height: 300px; overflow-y: auto; }
+.log-item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+.log-item .src {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+}
+.log-item .src.mem { background: var(--color-subtle); color: var(--color-text-muted); }
+.log-item .src.net { background: var(--color-accent-soft); color: var(--color-accent); }
+.log-empty { font-size: var(--text-xs); color: var(--color-text-faint); }
+
+/* --- 状态矩阵 -------------------------------------------------------------- */
+.matrix { margin-top: 48px; }
+.matrix h2 { font-size: var(--text-lg); font-weight: var(--weight-medium); margin-bottom: var(--space-1); }
+.matrix > p { font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-5); }
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+.card {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.card-head {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-subtle);
+}
+.card-head .name { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.card-head .desc { font-size: var(--text-xs); color: var(--color-text-faint); margin-top: 2px; line-height: var(--leading-normal); }
+.card-body { background: var(--color-sidebar-bg); padding: var(--space-2) var(--sb-inset); }
+
+@media (max-width: 760px) {
+  .stage { grid-template-columns: 1fr; }
+  .sidebar { width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1 data-i18n="title">侧边栏「展开 / 收起」统一交互原型</h1>
+      <p data-i18n="subtitle">对外只有「展开更多 / 收起」两个入口；数据来自本地内存还是接口请求，由代码内部按需决定（每批 5 条），用户无感知。</p>
+    </div>
+    <div class="controls">
+      <button class="ctl" id="themeToggle">🌙 Dark</button>
+      <button class="ctl" id="langToggle">EN</button>
+      <button class="ctl" id="resetBtn" data-i18n="reset">重置</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div>
+      <div class="frame-label" data-i18n="interactiveDemo">可交互 Demo（点底部按钮体验）</div>
+      <div class="sidebar">
+        <div class="sidebar-scroll">
+          <button class="btn-new-chat">
+            <span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+            <span data-i18n="newChat">新对话</span>
+          </button>
+
+          <!-- 可交互组：服务端共 80 条，首屏加载 5 条 -->
+          <div class="group">
+            <div class="gh">
+              <span class="gh-folder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+              <span class="gh-name">code-app</span>
+            </div>
+            <div id="rows"></div>
+            <div id="actions"></div>
+          </div>
+
+          <!-- 静态组：会话少，无任何按钮 -->
+          <div class="group" style="margin-top: var(--space-2);">
+            <div class="gh">
+              <span class="gh-folder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+              <span class="gh-name">kimi-code</span>
+            </div>
+            <div class="se"><div class="row"><span class="lead"></span><div class="left"><span class="t" data-i18n="staticRow1">发布流程梳理</span></div><span class="ts">1d</span></div></div>
+            <div class="se"><div class="row"><span class="lead"></span><div class="left"><span class="t" data-i18n="staticRow2">修复 token 刷新竞态</span></div><span class="ts">3d</span></div></div>
+            <div class="group-note" data-i18n="noteNoButton">会话 ≤ 首屏条数且服务端无更多 → 无按钮</div>
+          </div>
+
+          <!-- 静态组：空态 -->
+          <div class="group" style="margin-top: var(--space-2);">
+            <div class="gh">
+              <span class="gh-folder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+              <span class="gh-name">playground</span>
+            </div>
+            <div class="group-empty" data-i18n="noSessions">暂无对话</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <div class="state-box">
+        <h3 data-i18n="stateTitle">内部状态（用户不可见）</h3>
+        <dl class="state-grid">
+          <dt data-i18n="stTarget">目标可见条数 visibleTarget</dt><dd id="stTarget">5</dd>
+          <dt data-i18n="stLoaded">已加载 loaded / total</dt><dd id="stLoaded">5 / 80</dd>
+          <dt data-i18n="stHasMore">服务端 hasMore</dt><dd id="stHasMore">true</dd>
+          <dt data-i18n="stShown">当前渲染行数</dt><dd id="stShown"><span class="hl">5</span></dd>
+        </dl>
+      </div>
+      <div class="log-box">
+        <h3 data-i18n="logTitle">事件日志（内部决策）</h3>
+        <div class="log-list" id="logList">
+          <div class="log-empty" data-i18n="logEmpty">点击「展开更多」后，这里会标注本次数据来自内存还是接口。</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <section class="matrix">
+    <h2 data-i18n="matrixTitle">按钮出现规则（四个状态）</h2>
+    <p data-i18n="matrixDesc">「展开更多」在还有内容可展示时存在（本地未展示完或服务端 hasMore）；「收起」在展示超过首屏条数后出现。</p>
+    <div class="cards" id="cards"></div>
+  </section>
+</div>
+
+<script>
+/* ===========================================================================
+   状态机 —— 与方案一致：
+   - visibleTarget 初始 = initialCount（首屏条数，此处 5）
+   - 点「展开更多」：visibleTarget += 5；若 loaded < visibleTarget 且 hasMore，
+     自动发起接口请求拉一批（模拟 700ms），否则纯内存展开
+   - 渲染行数 = min(visibleTarget, loaded)
+   - 点「收起」：visibleTarget 重置为 initialCount
+   =========================================================================== */
+const I18N = {
+  zh: {
+    title: '侧边栏「展开 / 收起」统一交互原型',
+    subtitle: '对外只有「展开更多 / 收起」两个入口；数据来自本地内存还是接口请求，由代码内部按需决定（每批 5 条），用户无感知。',
+    reset: '重置',
+    interactiveDemo: '可交互 Demo（点底部按钮体验）',
+    newChat: '新对话',
+    showMore: '展开更多',
+    showLess: '收起',
+    loading: '加载中…',
+    noSessions: '暂无对话',
+    staticRow1: '发布流程梳理',
+    staticRow2: '修复 token 刷新竞态',
+    noteNoButton: '会话 ≤ 首屏条数且服务端无更多 → 无按钮',
+    stateTitle: '内部状态（用户不可见）',
+    stTarget: '目标可见条数 visibleTarget',
+    stLoaded: '已加载 loaded / total',
+    stHasMore: '服务端 hasMore',
+    stShown: '当前渲染行数',
+    logTitle: '事件日志（内部决策）',
+    logEmpty: '点击「展开更多」后，这里会标注本次数据来自内存还是接口。',
+    matrixTitle: '按钮出现规则（四个状态）',
+    matrixDesc: '「展开更多」在还有内容可展示时存在（本地未展示完或服务端 hasMore）；「收起」在展示超过首屏条数后出现。',
+    logNetStart: (n) => `点击「展开更多」→ 本地无足够数据，请求接口（+${n} 条）…`,
+    logNetDone: (a, b) => `接口返回，已加载 ${a} → ${b} 条，新行即展开`,
+    logMem: (a, b) => `点击「展开更多」→ 本地内存展开（显示 ${a} → ${b} 条，无请求）`,
+    logCollapse: (n) => `点击「收起」→ 裁回前 ${n} 条（数据保留在内存）`,
+    logReset: '重置为初始状态',
+    srcMem: '内存',
+    srcNet: '接口',
+    card1Name: '① 初始收起态',
+    card1Desc: '已加载 5 / 服务端 80。仅「展开更多」。',
+    card2Name: '② 加载中',
+    card2Desc: '点击后本地不足，接口请求中。按钮禁用，显示「加载中…」。',
+    card3Name: '③ 部分展开',
+    card3Desc: '显示 10 条，服务端仍有更多。「展开更多」+「收起」并存。',
+    card4Name: '④ 全部展开',
+    card4Desc: '80 条全部展示（hasMore=false）。仅「收起」。',
+    rows: (n) => `显示 ${n} 条`,
+  },
+  en: {
+    title: 'Sidebar Expand / Collapse — Unified Interaction Prototype',
+    subtitle: 'Only two entries: "Show more" / "Show less". Whether data comes from local memory or a server request is decided internally (batches of 5) — invisible to the user.',
+    reset: 'Reset',
+    interactiveDemo: 'Interactive demo (click the bottom buttons)',
+    newChat: 'New chat',
+    showMore: 'Show more',
+    showLess: 'Show less',
+    loading: 'Loading…',
+    noSessions: 'No conversations yet',
+    staticRow1: 'Release process review',
+    staticRow2: 'Fix token refresh race',
+    noteNoButton: 'Sessions ≤ first page & no more on server → no button',
+    stateTitle: 'Internal state (invisible to users)',
+    stTarget: 'visibleTarget',
+    stLoaded: 'loaded / total',
+    stHasMore: 'hasMore (server)',
+    stShown: 'Rendered rows',
+    logTitle: 'Event log (internal decisions)',
+    logEmpty: 'Click "Show more" — each entry marks whether data came from memory or the server.',
+    matrixTitle: 'Button visibility rules (four states)',
+    matrixDesc: '"Show more" exists while more can be revealed (undisplayed local rows or server hasMore); "Show less" appears once beyond the first page.',
+    logNetStart: (n) => `Click "Show more" → not enough local rows, fetching server (+${n})…`,
+    logNetDone: (a, b) => `Server returned, loaded ${a} → ${b}, new rows shown`,
+    logMem: (a, b) => `Click "Show more" → expanded from memory (${a} → ${b} rows, no request)`,
+    logCollapse: (n) => `Click "Show less" → trimmed back to first ${n} rows (data kept in memory)`,
+    logReset: 'Reset to initial state',
+    srcMem: 'memory',
+    srcNet: 'server',
+    card1Name: '① Initial collapsed',
+    card1Desc: 'Loaded 5 / 80 on server. Only "Show more".',
+    card2Name: '② Loading',
+    card2Desc: 'Local rows insufficient after click; fetching. Button disabled with "Loading…".',
+    card3Name: '③ Partially expanded',
+    card3Desc: '10 rows shown, server still has more. Both buttons.',
+    card4Name: '④ Fully expanded',
+    card4Desc: 'All 80 rows shown (hasMore=false). Only "Show less".',
+    rows: (n) => `${n} rows shown`,
+  },
+};
+
+const TITLES = [
+  '修复侧边栏展开时的闪烁', 'refactor: 抽离 useWorkspaceState', 'Windows 标题栏按钮对齐',
+  'feat: 会话拖拽到置顶区', '暗色模式对比度巡检', 'composer 附件卡片圆角',
+  'fix: 托盘菜单双语文案', 'submodule bump 到最新 main', '更新 DesignSystem §07 规范',
+  '快捷键设置页联调', 'session 导出 zip 打包日志', '搜索对话框全量加载时机',
+  'sidebar 滚动条样式统一', '移动端 switcher sheet 适配', 'fix: 重命名输入框 IME 提交',
+  'workspace 排序持久化', '空态文案与插图', 'check:style 新规则接入',
+  'release notes 0.0.12 起草', 'Jump List 工作区条目', 'shell env 探测超时调优',
+  'fix: 深链接选中会话不可见', 'pending 审批徽标计数', '性能录制 trace 落盘',
+];
+const TIMES = ['12m', '48m', '1h', '2h', '4h', '6h', '9h', '12h', '1d', '1d', '2d', '2d', '3d', '3d', '4d', '5d', '6d', '1w', '1w', '2w'];
+
+const TOTAL = 80, INITIAL = 5, BATCH = 5;
+/* chevron 图标（对齐 web-ui Icon sm = 14px；下 = 展开更多，上 = 收起） */
+const CHEV_DOWN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const CHEV_UP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+const sessions = Array.from({ length: TOTAL }, (_, i) => ({
+  title: TITLES[i % TITLES.length],
+  time: TIMES[Math.min(Math.floor(i / 2), TIMES.length - 1)],
+}));
+
+/* URL 参数：?theme=dark / ?lang=en，便于直接打开对应状态与截图验证 */
+const params = new URLSearchParams(location.search);
+if (params.get('theme') === 'dark') document.documentElement.dataset.colorScheme = 'dark';
+const S = { loaded: INITIAL, target: INITIAL, hasMore: true, loading: false, lang: params.get('lang') === 'en' ? 'en' : 'zh' };
+let prevShown = INITIAL;
+let logEntries = [];
+
+const t = (k) => I18N[S.lang][k];
+const $ = (id) => document.getElementById(id);
+
+function renderRows() {
+  const shown = Math.min(S.target, S.loaded);
+  $('rows').innerHTML = sessions.slice(0, shown).map((s, i) => `
+    <div class="se${i >= prevShown ? ' enter' : ''}">
+      <div class="row"><span class="lead"></span><div class="left"><span class="t">${s.title}</span></div><span class="ts">${s.time}</span></div>
+    </div>`).join('');
+  prevShown = shown;
+  return shown;
+}
+
+function renderActions(shown) {
+  const canExpand = shown < S.loaded || S.hasMore; // 还有可展示的（本地未展示完或服务端 hasMore）
+  const canCollapse = shown > INITIAL;             // 展示超过首屏条数
+  if (!canExpand && !canCollapse) { $('actions').innerHTML = ''; return; }
+  let html = '<div class="show-more-row">';
+  if (canExpand) {
+    html += `
+      <button class="show-more" ${S.loading ? 'disabled' : ''} data-act="expand">
+        ${S.loading ? '<span class="mini-spinner"></span>' : CHEV_DOWN}
+        <span class="show-more-label">${S.loading ? t('loading') : t('showMore')}</span>
+      </button>`;
+  }
+  if (canExpand && canCollapse) html += '<span class="show-more-sep">·</span>';
+  if (canCollapse) {
+    html += `
+      <button class="show-more" data-act="collapse">
+        ${CHEV_UP}
+        <span class="show-more-label">${t('showLess')}</span>
+      </button>`;
+  }
+  html += '</div>';
+  $('actions').innerHTML = html;
+}
+
+function renderState(shown) {
+  $('stTarget').textContent = S.target;
+  $('stLoaded').textContent = `${S.loaded} / ${TOTAL}`;
+  $('stHasMore').textContent = String(S.hasMore);
+  $('stShown').innerHTML = `<span class="hl">${shown}</span>`;
+}
+
+function renderLog() {
+  $('logList').innerHTML = logEntries.length === 0
+    ? `<div class="log-empty">${t('logEmpty')}</div>`
+    : logEntries.map((e) => `
+      <div class="log-item">${e.src ? `<span class="src ${e.src}">${e.src === 'mem' ? t('srcMem') : t('srcNet')}</span>` : ''}<span>${e.text}</span></div>`).join('');
+}
+
+function render() {
+  const shown = renderRows();
+  renderActions(shown);
+  renderState(shown);
+  renderLog();
+}
+
+function pushLog(text, src) {
+  logEntries.unshift({ text, src });
+  if (logEntries.length > 30) logEntries.pop();
+}
+
+function expand() {
+  if (S.loading) return;
+  S.target += BATCH;
+  if (S.loaded < S.target && S.hasMore) {
+    // 本地不够 → 接口请求
+    S.loading = true;
+    pushLog(t('logNetStart')(Math.min(BATCH, TOTAL - S.loaded)), 'net');
+    render();
+    setTimeout(() => {
+      const before = S.loaded;
+      S.loaded += Math.min(BATCH, TOTAL - S.loaded);
+      S.hasMore = S.loaded < TOTAL;
+      S.loading = false;
+      pushLog(t('logNetDone')(before, S.loaded), 'net');
+      render();
+    }, 700);
+  } else {
+    // 本地够 → 纯内存展开
+    const to = Math.min(S.target, S.loaded);
+    pushLog(t('logMem')(prevShown, to), 'mem');
+    render();
+  }
+}
+
+function collapse() {
+  if (S.loading) return;
+  S.target = INITIAL;
+  pushLog(t('logCollapse')(INITIAL), null);
+  render();
+}
+
+function reset() {
+  S.loaded = INITIAL; S.target = INITIAL; S.hasMore = true; S.loading = false;
+  logEntries = [];
+  pushLog(t('logReset'), null);
+  render();
+}
+
+/* 按钮事件（事件委托） */
+$('actions').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn || btn.disabled) return;
+  if (btn.dataset.act === 'expand') expand(); else collapse();
+});
+$('resetBtn').addEventListener('click', reset);
+
+/* 主题 / 语言 */
+$('themeToggle').addEventListener('click', () => {
+  const html = document.documentElement;
+  const dark = html.dataset.colorScheme === 'dark';
+  html.dataset.colorScheme = dark ? 'light' : 'dark';
+  $('themeToggle').textContent = dark ? '🌙 Dark' : '☀️ Light';
+});
+function applyLang() {
+  $('langToggle').textContent = S.lang === 'zh' ? 'EN' : '中文';
+  document.documentElement.lang = S.lang === 'zh' ? 'zh-CN' : 'en';
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const v = t(el.dataset.i18n);
+    if (typeof v === 'string') el.textContent = v;
+  });
+  renderCards();
+  render();
+}
+$('langToggle').addEventListener('click', () => {
+  S.lang = S.lang === 'zh' ? 'en' : 'zh';
+  applyLang();
+});
+
+/* --- 状态矩阵（静态切片） ------------------------------------------------- */
+function miniRow(title, time) {
+  return `<div class="se"><div class="row"><span class="lead"></span><div class="left"><span class="t">${title}</span></div><span class="ts">${time}</span></div></div>`;
+}
+function ghostRows(n) {
+  return `<div class="group-note" style="padding-top: 2px; padding-bottom: 6px;">⋯ ${n}</div>`;
+}
+function btnShowMore(label, chevron, disabled = false, spinner = false) {
+  return `<button class="show-more" ${disabled ? 'disabled' : ''}>${spinner ? '<span class="mini-spinner"></span>' : chevron}<span class="show-more-label">${label}</span></button>`;
+}
+
+function renderCards() {
+  const cards = [
+    {
+      name: t('card1Name'), desc: t('card1Desc'),
+      body: miniRow(TITLES[0], '12m') + miniRow(TITLES[1], '48m') + ghostRows(3) + `<div class="show-more-row">${btnShowMore(t('showMore'), CHEV_DOWN)}</div>`,
+    },
+    {
+      name: t('card2Name'), desc: t('card2Desc'),
+      body: miniRow(TITLES[0], '12m') + miniRow(TITLES[1], '48m') + ghostRows(3) + `<div class="show-more-row">${btnShowMore(t('loading'), CHEV_DOWN, true, true)}</div>`,
+    },
+    {
+      name: t('card3Name'), desc: t('card3Desc'),
+      body: miniRow(TITLES[0], '12m') + miniRow(TITLES[1], '48m') + ghostRows(8) + `<div class="show-more-row">${btnShowMore(t('showMore'), CHEV_DOWN)}<span class="show-more-sep">·</span>${btnShowMore(t('showLess'), CHEV_UP)}</div>`,
+    },
+    {
+      name: t('card4Name'), desc: t('card4Desc'),
+      body: miniRow(TITLES[0], '12m') + miniRow(TITLES[1], '48m') + ghostRows(78) + `<div class="show-more-row">${btnShowMore(t('showLess'), CHEV_UP)}</div>`,
+    },
+  ];
+  $('cards').innerHTML = cards.map((c) => `
+    <div class="card">
+      <div class="card-head"><div class="name">${c.name}</div><div class="desc">${c.desc}</div></div>
+      <div class="card-body">${c.body}</div>
+    </div>`).join('');
+}
+
+applyLang();
+if (document.documentElement.dataset.colorScheme === 'dark') $('themeToggle').textContent = '☀️ Light';
+</script>
+</body>
+</html>
