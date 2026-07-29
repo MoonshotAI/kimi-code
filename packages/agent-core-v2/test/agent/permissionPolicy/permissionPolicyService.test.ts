@@ -139,6 +139,22 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('approves a configured MCP tool before the manual-mode fallback', async () => {
+    rules.push({
+      decision: 'allow',
+      scope: 'user',
+      pattern: 'mcp__example__read_data',
+    });
+
+    await expect(evaluate({
+      toolName: 'mcp__example__read_data',
+      args: {},
+    })).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
+    });
+  });
+
   it('reuses approve-for-session before matching ask rules', async () => {
     rules.push({
       decision: 'ask',

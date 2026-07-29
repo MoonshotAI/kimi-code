@@ -1,16 +1,19 @@
 /**
  * `permissionRules` domain (L3) — `IAgentPermissionRulesService` implementation.
  *
- * Holds the agent's permission rules and deduped session-approval patterns in the
- * `wire` `PermissionRulesModel`, mutating it only through the `permission.rules.add`
- * / `permission.record_approval_result` Ops (`wire.dispatch(...)`) and reading it
- * through `wire.getModel`. `wire.replay` rebuilds the model silently and
- * consumers read the getters instead. Bound at Agent scope.
+ * Exposes the effective permission rules by composing the user-configured
+ * `[permission]` rules from `config` with the agent's live rules in the `wire`
+ * `PermissionRulesModel`. Mutates agent state only through the
+ * `permission.rules.add` / `permission.record_approval_result` Ops
+ * (`wire.dispatch(...)`); `wire.replay` rebuilds the model silently. Bound at
+ * Agent scope.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
+import { IConfigService } from '#/app/config/config';
 import { IWireService } from '#/wire/wire';
+import { PERMISSION_SECTION, type PermissionConfig } from './configSection';
 import {
   IAgentPermissionRulesService,
   type PermissionApprovalResultRecord,
@@ -25,10 +28,15 @@ import {
 export class AgentPermissionRulesService implements IAgentPermissionRulesService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWireService private readonly wire: IWireService) {}
+  constructor(
+    @IConfigService private readonly config: IConfigService,
+    @IWireService private readonly wire: IWireService,
+  ) {}
 
   get rules(): readonly PermissionRule[] {
-    return [...this.wire.getModel(PermissionRulesModel).rules];
+    const configuredRules =
+      this.config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules ?? [];
+    return [...configuredRules, ...this.wire.getModel(PermissionRulesModel).rules];
   }
 
   get sessionApprovalRulePatterns(): readonly string[] {
