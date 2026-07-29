@@ -8,6 +8,8 @@
  * lets tests inject a fake transport without pulling in the MCP SDK type graph.
  */
 
+import type { ChannelMessageListener } from './client-shared';
+
 /**
  * Inline resource contents nested under an EmbeddedResource block.
  * Exactly one of `text` or `blob` is populated, per the MCP schema's
@@ -56,6 +58,13 @@ export interface MCPClient {
    * `MethodNotFound` — proves the transport is usable.
    */
   ping(signal?: AbortSignal): Promise<void>;
+  /**
+   * Subscribes to `notifications/kimi/channel` messages pushed by the
+   * server. At most one listener is supported (mirrors `onUnexpectedClose`);
+   * a message that arrives before a listener is attached is buffered and
+   * delivered once one is.
+   */
+  onChannelMessage(listener: ChannelMessageListener): void;
 }
 
 export function assertMcpInputSchema(

@@ -1,15 +1,18 @@
 import type { McpServerSseConfig } from './config-schema';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { SSEClientTransport, SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 
 import {
   buildRequestOptions,
+  createMcpSdkClient,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
   toMcpToolDefinition,
   toMcpToolResult,
+  type ChannelMessageHub,
+  type ChannelMessageListener,
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
@@ -28,6 +31,7 @@ export interface SseMcpClientOptions {
 
 export class SseMcpClient implements MCPClient {
   private readonly client: Client;
+  private readonly channelHub: ChannelMessageHub;
   private readonly transport: SSEClientTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
@@ -49,10 +53,12 @@ export class SseMcpClient implements MCPClient {
       fetch: options.fetch,
       authProvider: options.oauthProvider,
     });
-    this.client = new Client({
-      name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
-      version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
-    });
+    const { client, channelHub } = createMcpSdkClient(
+      options.clientName ?? KIMI_MCP_CLIENT_NAME,
+      options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
+    );
+    this.client = client;
+    this.channelHub = channelHub;
     this.startupTimeoutMs = options.startupTimeoutMs;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
@@ -93,6 +99,10 @@ export class SseMcpClient implements MCPClient {
       this.pendingUnexpectedClose = undefined;
       listener(pending);
     }
+  }
+
+  onChannelMessage(listener: ChannelMessageListener): void {
+    this.channelHub.onChannelMessage(listener);
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

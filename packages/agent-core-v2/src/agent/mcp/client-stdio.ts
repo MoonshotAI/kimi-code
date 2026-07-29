@@ -1,17 +1,20 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerStdioConfig } from './config-schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { isAbsolute, resolve } from 'pathe';
 
 import {
   buildRequestOptions,
+  createMcpSdkClient,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
   toMcpToolDefinition,
   toMcpToolResult,
+  type ChannelMessageHub,
+  type ChannelMessageListener,
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
@@ -29,6 +32,7 @@ const STDERR_BUFFER_CAPACITY = 4 * 1024;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
+  private readonly channelHub: ChannelMessageHub;
   private readonly transport: StdioClientTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
@@ -57,10 +61,12 @@ export class StdioMcpClient implements MCPClient {
     this.transport.stderr?.on('data', (chunk: Buffer | string) => {
       this.stderrBuffer.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
     });
-    this.client = new Client({
-      name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
-      version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
-    });
+    const { client, channelHub } = createMcpSdkClient(
+      options.clientName ?? KIMI_MCP_CLIENT_NAME,
+      options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
+    );
+    this.client = client;
+    this.channelHub = channelHub;
     this.startupTimeoutMs = options.startupTimeoutMs;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
@@ -101,6 +107,10 @@ export class StdioMcpClient implements MCPClient {
       this.pendingUnexpectedClose = undefined;
       listener(pending);
     }
+  }
+
+  onChannelMessage(listener: ChannelMessageListener): void {
+    this.channelHub.onChannelMessage(listener);
   }
 
   stderrSnapshot(): string {
