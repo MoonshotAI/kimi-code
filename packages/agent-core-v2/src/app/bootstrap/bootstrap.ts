@@ -3,7 +3,7 @@
  *
  * Defines the `IBootstrapService`, the snapshot of the world the process runs
  * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientVersion`) and the
+ * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientIdentity`) and the
  * app path layout (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is
  * the single place that reads `process.env` / `os.homedir()` / invocation
  * input to resolve the snapshot; everything downstream reads from
@@ -17,6 +17,8 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { join } from 'pathe';
+
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -36,7 +38,7 @@ export interface IBootstrapOptions {
   readonly arch: string;
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly clientVersion: string;
+  readonly clientIdentity: KimiHostIdentity;
 }
 
 export const IBootstrapOptions: ServiceIdentifier<IBootstrapOptions> =
@@ -61,7 +63,7 @@ export interface IBootstrapService {
   readonly osHomeDir: string;
   readonly homeDir: string;
   readonly configPath: string;
-  readonly clientVersion: string;
+  readonly clientIdentity: KimiHostIdentity;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -87,8 +89,19 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  readonly clientVersion?: string;
+  readonly clientIdentity?: KimiHostIdentity;
 }
+
+/**
+ * Built-in identity used only when the caller omits `clientIdentity`. This is
+ * a fallback so bare `bootstrap()` calls in unit tests keep working — NOT the
+ * contract: composition roots must pass the host's own `KimiHostIdentity`.
+ */
+const FALLBACK_CLIENT_IDENTITY: KimiHostIdentity = {
+  productName: 'kimi-code-cli',
+  version: 'unknown',
+  platform: 'kimi_code_cli',
+};
 
 export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapOptions {
   const env = input.env ?? process.env;
@@ -103,7 +116,7 @@ export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapO
     arch: input.arch ?? process.arch,
     cwd: input.cwd ?? process.cwd(),
     env,
-    clientVersion: input.clientVersion ?? 'unknown',
+    clientIdentity: input.clientIdentity ?? FALLBACK_CLIENT_IDENTITY,
   };
 }
 

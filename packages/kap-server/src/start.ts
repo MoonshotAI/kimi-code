@@ -231,17 +231,30 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // rooted at `homeDir`, so the Store facades above it (append-log, atomic
   // document, blob) — and in turn session metadata, wire records, blobs, and
   // the session index — all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath, clientVersion: hostVersion }, [
-    ...logSeed(logging),
-    // Default host identity so outbound requests (model, WebSearch, registry
-    // refresh) carry a product User-Agent even when the embedding host did not
-    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
-    // through `opts.seeds`, which override this entry (last seed wins).
-    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
-    ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
-    ...hostIdentitySeed(opts.hostIdentity),
-    ...(opts.seeds ?? []),
-  ]);
+  // Temporary default identity: step 4 of the host-identity unification makes
+  // `hostIdentity` a required `startServer` option and passes it through here.
+  const { app: core } = bootstrap(
+    {
+      homeDir,
+      configPath,
+      clientIdentity: {
+        productName: 'kimi-code-cli',
+        version: hostVersion,
+        platform: 'kimi_code_cli',
+      },
+    },
+    [
+      ...logSeed(logging),
+      // Default host identity so outbound requests (model, WebSearch, registry
+      // refresh) carry a product User-Agent even when the embedding host did not
+      // seed its own headers. Hosts like the CLI pass full Kimi identity headers
+      // through `opts.seeds`, which override this entry (last seed wins).
+      ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
+      ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
+      ...hostIdentitySeed(opts.hostIdentity),
+      ...(opts.seeds ?? []),
+    ],
+  );
 
   // Attach the cloud telemetry appender BEFORE any session is created:
   // `session_started` / `session_load_failed` fire inside create()/resume(), so

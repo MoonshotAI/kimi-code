@@ -122,7 +122,11 @@ describe('server-v2 boot', () => {
     // ... and it backs the default product User-Agent.
     const defaults = server.core.accessor.get(IHostRequestHeaders);
     expect(defaults.headers['User-Agent']).toBe('kimi-code-cli/9.9.9-host');
-    expect(server.core.accessor.get(IBootstrapService).clientVersion).toBe('9.9.9-host');
+    expect(server.core.accessor.get(IBootstrapService).clientIdentity).toEqual({
+      productName: 'kimi-code-cli',
+      version: '9.9.9-host',
+      platform: 'kimi_code_cli',
+    });
   });
 
   it('seeds a default product User-Agent that opts.seeds can override', async () => {
