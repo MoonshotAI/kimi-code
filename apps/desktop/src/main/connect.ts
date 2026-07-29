@@ -28,24 +28,9 @@ let consecutiveConnectFailures = 0;
 
 /** Where a connect failure was raised: starting the embedded server, or
     loading the renderer URL (external mode has no start stage). */
-export type ConnectFailureStage = 'server_start' | 'load_url';
+type ConnectFailureStage = 'server_start' | 'load_url';
 
 type ConnectFailurePhase = NonNullable<StartupConnectResultEvent['failure_phase']>;
-
-/** Heuristic failure_phase for startup_connect_result: Electron ERR_* codes
-    and auth signals win over the stage default (spawn/port vs. handshake).
-    The URL is stripped first — external-mode URLs carry `#token=…`, which
-    would otherwise make every external failure look like auth. */
-export function classifyConnectFailure(error: unknown, stage: ConnectFailureStage): ConnectFailurePhase {
-  const raw = error instanceof Error ? error.message : String(error);
-  const message = raw.replace(/'[^']*'|"[^"]*"|https?:\/\/\S+/g, ' ').toLowerCase();
-  if (/401|unauthorized|token/.test(message)) return 'auth';
-  if (/err_timed_out|timeout|etimedout/.test(message)) return 'timeout';
-  if (stage === 'server_start') {
-    return /eaddrinuse|port/.test(message) ? 'port' : 'spawn';
-  }
-  return 'handshake';
-}
 
 // connect() calls are serialized through this queue: window (re)creation
 // (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
@@ -207,13 +192,21 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     }
   } catch (error) {
     consecutiveConnectFailures += 1;
+    const message = error instanceof Error ? error.message : String(error);
+    // failure_phase heuristic: auth/timeout signals win over the stage
+    // default. Strip quoted spans and URLs first — external-mode URLs carry
+    // `#token=…`, which would make every external failure match auth.
+    const normalized = message.replace(/'[^']*'|"[^"]*"|https?:\/\/\S+/g, ' ').toLowerCase();
+    let failurePhase: ConnectFailurePhase = failureStage === 'server_start' ? 'spawn' : 'handshake';
+    if (/401|unauthorized|token/.test(normalized)) failurePhase = 'auth';
+    else if (/err_timed_out|timeout|etimedout/.test(normalized)) failurePhase = 'timeout';
+    else if (failureStage === 'server_start' && /eaddrinuse|port/.test(normalized)) failurePhase = 'port';
     trackDesktopEvent('startup_connect_result', {
       ok: false,
-      failure_phase: classifyConnectFailure(error, failureStage),
+      failure_phase: failurePhase,
       retry_count: consecutiveConnectFailures,
       error_class: error instanceof Error ? error.name : 'unknown',
     });
-    const message = error instanceof Error ? error.message : String(error);
     log.error(`[kimi-desktop] connect failed: ${message}`);
     if (!win.isDestroyed()) {
       trackDesktopEvent('startup_failure_screen_shown', {});
