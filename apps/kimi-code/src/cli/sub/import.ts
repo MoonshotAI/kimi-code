@@ -9,6 +9,7 @@
  * Usage:
  *   kimi import --from claude-code                    # interactive picker → new session
  *   kimi import --from claude-code --session <id>     # specific CC session
+ *   kimi import --from claude-code --turns 50         # include up to 50 conversation turns
  *   kimi import --file handoff.md                     # from a handoff file
  *   kimi import --from claude-code --print            # print handoff to stdout only
  *   kimi import --from claude-code --prompt "..."     # import + send follow-up prompt
@@ -70,6 +71,7 @@ interface ImportOptions {
   file?: string;
   print: boolean;
   prompt?: string;
+  turns?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +164,16 @@ async function handleSourceImport(
 
   let ctx;
   try {
-    ctx = await parser.parseSession(sessionId);
+    let parseOpts: { maxTurns?: number } | undefined;
+    if (opts.turns !== undefined) {
+      const maxTurns = Number.parseInt(opts.turns, 10);
+      if (Number.isNaN(maxTurns) || maxTurns < 1) {
+        deps.stderr.write(`Invalid --turns value: ${opts.turns}. Must be a positive integer.\n`);
+        deps.exit(1);
+      }
+      parseOpts = { maxTurns };
+    }
+    ctx = await parser.parseSession(sessionId, parseOpts);
   } catch (error) {
     deps.stderr.write(`Failed to parse session: ${errorMessage(error)}\n`);
     deps.exit(1);
@@ -346,6 +357,7 @@ export function registerImportCommand(parent: Command, deps: ImportSubdeps = {})
     .description('Import session context from another AI coding tool.')
     .option('--from <source>', 'Source tool (e.g. claude-code).')
     .option('--session <id>', 'Session ID from the source tool to import.')
+    .option('--turns <number>', 'Maximum recent conversation turns to include (default: 30).')
     .option('--file <path>', 'Import from a handoff Markdown file instead of a source tool.')
     .option('--prompt <text>', 'Follow-up prompt to send after importing context.')
     .option(

@@ -94,6 +94,12 @@ export interface SourceSessionSummary {
   tokenCount?: number;
 }
 
+/** Options for {@link SourceParser.parseSession}. */
+export interface ParseOptions {
+  /** Maximum number of recent conversation turns to include (default: 30). */
+  maxTurns?: number;
+}
+
 /** Interface that each source-tool parser must implement. */
 export interface SourceParser {
   /** Unique identifier for this source (e.g. 'claude-code'). */
@@ -102,6 +108,10 @@ export interface SourceParser {
   readonly label: string;
   /** Discover available sessions from this source tool. */
   listSessions(): Promise<SourceSessionSummary[]>;
-  /** Parse a specific session into a handoff context. */
-  parseSession(sessionId: string): Promise<HandoffContext>;
+  /**
+   * Parse a specific session into a handoff context.
+   * @param sessionId — The source tool's session identifier.
+   * @param options — Optional parsing options (e.g. max turns).
+   */
+  parseSession(sessionId: string, options?: ParseOptions): Promise<HandoffContext>;
 }

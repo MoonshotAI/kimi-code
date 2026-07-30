@@ -132,7 +132,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`import`（从外部 AI 编码工具导入会话上下文）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -248,6 +248,63 @@ kimi export 01HZ...XYZ -o ./bug-report.zip
 # 排除全局诊断日志
 kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 ```
+
+### `kimi import`
+
+从外部 AI 编码工具（如 Claude Code）导入会话到 Kimi Code，保留对话历史、工具活动和项目上下文。导入后的会话可通过 `kimi -r` 恢复并继续工作。
+
+```sh
+kimi import --from <source> [options]
+kimi import --file <handoff.md>
+```
+
+| 选项 | 简写 | 说明 |
+| --- | --- | --- |
+| `--from <source>` | | 要导入的源工具。当前支持：`claude-code` |
+| `--session <id>` | | 源工具中的会话 ID。省略时进入交互式选择器浏览可用会话 |
+| `--turns <number>` | | 最多包含的最近对话轮数。默认：`30` |
+| `--file <path>` | | 从 handoff Markdown 文件导入，而不是直接查询源工具 |
+| `--prompt <text>` | | 导入后发送后续 prompt，让模型立即处理上下文 |
+| `--print` | | 将 handoff Markdown 打印到 stdout，不创建 kimi 会话（便于预览或管道处理） |
+
+#### 从 Claude Code 导入
+
+```sh
+# 交互式选择器——浏览你的 Claude Code 会话并选择一个
+kimi import --from claude-code
+
+# 按 ID 导入指定会话
+kimi import --from claude-code --session <uuid>
+
+# 包含更多对话历史（默认 30 轮）
+kimi import --from claude-code --session <uuid> --turns 50
+
+# 先预览将要导入的内容
+kimi import --from claude-code --session <uuid> --print
+
+# 导入并一步继续工作
+kimi import --from claude-code --session <uuid> --prompt "继续实现"
+```
+
+解析器会扫描 `~/.claude/projects/` 目录下的会话文件（支持 `CLAUDE_CONFIG_DIR` 环境变量），并将其转换为结构化的 handoff 文档。生成的内容包括：
+
+- YAML 前置元数据块（源工具、会话 ID、模型、token 用量等）
+- 从首条用户消息提取的摘要
+- 会话期间检测到的关键决策和架构选择
+- 修改或读取过的文件列表
+- 最近对话轮次（用户、助手、工具调用和工具结果）
+- 未完成的待办工作项
+
+#### 从 Handoff 文件导入
+
+你也可以从 handoff Markdown 文件导入（例如先用 `--print` 生成再手动编辑，或由外部工具生成）：
+
+```sh
+kimi import --file ./handoff.md
+kimi import --file ./handoff.md --prompt "继续这个会话的工作"
+```
+
+handoff 文件应遵循源解析器生成的 Markdown 格式（包含 `source`、`sourceSessionId` 等 YAML 前置元数据）。
 
 ### `kimi migrate`
 

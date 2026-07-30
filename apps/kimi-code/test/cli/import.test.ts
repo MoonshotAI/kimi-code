@@ -272,6 +272,34 @@ describe('Claude Code session parser', () => {
       claudeCodeParser.parseSession('nonexistent-session-id'),
     ).rejects.toThrow('not found');
   });
+
+  it('should respect the maxTurns parse option', async () => {
+    const test = createTestCCSession();
+    try {
+      const { claudeCodeParser } = await import('#/cli/import/sources/claude-code');
+
+      const origEnv = process.env['CLAUDE_CONFIG_DIR'];
+      process.env['CLAUDE_CONFIG_DIR'] = test.dir;
+      try {
+        // With maxTurns=1 we should get very few conversation turns
+        const ctxShort = await claudeCodeParser.parseSession(test.sessionId, { maxTurns: 1 });
+        const ctxDefault = await claudeCodeParser.parseSession(test.sessionId);
+
+        // The short version should have fewer turns than the default
+        expect(ctxShort.recentConversation.length).toBeLessThan(
+          ctxDefault.recentConversation.length,
+        );
+      } finally {
+        if (origEnv !== undefined) {
+          process.env['CLAUDE_CONFIG_DIR'] = origEnv;
+        } else {
+          delete process.env['CLAUDE_CONFIG_DIR'];
+        }
+      }
+    } finally {
+      rmSync(test.dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Handoff Markdown format', () => {

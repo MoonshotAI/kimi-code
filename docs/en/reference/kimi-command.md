@@ -132,7 +132,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `import` (import session context from external AI coding tools), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -248,6 +248,63 @@ kimi export 01HZ...XYZ -o ./bug-report.zip
 # Exclude the global diagnostic log
 kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 ```
+
+### `kimi import`
+
+Import a session from an external AI coding tool (e.g. Claude Code) into Kimi Code, preserving conversation history, tool activity, and project context. The imported session becomes a resumable kimi session that you can continue with `kimi -r`.
+
+```sh
+kimi import --from <source> [options]
+kimi import --file <handoff.md>
+```
+
+| Option | Short | Description |
+| --- | --- | --- |
+| `--from <source>` | | Source tool to import from. Currently supported: `claude-code` |
+| `--session <id>` | | Session ID from the source tool. When omitted, an interactive picker lists available sessions |
+| `--turns <number>` | | Maximum number of recent conversation turns to include. Default: `30` |
+| `--file <path>` | | Import from a handoff Markdown file instead of querying a source tool directly |
+| `--prompt <text>` | | Follow-up prompt to send after importing, so the model can process the context immediately |
+| `--print` | | Print the handoff Markdown to stdout without creating a kimi session (useful for preview or piping) |
+
+#### Import from Claude Code
+
+```sh
+# Interactive picker — browse your Claude Code sessions and select one
+kimi import --from claude-code
+
+# Import a specific session by ID
+kimi import --from claude-code --session <uuid>
+
+# Include more conversation history (default: 30 turns)
+kimi import --from claude-code --session <uuid> --turns 50
+
+# Preview what would be imported before committing
+kimi import --from claude-code --session <uuid> --print
+
+# Import and continue working in a single step
+kimi import --from claude-code --session <uuid> --prompt "Continue the implementation"
+```
+
+The parser scans `~/.claude/projects/` for session files (respecting the `CLAUDE_CONFIG_DIR` environment variable) and converts them into a structured handoff document. The generated document includes:
+
+- A YAML frontmatter block with source metadata (tool, session ID, model, token usage)
+- A summary extracted from the first user message
+- Key decisions and architectural choices detected during the session
+- Files that were modified or read
+- Recent conversation turns (user, assistant, tool calls, and tool results)
+- Pending work items that were not completed
+
+#### Import from a Handoff File
+
+You can also import from a handoff Markdown file (e.g. one generated with `--print` and edited by hand, or one produced by an external tool):
+
+```sh
+kimi import --file ./handoff.md
+kimi import --file ./handoff.md --prompt "Pick up where this session left off"
+```
+
+The handoff file should follow the same Markdown format produced by the source parsers (YAML frontmatter with `source`, `sourceSessionId`, etc.).
 
 ### `kimi migrate`
 

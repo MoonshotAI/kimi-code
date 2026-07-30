@@ -24,6 +24,7 @@ import type {
   FileChangeRecord,
   HandoffContext,
   HandoffTokenUsage,
+  ParseOptions,
   SourceParser,
   SourceSessionSummary,
 } from './types';
@@ -33,7 +34,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
-const MAX_RECENT_TURNS = 30;
+const DEFAULT_MAX_TURNS = 30;
 const MAX_THINKING_CHARS = 500;
 const MAX_TOOL_INPUT_CHARS = 200;
 
@@ -627,7 +628,7 @@ class ClaudeCodeParser implements SourceParser {
     return summaries;
   }
 
-  async parseSession(sessionId: string): Promise<HandoffContext> {
+  async parseSession(sessionId: string, options?: ParseOptions): Promise<HandoffContext> {
     const projectsDir = resolveClaudeConfigDir();
     const files = await discoverSessionFiles(projectsDir);
 
@@ -643,14 +644,16 @@ class ClaudeCodeParser implements SourceParser {
       entries.push(entry);
     }
 
-    return this.buildContext(sessionId, filePath, entries);
+    return this.buildContext(sessionId, filePath, entries, options?.maxTurns);
   }
 
   private buildContext(
     sessionId: string,
     _filePath: string,
     entries: CCRawEntry[],
+    maxTurns?: number,
   ): HandoffContext {
+    const turnsLimit = maxTurns ?? DEFAULT_MAX_TURNS;
     // Filter to conversation entries
     const convEntries = entries.filter(isConversationEntry);
 
@@ -682,7 +685,7 @@ class ClaudeCodeParser implements SourceParser {
     const allThinking: string[] = [];
     const toolIdToName = new Map<string, string>();
 
-    for (const entry of convEntries.slice(-MAX_RECENT_TURNS * 2)) {
+    for (const entry of convEntries.slice(-turnsLimit * 2)) {
       if (entry.message === undefined) continue;
 
       if (entry.type === 'user') {
@@ -761,7 +764,7 @@ class ClaudeCodeParser implements SourceParser {
       summary: truncateText(firstUserText, 200) || undefined,
       keyDecisions,
       filesModified,
-      recentConversation: conversation.slice(-MAX_RECENT_TURNS),
+      recentConversation: conversation.slice(-turnsLimit),
       pendingWork,
     };
 
