@@ -73,7 +73,6 @@
  */
 interface ConfigUpdatePayload {
   _name: 'config.update';
-  cwd?: string;
   modelAlias?: string;
   profileName?: string;
   /** ThinkingEffort */
@@ -445,7 +444,6 @@ interface PlanRevisionPayload {
  */
 interface ProfileBindPayload {
   _name: 'profile.bind';
-  cwd?: string;
   modelAlias?: string;
   profileName?: string;
   /** ThinkingEffort */

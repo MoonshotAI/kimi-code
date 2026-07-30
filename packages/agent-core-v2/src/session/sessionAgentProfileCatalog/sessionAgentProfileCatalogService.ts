@@ -2,59 +2,46 @@
  * `sessionAgentProfileCatalog` domain (L3) — `ISessionAgentProfileCatalog`
  * implementation.
  *
- * Merges the builtin (code-contribution) App catalog with the file-backed
- * sources (plugin / user / extra / project / explicit) by priority, requiring
- * an explicit opt-in before a file replaces a same-name builtin, and
- * serializing
- * refreshes per source the same way `sessionSkillCatalog` does. The merged
- * view always contains the builtin profiles (seeded at construction); file
- * profiles appear once `ready` resolves. A rejecting `fatal` source (an
- * invalid `--agent-file`) propagates into `ready` so `bind()` / `load()`
- * awaiters see the error; a rejecting non-fatal source (a transient fs error
- * inside a directory source) degrades to a warning and keeps any previously
- * loaded contribution, so directory problems never poison the session.
- * `ready` tracks the most recent load pass: `reload()` replaces it, so a
- * fatal failure does not wedge the catalog once the underlying problem is
- * fixed, and `loadAll` merges whatever loaded even when a fatal source
- * rejects mid-pass. The swallowed handler on `ready` keeps an un-awaited
- * rejection from crashing the process, and event-driven reloads get the
- * same warning treatment. The plain-data state (`contributions`, `merged`)
- * is registered into `sessionState` (`ISessionStateService`) and
- * read/written through it.
- * Bound at Session scope.
+ * Projects the App-scope `IAgentProfileRegistry` into this session's merged
+ * profile view. The relevant entries are the global ones (builtin) plus the
+ * ones tagged with the seeded workspace key (user / plugin / extra /
+ * workspace / explicit); they are re-merged on every registry change (the
+ * projection is a cheap full recompute — merge, never incremental patching).
+ * Merge rules, applied per profile name: candidates are collected from every
+ * relevant entry (deduped within an entry, highest priority first); the first
+ * candidate wins, except that replacing a same-name `builtin` profile
+ * requires `override: true` in the frontmatter — a non-override collision is
+ * warned about and skipped to the next candidate. `ready` resolves
+ * immediately: loader readiness is the handler's job — it awaits every
+ * agent-profile loader of the workspace before publishing the session handle,
+ * so the registry is already populated when this service is constructed, and
+ * every later change arrives through `onDidChange`. Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { ILogService } from '#/_base/log/log';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { isError2 } from '#/_base/errors/errors';
-import { defineState } from '#/_base/state/stateRegistry';
+import { ILogService } from '#/_base/log/log';
+import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
-  DEFAULT_AGENT_PROFILE_NAME,
-  IAgentProfileCatalogService,
-  type AgentProfile,
-} from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type {
-  AgentProfileContribution,
-  IAgentProfileSource,
-} from '#/app/agentFileCatalog/agentProfileSource';
-import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
-import { ISessionStateService } from '#/session/state/sessionState';
+  IAgentProfileRegistry,
+  type AgentProfileRegistration,
+} from '#/app/agentProfileCatalog/agentProfileRegistry';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 
-import { IExplicitFileAgentSource } from './explicitFileAgentSource';
-import { IExtraFileAgentSource } from './extraFileAgentSource';
-import { IPluginAgentProfileSource } from './pluginAgentProfileSource';
-import { IProjectFileAgentSource } from './projectFileAgentSource';
-import { ISessionAgentProfileCatalog } from './sessionAgentProfileCatalog';
+import { ISessionAgentProfileCatalogSeed } from './agentProfileCatalogSeed';
+import {
+  ISessionAgentProfileCatalog,
+  type AgentProfileInspection,
+  type AgentProfileSuppressedCandidate,
+} from './sessionAgentProfileCatalog';
 
-export const agentProfileCatalogContributionsKey = defineState<
-  Map<string, { readonly c: AgentProfileContribution; readonly priority: number }>
->('sessionAgentProfileCatalog.contributions', () => new Map());
-export const agentProfileCatalogMergedKey = defineState<Map<string, AgentProfile>>(
-  'sessionAgentProfileCatalog.merged',
-  () => new Map(),
-);
+interface ProfileCandidate {
+  readonly profile: AgentProfile;
+  readonly sourceId: string;
+  readonly priority: number;
+}
 
 export class SessionAgentProfileCatalogService
   extends Disposable
@@ -62,61 +49,31 @@ export class SessionAgentProfileCatalogService
 {
   declare readonly _serviceBrand: undefined;
 
-  private readonly sources: readonly IAgentProfileSource[];
-  private readonly sourceLoadTails = new Map<IAgentProfileSource, Promise<void>>();
-  private readyPromise: Promise<void>;
+  private merged = new Map<string, AgentProfile>();
+  private inspections = new Map<string, AgentProfileInspection>();
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());
   readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
 
   constructor(
-    @ISessionStateService private readonly states: ISessionStateService,
-    @IAgentProfileCatalogService private readonly builtin: IAgentProfileCatalogService,
-    @IPluginAgentProfileSource plugin: IPluginAgentProfileSource,
-    @IUserFileAgentSource user: IUserFileAgentSource,
-    @IExtraFileAgentSource extra: IExtraFileAgentSource,
-    @IProjectFileAgentSource project: IProjectFileAgentSource,
-    @IExplicitFileAgentSource explicit: IExplicitFileAgentSource,
+    @IAgentProfileRegistry private readonly registry: IAgentProfileRegistry,
+    @ISessionAgentProfileCatalogSeed private readonly seed: ISessionAgentProfileCatalogSeed,
     @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.states.register(agentProfileCatalogContributionsKey);
-    this.states.register(agentProfileCatalogMergedKey);
-    this.sources = [plugin, user, extra, project, explicit].toSorted(
-      (a, b) => a.priority - b.priority,
+    this.reproject();
+    this._register(
+      this.registry.onDidChange((change) => {
+        if (change.workspaceKey !== undefined && change.workspaceKey !== this.seed.workspaceKey) {
+          return;
+        }
+        this.reproject();
+        this.onDidChangeEmitter.fire(change.sourceId);
+      }),
     );
-    for (const s of this.sources) {
-      if (s.onDidChange) {
-        this._register(
-          s.onDidChange(() => {
-            void this.reloadSource(s.id).catch((error) => {
-              this.log.warn(`agent profile source "${s.id}" reload failed: ${String(error)}`);
-            });
-          }),
-        );
-      }
-    }
-    this.remerge();
-    this.readyPromise = this.loadAll();
-    void this.readyPromise.catch(() => undefined);
-  }
-
-  private get contributions(): Map<
-    string,
-    { readonly c: AgentProfileContribution; readonly priority: number }
-  > {
-    return this.states.get(agentProfileCatalogContributionsKey);
-  }
-
-  private get merged(): Map<string, AgentProfile> {
-    return this.states.get(agentProfileCatalogMergedKey);
-  }
-
-  private set merged(value: Map<string, AgentProfile>) {
-    this.states.set(agentProfileCatalogMergedKey, value);
   }
 
   get ready(): Promise<void> {
-    return this.readyPromise;
+    return Promise.resolve();
   }
 
   get(name: string): AgentProfile | undefined {
@@ -137,96 +94,110 @@ export class SessionAgentProfileCatalogService
     return [...this.merged.values()];
   }
 
+  inspect(name: string): AgentProfileInspection | undefined {
+    return this.inspections.get(name);
+  }
+
   async load(): Promise<void> {
     await this.ready;
   }
 
   async reload(): Promise<void> {
-    this.readyPromise = this.loadAll();
-    void this.readyPromise.catch(() => undefined);
-    await this.readyPromise;
+    await this.ready;
+    this.reproject();
     this.onDidChangeEmitter.fire('catalog');
   }
 
-  private async loadAll(): Promise<void> {
-    try {
-      for (const s of this.sources) {
-        await this.loadSource(s);
+  private relevantEntries(): AgentProfileRegistration[] {
+    const key = this.seed.workspaceKey;
+    return this.registry
+      .entries()
+      .filter((e) => e.workspaceKey === undefined || e.workspaceKey === key);
+  }
+
+  private reproject(): void {
+    const merged = new Map<string, AgentProfile>();
+    const inspections = new Map<string, AgentProfileInspection>();
+    const entries = this.relevantEntries();
+
+    const builtinEntry = entries.find((e) => e.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID);
+    if (builtinEntry !== undefined) {
+      for (const profile of builtinEntry.contribution.profiles) {
+        merged.set(profile.name, profile);
+        inspections.set(profile.name, {
+          name: profile.name,
+          profile,
+          sourceId: builtinEntry.sourceId,
+          priority: builtinEntry.priority,
+          suppressed: [],
+        });
       }
-    } finally {
-      this.remerge();
     }
-  }
 
-  private async reloadSource(id: string): Promise<void> {
-    const s = this.sources.find((x) => x.id === id);
-    if (!s) return;
-    await this.loadSource(s, true);
-  }
+    const fileCandidates = new Map<string, ProfileCandidate[]>();
+    const ordered = entries
+      .filter((e) => e.sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID)
+      .toSorted((a, b) => b.priority - a.priority);
+    for (const entry of ordered) {
+      const entryProfiles = new Map<string, AgentProfile>();
+      for (const profile of entry.contribution.profiles) {
+        entryProfiles.set(profile.name, profile);
+      }
+      for (const profile of entryProfiles.values()) {
+        const candidates = fileCandidates.get(profile.name) ?? [];
+        candidates.push({
+          profile,
+          sourceId: entry.sourceId,
+          priority: entry.priority,
+        });
+        fileCandidates.set(profile.name, candidates);
+      }
+    }
 
-  private loadSource(source: IAgentProfileSource, fireChange = false): Promise<void> {
-    const previous = this.sourceLoadTails.get(source) ?? Promise.resolve();
-    const current = previous
-      .catch(() => undefined)
-      .then(async () => {
-        let contribution: AgentProfileContribution;
-        try {
-          contribution = await source.load();
-        } catch (error) {
-          if (source.fatal) throw error;
-          const at = isError2(error) ? error.details?.['path'] : undefined;
+    for (const candidates of fileCandidates.values()) {
+      const suppressed: AgentProfileSuppressedCandidate[] = [];
+      let winner = false;
+      for (const candidate of candidates) {
+        if (merged.has(candidate.profile.name) && candidate.profile.override !== true) {
           this.log.warn(
-            `agent profile source "${source.id}" load failed: ${String(error)}${typeof at === 'string' ? ` [${at}]` : ''}`,
+            `agent file profile "${candidate.profile.name}" ignored: a same-name builtin profile exists; set "override: true" in the frontmatter to replace it`,
           );
-          return;
-        }
-        this.contributions.set(source.id, { c: contribution, priority: source.priority });
-        if (fireChange) {
-          this.remerge();
-          this.onDidChangeEmitter.fire(source.id);
-        }
-      });
-    this.sourceLoadTails.set(source, current);
-    const clear = () => {
-      if (this.sourceLoadTails.get(source) === current) {
-        this.sourceLoadTails.delete(source);
-      }
-    };
-    void current.then(clear, clear);
-    return current;
-  }
-
-  private remerge(): void {
-    const m = new Map<string, AgentProfile>();
-    for (const profile of this.builtin.list()) {
-      m.set(profile.name, profile);
-    }
-    const fileProfiles = new Map<string, AgentProfile[]>();
-    const ordered = [...this.contributions.values()].toSorted(
-      (a, b) => b.priority - a.priority,
-    );
-    for (const { c } of ordered) {
-      const sourceProfiles = new Map<string, AgentProfile>();
-      for (const profile of c.profiles) sourceProfiles.set(profile.name, profile);
-      for (const profile of sourceProfiles.values()) {
-        const candidates = fileProfiles.get(profile.name) ?? [];
-        candidates.push(profile);
-        fileProfiles.set(profile.name, candidates);
-      }
-    }
-    for (const candidates of fileProfiles.values()) {
-      for (const profile of candidates) {
-        if (m.has(profile.name) && profile.override !== true) {
-          this.log.warn(
-            `agent file profile "${profile.name}" ignored: a same-name builtin profile exists; set "override: true" in the frontmatter to replace it`,
-          );
+          suppressed.push({
+            sourceId: candidate.sourceId,
+            priority: candidate.priority,
+            reason: 'builtin-override-required',
+          });
           continue;
         }
-        m.set(profile.name, profile);
+        merged.set(candidate.profile.name, candidate.profile);
+        inspections.set(candidate.profile.name, {
+          name: candidate.profile.name,
+          profile: candidate.profile,
+          sourceId: candidate.sourceId,
+          priority: candidate.priority,
+          suppressed: [
+            ...suppressed,
+            ...candidates.slice(candidates.indexOf(candidate) + 1).map((rest) => ({
+              sourceId: rest.sourceId,
+              priority: rest.priority,
+              reason: 'priority' as const,
+            })),
+          ],
+        });
+        winner = true;
         break;
       }
+      if (!winner && suppressed.length > 0) {
+        const name = candidates[0]?.profile.name;
+        const existing = name === undefined ? undefined : inspections.get(name);
+        if (existing !== undefined) {
+          inspections.set(existing.name, { ...existing, suppressed });
+        }
+      }
     }
-    this.merged = m;
+
+    this.merged = merged;
+    this.inspections = inspections;
   }
 }
 

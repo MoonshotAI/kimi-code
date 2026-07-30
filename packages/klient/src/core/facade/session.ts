@@ -27,11 +27,14 @@ import type {
 } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 
 import type { ScopeRef } from '../channel.js';
+import { RPCError } from '../errors.js';
 import type { ScopedCaller } from './global.js';
+
+const NOT_FOUND = 40404;
 
 export type { ScopedCaller } from './global.js';
 
-/** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
+/** What `workspaceHandlerService.create/fork/createChild` leaves on the wire. */
 interface HandleWire {
   readonly id: string;
 }
@@ -86,11 +89,23 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
   const scope: ScopeRef = { sessionId };
   const read = (): Promise<SessionMeta> =>
     call(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+  // Session lifecycle methods live on the session's workspace handler
+  // (Workspace scope) — the index supplies the handler's workspaceId.
+  const resolveWorkspaceId = async (): Promise<string | undefined> => {
+    const summary = (await call({}, 'sessionIndex', 'get', [sessionId])) as
+      | { workspaceId: string }
+      | undefined;
+    return summary?.workspaceId;
+  };
   const spawn = async (
     method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
-    const handle = (await call({}, 'sessionLifecycleService', method, [
+    const workspaceId = await resolveWorkspaceId();
+    if (workspaceId === undefined) {
+      throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
+    }
+    const handle = (await call({ workspaceId }, 'workspaceHandlerService', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
     ])) as HandleWire;
     return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
@@ -127,10 +142,20 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       }
       return 'idle';
     },
-    close: () => call({}, 'sessionLifecycleService', 'close', [sessionId]) as Promise<void>,
-    archive: () => call({}, 'sessionLifecycleService', 'archive', [sessionId]) as Promise<void>,
+    close: async () => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return;
+      await call({ workspaceId }, 'workspaceHandlerService', 'close', [sessionId]);
+    },
+    archive: async () => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return;
+      await call({ workspaceId }, 'workspaceHandlerService', 'archive', [sessionId]);
+    },
     restore: async () => {
-      const handle = (await call({}, 'sessionLifecycleService', 'restore', [
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return false;
+      const handle = (await call({ workspaceId }, 'workspaceHandlerService', 'restore', [
         sessionId,
       ])) as HandleWire | null;
       return handle !== null;

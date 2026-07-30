@@ -6,10 +6,11 @@ The transport (`/api/v2` over HTTP + WS) lives in the **edge** layer (`gateway`/
 
 ## 1. The edge model
 
-Three scopes, three URL shapes, one dispatcher:
+Four scopes, four URL shapes, one dispatcher:
 
 ```text
 GET|POST /api/v2/:sa                                       Core
+GET|POST /api/v2/workspace/:workspace_id/:sa               Workspace
 GET|POST /api/v2/session/:session_id/:sa                   Session
 GET|POST /api/v2/session/:session_id/agent/:agent_id/:sa   Agent
 ```
@@ -26,9 +27,10 @@ GET|POST /api/v2/session/:session_id/agent/:agent_id/:sa   Agent
 ```ts
 // actionMap — the allowlist; hides internal domain names.
 const actionMap = {
-  core:    { 'sessions:list': { service: ISessionIndex, method: 'list' }, ... },
-  session: { 'session:read':  { service: ISessionMetadata, method: 'read' }, ... },
-  agent:   { 'profile:getModel': { service: IProfileService, method: 'getModel' }, ... },
+  core:      { 'sessions:list': { service: ISessionIndex, method: 'list' }, ... },
+  workspace: { 'skills:list':   { service: IWorkspaceSkillCatalog, method: 'list' }, ... },
+  session:   { 'session:read':  { service: ISessionMetadata, method: 'read' }, ... },
+  agent:     { 'profile:getModel': { service: IProfileService, method: 'getModel' }, ... },
 };
 ```
 
@@ -83,14 +85,14 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `session` | `setArchived` | ISessionMetadata.setArchived | POST |
 | `session` | `status` | ISessionActivity.status | GET |
 | `session` | `isIdle` | ISessionActivity.isIdle | GET |
-| `session` | `archive` | ISessionLifecycleService.archive | POST |
+| `session` | `archive` | IWorkspaceHandlerService.archive | POST |
 | `approvals` | `listPending` | IApprovalService.listPending | GET |
 | `approvals` | `decide` | IApprovalService.decide | POST |
 | `questions` | `listPending` | IQuestionService.listPending | GET |
 | `questions` | `answer` | IQuestionService.answer | POST |
 | `interactions` | `listPending` | IInteractionService.listPending | GET |
 | `interactions` | `respond` | IInteractionService.respond | POST |
-| `workspace` | `setWorkDir` / `addAdditionalDir` / `removeAdditionalDir` / `resolve` | IWorkspaceContext.* | GET/POST |
+| `workspace` | `workDir` / `additionalDirs` / `resolve` | ISessionWorkspaceContext.* | GET |
 
 ### Agent (`/api/v2/session/:sid/agent/:aid/:resource:action`)
 
@@ -126,7 +128,7 @@ These fail §2 and must be wrapped in a facade that takes ids and returns data:
 
 | Service | Why not direct | Facade shape |
 |---|---|---|
-| ISessionLifecycleService | returns `IScopeHandle` | `sessions.create` / `fork` / `close` / `archive` → wire Session |
+| IWorkspaceHandlerService | returns `IScopeHandle` | `sessions.create` / `fork` / `close` / `archive` → wire Session |
 | IAgentPromptService / IAgentTurnService | returns `Turn` handle | `prompts.submit` / `steer` / `abort` / `undo` |
 | ILLMRequester | `AsyncIterable` stream | stream over WS, not RPC |
 | ISubagentHost | `SubagentHandle` | `subagents.spawn` / `resume` → info |

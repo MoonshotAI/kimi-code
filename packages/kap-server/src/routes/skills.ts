@@ -25,7 +25,8 @@
  * are exported for exactly this purpose.
  *
  * **Activation gate**: by convention the session endpoints are only valid for
- * an *activated* session — one that is live in `ISessionLifecycleService`. When
+ * an *activated* session — one that is live in a workspace handler's session
+ * registry. When
  * the session is not in the live map we still answer `40401 session.not_found`
  * (the only session error code on the v1 wire contract), but we enrich the
  * message:
@@ -78,7 +79,6 @@ import {
   IEventService,
   IPluginService,
   ISessionIndex,
-  ISessionLifecycleService,
   ISessionMetadata,
   ISessionSkillCatalog,
   ISkillCatalogRuntimeOptions,
@@ -86,6 +86,7 @@ import {
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   applyPromptMetadataUpdate,
@@ -161,7 +162,7 @@ async function resolveActivatedSession(
   // session cold-loads it instead of reporting "not activated"; matches v1's
   // `resumeSession` in SkillService. `resume` returns undefined only when the
   // session is unknown or its workspace is gone.
-  const handle = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle !== undefined) return { handle };
 
   const summary = await core.accessor.get(ISessionIndex).get(sessionId);

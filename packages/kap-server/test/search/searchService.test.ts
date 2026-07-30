@@ -35,7 +35,7 @@ function summary(id: string, title: string, updatedAt = T1): SessionSummary {
 function makeBootstrap(home: string): IBootstrapService {
   return {
     homeDir: home,
-    sessionDir: (ws: string, sid: string) => join(home, 'sessions', ws, sid),
+    scope: (name: string) => name,
   } as unknown as IBootstrapService;
 }
 

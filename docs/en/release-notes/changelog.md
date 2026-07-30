@@ -6,6 +6,21 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.31.0 (2026-07-30)
+
+### Features
+
+- Support Markdown-defined custom agents on agent-core.
+- Add the /secondary_model slash command to configure the secondary model used by subagents (experimental; enable it in /experiments first).
+- Plugins can contribute custom agents, discovered automatically and available for sub-agent delegation.
+- Plugins can contribute system prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`.
+
+### Bug Fixes
+
+- Remove the blocking `block`/`timeout` wait from the TaskOutput tool so checking a background task can no longer stall the conversation; it now always returns an immediate snapshot, and completion still arrives via automatic notification.
+- Fix sessions missing from the session picker when their cached metadata predates the archived flag.
+- Fix request headers not being passed correctly on some requests.
+
 ## 0.30.0 (2026-07-29)
 
 ### Features

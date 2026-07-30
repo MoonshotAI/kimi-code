@@ -61,6 +61,11 @@ describe('server telemetry', () => {
         homeDir: home as string,
         configPath: resolveConfigPath({ homeDir: home as string }),
         env: resolvedEnv,
+        clientIdentity: {
+          productName: 'test-product',
+          version: '0.0.0-test',
+          platform: 'test_platform',
+        },
       },
       [
         ...logSeed(resolveLoggingConfig({ homeDir: home as string, env: resolvedEnv })),

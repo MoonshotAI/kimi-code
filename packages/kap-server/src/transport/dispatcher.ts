@@ -9,8 +9,9 @@ import {
   ErrorCodes,
   IAgentGoalService,
   IAgentLifecycleService,
-  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
   Error2,
+  getLiveSessionById,
   type IScopeHandle,
   type Scope,
   type ServiceIdentifier,
@@ -44,9 +45,13 @@ export async function resolveScope(
   switch (scopeKind) {
     case 'core':
       return core;
+    case 'workspace': {
+      const workspaceId = params['workspace_id'] ?? '';
+      return core.accessor.get(IWorkspaceLifecycleService).handlerFor({ workspaceId });
+    }
     case 'session': {
       const sessionId = params['session_id'] ?? '';
-      const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+      const session = getLiveSessionById(core.accessor, sessionId);
       if (session === undefined) {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }
@@ -55,7 +60,7 @@ export async function resolveScope(
     case 'agent': {
       const sessionId = params['session_id'] ?? '';
       const agentId = params['agent_id'] ?? '';
-      const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+      const session = getLiveSessionById(core.accessor, sessionId);
       if (session === undefined) {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }

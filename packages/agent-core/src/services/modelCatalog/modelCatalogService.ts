@@ -44,7 +44,7 @@ export class ModelCatalogService
     @IEventService private readonly eventService: IEventService,
   ) {
     super();
-    this._authFacade = createManagedAuthFacade(env);
+    this._authFacade = createManagedAuthFacade(env, env.identity);
   }
 
   static _createForTest(

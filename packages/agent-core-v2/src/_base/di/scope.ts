@@ -13,8 +13,9 @@ import { ServiceCollection } from './serviceCollection';
 
 export enum LifecycleScope {
   App = 0,
-  Session = 1,
-  Agent = 2,
+  Workspace = 1,
+  Session = 2,
+  Agent = 3,
 }
 
 export enum ScopeActivation {
@@ -76,6 +77,7 @@ export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
 }
 
 export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
+export type IWorkspaceScopeHandle = IScopeHandle<LifecycleScope.Workspace>;
 export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
 export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
 

@@ -48,6 +48,29 @@ export async function projectRoots(
   return roots;
 }
 
+/**
+ * The project root and the raw project skill-root candidates
+ * (`.kimi-code/skills` and `.agents/skills` under it) regardless of
+ * existence — the watch plan for project-skill refreshes, since
+ * `projectRoots` filters to directories that already exist.
+ */
+export interface ProjectSkillRootCandidates {
+  readonly projectRoot: string;
+  readonly candidates: readonly string[];
+}
+
+export async function projectSkillRootCandidates(
+  workDir: string,
+): Promise<ProjectSkillRootCandidates> {
+  const projectRoot = await findProjectRoot(workDir);
+  return {
+    projectRoot,
+    candidates: [...PROJECT_BRAND_DIRS, ...PROJECT_GENERIC_DIRS].map((dir) =>
+      path.join(projectRoot, dir),
+    ),
+  };
+}
+
 export async function configuredRoots(
   dirs: readonly string[],
   workDir: string,

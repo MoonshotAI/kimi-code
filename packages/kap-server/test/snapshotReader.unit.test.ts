@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import {
   ISessionIndex,
-  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
   IWorkspaceService,
   type ContextMessage,
   type SessionSummary,
@@ -67,7 +67,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
       [ISessionIndex, { get: async (sid: string) => index.get(sid) }],
       [IWorkspaceService, { get: async (ws: string) => workspaces.get(ws) }],
       // Cold by default — no live handle.
-      [ISessionLifecycleService, { get: () => undefined }],
+      [IWorkspaceLifecycleService, { handlers: { list: () => [] } }],
     ]),
   };
   const broadcaster = { seq: 0, epoch: 'ep_unit', inFlightTurn: null };

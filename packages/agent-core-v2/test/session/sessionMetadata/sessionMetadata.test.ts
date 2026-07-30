@@ -93,6 +93,36 @@ describe('SessionMetadata', () => {
     expect(await meta.read()).toMatchObject({ title: 't', archived: true });
   });
 
+  it('mirrors a boolean archived to the read model even when the loaded document lacks the field', async () => {
+    // A state.json written before `archived` existed: normalizeSessionMeta
+    // keeps the field undefined, and a naive mirror would drop the key from
+    // the cached JSON entirely (failing the read-model contract on reads).
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      agents: {},
+      custom: {},
+    });
+
+    const writes: unknown[] = [];
+    ix.stub(IQueryStore, {
+      ...stubQueryStore(),
+      put: async (_c: string, _k: string, value: unknown) => {
+        writes.push(value);
+      },
+    });
+    ix.stub(IFlagService, stubFlag(true));
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.update({ title: 'x' });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ id: 's1', archived: false });
+  });
+
   it('persists across instances', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.update({ title: 'persisted' });

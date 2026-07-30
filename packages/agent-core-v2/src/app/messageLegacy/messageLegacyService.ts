@@ -41,7 +41,11 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { resumeSessionById } from '#/app/workspaceLifecycle/sessionLookup';
+import {
+  IInstantiationService,
+  type ServicesAccessor,
+} from '#/_base/di/instantiation';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 
@@ -53,11 +57,22 @@ const MAX_PAGE_SIZE = 100;
 export class MessageLegacyService implements IMessageLegacyService {
   declare readonly _serviceBrand: undefined;
 
+  /**
+   * Stable accessor over the App container (same wrapper `Scope.accessor`
+   * uses — one `invokeFunction` per resolution, never a stashed transient
+   * accessor), feeding the `sessionLookup` composition helpers.
+   */
+  private readonly services: ServicesAccessor;
+
   constructor(
-    @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
+    @IInstantiationService instantiation: IInstantiationService,
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLog: IAppendLogStore,
-  ) {}
+  ) {
+    this.services = {
+      get: (id) => instantiation.invokeFunction((accessor) => accessor.get(id)),
+    };
+  }
 
   async list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>> {
     const all = await this.loadMessages(sessionId);
@@ -107,7 +122,8 @@ export class MessageLegacyService implements IMessageLegacyService {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
 
-    const session = await this.lifecycle.resume(sessionId);
+    // The shared index → handler → session-lifecycle composition.
+    const session = await resumeSessionById(this.services, sessionId);
     if (session === undefined) return [];
     const agent = await ensureMainAgent(session);
 

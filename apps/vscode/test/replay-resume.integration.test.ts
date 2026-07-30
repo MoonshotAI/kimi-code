@@ -46,7 +46,7 @@ async function createReplayRig(): Promise<ReplayRig> {
   const provider = await createFakeProviderHarness();
   const harness = createKimiHarness({
     homeDir,
-    identity: { userAgentProduct: "kimi-code-vscode", version: "test" },
+    identity: { productName: "kimi-code-vscode", version: "test", platform: "kimi_code_vscode" },
   });
   await harness.setConfig({
     providers: {

@@ -49,7 +49,7 @@ export type Caller = (service: string, method: string, args: unknown[]) => Promi
 
 /** Scoped variant — the factory's real signature; global methods bind the core scope. */
 export type ScopedCaller = (
-  scope: { readonly sessionId?: string; readonly agentId?: string },
+  scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
   method: string,
   args: unknown[],
@@ -57,7 +57,7 @@ export type ScopedCaller = (
 
 /** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
 export type ScopedStreamCaller = (
-  scope: { readonly sessionId?: string; readonly agentId?: string },
+  scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
   method: string,
   args: unknown[],
@@ -228,14 +228,13 @@ export interface GlobalFacade {
 // tie every contract schema to its engine type.
 // ---------------------------------------------------------------------------
 
-const ENV_PROPERTIES = [
+const ENV_SCALAR_PROPERTIES = [
   'platform',
   'arch',
   'cwd',
   'osHomeDir',
   'homeDir',
   'configPath',
-  'clientVersion',
   'sessionsDir',
   'blobsDir',
   'storeDir',
@@ -251,14 +250,18 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
   // env() result can never change — resolve it once and reuse the promise.
   let envPromise: Promise<KlientEnvInfo> | undefined;
   const env = (): Promise<KlientEnvInfo> => {
-    envPromise ??= Promise.all(
-      ENV_PROPERTIES.map((prop) => call('bootstrapService', prop, []) as Promise<string>),
-    ).then(
-      (values) =>
-        Object.fromEntries(
-          ENV_PROPERTIES.map((prop, index) => [prop, values[index]]),
-        ) as unknown as KlientEnvInfo,
-    );
+    envPromise ??= Promise.all([
+      ...ENV_SCALAR_PROPERTIES.map((prop) => call('bootstrapService', prop, []) as Promise<string>),
+      // The wire surface keeps `clientVersion` (a string); it is sourced from
+      // the bootstrap clientIdentity, which replaced the flat scalar.
+      call('bootstrapService', 'clientIdentity', []) as Promise<{ version: string }>,
+    ]).then((values) => {
+      const scalars = Object.fromEntries(
+        ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
+      );
+      const identity = values[values.length - 1] as { version: string };
+      return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
+    });
     return envPromise;
   };
 
@@ -269,7 +272,12 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       countActive: (workspaceIds) =>
         call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title }) => {
-        const handle = (await scoped({}, 'sessionLifecycleService', 'create', [
+        // The workspace handler owns session creation: materialize (or reuse)
+        // the handler for the root, then create under it.
+        const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
+          { root: workDir },
+        ])) as { id: string };
+        const handle = (await scoped({ workspaceId: handler.id }, 'workspaceHandlerService', 'create', [
           { workDir, additionalDirs },
         ])) as { id: string };
         const scope = { sessionId: handle.id };

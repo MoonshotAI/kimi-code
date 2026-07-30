@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.31.0
+
+### Minor Changes
+
+- [#2365](https://github.com/MoonshotAI/kimi-code/pull/2365) [`fa2c5ce`](https://github.com/MoonshotAI/kimi-code/commit/fa2c5ce18b70577fa3ada4eb8bdd4993891994ce) Thanks [@7Sageer](https://github.com/7Sageer)! - Add support for plugin-contributed custom agents, discovered automatically and available for sub-agent delegation. Ship an `agents/` directory in the plugin (or declare `agents` paths in the plugin manifest) to provide them.
+
+- [#2314](https://github.com/MoonshotAI/kimi-code/pull/2314) [`02d77b2`](https://github.com/MoonshotAI/kimi-code/commit/02d77b20d941873563f14890e049ffe40cec76e4) Thanks [@7Sageer](https://github.com/7Sageer)! - Allow enabled plugins to contribute agent system-prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`, effective on both agent engines (the TUI, `kimi -p`, and `kimi web`).
+
+- [#2232](https://github.com/MoonshotAI/kimi-code/pull/2232) [`efac96c`](https://github.com/MoonshotAI/kimi-code/commit/efac96c8a95a3c3ca4e1ae9bce38082498a02b2e) Thanks [@7Sageer](https://github.com/7Sageer)! - Support Markdown-defined custom agents on agent-core.
+
+- [#2232](https://github.com/MoonshotAI/kimi-code/pull/2232) [`efac96c`](https://github.com/MoonshotAI/kimi-code/commit/efac96c8a95a3c3ca4e1ae9bce38082498a02b2e) Thanks [@7Sageer](https://github.com/7Sageer)! - Add the /secondary_model slash command to configure the secondary model used by subagents.
+
+### Patch Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix request headers not being passed correctly on some requests.
+
+- [#2379](https://github.com/MoonshotAI/kimi-code/pull/2379) [`691ec46`](https://github.com/MoonshotAI/kimi-code/commit/691ec4679ea19d6be8ac18f359088384ed3e446d) Thanks [@RealKai42](https://github.com/RealKai42)! - Remove the blocking `block`/`timeout` wait from the TaskOutput tool so checking a background task can no longer stall the conversation; it now always returns an immediate snapshot, and completion still arrives via automatic notification.
+
+- [#2395](https://github.com/MoonshotAI/kimi-code/pull/2395) [`d10b1c1`](https://github.com/MoonshotAI/kimi-code/commit/d10b1c130813dbd6ee8c8599a6a98feb36aea67f) Thanks [@sailist](https://github.com/sailist)! - Fix sessions missing from the session picker when their cached metadata predates the archived flag.
+
 ## 0.30.0
 
 ### Minor Changes

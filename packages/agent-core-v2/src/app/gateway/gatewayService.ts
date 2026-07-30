@@ -1,7 +1,8 @@
 /**
  * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
  *
- * Owns the REST/WS entry points; resolves sessions through `sessionLifecycle`,
+ * Owns the REST/WS entry points; resolves sessions through the live handler
+ * registry (`workspaceLifecycle` → the handler's `IWorkspaceHandlerService`),
  * agents through `agentLifecycle`, drives turns through `prompt` / `loop`,
  * and flushes logs through `log`. Bound at App scope.
  *
@@ -18,7 +19,8 @@ import {
 } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -28,17 +30,25 @@ export class RestGateway implements IRestGateway {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @ISessionLifecycleService private readonly sessions: ISessionLifecycleService,
+    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
     @ILogService private readonly log: ILogService,
   ) { }
 
   private agent(sessionId: string, agentId: string): IAgentScopeHandle {
-    const session = this.sessions.get(sessionId);
+    const session = this.liveSession(sessionId);
     if (session === undefined) throw new Error(`unknown session '${sessionId}'`);
     const agents = session.accessor.get(IAgentLifecycleService);
     const agent = agents.get(agentId);
     if (agent === undefined) throw new Error(`unknown agent '${agentId}'`);
     return agent;
+  }
+
+  private liveSession(sessionId: string) {
+    for (const handler of this.workspaceLifecycle.handlers.list()) {
+      const handle = handler.accessor.get(IWorkspaceHandlerService).get(sessionId);
+      if (handle !== undefined) return handle;
+    }
+    return undefined;
   }
 
   async prompt(
@@ -78,11 +88,11 @@ export class RestGateway implements IRestGateway {
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {
-    return Promise.resolve(this.sessions.get(sessionId) !== undefined);
+    return Promise.resolve(this.liveSession(sessionId) !== undefined);
   }
 
   async flushLogs(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
+    const session = this.liveSession(sessionId);
     if (session === undefined) return;
     await session.accessor.get(ILogService).flush();
   }
@@ -95,10 +105,6 @@ export class RestGateway implements IRestGateway {
 export class WSGateway implements IWSGateway {
   declare readonly _serviceBrand: undefined;
   private readonly connections = new Set<string>();
-
-  constructor(
-    @ISessionLifecycleService _sessions: ISessionLifecycleService,
-  ) { }
 
   connect(connectionId: string): void {
     this.connections.add(connectionId);

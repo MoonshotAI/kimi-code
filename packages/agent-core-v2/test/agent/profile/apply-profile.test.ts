@@ -11,7 +11,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 
 import {
   appService,
@@ -104,7 +104,6 @@ describe('AgentProfileService.applyProfile', () => {
   it('refreshes the active profile system prompt exactly without resetting active tools', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
-    svc.update({ cwd: workDir });
     await svc.applyProfile(exactProfile);
     svc.update({ activeToolNames: ['Read'] });
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');

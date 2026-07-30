@@ -18,6 +18,7 @@ import type {
 import {
   ContextSizeModel,
   IAgentActivityView,
+  LifecycleScope,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -27,9 +28,10 @@ import {
   IModelCatalog,
   ISessionActivityView,
   ISessionInteractionService,
-  ISessionLifecycleService,
   IWireService,
   ISessionMetadata,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
   MAIN_AGENT_ID,
   SECONDARY_DERIVED_MODEL_ID,
   SessionInteractionService,
@@ -112,7 +114,7 @@ class FakeEventBus {
 }
 
 class FakeAgentHandle {
-  readonly kind = 2;
+  readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
   readonly accessor;
   private readonly services = new Map<unknown, unknown>();
@@ -350,29 +352,43 @@ function makeCore(
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
 ): Scope {
+  const sessionFor = (sid: string) => {
+    const lifecycle = sessions.get(sid);
+    if (lifecycle === undefined) return undefined;
+    const sessionAccessor = {
+      get: (t: unknown) => {
+        if (t === IAgentLifecycleService) return lifecycle;
+        if (t === ISessionInteractionService) return lifecycle.interactions;
+        if (t === ISessionActivityView) return lifecycle.workView;
+        // Minimal metadata read for the transcript binding's descriptor pass.
+        if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
+        return undefined;
+      },
+    };
+    return { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} };
+  };
+  const handlerService = {
+    // Inert lifecycle events (TranscriptService subscribes on construction).
+    onDidCloseSession: () => ({ dispose: () => {} }),
+    onDidArchiveSession: () => ({ dispose: () => {} }),
+    get: sessionFor,
+  };
+  const handler = {
+    id: 'wd',
+    kind: LifecycleScope.Workspace,
+    accessor: {
+      get: (t: unknown) => (t === IWorkspaceHandlerService ? handlerService : undefined),
+    },
+    dispose: () => {},
+  };
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
-      if (token === ISessionLifecycleService) {
+      if (token === IWorkspaceLifecycleService) {
         return {
-          // Inert lifecycle events (TranscriptService subscribes on construction).
-          onDidCloseSession: () => ({ dispose: () => {} }),
-          onDidArchiveSession: () => ({ dispose: () => {} }),
-          get: (sid: string) => {
-            const lifecycle = sessions.get(sid);
-            if (lifecycle === undefined) return undefined;
-            const sessionAccessor = {
-              get: (t: unknown) => {
-                if (t === IAgentLifecycleService) return lifecycle;
-                if (t === ISessionInteractionService) return lifecycle.interactions;
-                if (t === ISessionActivityView) return lifecycle.workView;
-                // Minimal metadata read for the transcript binding's descriptor pass.
-                if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
-                return undefined;
-              },
-            };
-            return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
-          },
+          handlers: { list: () => [handler] },
+          sessions: { list: () => [] },
+          onDidMaterializeHandler: () => ({ dispose: () => {} }),
         };
       }
       return undefined;

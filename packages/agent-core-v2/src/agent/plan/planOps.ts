@@ -26,7 +26,7 @@
  * `agent.status.updated` planMode slice — are NOT part of `apply`: they run
  * after `wire.dispatch` on the live path, and `wire.replay` rebuilds the
  * Model silently from the persisted `plan_mode.*` / `plan.revision` records
- * (seeded by `sessionLifecycle`). The legacy `toReplay: plan_updated`
+ * (seeded by `workspaceHandler`). The legacy `toReplay: plan_updated`
  * projection is dropped (inert — nothing reads it). `plan.revision` carries
  * a `toEvent` so the live transcript projector can map it onto a marker plus
  * the plan badge; replay never emits it. Consumed by the Agent-scope

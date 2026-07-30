@@ -2,7 +2,7 @@
  * `hostIdentity` domain (L3) — runtime identity of the embedding host.
  *
  * Holds process-level overrides the host product (CLI, desktop, …) injects at
- * the composition root: `productName` fills the `${product_name}` slot in the
+ * the composition root: `displayName` fills the `${product_name}` slot in the
  * base system-prompt template, `replyStyleGuide` replaces the
  * `${reply_style_guide}` block (the CLI default describes Markdown rendering
  * in a terminal). Composition roots set them through {@link hostIdentitySeed};
@@ -13,8 +13,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope, registerScopedService, ScopeActivation, type ScopeSeed } from '#/_base/di/scope';
 
-export interface HostIdentityOverrides {
-  readonly productName?: string;
+export interface PromptIdentityOverrides {
+  readonly displayName?: string;
   readonly replyStyleGuide?: string;
 }
 
@@ -36,13 +36,13 @@ export class HostIdentity implements IHostIdentity {
   ) {}
 }
 
-export function hostIdentitySeed(overrides: HostIdentityOverrides | undefined): ScopeSeed {
+export function hostIdentitySeed(overrides: PromptIdentityOverrides | undefined): ScopeSeed {
   if (overrides === undefined) return [];
-  if (overrides.productName === undefined && overrides.replyStyleGuide === undefined) return [];
+  if (overrides.displayName === undefined && overrides.replyStyleGuide === undefined) return [];
   return [
     [
       IHostIdentity as ServiceIdentifier<unknown>,
-      new HostIdentity(overrides.productName, overrides.replyStyleGuide),
+      new HostIdentity(overrides.displayName, overrides.replyStyleGuide),
     ],
   ];
 }
