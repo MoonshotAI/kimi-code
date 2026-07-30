@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -90,6 +90,16 @@ describe('GitService', () => {
 
       const result = await service.status(repo, new Set(['a.txt']));
       expect(result.entries).toEqual({ 'a.txt': 'modified' });
+    });
+
+    it('lists files inside untracked directories individually', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'a\n');
+      commitAll('init');
+      mkdirSync(join(repo, 'newdir'), { recursive: true });
+      writeFileSync(join(repo, 'newdir', 'b.txt'), 'b\n');
+
+      const result = await service.status(repo);
+      expect(result.entries).toEqual({ 'newdir/b.txt': 'untracked' });
     });
 
     it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
