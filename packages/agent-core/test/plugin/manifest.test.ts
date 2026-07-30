@@ -201,6 +201,47 @@ describe('parseManifest', () => {
     expect(result.manifest?.skills).toEqual([root]);
   });
 
+  it('resolves an explicit agents path', async () => {
+    const root = await makePlugin(
+      { 'kimi.plugin.json': JSON.stringify({ name: 'demo', agents: './agents/' }) },
+      { dirs: ['agents'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([path.join(root, 'agents')]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('falls back to the agents directory when agents field is absent', async () => {
+    const root = await makePlugin(
+      { 'kimi.plugin.json': JSON.stringify({ name: 'demo' }) },
+      { dirs: ['agents'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([path.join(root, 'agents')]);
+  });
+
+  it('keeps agents empty when the field is absent and no agents directory exists', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo' }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([]);
+  });
+
+  it('rejects an agents path not prefixed with ./', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', agents: 'agents/' }),
+    });
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringContaining('"agents" path must start with "./"'),
+      }),
+    );
+    expect(result.manifest?.agents).toEqual([]);
+  });
+
   it('does not fall back to root SKILL.md when skills field is present', async () => {
     const root = await makePlugin(
       {

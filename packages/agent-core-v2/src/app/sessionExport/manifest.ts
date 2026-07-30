@@ -29,6 +29,7 @@ export function buildExportManifest(args: {
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
   readonly webLogPath?: string;
+  readonly desktopVersion?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
 }): ExportSessionManifest {
@@ -52,6 +53,7 @@ export function buildExportManifest(args: {
     sessionLogPath: args.sessionLogPath,
     globalLogPath: args.globalLogPath,
     webLogPath: args.webLogPath,
+    desktopVersion: args.desktopVersion,
     installSource: args.installSource,
     shellEnv: args.shellEnv,
   };

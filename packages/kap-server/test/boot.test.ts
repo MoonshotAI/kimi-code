@@ -26,7 +26,7 @@ import {
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
-import { getServerVersion } from '../src/version';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 
 describe('server-v2 boot', () => {
@@ -47,6 +47,7 @@ describe('server-v2 boot', () => {
   it('boots agent-core-v2 and serves the basic /api/v1 routes', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -96,14 +97,19 @@ describe('server-v2 boot', () => {
     expect(oauthBody.data).toBeNull();
   });
 
-  it('reports opts.version as server_version instead of the package version', async () => {
+  it('reports opts.serverVersion as server_version instead of the package version', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-version-'));
     server = await startServer({
+      hostIdentity: {
+        productName: 'test-host',
+        version: '9.9.9-host',
+        platform: 'test_platform',
+      },
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      version: '9.9.9-host',
+      serverVersion: '9.9.9-host',
     });
 
     const base = `http://127.0.0.1:${server.port}`;
@@ -114,33 +120,42 @@ describe('server-v2 boot', () => {
     };
     expect(metaBody.data.server_version).toBe('9.9.9-host');
 
-    // The host version is also what the instance registry advertises to
+    // The engine version is also what the instance registry advertises to
     // status/ps clients.
     const [instance] = await listLiveServerInstances(home);
-    expect(instance?.hostVersion).toBe('9.9.9-host');
+    expect(instance?.serverVersion).toBe('9.9.9-host');
 
-    // ... and it backs the default product User-Agent.
+    // ... while the default product User-Agent and the engine's client
+    // identity come from the host identity.
     const defaults = server.core.accessor.get(IHostRequestHeaders);
-    expect(defaults.headers['User-Agent']).toBe('kimi-code-cli/9.9.9-host');
-    expect(server.core.accessor.get(IBootstrapService).clientVersion).toBe('9.9.9-host');
+    expect(defaults.headers['User-Agent']).toBe('test-host/9.9.9-host');
+    expect(server.core.accessor.get(IBootstrapService).clientIdentity).toEqual({
+      productName: 'test-host',
+      version: '9.9.9-host',
+      platform: 'test_platform',
+    });
   });
 
-  it('seeds a default product User-Agent that opts.seeds can override', async () => {
+  it('seeds default Kimi identity headers from hostIdentity that opts.seeds can override', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ua-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
     });
     const defaults = server.core.accessor.get(IHostRequestHeaders);
-    expect(defaults.headers['User-Agent']).toBe(`kimi-code-cli/${getServerVersion()}`);
+    expect(defaults.headers['User-Agent']).toBe('test-host/0.0.0-test');
+    expect(defaults.headers['X-Msh-Version']).toBe('0.0.0-test');
+    expect(defaults.headers['X-Msh-Platform']).toBe('test_platform');
 
     // Restart on the same homeDir with a host-provided seed; it must win over
     // the default (the CLI passes full Kimi identity headers this way).
     await server.close();
     server = undefined;
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -154,6 +169,7 @@ describe('server-v2 boot', () => {
   it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -168,6 +184,7 @@ describe('server-v2 boot', () => {
     await server.close();
     server = undefined;
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -182,6 +199,7 @@ describe('server-v2 boot', () => {
     const shutdown = vi.fn(async () => {});
 
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -211,6 +229,7 @@ describe('server-v2 boot', () => {
     } as unknown as IOAuthToolkit;
 
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -382,6 +401,7 @@ describe('server-v2 boot — port retry', () => {
     const occupant = await listenOnPort('127.0.0.1', port);
     try {
       server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
         port,
         homeDir: home,

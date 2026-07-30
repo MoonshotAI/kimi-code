@@ -63,6 +63,55 @@ describe('plugin manifest parser', () => {
     ]);
   });
 
+  it('resolves explicit agents directories', async () => {
+    await mkdir(join(dir, 'agents'), { recursive: true });
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['./agents'] }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+    const root = await realpath(dir);
+
+    expect(result.manifest?.agents).toEqual([join(root, 'agents')]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('defaults agents to the ./agents directory when the field is absent', async () => {
+    await mkdir(join(dir, 'agents'), { recursive: true });
+    await writeFile(join(dir, 'kimi.plugin.json'), JSON.stringify({ name: 'demo' }), 'utf8');
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.agents).toEqual([join(dir, 'agents')]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('keeps agents empty when the field is absent and no ./agents directory exists', async () => {
+    await writeFile(join(dir, 'kimi.plugin.json'), JSON.stringify({ name: 'demo' }), 'utf8');
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.agents).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('warns on invalid agents paths', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['../outside'] }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.agents).toEqual([]);
+    expect(result.diagnostics.map((d) => d.message)).toEqual([
+      '"agents" path must start with "./" (got "../outside")',
+    ]);
+  });
+
   it('reads the systemPrompt field, trimming surrounding whitespace', async () => {
     await writeFile(
       join(dir, 'kimi.plugin.json'),

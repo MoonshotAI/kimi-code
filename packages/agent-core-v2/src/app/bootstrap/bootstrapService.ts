@@ -15,6 +15,8 @@
 
 import { basename, join, relative } from 'pathe';
 
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
@@ -32,7 +34,7 @@ export class BootstrapService implements IBootstrapService {
   readonly osHomeDir: string;
   readonly homeDir: string;
   readonly configPath: string;
-  readonly clientVersion: string;
+  readonly clientIdentity: KimiHostIdentity;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -51,7 +53,7 @@ export class BootstrapService implements IBootstrapService {
     this.env = options.env;
     this.homeDir = options.homeDir;
     this.configPath = options.configPath;
-    this.clientVersion = options.clientVersion;
+    this.clientIdentity = options.clientIdentity;
     this.sessionsDir = join(options.homeDir, 'sessions');
     this.blobsDir = join(options.homeDir, 'blobs');
     this.storeDir = join(options.homeDir, 'store');

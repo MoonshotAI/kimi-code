@@ -21,6 +21,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { PluginManager } from './manager';
@@ -156,6 +157,10 @@ export class PluginService extends Disposable implements IPluginService {
 
   pluginSkillRoots(): Promise<readonly SkillRoot[]> {
     return this.runConsumptionRead([], async () => this.manager.pluginSkillRoots());
+  }
+
+  pluginAgentRoots(): Promise<readonly AgentFileRoot[]> {
+    return this.runConsumptionRead([], async () => this.manager.pluginAgentRoots());
   }
 
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]> {

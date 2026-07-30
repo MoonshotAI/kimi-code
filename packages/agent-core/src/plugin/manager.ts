@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
+import type { AgentFileRoot } from '../profile/agentfile/types';
 import { discoverSkills, type SkillRoot } from '../skill';
 import type { HookDef } from '../session/hooks';
 import { loadPluginCommand } from './commands';
@@ -211,6 +212,17 @@ export class PluginManager {
           source: 'extra',
           plugin: { id: record.id, instructions: record.skillInstructions },
         });
+      }
+    }
+    return roots;
+  }
+
+  pluginAgentRoots(): readonly AgentFileRoot[] {
+    const roots: AgentFileRoot[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const dir of record.manifest.agents ?? []) {
+        roots.push({ path: dir, source: 'plugin' });
       }
     }
     return roots;

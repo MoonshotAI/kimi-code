@@ -32,8 +32,11 @@ import {
   IUserFileAgentSource,
   UserFileAgentSource,
 } from '#/app/agentFileCatalog/userFileAgentSource';
+import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IPluginService } from '#/app/plugin/plugin';
+import type { ReloadSummary } from '#/app/plugin/types';
 import '#/index';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -45,6 +48,10 @@ import {
   ExtraFileAgentSource,
   IExtraFileAgentSource,
 } from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
+import {
+  IPluginAgentProfileSource,
+  PluginAgentProfileSource,
+} from '#/session/sessionAgentProfileCatalog/pluginAgentProfileSource';
 import {
   IProjectFileAgentSource,
   ProjectFileAgentSource,
@@ -113,6 +120,33 @@ function workspaceStub(workDir: string): ISessionWorkspaceContext {
   };
 }
 
+function pluginStub(
+  agentRoots: readonly AgentFileRoot[] = [],
+  reloadEmitter?: Emitter<ReloadSummary>,
+): IPluginService {
+  return {
+    _serviceBrand: undefined,
+    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
+    listPlugins: async () => [],
+    installPlugin: async () => ({ id: '' }) as never,
+    setPluginEnabled: async () => {},
+    setPluginMcpServerEnabled: async () => {},
+    removePlugin: async () => {},
+    reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
+    getPluginInfo: async () => {
+      throw new Error('getPluginInfo is not used by these tests');
+    },
+    listPluginCommands: async () => [],
+    checkUpdates: async () => [],
+    pluginSkillRoots: async () => [],
+    pluginAgentRoots: async () => agentRoots,
+    enabledSessionStarts: async () => [],
+    enabledSystemPrompts: async () => [],
+    enabledMcpServers: async () => ({}),
+    enabledHooks: async () => [],
+  };
+}
+
 function agentMd(name: string, description: string, override = false): string {
   const overrideLine = override ? 'override: true\n' : '';
   return `---\nname: ${name}\ndescription: ${description}\n${overrideLine}---\n\nYou are ${name}.\n`;
@@ -174,6 +208,8 @@ function makeSession(
     readonly logWarnings?: string[];
     readonly userSource?: IUserFileAgentSource;
     readonly explicitSource?: IExplicitFileAgentSource;
+    readonly pluginAgentRoots?: readonly AgentFileRoot[];
+    readonly pluginReloadEmitter?: Emitter<ReloadSummary>;
   },
 ) {
   const config = configStub();
@@ -190,6 +226,10 @@ function makeSession(
     stubPair(IConfigService, config),
     stubPair(IAgentCatalogRuntimeOptions, runtimeOptions),
     stubPair(ILogService, logStub()),
+    stubPair(
+      IPluginService,
+      pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter),
+    ),
     ...(opts?.userSource ? [stubPair(IUserFileAgentSource, opts.userSource)] : []),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [
@@ -247,6 +287,11 @@ describe('SessionAgentProfileCatalogService', () => {
       LifecycleScope.Session,
       IProjectFileAgentSource,
       ProjectFileAgentSource,
+    );
+    registerScopedService(
+      LifecycleScope.Session,
+      IPluginAgentProfileSource,
+      PluginAgentProfileSource,
     );
   });
 
@@ -307,6 +352,47 @@ describe('SessionAgentProfileCatalogService', () => {
 
       expect(catalog.get('shared')?.description).toBe('from explicit');
       expect(catalog.get('user-extra')?.description).toBe('from extra');
+      host.dispose();
+    });
+  });
+
+  it('merges plugin agents below user; user wins on name collision', async () => {
+    await withFixture(async (fixture) => {
+      const pluginAgentsDir = join(fixture.extraDir, 'plugin-agents');
+      await writeAgent(pluginAgentsDir, 'shared.md', agentMd('shared', 'from plugin'));
+      await writeAgent(pluginAgentsDir, 'plugin-only.md', agentMd('plugin-only', 'from plugin'));
+      await writeAgent(join(fixture.homeDir, 'agents'), 'shared.md', agentMd('shared', 'from user'));
+      const { host, session } = makeSession(fixture, {
+        pluginAgentRoots: [{ path: pluginAgentsDir, source: 'plugin' }],
+      });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.get('shared')?.description).toBe('from user');
+      expect(catalog.get('plugin-only')?.description).toBe('from plugin');
+      host.dispose();
+    });
+  });
+
+  it('reloads the plugin source when plugins reload', async () => {
+    await withFixture(async (fixture) => {
+      const pluginAgentsDir = join(fixture.extraDir, 'plugin-agents');
+      await mkdir(pluginAgentsDir, { recursive: true });
+      const reloadEmitter = new Emitter<ReloadSummary>();
+      const { host, session } = makeSession(fixture, {
+        pluginAgentRoots: [{ path: pluginAgentsDir, source: 'plugin' }],
+        pluginReloadEmitter: reloadEmitter,
+      });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+      expect(catalog.get('late')).toBeUndefined();
+
+      await writeAgent(pluginAgentsDir, 'late.md', agentMd('late', 'late plugin agent'));
+      const changed = waitForEvent(catalog.onDidChange);
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+      await changed;
+
+      expect(catalog.get('late')?.description).toBe('late plugin agent');
       host.dispose();
     });
   });

@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.0
+
+### Minor Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Rename `userAgentProduct` to `productName` and require `platform` in the host identity options exposed by the SDK.
+
 ## 0.14.0
 
 ### Minor Changes
