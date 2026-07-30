@@ -77,12 +77,12 @@ export function createKimiDeviceId(
 export function createKimiDeviceHeaders(options: {
   readonly homeDir: string;
   readonly version: string;
-  /** Falls back to `KIMI_CODE_PLATFORM` only for direct callers without a host
-      identity; hosts carrying a `KimiHostIdentity` always pass theirs. */
-  readonly platform?: string | undefined;
+  /** Required and validated like the version: non-empty ASCII, no fallback —
+      a blank or fabricated platform would silently misreport the host. */
+  readonly platform: string;
 }): DeviceHeaders {
   return {
-    'X-Msh-Platform': options.platform ?? KIMI_CODE_PLATFORM,
+    'X-Msh-Platform': requiredAsciiHeader(options.platform, 'Kimi identity platform'),
     'X-Msh-Version': requiredAsciiHeader(options.version, 'Kimi identity version'),
     'X-Msh-Device-Name': asciiHeader(hostname()),
     'X-Msh-Device-Model': asciiHeader(deviceModel()),

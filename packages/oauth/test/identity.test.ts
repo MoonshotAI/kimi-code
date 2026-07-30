@@ -61,10 +61,11 @@ describe('Kimi identity factories', () => {
     expect(readKimiDeviceId(homeDir)).toBeNull();
   });
 
-  it('creates complete X-Msh device headers from host version', () => {
+  it('creates complete X-Msh device headers from host version and platform', () => {
     const headers = createKimiDeviceHeaders({
       homeDir: tempHome(),
       version: '1.2.3-test',
+      platform: KIMI_CODE_PLATFORM,
     });
 
     expect(headers['X-Msh-Platform']).toBe(KIMI_CODE_PLATFORM);
@@ -99,6 +100,24 @@ describe('Kimi identity factories', () => {
     });
 
     expect(headers['X-Msh-Platform']).toBe('kimi_code_desktop');
+  });
+
+  it('rejects an empty, whitespace, or all-non-ASCII platform instead of emitting a bad header', () => {
+    for (const platform of ['', '   ', '桌面']) {
+      expect(
+        () => createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.2.3', platform }),
+        JSON.stringify(platform),
+      ).toThrow('Kimi identity platform');
+    }
+  });
+
+  it('sanitizes header-unsafe characters out of the platform value', () => {
+    const headers = createKimiDeviceHeaders({
+      homeDir: tempHome(),
+      version: '1.2.3',
+      platform: 'kimi_code_桌面\n',
+    });
+    expect(headers['X-Msh-Platform']).toBe('kimi_code_');
   });
 
   it('merges User-Agent and device headers into default headers', () => {
@@ -156,7 +175,7 @@ describe('ascii header value sanitization', () => {
 
     try {
       const { createKimiDeviceHeaders: createHeaders } = await import('../src/identity');
-      const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0' });
+      const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       expect(headers['X-Msh-Device-Name']).toBe('unknown');
     } finally {
       vi.doUnmock('node:os');
@@ -179,7 +198,7 @@ describe('ascii header value sanitization', () => {
 
     try {
       const { createKimiDeviceHeaders: createHeaders } = await import('../src/identity');
-      const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0' });
+      const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       for (const [key, value] of Object.entries(headers)) {
         expect(value, `header ${key} has untrimmed whitespace: ${JSON.stringify(value)}`).toBe(
           value.trim(),
@@ -211,7 +230,7 @@ describe('ascii header value sanitization', () => {
 
     try {
       const { createKimiDeviceHeaders } = await import('../src/identity');
-      const headers = createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.0.0' });
+      const headers = createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       expect(headers['X-Msh-Device-Model']).toBe('macOS 25.5.0 arm64');
     } finally {
       vi.doUnmock('node:os');
