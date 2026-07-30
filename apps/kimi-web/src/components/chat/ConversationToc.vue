@@ -139,24 +139,6 @@ onBeforeUnmount(() => {
   opacity: 0.5;
   transition: opacity var(--duration-base) var(--ease-out);
 }
-/* Invisible hover bridge: the collapsed rail is only a few px wide, so this
-   extends the hover target on both sides to make the outline easy to open and
-   forgiving to stay within. The left side covers only the 14px gap toward the
-   content — a table wide enough to reach past the gap also covers the bar,
-   which hides the rail (pointer-events: none) before the bridge can steal its
-   events. The right side stops at the scrollbar gutter so it never swallows
-   scrollbar clicks. Kept at z-index 0 so it sits behind the rows (which are
-   raised to z-index 1) — otherwise the bridge, as a positioned pseudo-element,
-   paints above the in-flow rows and swallows their clicks. */
-.conversation-toc::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -14px;
-  right: calc(-1 * var(--space-2));
-  z-index: 0;
-}
 .conversation-toc:hover,
 .conversation-toc:focus-within { opacity: 1; }
 

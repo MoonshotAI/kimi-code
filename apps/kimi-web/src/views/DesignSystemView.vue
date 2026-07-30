@@ -2313,7 +2313,7 @@ onUnmounted(() => {
   .demo-stack { display: flex; flex-direction: column; gap: 12px; width: 100%; }
   .demo-col { display: flex; flex-direction: column; gap: 10px; }
   .demo-grow { flex: 1; min-width: 0; }
-  .demo-chat { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 560px; }
+  .demo-chat { display: flex; flex-direction: column; gap: 14px; width: 100%; }
 
   /* Icon catalog (§02 Icon library) */
   .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin: 14px 0; }
