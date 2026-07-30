@@ -143,7 +143,11 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
         lastPrompt: this.data.lastPrompt,
         createdAt: this.data.createdAt,
         updatedAt: this.data.updatedAt,
-        archived: this.data.archived,
+        // `data.archived` stays undefined for sessions whose state.json
+        // predates the field; the read-model contract requires a boolean
+        // (`readSummary` normalizes the same way), so an undefined here would
+        // poison the cache entry and fail contract validation on reads.
+        archived: this.data.archived === true,
         custom: this.data.custom,
       });
     } catch (error) {

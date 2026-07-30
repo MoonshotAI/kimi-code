@@ -9,6 +9,7 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
   type BearerTokenProvider,
+  type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -50,9 +51,11 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
 
   constructor(
     private readonly options: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
+    identity?: KimiHostIdentity,
   ) {
     this.toolkit = new KimiOAuthToolkit<ServicesManagedConfig>({
       homeDir: options.homeDir,
+      identity,
       configAdapter: {
         configPath: options.configPath,
         read: () => readConfigFile(options.configPath) as ServicesManagedConfig,
@@ -169,6 +172,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
 
 export function createManagedAuthFacade(
   env: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
+  identity?: KimiHostIdentity,
 ): ServicesAuthFacade {
-  return new ServicesManagedAuthFacade(env);
+  return new ServicesManagedAuthFacade(env, identity);
 }

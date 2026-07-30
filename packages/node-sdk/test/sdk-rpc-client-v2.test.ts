@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness, SDKRpcClientV2 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
+import { IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
 
 import { TEST_IDENTITY } from './test-identity';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
@@ -34,6 +35,23 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
+  it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      // Without this seed the managed vendors go out with the SDK's default
+      // User-Agent and no X-Msh-* — the interactive-v2 path's identity bug.
+      const headers = client.engineAccessor.get(IHostRequestHeaders).headers;
+      expect(headers['User-Agent']).toBe(`kimi-code-cli/${TEST_IDENTITY.version}`);
+      expect(headers['X-Msh-Platform']).toBe('kimi_code_cli');
+      expect(headers['X-Msh-Version']).toBe(TEST_IDENTITY.version);
+      expect(headers['X-Msh-Device-Id']).toBeTruthy();
+    } finally {
+      await client.close();
+    }
+  });
+
   it('serves getExperimentalFeatures from the v2 engine', async () => {
     const { harness } = await makeHarness();
     try {

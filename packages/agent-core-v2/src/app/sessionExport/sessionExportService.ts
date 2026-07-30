@@ -215,6 +215,7 @@ export async function exportSessionDirectory(input: {
       sessionScan,
       sessionLogPath: stableSessionLog === undefined ? undefined : SESSION_LOG_REL,
       webLogPath: bundledWebLog ? WEB_LOG_REL : undefined,
+      desktopVersion: input.request.desktopVersion,
       installSource: input.request.installSource,
       shellEnv: input.request.shellEnv,
     });

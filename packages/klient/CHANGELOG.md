@@ -1,5 +1,12 @@
 # @moonshot-ai/klient
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
+  - @moonshot-ai/agent-core-v2@0.3.0
+
 ## 0.1.0
 
 ### Minor Changes

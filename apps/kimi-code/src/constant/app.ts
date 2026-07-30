@@ -10,6 +10,10 @@ export const CLI_UI_MODE = 'shell';
 // Telemetry ui_mode for the `kimi web` host. Same product
 // as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
 export const WEB_UI_MODE = 'web';
+// User-Agent suffix for the `kimi web` host: its requests go out as
+// `kimi-code-cli/<version> (web)` so upstream can tell web-UI traffic
+// apart from direct CLI runs without changing the product token or platform.
+export const WEB_USER_AGENT_SUFFIX = 'web';
 
 // Give telemetry a short flush window without making CLI exit feel stuck.
 export const CLI_SHUTDOWN_TIMEOUT_MS = 3000;

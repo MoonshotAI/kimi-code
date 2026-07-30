@@ -169,7 +169,7 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  */
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
-  // have (fault-injection, minidb backend, subagent); v1-only flags would be
+  // have (minidb backend, subagent); v1-only flags would be
   // the symmetric case. Parity is enforced on the intersection of ids until
   // the registries are unified.
   getExperimentalFeatures: (

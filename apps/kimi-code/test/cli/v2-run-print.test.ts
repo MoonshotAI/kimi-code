@@ -205,7 +205,11 @@ function makeFakeHarness() {
       {
         platform: 'linux',
         arch: 'x64',
-        clientVersion: '1.2.3-test',
+        clientIdentity: {
+          productName: 'test-product',
+          version: '1.2.3-test',
+          platform: 'test_platform',
+        },
         osHomeDir: '/home/test',
         getEnv: () => undefined,
       },

@@ -39,12 +39,8 @@ const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 const PAGING_HINT_LINES = 300;
 
 
-function retrievalStatus(
-  status: AgentTaskStatus,
-  block: boolean | undefined,
-): 'success' | 'timeout' | 'not_ready' {
-  if (TERMINAL_STATUSES.has(status)) return 'success';
-  return block ? 'timeout' : 'not_ready';
+function retrievalStatus(status: AgentTaskStatus): 'success' | 'not_ready' {
+  return TERMINAL_STATUSES.has(status) ? 'success' : 'not_ready';
 }
 
 function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
@@ -85,23 +81,11 @@ export class TaskOutputTool implements ITaskOutputTool {
       description: `Reading output of task ${args.task_id}`,
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
-      execute: ({ signal }) => this.execute(args, signal),
+      execute: () => this.execute(args),
     };
   }
 
-  private async execute(
-    args: TaskOutputInput,
-    signal: AbortSignal,
-  ): Promise<ExecutableToolResult> {
-    const info = this.tasks.getTask(args.task_id);
-    if (!info) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
-    }
-
-    if (args.block && !TERMINAL_STATUSES.has(info.status)) {
-      await this.tasks.wait(args.task_id, (args.timeout ?? 30) * 1000, signal);
-    }
-
+  private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
     const current = this.tasks.getTask(args.task_id);
     if (!current) {
       return { isError: true, output: `Task not found: ${args.task_id}` };
@@ -111,7 +95,7 @@ export class TaskOutputTool implements ITaskOutputTool {
 
     const lines = [
       formatPlainObject({
-        retrievalStatus: retrievalStatus(current.status, args.block),
+        retrievalStatus: retrievalStatus(current.status),
         ...current,
         outputPath: output.outputPath,
         terminalReason: terminalReason(current),
@@ -122,10 +106,6 @@ export class TaskOutputTool implements ITaskOutputTool {
         fullOutputTool:
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
         fullOutputHint: fullOutputHint(output),
-        nextStep:
-          args.block === true && !TERMINAL_STATUSES.has(current.status)
-            ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
-            : undefined,
       }),
       '',
     ];

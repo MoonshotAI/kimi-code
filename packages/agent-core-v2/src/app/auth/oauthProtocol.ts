@@ -4,6 +4,8 @@
  * Request/response shapes of the v1 `/oauth/*` endpoints plus the managed
  * OAuth provider model-refresh response, defined as zod schemas so the
  * transports validate against the same contract the `IOAuthService` returns.
+ * New endpoints use the camelCase domain contract owned by the oauth
+ * package (re-exported below); legacy snake_case schemas stay local.
  */
 
 import { z } from 'zod';
@@ -158,3 +160,15 @@ export const managedUsageResultSchema = z.discriminatedUnion('kind', [
   managedUsageErrorSchema,
 ]);
 export type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Managed-account profile (`GET /v1/oauth/userinfo`) — camelCase domain
+// contract owned by `@moonshot-ai/kimi-code-oauth` (its zod schemas are the
+// single source of truth); re-exported here so transports keep one import
+// path. Legacy snake_case endpoints keep their local schemas above.
+// ---------------------------------------------------------------------------
+
+export {
+  managedUserInfoResultSchema,
+  type ManagedUserInfoResult,
+} from '@moonshot-ai/kimi-code-oauth';
