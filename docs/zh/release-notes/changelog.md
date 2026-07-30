@@ -11,9 +11,9 @@ outline: 2
 ### 新功能
 
 - TUI 支持 Markdown 定义的自定义 Agent。
-- 支持插件贡献自定义 Agent。
-- 新增 /secondary_model 斜杠命令，用于配置子 Agent 使用的辅助模型。
-- 插件支持贡献自定义系统提示词。
+- 新增 /secondary_model 斜杠命令，用于配置子 Agent 使用的辅助模型（实验性功能，需先在 /experiments 中开启）。
+- 插件可贡献自定义 Agent，自动发现并可用于子 Agent 委派。
+- 插件可贡献系统提示词，通过 `kimi.plugin.json` 中的 `systemPrompt` 或 `systemPromptPath` 声明。
 
 ### 修复
 

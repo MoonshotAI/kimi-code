@@ -11,9 +11,9 @@ This page documents the changes in each Kimi Code CLI release.
 ### Features
 
 - Support Markdown-defined custom agents on agent-core.
-- Add support for plugin-contributed custom agents, discovered automatically and available for sub-agent delegation. Ship an `agents/` directory in the plugin (or declare `agents` paths in the plugin manifest) to provide them.
-- Add the /secondary_model slash command to configure the secondary model used by subagents.
-- Allow enabled plugins to contribute agent system-prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`, effective on both agent engines (the TUI, `kimi -p`, and `kimi web`).
+- Add the /secondary_model slash command to configure the secondary model used by subagents (experimental; enable it in /experiments first).
+- Plugins can contribute custom agents, discovered automatically and available for sub-agent delegation.
+- Plugins can contribute system prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`.
 
 ### Bug Fixes
 
