@@ -22,7 +22,7 @@ import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from 
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
 import { classifyToken, revokedTombstone, type TokenState } from './token-state';
-import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
+import type { DeviceAuthorization, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
 
 const MIN_REFRESH_THRESHOLD_SECONDS = 300;
 const REFRESH_THRESHOLD_RATIO = 0.5;

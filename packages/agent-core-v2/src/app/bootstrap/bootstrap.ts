@@ -89,21 +89,12 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  readonly clientIdentity?: KimiHostIdentity;
+  /** Required: every process names its host. There is deliberately no default
+      — a fabricated identity would silently misreport the host upstream. */
+  readonly clientIdentity: KimiHostIdentity;
 }
 
-/**
- * Built-in identity used only when the caller omits `clientIdentity`. This is
- * a fallback so bare `bootstrap()` calls in unit tests keep working — NOT the
- * contract: composition roots must pass the host's own `KimiHostIdentity`.
- */
-const FALLBACK_CLIENT_IDENTITY: KimiHostIdentity = {
-  productName: 'kimi-code-cli',
-  version: 'unknown',
-  platform: 'kimi_code_cli',
-};
-
-export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapOptions {
+export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOptions {
   const env = input.env ?? process.env;
   const osHomeDir = input.osHomeDir ?? homedir();
   const homeDir = resolveKimiHome(input.homeDir, env, osHomeDir);
@@ -116,11 +107,11 @@ export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapO
     arch: input.arch ?? process.arch,
     cwd: input.cwd ?? process.cwd(),
     env,
-    clientIdentity: input.clientIdentity ?? FALLBACK_CLIENT_IDENTITY,
+    clientIdentity: input.clientIdentity,
   };
 }
 
-export function bootstrapSeed(input: BootstrapInput = {}): ScopeSeed {
+export function bootstrapSeed(input: BootstrapInput): ScopeSeed {
   return [[IBootstrapOptions as ServiceIdentifier<unknown>, resolveBootstrapOptions(input)]];
 }
 
@@ -128,7 +119,7 @@ export interface BootstrapResult {
   readonly app: Scope;
 }
 
-export function bootstrap(input: BootstrapInput = {}, extraSeeds: ScopeSeed = []): BootstrapResult {
+export function bootstrap(input: BootstrapInput, extraSeeds: ScopeSeed = []): BootstrapResult {
   const options = resolveBootstrapOptions(input);
   const app = createAppScope({
     extra: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],

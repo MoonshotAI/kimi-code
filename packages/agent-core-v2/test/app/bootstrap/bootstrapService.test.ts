@@ -60,23 +60,26 @@ describe('BootstrapService (scoped)', () => {
 
 describe('resolveBootstrapOptions', () => {
   it('prefers explicit homeDir over KIMI_CODE_HOME over osHomeDir', () => {
-    expect(resolveBootstrapOptions({ homeDir: '/a', osHomeDir: '/b', env: {} }).homeDir).toBe('/a');
-    expect(resolveBootstrapOptions({ osHomeDir: '/b', env: { KIMI_CODE_HOME: '/c' } }).homeDir).toBe('/c');
-    expect(resolveBootstrapOptions({ osHomeDir: '/b', env: {} }).homeDir).toBe('/b/.kimi-code');
+    expect(
+      resolveBootstrapOptions({ homeDir: '/a', osHomeDir: '/b', env: {}, clientIdentity: stubClientIdentity })
+        .homeDir,
+    ).toBe('/a');
+    expect(
+      resolveBootstrapOptions({
+        osHomeDir: '/b',
+        env: { KIMI_CODE_HOME: '/c' },
+        clientIdentity: stubClientIdentity,
+      }).homeDir,
+    ).toBe('/c');
+    expect(
+      resolveBootstrapOptions({ osHomeDir: '/b', env: {}, clientIdentity: stubClientIdentity }).homeDir,
+    ).toBe('/b/.kimi-code');
   });
 
   it('passes through an explicit clientIdentity', () => {
     expect(
       resolveBootstrapOptions({ env: {}, clientIdentity: stubClientIdentity }).clientIdentity,
     ).toEqual(stubClientIdentity);
-  });
-
-  it('falls back to a built-in CLI identity when clientIdentity is omitted', () => {
-    expect(resolveBootstrapOptions({ env: {} }).clientIdentity).toEqual({
-      productName: 'kimi-code-cli',
-      version: 'unknown',
-      platform: 'kimi_code_cli',
-    });
   });
 });
 

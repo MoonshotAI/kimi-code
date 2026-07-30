@@ -416,7 +416,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       {
         homeDir: this.homeDir,
         configPath: this.configPath,
-        clientIdentity: this.identity,
+        clientIdentity: assertKimiHostIdentity(this.identity),
       },
       [
         ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
