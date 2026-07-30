@@ -11,7 +11,7 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { getAllTips, tipsConfigVersion, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -73,7 +73,20 @@ export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly Toolbar
   return seq;
 }
 
-const ROTATION: readonly ToolbarTip[] = buildWeightedTips(ALL_TIPS);
+/**
+ * Rotation over the effective tip list (built-ins plus/minus custom tips from
+ * `[tips]` in tui.toml). Memoized against `tipsConfigVersion()` so a
+ * `/reload-tui` that changes tips rebuilds the rotation exactly once.
+ */
+let rotationCache: { version: number; rotation: readonly ToolbarTip[] } | null = null;
+
+function getRotation(): readonly ToolbarTip[] {
+  const version = tipsConfigVersion();
+  if (rotationCache === null || rotationCache.version !== version) {
+    rotationCache = { version, rotation: buildWeightedTips(getAllTips()) };
+  }
+  return rotationCache.rotation;
+}
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
@@ -88,12 +101,13 @@ function currentTipIndex(): number {
  * tips on their own and avoiding "X | X".
  */
 function tipsForIndex(index: number): { primary: string; pair: string | null } {
-  const n = ROTATION.length;
+  const rotation = getRotation();
+  const n = rotation.length;
   if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  const current = ROTATION[offset]!;
+  const current = rotation[offset]!;
   if (n === 1 || current.solo) return { primary: current.text, pair: null };
-  const next = ROTATION[(offset + 1) % n]!;
+  const next = rotation[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
@@ -366,8 +380,13 @@ export class FooterComponent implements Component {
       tasks: [],
       cwd: [],
       git: [],
+      sessionId: [],
       tips: [],
     };
+
+    if (state.sessionId) {
+      slots['sessionId'] = [chalk.hex(colors.textMuted)(state.sessionId)];
+    }
 
     {
       const { primary, pair } = tipsForIndex(currentTipIndex());

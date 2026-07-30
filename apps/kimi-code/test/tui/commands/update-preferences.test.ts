@@ -45,6 +45,7 @@ describe('update preference commands', () => {
       disablePasteBurst: false,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
+      tips: { mode: 'append', custom: [] },
     });
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });

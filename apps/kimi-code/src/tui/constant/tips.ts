@@ -47,3 +47,53 @@ export const ALL_TIPS: readonly ToolbarTip[] = [
   { text: 'shift-tab to Plan mode to review the approach before Kimi edits files.', priority: 2 },
   { text: '/model: switch model', priority: 2 },
 ];
+
+/**
+ * Custom tips ("spinner verbs") from `[tips]` in tui.toml.
+ *
+ * `append` (default) mixes user tips into the built-in rotation; `replace`
+ * shows only user tips (Claude Code `spinnerVerbs` parity). Consumers read
+ * the effective lists via `getWorkingTips()` / `getAllTips()` and memoize
+ * against `tipsConfigVersion()`, which bumps on every effective change.
+ */
+export type TipsMode = 'append' | 'replace';
+
+let customTips: readonly ToolbarTip[] = [];
+let customMode: TipsMode = 'append';
+let version = 0;
+
+export function configureCustomTips(mode: TipsMode, tips: readonly string[]): void {
+  const normalized = tips
+    .map((t) => ({ text: t.trim() }))
+    .filter((t) => t.text.length > 0);
+  const unchanged =
+    mode === customMode &&
+    normalized.length === customTips.length &&
+    normalized.every((t, i) => t.text === customTips[i]!.text);
+  if (unchanged) return;
+  customMode = mode;
+  customTips = normalized;
+  version += 1;
+}
+
+export function tipsConfigVersion(): number {
+  return version;
+}
+
+/**
+ * The currently configured custom tips, for code paths that re-serialize
+ * tui.toml (e.g. `/config` saves) and must not drop the user's `[tips]`.
+ */
+export function getCustomTipsConfig(): { mode: TipsMode; custom: string[] } {
+  return { mode: customMode, custom: customTips.map((t) => t.text) };
+}
+
+export function getWorkingTips(): readonly ToolbarTip[] {
+  if (customMode === 'replace' && customTips.length > 0) return customTips;
+  return [...WORKING_TIPS, ...customTips];
+}
+
+export function getAllTips(): readonly ToolbarTip[] {
+  if (customMode === 'replace' && customTips.length > 0) return customTips;
+  return [...ALL_TIPS, ...customTips];
+}

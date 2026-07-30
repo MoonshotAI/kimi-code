@@ -30,7 +30,7 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
-export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git', 'tips'] as const;
+export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git', 'sessionId', 'tips'] as const;
 export type StatusLineItem = (typeof STATUS_LINE_ITEMS)[number];
 
 export const StatusLineFileConfigSchema = z.object({
@@ -49,6 +49,24 @@ export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
 export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
   items: null,
   command: null,
+};
+
+export const TipsModeSchema = z.enum(['append', 'replace']);
+
+export const TipsConfigSchema = z.object({
+  mode: TipsModeSchema,
+  custom: z.array(z.string()),
+});
+export type TipsConfig = z.infer<typeof TipsConfigSchema>;
+
+export const TipsFileConfigSchema = z.object({
+  mode: TipsModeSchema.optional(),
+  custom: z.array(z.string()).optional(),
+});
+
+export const DEFAULT_TIPS_CONFIG: TipsConfig = {
+  mode: 'append',
+  custom: [],
 };
 
 export const TuiConfigFileSchema = z.object({
@@ -71,6 +89,7 @@ export const TuiConfigFileSchema = z.object({
     })
     .optional(),
   status_line: StatusLineFileConfigSchema.optional(),
+  tips: TipsFileConfigSchema.optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -82,6 +101,9 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
+  /** Custom spinner tips (`[tips]` in tui.toml); optional for the same
+   * fixture-compatibility reason as `statusLine`. */
+  tips: TipsConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -105,6 +127,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
   statusLine: DEFAULT_STATUS_LINE_CONFIG,
+  tips: DEFAULT_TIPS_CONFIG,
 });
 
 /**
@@ -202,6 +225,10 @@ export function normalizeTuiConfig(
           ? null
           : statusLineCommand,
     },
+    tips: {
+      mode: config.tips?.mode ?? DEFAULT_TIPS_CONFIG.mode,
+      custom: config.tips?.custom ?? DEFAULT_TIPS_CONFIG.custom,
+    },
   });
 }
 
@@ -228,6 +255,19 @@ export function renderTuiConfig(config: TuiConfig): string {
 # It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
 # command = "~/.kimi-code/statusline.sh"
 `;
+  // [tips] round-trips like [status_line]: emitted live when the user has
+  // custom tips (or replace mode), commented-out guide otherwise.
+  const tipsMode = config.tips?.mode ?? 'append';
+  const tipsCustom = config.tips?.custom ?? [];
+  const tipsSection =
+    tipsMode === 'replace' || tipsCustom.length > 0
+      ? `[tips]\nmode = "${tipsMode}"\ncustom = [${tipsCustom.map((t) => `"${escapeTomlBasicString(t)}"`).join(', ')}]\n`
+      : `# [tips]
+# Your own spinner tips / verbs. "append" (default) mixes them into the
+# built-in rotation; "replace" shows only yours.
+# mode = "append"
+# custom = ["Accidental Virtue", "Quantum Truss"]
+`;
   return `# ~/.kimi-code/tui.toml
 # Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
@@ -245,7 +285,8 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
 
-${statusSection}`;
+${statusSection}
+${tipsSection}`;
 }
 
 function escapeTomlBasicString(value: string): string {

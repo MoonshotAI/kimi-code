@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import {
@@ -96,6 +96,10 @@ describe('FooterComponent status_line items', () => {
   });
 
   it('honors the configured position of the tips slot', () => {
+    // Pin the clock: the tip content rotates every 10s, so renders on either
+    // side of a rotation boundary would otherwise disagree.
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
     // The tip content itself rotates; locate it via a tips-only render.
     const tipsOnly = plain(
       new FooterComponent({
@@ -120,6 +124,7 @@ describe('FooterComponent status_line items', () => {
     expect(tipsOnly.length).toBeGreaterThan(0);
     expect(tipsFirst.indexOf(tipsOnly)).toBeLessThan(tipsFirst.indexOf('kimi-k2'));
     expect(tipsLast.indexOf('kimi-k2')).toBeLessThan(tipsLast.indexOf(tipsOnly));
+    vi.useRealTimers();
   });
 
   it('renders nothing on line 1 for an empty items list', () => {
@@ -258,5 +263,37 @@ describe('StatusLineCommandRunner', () => {
     const line1 = plain(footer.render(120)[0]!);
     expect(line1).toContain('bbb');
     expect(line1).not.toContain('aaa');
+  });
+});
+
+describe('FooterComponent sessionId slot', () => {
+  it('renders the session id when sessionId is in items', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['model', 'sessionId'], command: null },
+    };
+    const footer = new FooterComponent(state);
+
+    const line1 = plain(footer.render(200)[0]!);
+    expect(line1).toContain('ses-1');
+    const modelAt = line1.indexOf('kimi-k2');
+    const sessionAt = line1.indexOf('ses-1');
+    expect(sessionAt).toBeGreaterThan(modelAt);
+  });
+
+  it('omits the session id when sessionId is not in items', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['model', 'cwd'], command: null },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(200)[0]!)).not.toContain('ses-1');
+  });
+
+  it('does not show the session id in the default layout', () => {
+    const footer = new FooterComponent({ ...baseState });
+
+    expect(plain(footer.render(200)[0]!)).not.toContain('ses-1');
   });
 });

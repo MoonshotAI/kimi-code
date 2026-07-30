@@ -392,8 +392,10 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
-| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行展示哪些内置槽位及其顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`。缺省保持默认布局；未知 id 跳过并告警 |
+| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行展示哪些内置槽位及其顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`sessionId`、`tips`。缺省保持默认布局（不含 `sessionId`）；未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令。其 stdout 第一行替换状态栏第一行，stdin 会收到 JSON 快照（model、cwd、git 分支、permission 模式、plan 模式、上下文用量、session id、版本）。运行上限 300ms、每秒最多一次；失败时回退内置布局 |
+| `[tips].mode` | `string` | `append` | 自定义提示的混合方式：`append` 追加到内置 spinner/页脚提示轮换，`replace` 仅显示你的提示 |
+| `[tips].custom` | `array<string>` | `[]` | 自定义 spinner 提示/动词 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -411,8 +413,12 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "model", "tasks", "cwd", "git", "sessionId", "tips"]
 # command = "~/.kimi-code/statusline.sh"
+
+# [tips]
+# mode = "append" # "append"（混入内置轮换）| "replace"（仅显示你的提示）
+# custom = ["Accidental Virtue", "Quantum Truss"]
 ```
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。

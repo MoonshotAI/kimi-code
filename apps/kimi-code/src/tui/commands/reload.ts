@@ -1,6 +1,7 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme, lightColors } from '#/tui/theme';
+import { configureCustomTips } from '#/tui/constant/tips';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -54,6 +55,9 @@ export async function applyReloadedTuiConfig(
     upgrade: config.upgrade,
     statusLine: config.statusLine,
   });
+  if (config.tips !== undefined) {
+    configureCustomTips(config.tips.mode, config.tips.custom);
+  }
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }
 

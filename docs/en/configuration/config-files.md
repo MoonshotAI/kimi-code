@@ -392,8 +392,10 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
-| `[status_line].items` | `string[]` | `[]` | Built-in slots to show on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`. Unset keeps the default layout; unknown ids are skipped with a warning |
+| `[status_line].items` | `string[]` | `[]` | Built-in slots to show on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `sessionId`, `tips`. Unset keeps the default layout (which does not include `sessionId`); unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command. Its first stdout line replaces the first footer line, with a JSON snapshot (model, cwd, git branch, permission mode, plan mode, context usage, session id, version) passed on stdin. Runs are capped at 300ms and throttled to once per second; failures fall back to the built-in layout |
+| `[tips].mode` | `string` | `append` | How custom tips are mixed: `append` adds them to the built-in spinner/footer tip rotation, `replace` shows only your tips |
+| `[tips].custom` | `array<string>` | `[]` | Your own spinner tips / verbs |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -411,8 +413,12 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "model", "tasks", "cwd", "git", "sessionId", "tips"]
 # command = "~/.kimi-code/statusline.sh"
+
+# [tips]
+# mode = "append" # "append" (mix into built-ins) | "replace" (only your tips)
+# custom = ["Accidental Virtue", "Quantum Truss"]
 ```
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.

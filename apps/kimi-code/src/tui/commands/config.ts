@@ -22,6 +22,7 @@ import { SettingsSelectorComponent, type SettingsSelection } from '../components
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
+import { getCustomTipsConfig } from '../constant/tips';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -59,6 +60,10 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
+    // Pass through the user's status_line and custom tips so a preference
+    // save rewrites tui.toml without dropping them.
+    statusLine: host.state.appState.statusLine,
+    tips: getCustomTipsConfig(),
   };
 }
 

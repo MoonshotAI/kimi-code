@@ -64,6 +64,7 @@ auto_install = false
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
+      tips: { mode: 'append', custom: [] },
     });
   });
 
@@ -89,6 +90,7 @@ command = "   "
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
       statusLine: { items: null, command: null },
+      tips: { mode: 'append', custom: [] },
     });
   });
 
@@ -122,6 +124,8 @@ command = "   "
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
         statusLine: { items: null, command: null },
+        tips: { mode: 'append', custom: [] },
+      tips: { mode: 'append', custom: [] },
       },
       filePath,
     );
@@ -133,6 +137,7 @@ command = "   "
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
+      tips: { mode: 'append', custom: [] },
     });
   });
 

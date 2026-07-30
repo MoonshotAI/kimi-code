@@ -33,6 +33,7 @@ import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import { BannerProvider } from './banner/banner-provider';
+import { configureCustomTips } from './constant/tips';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -204,6 +205,11 @@ type MutableCreateSessionOptions = {
 };
 
 function createInitialAppState(input: KimiTUIStartupInput): AppState {
+  // Apply custom spinner tips (`[tips]` in tui.toml) before any spinner or
+  // footer rotation is built.
+  if (input.tuiConfig.tips !== undefined) {
+    configureCustomTips(input.tuiConfig.tips.mode, input.tuiConfig.tips.custom);
+  }
   const startupPermission: PermissionMode = input.cliOptions.auto
     ? 'auto'
     : input.cliOptions.yolo
