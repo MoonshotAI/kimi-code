@@ -16,6 +16,12 @@
  * The combined AGENTS.md content is injected in full; when it exceeds the
  * soft {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible
  * `agentsMdWarning` is produced instead of silently truncating.
+ *
+ * The discovered-file list is returned alongside the content as `paths`
+ * (surfaced as `agentsMdPaths`), and the per-directory candidate rules
+ * (`AGENTS_MD_PLAIN_NAMES` / `dotKimiAgentsMdPath` / `findAgentsMdInDir`)
+ * plus the root→leaf chain helpers (`findProjectRoot` / `dirsRootToLeaf`)
+ * are exported so discovery probes and injection never drift apart.
  */
 
 import { dirname, join, normalize } from 'pathe';
@@ -40,6 +46,7 @@ export type { ProfileContextDeps };
 export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
   readonly agentsMd?: string;
+  readonly agentsMdPaths?: readonly string[];
   readonly additionalDirsInfo?: string;
   readonly agentsMdWarning?: string;
 }
@@ -66,6 +73,7 @@ export async function prepareSystemPromptContext(
   return {
     cwdListing,
     agentsMd: agentsMdResult.content,
+    agentsMdPaths: agentsMdResult.paths,
     additionalDirsInfo,
     agentsMdWarning: agentsMdResult.warning,
   };
@@ -80,9 +88,57 @@ export async function loadAgentsMd(
   return result.content;
 }
 
-interface LoadedAgentsMd {
+export async function loadAgentsMdDetailed(
+  deps: ProfileContextDeps,
+  workDir: string,
+  brandHome?: string,
+): Promise<LoadedAgentsMd> {
+  return loadAgentsMdForRoots(deps, brandHome, [workDir]);
+}
+
+export interface LoadedAgentsMd {
   readonly content: string;
   readonly warning: string | undefined;
+  readonly paths: readonly string[];
+}
+
+export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
+
+export function dotKimiAgentsMdPath(dir: string): string {
+  return join(dir, '.kimi-code', 'AGENTS.md');
+}
+
+export function agentsMdCandidatePaths(dir: string): string[] {
+  return [dotKimiAgentsMdPath(dir), ...AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name))];
+}
+
+export async function findAgentsMdInDir(
+  deps: { readonly fs: IHostFileSystem },
+  dir: string,
+): Promise<string[]> {
+  const found: string[] = [];
+  const dotKimi = dotKimiAgentsMdPath(dir);
+  if (await isNonEmptyFile(deps, dotKimi)) found.push(dotKimi);
+  for (const fileName of AGENTS_MD_PLAIN_NAMES) {
+    const candidate = join(dir, fileName);
+    if (await isNonEmptyFile(deps, candidate)) {
+      found.push(candidate);
+      break;
+    }
+  }
+  return found;
+}
+
+async function isNonEmptyFile(
+  deps: { readonly fs: IHostFileSystem },
+  path: string,
+): Promise<boolean> {
+  try {
+    const content = await deps.fs.readText(path, { errors: 'ignore' });
+    return content.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export type { LoadedAgentsMd };
@@ -115,7 +171,7 @@ export async function loadAgentsMdForRoots(
 
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
-    ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
+    AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name)),
   );
   for (const file of genericFiles) {
     if (await collect(file)) break;
@@ -127,8 +183,8 @@ export async function loadAgentsMdForRoots(
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
-      await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-      for (const fileName of ['AGENTS.md', 'agents.md']) {
+      await collect(dotKimiAgentsMdPath(dir));
+      for (const fileName of AGENTS_MD_PLAIN_NAMES) {
         if (await collect(join(dir, fileName))) break;
       }
     }
@@ -144,7 +200,8 @@ export async function loadAgentsMdForRoots(
     );
   }
   const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
-  return { content, warning };
+  const paths = discovered.map((file) => normalize(file.path));
+  return { content, warning, paths };
 }
 
 export interface AgentsMdWatchRoot {
@@ -193,7 +250,15 @@ async function loadAdditionalDirsInfo(
   return sections.join('\n\n');
 }
 
-function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
+export async function findProjectRoot(
+  deps: { readonly fs: IHostFileSystem },
+  workDir: string,
+): Promise<string> {
+  const rootWorkDir = normalize(workDir);
+  return (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+}
+
+export function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
   const dirs: string[] = [];
   let current = normalize(workDir);
 
@@ -235,7 +300,7 @@ async function readAgentFile(
   return { path, content };
 }
 
-async function pathExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
+async function pathExists(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
   try {
     await deps.fs.lstat(path);
     return true;
@@ -244,11 +309,11 @@ async function pathExists(deps: ProfileContextDeps, path: string): Promise<boole
   }
 }
 
-async function entryExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
+async function entryExists(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
   return pathExists(deps, path);
 }
 
-async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
+async function isFile(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
   try {
     const stat = await deps.fs.stat(path);
     return stat.isFile;

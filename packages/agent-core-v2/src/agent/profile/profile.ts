@@ -54,6 +54,7 @@ export type AgentConfigUpdateData = Partial<{
 
 export interface SystemPromptContext extends AgentProfileContext {
   readonly agentsMdWarning?: string;
+  readonly agentsMdPaths?: readonly string[];
 }
 
 export type ResolvedAgentProfile = AgentProfile;
