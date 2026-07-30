@@ -151,6 +151,7 @@ export function renderManualUpdateMessage(
   target: UpdateTarget,
   source: InstallSource,
   installCommand: string,
+  platform: NodeJS.Platform = process.platform,
 ): string {
   let sourceDesc: string;
   switch (source) {
@@ -164,7 +165,10 @@ export function renderManualUpdateMessage(
       sourceDesc = 'homebrew';
       break;
     case 'native':
-      sourceDesc = 'native (windows). Auto-update is not supported on this platform.';
+      sourceDesc =
+        platform === 'win32'
+          ? 'native (windows). Auto-update is not supported on this platform.'
+          : 'native';
       break;
     case 'unsupported':
       sourceDesc = 'unsupported package manager or layout.';
