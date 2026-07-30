@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -325,6 +325,11 @@ describe('PluginManager', () => {
     expect(updated.updatedAt).not.toBe(first.updatedAt);
     expect(updated.originalSource).toBe(updatedRoot);
     expect(manager.info('demo')?.mcpServers[0]?.enabled).toBe(false);
+    // Rename-swap publish must not leave sibling `*-previous` trees behind when
+    // the old managed root is free to delete (Windows EBUSY path defers this).
+    const managedDir = path.join(home, 'plugins', 'managed');
+    const leftover = (await readdir(managedDir)).filter((name) => name.includes('-previous'));
+    expect(leftover).toEqual([]);
   });
 
   it('keeps a plugin in error state instead of losing it on a broken manifest', async () => {
