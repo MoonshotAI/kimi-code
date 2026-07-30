@@ -14,6 +14,7 @@
 
 ### Patch Changes
 
+- [#1994](https://github.com/MoonshotAI/kimi-code/pull/1994) [`beeb964`](https://github.com/MoonshotAI/kimi-code/commit/beeb964393c8f9a38c2b1e2273e4415fc434b16d) Thanks [@RealKai42](https://github.com/RealKai42)! - Reduce webview streaming re-render churn: settled assistant messages no longer re-render on every streaming delta, and local images over 10MB are no longer inlined into the webview DOM.
 - Updated dependencies [[`ec88d35`](https://github.com/MoonshotAI/kimi-code/commit/ec88d352e8f4dc5e8ffd1212f016138458f69893), [`b5efba7`](https://github.com/MoonshotAI/kimi-code/commit/b5efba7abcaf4041f81ec520097a61e6546e8c50), [`ce0e3ce`](https://github.com/MoonshotAI/kimi-code/commit/ce0e3ceb04223bdaad8e8931bad46eff561055b6), [`e458323`](https://github.com/MoonshotAI/kimi-code/commit/e45832398d0d9cad98dbad1cbf1e5b103a20aace)]:
   - @moonshot-ai/kimi-code-sdk@0.14.0
 
