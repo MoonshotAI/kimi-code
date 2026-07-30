@@ -577,6 +577,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/minidb':
+        specifier: workspace:*
+        version: link:../minidb
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript
@@ -695,12 +698,18 @@ importers:
       '@moonshot-ai/agent-core':
         specifier: workspace:^
         version: link:../agent-core
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
       '@moonshot-ai/kaos':
         specifier: workspace:^
         version: link:../kaos
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/klient':
+        specifier: workspace:^
+        version: link:../klient
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong

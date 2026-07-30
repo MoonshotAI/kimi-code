@@ -111,7 +111,6 @@ describe('connect', () => {
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(mocks.startDesktopServer).toHaveBeenCalledWith({
       webAssetsDir: join('/resources', 'desktop-dist'),
-      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
     });
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', undefined, undefined, false, true);

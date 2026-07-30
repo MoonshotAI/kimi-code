@@ -4,13 +4,16 @@
      the standalone LoginDialog); an already-authenticated user sees the done
      state instead. Copy for the flow itself reuses the `login.*` keys. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
 } from '../../composables/useOAuthLoginFlow';
+// Desktop divergence (not synced to apps/web): marks the verification URL as
+// desktop-originated so the auth page can offer "open the desktop app".
+import { withDesktopLoginSource } from '../../lib/loginSource';
 import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/web-ui';
 import BrandLogo from './BrandLogo.vue';
 
@@ -41,6 +44,13 @@ const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLo
 
 const copied = ref(false);
 
+// Desktop divergence: the verification URL shown / opened / copied from this
+// step carries `from=kimi_code_desktop` so the auth page renders the "open
+// the desktop app" button only for desktop-originated flows.
+const verificationUriComplete = computed(() =>
+  flow.value ? withDesktopLoginSource(flow.value.verificationUriComplete) : '',
+);
+
 function startLogin(): void {
   phase.value = 'flow';
   void startFlow();
@@ -55,7 +65,7 @@ function backToChoice(): void {
 // code-entry fallback is parked, but the link itself stays available.
 async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
+  const ok = await copyTextToClipboard(verificationUriComplete.value);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
@@ -129,7 +139,7 @@ function formatSeconds(s: number): string {
       <!-- Primary path: open the complete URI (device code already embedded) -->
       <a
         class="ls-primary"
-        :href="flow.verificationUriComplete"
+        :href="verificationUriComplete"
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -140,7 +150,7 @@ function formatSeconds(s: number): string {
       <!-- Copyable complete link (device code embedded) for "open it elsewhere"
            — the manual code-entry block below stays parked. -->
       <div class="ls-code-row">
-        <span class="ls-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
+        <span class="ls-link" :title="verificationUriComplete">{{ verificationUriComplete }}</span>
         <Button class="ls-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
           <template v-if="copied">
             <Icon name="check" size="sm" />

@@ -3,38 +3,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   startServerMock,
   installProxyMock,
-  bootstrapSeedMock,
-  hostRequestHeadersSeedMock,
-  createKimiDefaultHeadersMock,
-  readKimiDeviceIdMock,
+  createKimiDeviceIdMock,
   wireDesktopTelemetryMock,
 } = vi.hoisted(() => ({
   startServerMock: vi.fn(),
   installProxyMock: vi.fn(),
-  bootstrapSeedMock: vi.fn(() => [['bootstrap-options', 'DESKTOP_BOOTSTRAP']]),
-  hostRequestHeadersSeedMock: vi.fn(() => [['host-headers', 'HOST_HEADERS_SEED']]),
-  // Mirrors the real createKimiDefaultHeaders: X-Msh-Platform starts out as
-  // the CLI value so the test can verify the desktop override flips it.
-  createKimiDefaultHeadersMock: vi.fn(() => ({
-    'User-Agent': 'kimi-code-desktop/1.2.3',
-    'X-Msh-Platform': 'kimi_code_cli',
-    'X-Msh-Device-Id': 'device-1',
-  })),
-  readKimiDeviceIdMock: vi.fn<(homeDir: string) => string | null>(() => 'device-1'),
+  createKimiDeviceIdMock: vi.fn(() => 'device-1'),
   wireDesktopTelemetryMock: vi.fn(),
 }));
 
+vi.mock('electron', () => ({
+  app: { getVersion: vi.fn(() => '1.2.3') },
+}));
 vi.mock('@moonshot-ai/kap-server', () => ({
   startServer: startServerMock,
   createServerLogger: vi.fn(),
 }));
-vi.mock('@moonshot-ai/agent-core-v2', () => ({
-  bootstrapSeed: bootstrapSeedMock,
-  hostRequestHeadersSeed: hostRequestHeadersSeedMock,
-}));
 vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
-  createKimiDefaultHeaders: createKimiDefaultHeadersMock,
-  readKimiDeviceId: readKimiDeviceIdMock,
+  createKimiDeviceId: createKimiDeviceIdMock,
 }));
 vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   installGlobalProxyDispatcher: installProxyMock,
@@ -50,14 +36,11 @@ describe('startDesktopServer', () => {
   beforeEach(() => {
     startServerMock.mockReset();
     installProxyMock.mockReset();
-    hostRequestHeadersSeedMock.mockClear();
-    bootstrapSeedMock.mockClear();
-    createKimiDefaultHeadersMock.mockClear();
-    readKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
+    createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
   });
 
-  it('wires startServer with loopback, ephemeral port, corsOrigins, identity seed, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
+  it('wires startServer with loopback, ephemeral port, hostIdentity, serverVersion, corsOrigins, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
     const close = vi.fn().mockResolvedValue(undefined);
     const core = { accessor: 'CORE' };
     startServerMock.mockResolvedValue({
@@ -69,7 +52,6 @@ describe('startDesktopServer', () => {
 
     const handle = await startDesktopServer({
       webAssetsDir: '/app/web-dist',
-      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
     });
 
     expect(installProxyMock).toHaveBeenCalledOnce();
@@ -83,42 +65,26 @@ describe('startDesktopServer', () => {
     expect(args.disableAuth).toBe(true);
     // server_version comes from the tsdown/vitest-injected __KIMI_CORE_VERSION__
     // (the kimi-code CLI version), never from the bundled package.json lookup.
-    expect(typeof args.version).toBe('string');
-    expect(args.version.length).toBeGreaterThan(0);
+    expect(typeof args.serverVersion).toBe('string');
+    expect(args.serverVersion.length).toBeGreaterThan(0);
 
-    // System-prompt identity overrides the CLI defaults (product name +
-    // terminal-oriented reply style guide) for the desktop chat UI.
+    // The desktop host identity: transport fields (kap-server derives the
+    // bootstrap client identity and the outbound headers from them) plus the
+    // system-prompt display overrides.
     expect(args.hostIdentity).toEqual({
-      productName: 'Kimi Code',
+      productName: 'kimi-code-desktop',
+      version: '1.2.3',
+      platform: 'kimi_code_desktop',
+      displayName: 'Kimi Code',
       replyStyleGuide: expect.stringContaining('desktop app'),
     });
-
-    // Host identity is seeded as the full Kimi request headers (v2 dropped
-    // `coreProcessOptions`); no serviceOverrides / process.exit hack remains.
-    expect(createKimiDefaultHeadersMock).toHaveBeenCalledWith({
-      homeDir: '/tmp/kimi-test',
-      userAgentProduct: 'kimi-code-desktop',
-      version: '1.2.3',
-    });
-    expect(hostRequestHeadersSeedMock).toHaveBeenCalledWith({
-      'User-Agent': 'kimi-code-desktop/1.2.3',
-      'X-Msh-Platform': 'kimi_code_desktop',
-      'X-Msh-Device-Id': 'device-1',
-    });
-    expect(bootstrapSeedMock).toHaveBeenCalledWith({
-      homeDir: '/tmp/kimi-test',
-      clientVersion: '1.2.3',
-    });
-    expect(args.seeds).toEqual([
-      ['bootstrap-options', 'DESKTOP_BOOTSTRAP'],
-      ['host-headers', 'HOST_HEADERS_SEED'],
-    ]);
+    // No seeds: headers are derived by kap-server from hostIdentity.
+    expect(args.seeds).toBeUndefined();
 
     // The telemetry appender attaches to the embedded server's DI scope; with
     // consent denied (null handle) close just closes the server.
     expect(wireDesktopTelemetryMock).toHaveBeenCalledWith(core, {
       deviceId: 'device-1',
-      firstLaunch: false,
     });
 
     expect(handle.origin).toBe('http://127.0.0.1:54321');
@@ -127,13 +93,8 @@ describe('startDesktopServer', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('passes the first device identity to headers and first-launch telemetry', async () => {
-    readKimiDeviceIdMock.mockReturnValue(null);
-    createKimiDefaultHeadersMock.mockReturnValue({
-      'User-Agent': 'kimi-code-desktop/1.2.3',
-      'X-Msh-Platform': 'kimi_code_cli',
-      'X-Msh-Device-Id': 'device-new',
-    });
+  it('passes the minted device id to telemetry', async () => {
+    createKimiDeviceIdMock.mockReturnValue('device-new');
     const core = { accessor: 'CORE' };
     startServerMock.mockResolvedValue({
       host: '127.0.0.1',
@@ -142,17 +103,11 @@ describe('startDesktopServer', () => {
       close: vi.fn().mockResolvedValue(undefined),
     });
 
-    await startDesktopServer({
-      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
-    });
+    await startDesktopServer({});
 
-    expect(readKimiDeviceIdMock).toHaveBeenCalledOnce();
-    expect(hostRequestHeadersSeedMock).toHaveBeenCalledWith(
-      expect.objectContaining({ 'X-Msh-Device-Id': 'device-new' }),
-    );
+    expect(createKimiDeviceIdMock).toHaveBeenCalledWith('/tmp/kimi-test');
     expect(wireDesktopTelemetryMock).toHaveBeenCalledWith(core, {
       deviceId: 'device-new',
-      firstLaunch: true,
     });
   });
 
@@ -167,9 +122,7 @@ describe('startDesktopServer', () => {
       close,
     });
 
-    const handle = await startDesktopServer({
-      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
-    });
+    const handle = await startDesktopServer({});
     await handle.close();
 
     expect(telemetryShutdown).toHaveBeenCalledOnce();

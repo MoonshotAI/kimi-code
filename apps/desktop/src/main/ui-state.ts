@@ -19,6 +19,10 @@ export interface UiState {
   /** Auto-download updates in the background (updater.ts). Absent = disabled
       (opt-in via settings → advanced). */
   updateAutoDownload?: boolean;
+  /** The first_launch telemetry event has been reported. Product-level (this
+      app, per userData) — deliberately NOT derived from the shared device_id
+      file, whose existence only means some kimi-code product ran before. */
+  firstLaunchReported?: boolean;
 }
 
 function defaultStateFile(): string {
@@ -68,4 +72,15 @@ export function isVibrancyEnabled(file?: string): boolean {
 
 export function setVibrancyEnabled(enabled: boolean, file: string = defaultStateFile()): void {
   writeUiState({ vibrancy: enabled }, file);
+}
+
+/** Product-level first launch: true until the first_launch telemetry event is
+    reported once (no migration — installs upgrading from older builds report
+    once, accepted noise). */
+export function shouldReportFirstLaunch(file: string = defaultStateFile()): boolean {
+  return loadUiState(file).firstLaunchReported !== true;
+}
+
+export function markFirstLaunchReported(file: string = defaultStateFile()): void {
+  writeUiState({ firstLaunchReported: true }, file);
 }

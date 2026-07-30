@@ -2,13 +2,16 @@
 <!-- Managed Kimi OAuth device-code login dialog. Built on the design-system -->
 <!-- Dialog primitive; the device code + countdown stay monospace. -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
 } from '../../composables/useOAuthLoginFlow';
+// Desktop divergence (not synced to apps/web): marks the verification URL as
+// desktop-originated so the auth page can offer "open the desktop app".
+import { withDesktopLoginSource } from '../../lib/loginSource';
 import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -58,6 +61,13 @@ const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLo
 
 const copied = ref(false);
 
+// Desktop divergence: the verification URL shown / opened / copied from this
+// dialog carries `from=kimi_code_desktop` so the auth page renders the "open
+// the desktop app" button only for desktop-originated flows.
+const verificationUriComplete = computed(() =>
+  flow.value ? withDesktopLoginSource(flow.value.verificationUriComplete) : '',
+);
+
 onMounted(async () => {
   await startFlow();
 });
@@ -66,7 +76,7 @@ onMounted(async () => {
 // code-entry fallback is parked, but the link itself stays available.
 async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
+  const ok = await copyTextToClipboard(verificationUriComplete.value);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
@@ -111,7 +121,7 @@ function formatSeconds(s: number): string {
       <!-- Primary path: open the complete URI (device code already embedded) -->
       <a
         class="nb-primary"
-        :href="flow.verificationUriComplete"
+        :href="verificationUriComplete"
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -122,7 +132,7 @@ function formatSeconds(s: number): string {
       <!-- Copyable complete link (device code embedded) for "open it elsewhere"
            — the manual code-entry block below stays parked. -->
       <div class="nb-code-row">
-        <span class="nb-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
+        <span class="nb-link" :title="verificationUriComplete">{{ verificationUriComplete }}</span>
         <Button class="nb-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
           <template v-if="copied">
             <Icon name="check" size="sm" />

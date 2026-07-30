@@ -15,7 +15,6 @@ import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
 import { trackDesktopEvent } from './track';
 import type { StartupConnectResultEvent } from './telemetry-events';
-import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
 let serverInitialization: Promise<DesktopServerHandle | null> | null = null;
@@ -149,7 +148,6 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
             // server, and desktop-dist may not exist (kap-server would refuse to
             // start without index.html in it).
             webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
-            identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
             extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
           });
           serverHandle = handle;

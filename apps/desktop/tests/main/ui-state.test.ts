@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, loadUiState, markOnboarded, setUpdateAutoDownloadEnabled, setVibrancyEnabled } from '../../src/main/ui-state';
+import { isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, loadUiState, markFirstLaunchReported, markOnboarded, setUpdateAutoDownloadEnabled, setVibrancyEnabled, shouldReportFirstLaunch } from '../../src/main/ui-state';
 
 describe('ui-state persistence', () => {
   let dir: string;
@@ -80,5 +80,21 @@ describe('ui-state persistence', () => {
     expect(loadUiState(file)).toEqual({ onboarded: true, updateAutoDownload: false });
     setUpdateAutoDownloadEnabled(true, file);
     expect(loadUiState(file)).toEqual({ onboarded: true, updateAutoDownload: true });
+  });
+
+  it('reports first launch until marked, then never again (no migration)', () => {
+    // Missing file → report. A legacy ui-state without the marker also reports
+    // (upgraded installs re-report once — accepted noise, no migration).
+    expect(shouldReportFirstLaunch(file)).toBe(true);
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    expect(shouldReportFirstLaunch(file)).toBe(true);
+
+    markFirstLaunchReported(file);
+    expect(shouldReportFirstLaunch(file)).toBe(false);
+    expect(loadUiState(file)).toEqual({ onboarded: true, firstLaunchReported: true });
+
+    // Idempotent: marking again keeps the flag and other keys.
+    markFirstLaunchReported(file);
+    expect(shouldReportFirstLaunch(file)).toBe(false);
   });
 });

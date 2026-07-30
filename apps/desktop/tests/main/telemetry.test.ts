@@ -10,12 +10,16 @@ const {
   systemMetricsMock,
   nativeThemeMock,
   resolveKimiHomeMock,
+  shouldReportFirstLaunchMock,
+  markFirstLaunchReportedMock,
 } = vi.hoisted(() => ({
   createCloudAppenderMock: vi.fn(),
   logMock: { info: vi.fn(), error: vi.fn() },
   systemMetricsMock: { start: vi.fn(), stop: vi.fn() },
   nativeThemeMock: { shouldUseDarkColors: false },
   resolveKimiHomeMock: vi.fn((): string => '/tmp/kimi-telemetry-test'),
+  shouldReportFirstLaunchMock: vi.fn((): boolean => false),
+  markFirstLaunchReportedMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({ nativeTheme: nativeThemeMock }));
@@ -31,6 +35,10 @@ vi.mock('../../src/main/system-metrics', () => ({
   startDesktopSystemMetrics: systemMetricsMock.start,
   stopDesktopSystemMetrics: systemMetricsMock.stop,
 }));
+vi.mock('../../src/main/ui-state', () => ({
+  shouldReportFirstLaunch: shouldReportFirstLaunchMock,
+  markFirstLaunchReported: markFirstLaunchReportedMock,
+}));
 
 import {
   daysSince,
@@ -44,7 +52,7 @@ import {
   trackDesktopEvent,
 } from '../../src/main/track';
 
-const EXISTING_DEVICE = { deviceId: 'device-1', firstLaunch: false } as const;
+const EXISTING_DEVICE = { deviceId: 'device-1' } as const;
 
 function makeCore(configValue: unknown, opts: { getThrows?: boolean } = {}) {
   const configService = {
@@ -113,6 +121,8 @@ describe('wireDesktopTelemetry', () => {
     logMock.error.mockClear();
     systemMetricsMock.start.mockClear();
     systemMetricsMock.stop.mockClear();
+    shouldReportFirstLaunchMock.mockReset().mockReturnValue(false);
+    markFirstLaunchReportedMock.mockClear();
   });
 
   afterEach(() => {
@@ -171,16 +181,21 @@ describe('wireDesktopTelemetry', () => {
     await expect(host.getAccessToken()).resolves.toBeNull();
   });
 
-  it('tracks first_launch only after the appender is installed', async () => {
+  it('tracks first_launch only after the appender is installed, then marks it reported', async () => {
     const appender = makeAppender();
     createCloudAppenderMock.mockReturnValue(appender);
     const { core, telemetryService } = makeCore(undefined);
+    shouldReportFirstLaunchMock.mockReturnValue(true);
 
-    await wireDesktopTelemetry(core as never, { deviceId: 'device-new', firstLaunch: true });
+    await wireDesktopTelemetry(core as never, { deviceId: 'device-new' });
 
     expect(telemetryService.track2).toHaveBeenCalledWith('first_launch');
     expect(telemetryService.setAppender.mock.invocationCallOrder[0]).toBeLessThan(
       telemetryService.track2.mock.invocationCallOrder[0]!,
+    );
+    expect(markFirstLaunchReportedMock).toHaveBeenCalledOnce();
+    expect(telemetryService.track2.mock.invocationCallOrder[0]).toBeLessThan(
+      markFirstLaunchReportedMock.mock.invocationCallOrder[0]!,
     );
   });
 

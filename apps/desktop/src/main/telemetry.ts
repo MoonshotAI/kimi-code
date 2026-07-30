@@ -18,6 +18,7 @@ import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../shared/identity';
 import { log } from './log';
 import { startDesktopSystemMetrics, stopDesktopSystemMetrics } from './system-metrics';
 import { getRuntimeLocale, setDesktopTrackImpl } from './track';
+import { markFirstLaunchReported, shouldReportFirstLaunch } from './ui-state';
 
 export interface DesktopTelemetryHandle {
   /** Emits `exit`, flushes the buffer, stops periodic flush. Idempotent. */
@@ -26,7 +27,6 @@ export interface DesktopTelemetryHandle {
 
 export interface DesktopTelemetryIdentity {
   readonly deviceId: string;
-  readonly firstLaunch: boolean;
 }
 
 const SHUTDOWN_TIMEOUT_MS = 3_000;
@@ -147,8 +147,12 @@ export async function wireDesktopTelemetry(
         return core.accessor.get(ISessionIndex).countActive(workspaces.map((w) => w.id));
       },
     });
-    if (identity.firstLaunch) {
+    // Product-level first launch, gated by the ui-state marker (not by the
+    // shared device_id file — a machine that ran the CLI before must still
+    // report the desktop's first launch).
+    if (shouldReportFirstLaunch()) {
       telemetry.track2('first_launch');
+      markFirstLaunchReported();
     }
     log.info('[kimi-desktop] telemetry wired (cloud appender)');
 
