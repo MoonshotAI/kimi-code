@@ -2759,7 +2759,6 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
      a composer popup is open, so menus still paint above this pill. */
   z-index: var(--z-sticky);
 }
-.newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
   width: 12px;
   height: 12px;

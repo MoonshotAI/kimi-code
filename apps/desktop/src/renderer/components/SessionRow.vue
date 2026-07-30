@@ -487,7 +487,7 @@ defineExpose({ closeMenu });
       <Transition name="menu-pop">
         <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
         <MenuItem :danger="copyFailed" @click="copySessionId">
-          <Icon :name="copiedId ? 'check' : 'copy'" size="sm" />
+          <Icon name="copy" size="sm" />
           {{
             copyFailed
               ? t('sidebar.copyFailed')
