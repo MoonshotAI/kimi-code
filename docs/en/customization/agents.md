@@ -47,6 +47,8 @@ Beyond the three built-in sub-agents, you can define your own agents as Markdown
 
 Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Explicit (`--agent-file`) > Project > Extra > User > Plugin > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
 
+A session scans these directories when it is created. In long-lived sessions (for example sessions hosted by `kimi web`), agent files written after the session started still become available: when a dispatch names a profile the catalog does not have yet, the directories are rescanned once and the lookup retried before the dispatch fails.
+
 **User level** (applies to all projects):
 - `$KIMI_CODE_HOME/agents/` (default: `~/.kimi-code/agents/`)
 - `~/.agents/agents/`

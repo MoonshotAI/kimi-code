@@ -33,6 +33,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { getProfileOrReload } from '#/session/sessionAgentProfileCatalog/getOrReload';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import {
@@ -160,7 +161,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       if (allowlist !== undefined && !allowlist.includes(profileName)) {
         throw new Error(subagentTypeNotAllowedMessage(profileName, allowlist));
       }
-      const targetProfile = this.catalog.get(profileName);
+      const targetProfile = await getProfileOrReload(this.catalog, profileName);
       if (targetProfile === undefined) {
         throw new Error(`Unknown agent type: "${profileName}"`);
       }

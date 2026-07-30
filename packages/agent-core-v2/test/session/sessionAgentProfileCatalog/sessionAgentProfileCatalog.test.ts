@@ -48,6 +48,7 @@ import {
   ExtraFileAgentSource,
   IExtraFileAgentSource,
 } from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
+import { getProfileOrReload } from '#/session/sessionAgentProfileCatalog/getOrReload';
 import {
   IPluginAgentProfileSource,
   PluginAgentProfileSource,
@@ -440,6 +441,77 @@ describe('SessionAgentProfileCatalogService', () => {
 
       await expect(catalog.load()).resolves.toBeUndefined();
       expect(catalog.get('fixed')?.description).toBe('fixed agent');
+      host.dispose();
+    });
+  });
+
+  it('reload-on-miss: picks up an agent file written after the initial scan', async () => {
+    await withFixture(async (fixture) => {
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+      expect(catalog.get('late-agent')).toBeUndefined();
+
+      await writeAgent(
+        join(fixture.homeDir, 'agents'),
+        'late-agent.md',
+        agentMd('late-agent', 'written after scan'),
+      );
+      const profile = await getProfileOrReload(catalog, 'late-agent');
+
+      expect(profile?.description).toBe('written after scan');
+      host.dispose();
+    });
+  });
+
+  it('reload-on-miss: returns undefined for a genuinely unknown name', async () => {
+    await withFixture(async (fixture) => {
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      await expect(getProfileOrReload(catalog, 'no-such-agent')).resolves.toBeUndefined();
+      host.dispose();
+    });
+  });
+
+  it('reload-on-miss: hits skip the rescan and concurrent misses share one reload', async () => {
+    await withFixture(async (fixture) => {
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      let reloads = 0;
+      const wrapped: ISessionAgentProfileCatalog = {
+        _serviceBrand: undefined,
+        ready: catalog.ready,
+        onDidChange: catalog.onDidChange,
+        get: (name) => catalog.get(name),
+        getDefault: () => catalog.getDefault(),
+        list: () => catalog.list(),
+        load: () => catalog.load(),
+        reload: async () => {
+          reloads += 1;
+          await catalog.reload();
+        },
+      };
+
+      await getProfileOrReload(wrapped, DEFAULT_AGENT_PROFILE_NAME);
+      expect(reloads).toBe(0);
+
+      await writeAgent(
+        join(fixture.homeDir, 'agents'),
+        'late-agent.md',
+        agentMd('late-agent', 'written after scan'),
+      );
+      const [a, b] = await Promise.all([
+        getProfileOrReload(wrapped, 'late-agent'),
+        getProfileOrReload(wrapped, 'late-agent'),
+      ]);
+
+      expect(a?.name).toBe('late-agent');
+      expect(b?.name).toBe('late-agent');
+      expect(reloads).toBe(1);
       host.dispose();
     });
   });

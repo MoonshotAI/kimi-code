@@ -47,6 +47,8 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**显式（`--agent-file`）> 项目 > 额外 > 用户 > Plugin > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
 
+会话在创建时扫描这些目录。在长生命周期会话中（例如由 `kimi web` 托管的会话），会话启动后写入的 Agent 文件仍然可用：当一次派发指定了目录中尚不存在的 profile 时，会先重新扫描一次目录并重试查找，然后才会判定派发失败。
+
 **用户级**（对所有项目生效）：
 - `$KIMI_CODE_HOME/agents/`（默认：`~/.kimi-code/agents/`）
 - `~/.agents/agents/`
