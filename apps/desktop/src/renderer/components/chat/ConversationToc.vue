@@ -134,6 +134,11 @@ onBeforeUnmount(() => {
     calc(100cqi - var(--space-5) - var(--space-5))
   );
   left: calc(50% + (var(--toc-content-max) / 2) + 14px);
+  /* Cap against the containing block (.con), not the viewport: on desktop the
+     bottom terminal panel shrinks .con, and a vh-based cap would let the rail
+     overflow into the terminal. The ~160px buffer keeps clear of the chat
+     header and composer, matching the old 100vh - 200px feel. */
+  max-height: calc(100% - 160px);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -168,7 +173,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 7px;
   padding: 8px 0;
-  max-height: calc(100vh - 200px);
+  /* Height is capped by .conversation-toc's max-height; shrink and scroll
+     within it instead of using a viewport-based cap of our own. */
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
 }
