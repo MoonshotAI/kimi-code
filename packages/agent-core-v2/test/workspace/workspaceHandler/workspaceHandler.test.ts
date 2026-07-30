@@ -29,7 +29,11 @@ import {
 } from '#/session/agentLifecycle/agentLifecycle';
 import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
+import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -167,22 +171,31 @@ function workspaceSkillCatalogStub(): IWorkspaceSkillCatalog {
   } as unknown as IWorkspaceSkillCatalog;
 }
 
-function workspaceAgentProfileCatalogStub(): IWorkspaceAgentProfileCatalog {
-  const data = {
+function agentProfileLoaderStub(): IWorkspaceAgentProfileLoader {
+  return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    onDidChange: () => ({ dispose: () => {} }),
-    get: () => undefined,
-    getDefault: () => {
+    reload: () => Promise.resolve(),
+  };
+}
+
+function userAgentProfileLoaderStub(): IUserAgentProfileLoader {
+  return {
+    ...agentProfileLoaderStub(),
+    getDefaultProfile: () => {
       throw new Error('not implemented');
     },
-    list: () => [],
   };
-  return {
-    ...data,
-    reload: () => Promise.resolve(),
-    sessionData: () => data,
-  } as unknown as IWorkspaceAgentProfileCatalog;
+}
+
+function agentProfileLoaderStubs(): ReturnType<typeof stubPair>[] {
+  return [
+    stubPair(IWorkspaceAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IExtraAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IExplicitAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IUserAgentProfileLoader, userAgentProfileLoaderStub()),
+    stubPair(IPluginAgentProfileLoader, agentProfileLoaderStub()),
+  ];
 }
 
 function workspaceInstructionsStub(): IWorkspaceInstructionsService {
@@ -538,7 +551,7 @@ describe('WorkspaceHandlerService', () => {
         _serviceBrand: undefined,
         exec: () => Promise.reject(new Error('process exec is not supported in this test')),
       } satisfies ISessionProcessRunner),
-      stubPair(IWorkspaceAgentProfileCatalog, workspaceAgentProfileCatalogStub()),
+      ...agentProfileLoaderStubs(),
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
@@ -591,11 +604,11 @@ describe('WorkspaceHandlerService', () => {
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
-  it('re-arms the agent-profile catalog after a fatal ready rejection so a later create succeeds', async () => {
+  it('re-arms the explicit agent-profile loader after a fatal ready rejection so a later create succeeds', async () => {
     let readyAttempts = 0;
     const reload = vi.fn(() => Promise.resolve());
-    const catalogStub = {
-      ...workspaceAgentProfileCatalogStub(),
+    const loaderStub = {
+      ...agentProfileLoaderStub(),
       get ready(): Promise<void> {
         readyAttempts += 1;
         return readyAttempts === 1
@@ -603,8 +616,8 @@ describe('WorkspaceHandlerService', () => {
           : Promise.resolve();
       },
       reload,
-    } as unknown as IWorkspaceAgentProfileCatalog;
-    const svc = await build([stubPair(IWorkspaceAgentProfileCatalog, catalogStub)]);
+    } satisfies IExplicitAgentProfileLoader;
+    const svc = await build([stubPair(IExplicitAgentProfileLoader, loaderStub)]);
 
     await expect(svc.create({ sessionId: 's1', workDir: '/tmp/proj' })).rejects.toThrow(
       'fatal explicit file',

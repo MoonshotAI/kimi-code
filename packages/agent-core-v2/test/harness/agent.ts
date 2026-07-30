@@ -28,9 +28,8 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import { ISessionAgentProfileCatalogData } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
+import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
@@ -1184,7 +1183,8 @@ export class AgentTestContext {
             // Workspace-resource injection contracts (the seeds the real
             // handler hands each session): the harness has no Workspace
             // scope, so it seeds equivalents directly — an empty skill
-            // catalog, the App builtin profile catalog, a live-read AGENTS.md
+            // catalog, the workspace key the Session agent-profile catalog
+            // reads the App registry with, a live-read AGENTS.md
             // provider, and a no-server MCP manager. Tests replace them
             // through the usual service overrides.
             reg.defineInstance(ISessionSkillCatalogData, {
@@ -1193,15 +1193,10 @@ export class AgentTestContext {
               catalog: new InMemorySkillCatalog(),
               onDidChange: Event.None as Event<string>,
             } satisfies ISessionSkillCatalogData);
-            const builtinProfiles = this.root.accessor.get(IAgentProfileCatalogService);
-            reg.defineInstance(ISessionAgentProfileCatalogData, {
+            reg.defineInstance(ISessionAgentProfileCatalogSeed, {
               _serviceBrand: undefined,
-              ready: Promise.resolve(),
-              onDidChange: Event.None as Event<string>,
-              get: (name: string) => builtinProfiles.get(name),
-              getDefault: () => builtinProfiles.getDefault(),
-              list: () => builtinProfiles.list(),
-            } satisfies ISessionAgentProfileCatalogData);
+              workspaceKey: workspaceId,
+            } satisfies ISessionAgentProfileCatalogSeed);
             reg.defineInstance(ISessionInstructionsProvider, this.createInstructionsProvider());
             reg.defineInstance(ISessionMcpHandle, {
               _serviceBrand: undefined,
@@ -1299,10 +1294,6 @@ export class AgentTestContext {
         this.serviceOverrides,
         'agent',
       ),
-    });
-
-    this.get(IAgentProfileService).configure({
-      cwd: () => this.cwd,
     });
 
     this.initializeRestorableServices();
@@ -1763,12 +1754,11 @@ export class AgentTestContext {
   async expectResumeMatches(): Promise<void> {
     await this.waitForSessionMetadata();
     await this.drainWirePersistence();
-    const profile = this.get(IAgentProfileService);
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
     let wireHistory = await this.wireHistory();
     let resumedThroughRecord = wireHistory.length;
     const resumed = createTestAgent(
-      { autoConfigure: false, cwd: profile.data().cwd },
+      { autoConfigure: false, cwd: this.cwd },
       ...this.serviceOverrides,
       configServices(() => configSnapshot),
       llmGenerateServices(failOnResumeGenerate),
@@ -2384,7 +2374,7 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
   const providerConfig =
     model === undefined ? undefined : ctx.get(IProviderService).get(model.providerName);
   return {
-    cwd: data.cwd,
+    cwd: ctx.get(ISessionContext).cwd,
     activeToolNames: data.activeToolNames,
     provider: providerConfig,
     profileName: data.profileName,

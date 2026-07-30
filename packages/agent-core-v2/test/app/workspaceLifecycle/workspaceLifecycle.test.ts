@@ -28,7 +28,11 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
+import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -104,6 +108,23 @@ function sessionIndexStub(): ISessionIndex {
   };
 }
 
+function agentProfileLoaderStub(): IWorkspaceAgentProfileLoader {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    reload: () => Promise.resolve(),
+  };
+}
+
+function userAgentProfileLoaderStub(): IUserAgentProfileLoader {
+  return {
+    ...agentProfileLoaderStub(),
+    getDefaultProfile: () => {
+      throw new Error('not implemented');
+    },
+  };
+}
+
 function sessionStubs(): ReturnType<typeof stubPair>[] {
   return [
     stubPair(ISessionMetadata, {
@@ -154,32 +175,11 @@ function sessionStubs(): ReturnType<typeof stubPair>[] {
         }),
       } as unknown as IWorkspaceSkillCatalog;
     })()),
-    stubPair(IWorkspaceAgentProfileCatalog, (() => {
-      const onDidChange = () => ({ dispose: () => {} });
-      const get = () => undefined;
-      const getDefault = () => {
-        throw new Error('not implemented');
-      };
-      const list = () => [];
-      return {
-        _serviceBrand: undefined,
-        ready: Promise.resolve(),
-        onDidChange,
-        get,
-        getDefault,
-        list,
-        load: () => Promise.resolve(),
-        reload: () => Promise.resolve(),
-        sessionData: () => ({
-          _serviceBrand: undefined,
-          ready: Promise.resolve(),
-          onDidChange,
-          get,
-          getDefault,
-          list,
-        }),
-      } as unknown as IWorkspaceAgentProfileCatalog;
-    })()),
+    stubPair(IWorkspaceAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IExtraAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IExplicitAgentProfileLoader, agentProfileLoaderStub()),
+    stubPair(IUserAgentProfileLoader, userAgentProfileLoaderStub()),
+    stubPair(IPluginAgentProfileLoader, agentProfileLoaderStub()),
     stubPair(IWorkspaceInstructionsService, (() => {
       const onDidChange = () => ({ dispose: () => {} });
       return {

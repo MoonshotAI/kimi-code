@@ -254,7 +254,6 @@ describe('Agent config', () => {
     ]);
 
     expect(profile.data()).toMatchObject({
-      cwd: '/restored-cwd',
       modelAlias: 'restored-model',
       profileName: 'restored-profile',
       systemPrompt: 'Restored prompt.',

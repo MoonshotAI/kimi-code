@@ -14,7 +14,7 @@
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/agent/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
-#   extraAgentDirs           src/app/agentFileCatalog/configSection.ts
+#   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
 #   hooks                    src/agent/externalHooks/configSection.ts
 #   image                    src/agent/media/configSection.ts
@@ -106,7 +106,7 @@ default_plan_mode = false
 
 # ##########################################################################
 # extraAgentDirs (config.toml: extra_agent_dirs)
-#   owner: src/app/agentFileCatalog/configSection.ts
+#   owner: src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   scope: core
 # ##########################################################################
 

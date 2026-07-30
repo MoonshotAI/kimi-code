@@ -202,14 +202,16 @@ const DOMAIN_LAYER = new Map([
   ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
   ['sessionAgentProfileCatalog', 3],
-  // `workspaceSkillCatalog` / `workspaceAgentProfileCatalog` are the
-  // Workspace-scope owners of skill / agent-profile discovery + merging
-  // (sources bound per handler, single-source incremental refresh); they
-  // consume the same L1–L3 registries their Session-scope read views
-  // (`sessionSkillCatalog` / `sessionAgentProfileCatalog`) project, so they
-  // sit in L3 beside them.
+  // `workspaceSkillCatalog` is the Workspace-scope owner of skill discovery
+  // + merging (sources bound per handler, single-source incremental
+  // refresh); `workspaceAgentProfileLoader` is the Workspace-scope loader
+  // half of the agent-profile extension point (workspace / extra / explicit
+  // file scans registered into the App-scope `IAgentProfileRegistry`,
+  // tagged with the handler's workspaceId) — the merged read view their
+  // Session-scope counterparts (`sessionSkillCatalog` /
+  // `sessionAgentProfileCatalog`) project sits in L3 beside them.
   ['workspaceSkillCatalog', 3],
-  ['workspaceAgentProfileCatalog', 3],
+  ['workspaceAgentProfileLoader', 3],
   // `workspaceDirs` is the Workspace-scope owner of the handler's shared
   // additional-directory set (local.toml load + append, caller-dir union,
   // fs-watch refresh); its highest dependency is `projectLocalConfig` (L2),
@@ -235,7 +237,6 @@ const DOMAIN_LAYER = new Map([
   ['record', 3],
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
-  ['agentFileCatalog', 3],
   ['hostIdentity', 3],
   // L4 — agent behaviour
   // `activityView` is the Agent-scope read model folding the agent's own event

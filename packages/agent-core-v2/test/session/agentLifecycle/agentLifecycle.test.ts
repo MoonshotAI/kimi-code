@@ -737,7 +737,6 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
     source.accessor.get(IAgentProfileService).applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'deleted-profile',
       thinkingLevel: 'high',
       systemPrompt: 'original prompt',
@@ -749,7 +748,6 @@ describe('AgentLifecycleService', () => {
     const child = await svc.fork('main', { agentId: 'forked' });
 
     expect(child.accessor.get(IAgentProfileService).data()).toMatchObject({
-      cwd: '/work',
       profileName: 'deleted-profile',
       thinkingLevel: 'high',
       systemPrompt: 'original prompt',

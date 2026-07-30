@@ -1,120 +1,251 @@
 /**
- * Scenario: the Session-scope agent-profile-catalog view over the seeded
- * workspace data.
+ * Scenario: the Session-scope agent-profile catalog projection over the
+ * App-scope `IAgentProfileRegistry`.
  *
- * Exercises `SessionAgentProfileCatalogService` against a controlled
- * `ISessionAgentProfileCatalogData` seed: read delegation, readiness
- * propagation (including fatal explicit-file rejections), change-event
- * fan-out, and the no-rescan `reload()`. Run:
+ * Exercises `SessionAgentProfileCatalogService` directly (no DI scope host):
+ * a hand-driven `AgentProfileRegistryService` plus a stub log verify the
+ * projection rules — relevant-entry filtering by the seeded workspace key,
+ * priority-ordered name dedup, the builtin-override rule, change-event
+ * fan-out, and the read surface (`get` / `list` / `getDefault` / `inspect`).
+ * Run:
  * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog.test.ts`.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import {
-  _clearScopedRegistryForTests,
-  LifecycleScope,
-  registerScopedService,
-} from '#/_base/di/scope';
-import { Emitter } from '#/_base/event';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionAgentProfileCatalogData } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
+import { AGENT_PROFILE_SOURCE_PRIORITY } from '#/app/agentProfileCatalog/agentProfileContribution';
 
-const DEFAULT_PROFILE: AgentProfile = {
-  name: DEFAULT_AGENT_PROFILE_NAME,
-  systemPrompt: () => 'default',
-};
+import { stubLog } from '../../_base/log/stubs';
 
-function dataSeed(opts: {
-  readonly profiles?: readonly AgentProfile[];
-  readonly ready?: Promise<void>;
-}): {
-  readonly data: ISessionAgentProfileCatalogData;
-  readonly changes: Emitter<string>;
-} {
-  const profiles = opts.profiles ?? [DEFAULT_PROFILE];
-  const changes = new Emitter<string>();
+const WORKSPACE_KEY = 'wd_a';
+
+function profile(name: string, options?: { readonly override?: boolean }): AgentProfile {
   return {
-    changes,
-    data: {
-      _serviceBrand: undefined,
-      ready: opts.ready ?? Promise.resolve(),
-      onDidChange: changes.event,
-      get: (name) => profiles.find((profile) => profile.name === name),
-      getDefault: () => {
-        const profile = profiles.find((candidate) => candidate.name === DEFAULT_AGENT_PROFILE_NAME);
-        if (profile === undefined) throw new Error('no default');
-        return profile;
-      },
-      list: () => profiles,
-    },
+    name,
+    override: options?.override,
+    systemPrompt: () => `prompt:${name}`,
   };
 }
 
-describe('SessionAgentProfileCatalogService (seed view)', () => {
-  beforeEach(() => {
-    _clearScopedRegistryForTests();
-    registerScopedService(
-      LifecycleScope.Session,
-      ISessionAgentProfileCatalog,
-      SessionAgentProfileCatalogService,
-    );
+function makeCatalog(workspaceKey: string = WORKSPACE_KEY) {
+  const registry = new AgentProfileRegistryService();
+  const catalog = new SessionAgentProfileCatalogService(
+    registry,
+    { _serviceBrand: undefined, workspaceKey },
+    stubLog(),
+  );
+  return { registry, catalog };
+}
+
+describe('SessionAgentProfileCatalogService (registry projection)', () => {
+  it('projects global entries and own-workspace entries, filtering other workspace keys', () => {
+    const { registry, catalog } = makeCatalog();
+    const globalProfile = profile('global-p');
+    const ownProfile = profile('own-ws-p');
+    registry.register('user', { profiles: [globalProfile] });
+    registry.register('workspace', { profiles: [ownProfile] }, { workspaceKey: 'wd_a' });
+    registry.register('workspace', { profiles: [profile('other-ws-p')] }, { workspaceKey: 'wd_b' });
+
+    expect(catalog.get('global-p')).toBe(globalProfile);
+    expect(catalog.get('own-ws-p')).toBe(ownProfile);
+    expect(catalog.get('other-ws-p')).toBeUndefined();
+    catalog.dispose();
+    registry.dispose();
   });
 
-  function makeSession(data: ISessionAgentProfileCatalogData) {
-    const host = createScopedTestHost([]);
-    const session = host.child(LifecycleScope.Session, 's1', [
-      stubPair(ISessionAgentProfileCatalogData, data),
-    ]);
-    return { host, catalog: session.accessor.get(ISessionAgentProfileCatalog) };
-  }
-
-  it('delegates reads to the seed', async () => {
-    const seed = dataSeed({
-      profiles: [DEFAULT_PROFILE, { name: 'coder', systemPrompt: () => 'coder' }],
+  it('excludes same-name profiles of other workspace keys from the merge entirely', () => {
+    const { registry, catalog } = makeCatalog();
+    const userProfile = profile('shared');
+    const ownProfile = profile('shared');
+    registry.register('user', { profiles: [userProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.user,
     });
-    const { host, catalog } = makeSession(seed.data);
+    // A higher-priority entry from ANOTHER workspace must not even become a
+    // candidate: it neither wins the name nor shows up as suppressed.
+    registry.register('workspace', { profiles: [profile('shared')] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.explicit,
+      workspaceKey: 'wd_b',
+    });
+    registry.register('workspace', { profiles: [ownProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
 
-    await catalog.load();
-    expect(catalog.get('coder')?.name).toBe('coder');
-    expect(catalog.getDefault().name).toBe(DEFAULT_AGENT_PROFILE_NAME);
-    expect(catalog.list().map((profile) => profile.name)).toEqual([
-      DEFAULT_AGENT_PROFILE_NAME,
-      'coder',
-    ]);
-    host.dispose();
+    expect(catalog.get('shared')).toBe(ownProfile);
+    expect(catalog.inspect('shared')).toEqual({
+      name: 'shared',
+      profile: ownProfile,
+      sourceId: 'workspace',
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      suppressed: [
+        { sourceId: 'user', priority: AGENT_PROFILE_SOURCE_PRIORITY.user, reason: 'priority' },
+      ],
+    });
+    catalog.dispose();
+    registry.dispose();
   });
 
-  it('propagates a rejecting seed readiness (fatal explicit source)', async () => {
-    const failure = new Error('invalid --agent-file');
-    const seed = dataSeed({ ready: Promise.reject(failure) });
-    // Mirror the production service: an un-awaited rejection must not crash.
-    void seed.data.ready.catch(() => undefined);
-    const { host, catalog } = makeSession(seed.data);
+  it('lets the higher-priority source win a name collision and reports the suppressed candidate', () => {
+    const { registry, catalog } = makeCatalog();
+    const lowProfile = profile('x');
+    const highProfile = profile('x');
+    registry.register('user', { profiles: [lowProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.user,
+    });
+    registry.register('workspace', { profiles: [highProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
 
-    await expect(catalog.load()).rejects.toThrow('invalid --agent-file');
-    host.dispose();
+    expect(catalog.get('x')).toBe(highProfile);
+    expect(catalog.inspect('x')).toEqual({
+      name: 'x',
+      profile: highProfile,
+      sourceId: 'workspace',
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      suppressed: [
+        { sourceId: 'user', priority: AGENT_PROFILE_SOURCE_PRIORITY.user, reason: 'priority' },
+      ],
+    });
+    catalog.dispose();
+    registry.dispose();
   });
 
-  it('forwards change events with their source id and fires catalog on reload', async () => {
-    const seed = dataSeed({});
-    const { host, catalog } = makeSession(seed.data);
-    await catalog.load();
+  it('keeps the builtin profile when a same-name file profile lacks override: true', () => {
+    const { registry, catalog } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME);
+    const fileProfile = profile(DEFAULT_AGENT_PROFILE_NAME);
+    registry.register(BUILTIN_AGENT_PROFILE_SOURCE_ID, { profiles: [builtinProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.builtin,
+    });
+    registry.register('workspace', { profiles: [fileProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
 
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBe(builtinProfile);
+    expect(catalog.inspect(DEFAULT_AGENT_PROFILE_NAME)).toEqual({
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      profile: builtinProfile,
+      sourceId: BUILTIN_AGENT_PROFILE_SOURCE_ID,
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.builtin,
+      suppressed: [
+        {
+          sourceId: 'workspace',
+          priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+          reason: 'builtin-override-required',
+        },
+      ],
+    });
+    catalog.dispose();
+    registry.dispose();
+  });
+
+  it('lets a file profile with override: true replace the same-name builtin', () => {
+    const { registry, catalog } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME);
+    const overrideProfile = profile(DEFAULT_AGENT_PROFILE_NAME, { override: true });
+    registry.register(BUILTIN_AGENT_PROFILE_SOURCE_ID, { profiles: [builtinProfile] });
+    registry.register('workspace', { profiles: [overrideProfile] }, {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
+
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBe(overrideProfile);
+    expect(catalog.inspect(DEFAULT_AGENT_PROFILE_NAME)).toEqual({
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      profile: overrideProfile,
+      sourceId: 'workspace',
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      suppressed: [],
+    });
+    catalog.dispose();
+    registry.dispose();
+  });
+
+  it('re-projects and fires the source id on relevant registry changes, ignoring other keys', () => {
+    const { registry, catalog } = makeCatalog();
     const seen: string[] = [];
     const subscription = catalog.onDidChange((sourceId) => seen.push(sourceId));
-    seed.changes.fire('project');
+
+    const ownProfile = profile('own-ws-p');
+    registry.register('workspace', { profiles: [ownProfile] }, { workspaceKey: 'wd_a' });
+    expect(catalog.get('own-ws-p')).toBe(ownProfile);
+
+    const globalProfile = profile('global-p');
+    registry.register('user', { profiles: [globalProfile] });
+    expect(catalog.get('global-p')).toBe(globalProfile);
+
+    // Changes tagged with another workspace key are ignored entirely: no
+    // re-projection, no event.
+    registry.register('workspace', { profiles: [profile('other-ws-p')] }, { workspaceKey: 'wd_b' });
+    registry.unregister('workspace', 'wd_b');
+    expect(catalog.get('other-ws-p')).toBeUndefined();
+
+    registry.unregister('user');
+    expect(catalog.get('global-p')).toBeUndefined();
+
+    expect(seen).toEqual(['workspace', 'user', 'user']);
+    subscription.dispose();
+    catalog.dispose();
+    registry.dispose();
+  });
+
+  it("fires 'catalog' on reload", async () => {
+    const { registry, catalog } = makeCatalog();
+    const seen: string[] = [];
+    const subscription = catalog.onDidChange((sourceId) => seen.push(sourceId));
+
     await catalog.reload();
 
-    expect(seen).toEqual(['project', 'catalog']);
+    expect(seen).toEqual(['catalog']);
     subscription.dispose();
-    host.dispose();
+    catalog.dispose();
+    registry.dispose();
+  });
+
+  it('resolves ready immediately (loader readiness is the workspace handler’s job)', async () => {
+    const { registry, catalog } = makeCatalog();
+
+    await expect(catalog.ready).resolves.toBeUndefined();
+    await expect(catalog.load()).resolves.toBeUndefined();
+    catalog.dispose();
+    registry.dispose();
+  });
+
+  it('serves the read surface and throws from getDefault without the default profile', () => {
+    const { registry, catalog } = makeCatalog();
+    expect(catalog.get('missing')).toBeUndefined();
+    expect(catalog.inspect('missing')).toBeUndefined();
+    expect(catalog.list()).toEqual([]);
+    expect(() => catalog.getDefault()).toThrow(
+      `Default agent profile "${DEFAULT_AGENT_PROFILE_NAME}" is not registered`,
+    );
+
+    const defaultProfile = profile(DEFAULT_AGENT_PROFILE_NAME);
+    const coderProfile = profile('coder');
+    registry.register(BUILTIN_AGENT_PROFILE_SOURCE_ID, { profiles: [defaultProfile] });
+    registry.register('user', { profiles: [coderProfile] });
+
+    expect(catalog.getDefault()).toBe(defaultProfile);
+    expect(catalog.get('coder')).toBe(coderProfile);
+    expect(catalog.list()).toEqual([defaultProfile, coderProfile]);
+    expect(catalog.inspect(DEFAULT_AGENT_PROFILE_NAME)).toEqual({
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      profile: defaultProfile,
+      sourceId: BUILTIN_AGENT_PROFILE_SOURCE_ID,
+      priority: 0,
+      suppressed: [],
+    });
+    catalog.dispose();
+    registry.dispose();
   });
 });

@@ -15,8 +15,11 @@
  * never touches the handler itself.
  * Every Session scope is also seeded with the handler's shared workspace
  * resources as pure-data read views (the injection contracts):
- * `sessionSkillCatalogData` / `sessionAgentProfileCatalogData` (the merged
- * catalogs), `sessionInstructionsProvider` (the AGENTS.md snapshot),
+ * `sessionSkillCatalogData` (the merged skill catalog),
+ * `sessionAgentProfileCatalogSeed` (ONLY the handler's workspace id — the
+ * Session-scope catalog reads the App-scope agent-profile registry directly
+ * and picks out the contributions tagged with this key),
+ * `sessionInstructionsProvider` (the AGENTS.md snapshot),
  * `sessionMcpHandle` (the one shared MCP connection manager),
  * `sessionWorkspaceInfo` (the shared additional-directory set — caller
  * `additionalDirs` options union into it at materialization; the
@@ -37,14 +40,15 @@
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
  * On
- * materialize, the workspace agent-profile catalog's `ready` is awaited
+ * materialize, the agent-profile loaders' `ready` is awaited
  * before the handle is published — agent-file discovery is local-
  * fs and cheap, and a resumed session's first turn must see file-defined
- * agent types in the `Agent` tool description; the catalog's `ready` only
- * rejects for a fatal explicit-source error, exactly the case that should
+ * agent types in the `Agent` tool description; only the `fatal` explicit
+ * loader rejects, exactly the case that should
  * fail fast, and on that failure the half-materialized handle is disposed
- * instead of poisoning the session cache, and the catalog is re-armed with
- * a fire-and-forget `reload()` so a fixed agent file unblocks later creates
+ * instead of poisoning the session cache, and the explicit loader is re-armed
+ * with a fire-and-forget `reload()` so a fixed agent file unblocks later
+ * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
  * The handler's shared MCP manager (file + plugin servers only — sessions
  * cannot contribute servers) is awaited before create/resume returns. The
@@ -94,7 +98,7 @@ import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { sessionMcpHandleSeed } from '#/session/mcp/sessionMcpHandle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
-import { sessionAgentProfileCatalogDataSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogData';
+import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { sessionInstructionsProviderSeed } from '#/session/sessionInstructions/instructionsProvider';
 import { sessionWorkspaceInfoSeed } from '#/session/workspaceInfo/workspaceInfo';
 import {
@@ -114,7 +118,17 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
+import {
+  IExplicitAgentProfileLoader,
+} from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
+import {
+  IExtraAgentProfileLoader,
+} from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+import {
+  IWorkspaceAgentProfileLoader,
+} from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -166,8 +180,16 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceSkillCatalog private readonly skillCatalog: IWorkspaceSkillCatalog,
-    @IWorkspaceAgentProfileCatalog
-    private readonly agentProfileCatalog: IWorkspaceAgentProfileCatalog,
+    @IWorkspaceAgentProfileLoader
+    private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
+    @IExtraAgentProfileLoader
+    private readonly extraAgentProfileLoader: IExtraAgentProfileLoader,
+    @IExplicitAgentProfileLoader
+    private readonly explicitAgentProfileLoader: IExplicitAgentProfileLoader,
+    @IUserAgentProfileLoader
+    private readonly userAgentProfileLoader: IUserAgentProfileLoader,
+    @IPluginAgentProfileLoader
+    private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
     @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
@@ -259,7 +281,10 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
           // snapshot, and MCP manager reach the session as pure-data read
           // views; refreshes fan out through their change events.
           ...sessionSkillCatalogDataSeed(this.skillCatalog.sessionData()),
-          ...sessionAgentProfileCatalogDataSeed(this.agentProfileCatalog.sessionData()),
+          ...sessionAgentProfileCatalogSeed({
+            _serviceBrand: undefined,
+            workspaceKey: workspaceId,
+          }),
           ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
           ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
           ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
@@ -275,15 +300,21 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       void this.skillCatalog.ready;
-      await this.agentProfileCatalog.ready;
+      await Promise.all([
+        this.workspaceAgentProfileLoader.ready,
+        this.extraAgentProfileLoader.ready,
+        this.explicitAgentProfileLoader.ready,
+        this.userAgentProfileLoader.ready,
+        this.pluginAgentProfileLoader.ready,
+      ]);
       await this.mcp.ready;
     } catch (error) {
       handle.dispose();
-      // Re-arm the workspace agent-profile catalog after a fatal
-      // explicit-source rejection: its `ready` tracks the latest load pass,
-      // so without a reload the handler would keep rejecting every later
-      // session create even after the user fixes the offending agent file.
-      void this.agentProfileCatalog.reload().catch(() => undefined);
+      // Re-arm the explicit agent-profile loader after a fatal rejection:
+      // its `ready` tracks the latest load pass, so without a reload the
+      // handler would keep rejecting every later session create even after
+      // the user fixes the offending agent file.
+      void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
     }
     this.sessions.set(opts.sessionId, handle);

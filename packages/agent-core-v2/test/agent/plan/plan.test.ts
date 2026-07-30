@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 // deny rules adjudicate.
 import '#/agent/plan/planService';
 import type { ToolCall } from '#/kosong/contract/message';
-import { dirname, isAbsolute, join } from 'pathe';
+import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -219,19 +219,6 @@ describe('Plan service', () => {
       });
 
       expect(await expectActivePlanPath()).toBe(livePath);
-    });
-
-    it('keeps the plan path under the agent homedir when the profile cwd is empty', async () => {
-      useFakes(createPlanFakes({
-        writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
-      }));
-      profile.applyBindingSnapshot({ cwd: '', thinkingLevel: 'off', systemPrompt: '' });
-
-      await plan.enter('homedir-plan');
-
-      const planPath = await expectActivePlanPath();
-      expect(isAbsolute(planPath)).toBe(true);
-      expect(planPath).toBe(expectedPlanPath('homedir-plan'));
     });
 
     it('enters plan mode through the EnterPlanMode tool and reminds the next step', async () => {

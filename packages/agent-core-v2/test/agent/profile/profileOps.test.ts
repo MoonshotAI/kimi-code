@@ -309,14 +309,12 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
   it('persists and replays an allowlist reset to unrestricted', async () => {
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'restricted',
       thinkingLevel: 'off',
       systemPrompt: 'restricted',
       activeToolNames: ['Read'],
     });
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'unrestricted',
       thinkingLevel: 'off',
       systemPrompt: 'unrestricted',

@@ -7,7 +7,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Event } from '#/_base/event';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
+import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
@@ -92,10 +94,11 @@ describe('AgentProfileService.bind', () => {
   }
 
   it('binds a profile + model atomically and becomes runnable', async () => {
-    const { ctx: context, profile: svc } = buildContext();
+    const { profile: svc } = buildContext();
 
-    const catalog = context.get(IAgentProfileCatalogService);
+    const catalog = new BuiltinAgentProfileLoaderService(new AgentProfileRegistryService());
     expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBeDefined();
+    catalog.dispose();
 
     expect(svc.isRunnable()).toBe(false);
 
@@ -137,7 +140,6 @@ describe('AgentProfileService.bind', () => {
       profile: DEFAULT_AGENT_PROFILE_NAME,
       model: MOCK_MODEL,
       thinking: 'low',
-      cwd: homeDir,
     });
     await ctx.get(IWireService).flush();
 
@@ -145,7 +147,6 @@ describe('AgentProfileService.bind', () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       type: 'profile.bind',
-      cwd: homeDir,
       profileName: DEFAULT_AGENT_PROFILE_NAME,
       modelAlias: MOCK_MODEL,
       thinkingEffort: 'on',
@@ -198,27 +199,6 @@ describe('AgentProfileService.bind', () => {
     });
   });
 
-  it('records the resolved session cwd in the binding when the input omits it', async () => {
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
-    try {
-      const persistence = new InMemoryWireRecordPersistence();
-      ctx = createTestAgent({ persistence, cwd: workDir }, hostEnvironmentServices(homeDir));
-
-      await ctx.get(IAgentProfileService).bind({
-        profile: 'delegates-explore',
-        model: MOCK_MODEL,
-      });
-      await ctx.get(IWireService).flush();
-
-      expect(
-        persistence.records.find((record) => record.type === 'profile.bind'),
-      ).toMatchObject({ cwd: workDir });
-      expect(ctx.get(IAgentProfileService).data().cwd).toBe(workDir);
-    } finally {
-      await rm(workDir, { recursive: true, force: true });
-    }
-  });
-
   it('refreshes the system prompt from the session cwd after a default bind', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
     try {
@@ -226,7 +206,6 @@ describe('AgentProfileService.bind', () => {
       ctx = createTestAgent(hostEnvironmentServices(homeDir), { cwd: workDir });
       const svc = ctx.get(IAgentProfileService);
       await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-      expect(svc.data().cwd).toBe(workDir);
 
       await writeFile(join(workDir, 'AGENTS.md'), 'v2 instructions', 'utf-8');
       await svc.refreshSystemPrompt();

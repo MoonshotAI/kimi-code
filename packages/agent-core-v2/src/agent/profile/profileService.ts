@@ -65,7 +65,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
-import { resolve } from 'pathe';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -83,7 +82,8 @@ import {
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -219,7 +219,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
+    @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostIdentity private readonly hostIdentity: IHostIdentity,
     @IPluginService private readonly plugins: IPluginService,
@@ -290,7 +290,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   configure(options: ProfileServiceOptions): void {
     this.optionsValue = {
-      cwd: options.cwd ?? this.optionsValue.cwd,
       emitStatusUpdated: options.emitStatusUpdated ?? this.optionsValue.emitStatusUpdated,
     };
   }
@@ -317,7 +316,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(
       profileBind({
-        cwd: snapshot.cwd,
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
@@ -365,7 +363,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
 
     await this.sessionToolPolicy.ready;
-    const context = await this.buildSystemPromptContext(profile, input.cwd);
+    const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
     const systemPrompt = profile.systemPrompt(context);
@@ -379,10 +377,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(profileBind({
-      // Persist the RESOLVED cwd (the bind input's, or the session's when the
-      // input omits it): the Model's cwd is creation-fixed, and every later
-      // reader — `data()`, `refreshSystemPrompt` — must never see it unset.
-      cwd: context.cwd,
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
@@ -463,7 +457,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await this.buildSystemPromptContext(profile, undefined, options);
+    const context = await this.buildSystemPromptContext(profile, options);
     this.useProfile(profile, context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
@@ -476,7 +470,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
     let context: SystemPromptContext;
     try {
-      context = await this.buildSystemPromptContext(profile, this.cwd);
+      context = await this.buildSystemPromptContext(profile);
     } catch (error) {
       this.eventBus.publish({
         type: 'warning',
@@ -501,7 +495,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   data(): ProfileData {
     const model = this.tryResolveRawModel();
     return {
-      cwd: this.cwd,
       modelAlias: this.modelAlias,
       modelCapabilities: model?.capabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
@@ -692,14 +685,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.wire.getModel(ProfileModel);
   }
 
-  private get cwd(): string {
-    // `profileState.cwd` is creation-fixed by `profile.bind`; a legacy agent
-    // bound before the bind payload recorded the resolved cwd falls back to
-    // the session's own cwd — the same value its bind resolved against —
-    // never to a bare '' (which would read the server process's cwd).
-    return this.profileState.cwd ?? this.readConfiguredCwd() ?? this.sessionContext.cwd;
-  }
-
   private get model(): string {
     const modelAlias = this.modelAlias;
     if (modelAlias === undefined) {
@@ -877,19 +862,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private async buildSystemPromptContext(
     profile: ResolvedAgentProfile,
-    cwd?: string,
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
-    const effectiveCwd = cwd ?? this.sessionContext.cwd;
-    // The workspace instructions snapshot covers the handler root; an agent
-    // bound to a different cwd falls back to reading the files directly.
-    const preloadedAgentsMd =
-      resolve(effectiveCwd) === resolve(this.sessionContext.cwd)
-        ? await this.workspaceInstructionsSnapshot()
-        : undefined;
+    // The working directory is always the session's frozen cwd, so the
+    // workspace instructions snapshot (which covers the handler root) always
+    // applies.
+    const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
     const base = await prepareSystemPromptContext(
       { fs: this.fs, homeDir: this.env.homeDir },
-      effectiveCwd,
+      this.sessionContext.cwd,
       this.bootstrap.homeDir,
       {
         additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
@@ -900,7 +881,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const pluginSections = await this.resolvePluginSections();
     return {
       ...base,
-      cwd: effectiveCwd,
+      cwd: this.sessionContext.cwd,
       osKind: this.env.osKind,
       shellName: this.env.shellName,
       shellPath: this.env.shellPath,
@@ -976,11 +957,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }
     }
     return parts.join('\n\n');
-  }
-
-  private readConfiguredCwd(): string | undefined {
-    const cwd = this.optionsValue.cwd;
-    return typeof cwd === 'function' ? cwd() : cwd;
   }
 }
 

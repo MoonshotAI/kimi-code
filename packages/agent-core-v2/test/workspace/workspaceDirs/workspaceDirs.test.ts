@@ -63,7 +63,11 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
-import { IWorkspaceAgentProfileCatalog } from '#/workspace/workspaceAgentProfileCatalog/workspaceAgentProfileCatalog';
+import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
+import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
@@ -126,21 +130,21 @@ function workspaceSkillCatalogStub(): IWorkspaceSkillCatalog {
   } as unknown as IWorkspaceSkillCatalog;
 }
 
-function workspaceAgentProfileCatalogStub(): IWorkspaceAgentProfileCatalog {
-  const data = {
+function agentProfileLoaderStub(): IWorkspaceAgentProfileLoader {
+  return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    onDidChange: Event.None,
-    get: () => undefined,
-    getDefault: () => undefined,
-    list: () => [],
-  };
-  return {
-    ...data,
-    load: () => Promise.resolve(),
     reload: () => Promise.resolve(),
-    sessionData: () => data,
-  } as unknown as IWorkspaceAgentProfileCatalog;
+  };
+}
+
+function userAgentProfileLoaderStub(): IUserAgentProfileLoader {
+  return {
+    ...agentProfileLoaderStub(),
+    getDefaultProfile: () => {
+      throw new Error('not implemented');
+    },
+  };
 }
 
 function workspaceInstructionsStub(): IWorkspaceInstructionsService {
@@ -344,7 +348,11 @@ describe('workspace add-dir (handler chain)', () => {
         broadcastPermissionMode: () => {},
       } as unknown as IAgentLifecycleService),
       stubPair(IWorkspaceSkillCatalog, workspaceSkillCatalogStub()),
-      stubPair(IWorkspaceAgentProfileCatalog, workspaceAgentProfileCatalogStub()),
+      stubPair(IWorkspaceAgentProfileLoader, agentProfileLoaderStub()),
+      stubPair(IExtraAgentProfileLoader, agentProfileLoaderStub()),
+      stubPair(IExplicitAgentProfileLoader, agentProfileLoaderStub()),
+      stubPair(IUserAgentProfileLoader, userAgentProfileLoaderStub()),
+      stubPair(IPluginAgentProfileLoader, agentProfileLoaderStub()),
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceMcpService, workspaceMcpStub()),
     ]);
