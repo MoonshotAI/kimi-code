@@ -200,6 +200,7 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
 
   async function boot(seeds: ScopeSeed): Promise<void> {
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
