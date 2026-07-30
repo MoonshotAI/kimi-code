@@ -128,7 +128,7 @@ export async function runV2Print(
   const identity = createKimiCodeHostIdentity(version);
   const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
 
-  const { app } = bootstrap({ homeDir, clientVersion: version }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: identity }, [
     ...logSeed(logging),
     ...hostRequestHeadersSeed(hostHeaders),
     // `--skillsDir` (v1 print parity): explicit skill dirs replace default

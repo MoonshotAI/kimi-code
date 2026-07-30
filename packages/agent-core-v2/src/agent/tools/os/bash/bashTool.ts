@@ -385,7 +385,7 @@ export class BashTool implements IBashTool {
     if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
 
     const taskOutputHint = this.allowBackground()
-      ? `, or TaskOutput(task_id="${taskId}", block=false)`
+      ? `, or TaskOutput(task_id="${taskId}")`
       : '';
     const reference =
       `\n\n[Full output saved]\n` +

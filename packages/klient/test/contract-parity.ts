@@ -385,7 +385,8 @@ const _removePluginInput: AssertWire<typeof removePluginInputSchema, RemovePlugi
 const _getPluginInfoInput: AssertWire<typeof getPluginInfoInputSchema, GetPluginInfoInput> = true;
 
 // env.ts has no named schemas; `platform` narrows to `NodeJS.Platform` in the
-// engine — assert the bootstrap properties are all strings instead.
+// engine — assert the bootstrap properties are all strings instead. The
+// object-typed `clientIdentity` is intentionally not in this list.
 type _bootstrapStringProps = AssertStringProps<
   Pick<
     IBootstrapService,
@@ -395,7 +396,6 @@ type _bootstrapStringProps = AssertStringProps<
     | 'osHomeDir'
     | 'homeDir'
     | 'configPath'
-    | 'clientVersion'
     | 'sessionsDir'
     | 'blobsDir'
     | 'storeDir'
