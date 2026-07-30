@@ -651,6 +651,70 @@ describe('KimiOAuthToolkit', () => {
     });
   });
 
+  it('propagates the managed profile response', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('access-1'));
+    const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          user_id: 'u_123',
+          global_id: 'u_123',
+          nickname: 'moonwalker',
+          avatar: 'https://example.com/avatar.png',
+          phone: { country_code: '86', number: '176****0000' },
+          status: 'USER_STATUS_NORMAL',
+          region: 'REGION_CN',
+          created_time: '2026-06-11T13:26:47.561184Z',
+          last_login_time: '2026-07-16T03:12:03.033412Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    await expect(toolkit.getManagedUserInfo()).resolves.toMatchObject({
+      kind: 'ok',
+      userInfo: {
+        userId: 'u_123',
+        globalId: 'u_123',
+        nickname: 'moonwalker',
+        avatar: 'https://example.com/avatar.png',
+        phone: { countryCode: '86', number: '176****0000' },
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        createdTime: '2026-06-11T13:26:47.561184Z',
+        lastLoginTime: '2026-07-16T03:12:03.033412Z',
+      },
+    });
+  });
+
+  it('normalizes managed profile fetch errors into the error result', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('access-1'));
+    const fetchImpl = vi.fn(
+      async () => new Response('', { status: 401 }),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    await expect(toolkit.getManagedUserInfo()).resolves.toEqual({
+      kind: 'error',
+      status: 401,
+      message: 'Authorization failed. Please check your API key (try /login).',
+    });
+  });
+
   it('removes managed config on logout when an adapter supports cleanup', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));

@@ -1,5 +1,16 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.3.0
+
+### Minor Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Replace the bootstrap `clientVersion` with a required `clientIdentity` host identity object: the OAuth device-flow endpoints now send the full `X-Msh-*` device headers on every host, telemetry reads the client version from the same source, and the session export manifest gains an optional desktop version field.
+
+### Patch Changes
+
+- Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
+  - @moonshot-ai/kimi-code-oauth@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes

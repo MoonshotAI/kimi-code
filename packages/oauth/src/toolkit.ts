@@ -31,6 +31,11 @@ import {
   type ManagedKimiConfigAdapter,
 } from './managed-kimi-code';
 import {
+  fetchManagedUserInfo,
+  kimiCodeUserInfoUrl,
+  type ManagedUserInfoResult,
+} from './managed-userinfo';
+import {
   fetchManagedUsage,
   kimiCodeUsageUrl,
   type FetchManagedUsageError,
@@ -99,6 +104,8 @@ export type AuthManagedUsageResult =
       readonly extraUsage: ParsedManagedUsage['extraUsage'];
     }
   | FetchManagedUsageError;
+
+export type AuthManagedUserInfoResult = ManagedUserInfoResult;
 
 export class KimiOAuthToolkit<TConfig = unknown> {
   private readonly homeDir: string;
@@ -301,6 +308,29 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     }
   }
 
+  async getManagedUserInfo(
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<AuthManagedUserInfoResult> {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    try {
+      const accessToken = await this.ensureFresh(name, {
+        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+      });
+      const result = await fetchManagedUserInfo(managedUserInfoUrl(options.baseUrl), accessToken);
+      if (result.kind === 'error') return result;
+      return { kind: 'ok', userInfo: result.userInfo };
+    } catch (error) {
+      return {
+        kind: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   async submitFeedback(
     body: SubmitFeedbackBody,
     providerName?: string | undefined,
@@ -464,6 +494,11 @@ function defaultKimiHome(): string {
 function managedUsageUrl(baseUrl: string | undefined): string {
   if (baseUrl === undefined) return kimiCodeUsageUrl();
   return `${baseUrl.replace(/\/+$/, '')}/usages`;
+}
+
+function managedUserInfoUrl(baseUrl: string | undefined): string {
+  if (baseUrl === undefined) return kimiCodeUserInfoUrl();
+  return `${baseUrl.replace(/\/+$/, '')}/me`;
 }
 
 function managedFeedbackUrl(baseUrl: string | undefined): string {
