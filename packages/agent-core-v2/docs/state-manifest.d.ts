@@ -21,7 +21,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (Session: 18 keys · Agent: 68 keys)
+// Index (Session: 18 keys · Agent: 67 keys)
 //   Session
 //     cron.inFlight                      src/session/cron/sessionCronServiceImpl.ts
 //     cron.lastSeenAt                    src/session/cron/sessionCronServiceImpl.ts
@@ -51,8 +51,6 @@
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     contextSize.lastEmittedTokens                   src/agent/contextSize/contextSizeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
-//     faultInjection.armed                            src/agent/faultInjection/faultInjectionService.ts
-//     faultInjection.fired                            src/agent/faultInjection/faultInjectionService.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
@@ -86,6 +84,7 @@
 //     plan.wasActive                                  src/agent/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
 //     profile.agentsMdWarning                         src/agent/profile/profileService.ts
+//     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     prompt.launching                                src/agent/prompt/promptService.ts
@@ -714,9 +713,6 @@ export interface AgentStateSnapshot {
   'contextSize.lastEmittedTokens': number;
   // src/agent/externalHooks/externalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
-  // src/agent/faultInjection/faultInjectionService.ts
-  'faultInjection.armed': 'request-too-large' | 'image-format' | undefined;
-  'faultInjection.fired': (/* FaultKind — packages/agent-core-v2/src/agent/faultInjection/faultInjection.ts */ 'request-too-large' | 'image-format')[];
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
   'fullCompaction.compactionCountInTurn': number;
@@ -744,7 +740,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2263": undefined;
+    readonly "__@mediaStripSnapshotBrand@2244": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
@@ -823,6 +819,7 @@ export interface AgentStateSnapshot {
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
+  'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
   'profile.emittedToolPatternWarnings': Set<string>;
   // src/agent/prompt/promptService.ts
