@@ -62,7 +62,7 @@ export class KimiRuntime {
         identity: {
           productName: "kimi-code-vscode",
           version: options.version,
-          platform: "kimi_code_cli",
+          platform: "kimi_code_vscode",
         },
         uiMode: "vscode",
       });
