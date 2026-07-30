@@ -422,6 +422,17 @@ function openLogin(): void {
   showLogin.value = true;
 }
 
+// Sign-out always confirms through the shared modal (the sidebar user menu
+// confirms on its own; the settings dialogs route their logout event here).
+async function confirmLogout(): Promise<void> {
+  await confirm({
+    title: t('sidebar.logoutConfirmTitle'),
+    message: t('sidebar.logoutConfirmMessage'),
+    variant: 'danger',
+    action: () => client.logout(),
+  });
+}
+
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
   // Same semantics as the composer dropdown rows: the overlay is just the
@@ -888,6 +899,7 @@ function openPr(url: string): void {
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
         @open-settings="showSettings = true"
+        @login="openLogin"
         @collapse="toggleSidebarCollapse"
       />
       <ResizeHandle
@@ -1155,6 +1167,7 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
+      :managed-user-info="client.managedUserInfo.value"
       :on-fetch-usage="client.getUsage"
       :notify="client.notifyEnabled.value"
       :notify-permission="client.notifyPermission.value"
@@ -1170,7 +1183,7 @@ function openPr(url: string): void {
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @logout="confirmLogout"
       @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false"
     />
@@ -1256,6 +1269,7 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
+      :managed-user-info="client.managedUserInfo.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
@@ -1265,7 +1279,7 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-font-scale="client.setFontScale($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @logout="confirmLogout"
     />
     </div>
     <!-- First-run onboarding wizard (language → appearance → notifications →

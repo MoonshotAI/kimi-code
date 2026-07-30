@@ -110,6 +110,24 @@ describe('bounded Web trace', () => {
     expect(Object.keys(result)).toHaveLength(51);
   });
 
+  it('redacts sensitive keys including profile PII', () => {
+    const result = sanitizeForTrace({
+      email: 'user@example.com',
+      phone: '+8613800000000',
+      nickname: 'alice',
+      avatar: 'https://example.com/a.png',
+      sessionId: 'sess_1',
+    });
+
+    expect(result).toEqual({
+      email: '[redacted]',
+      phone: '[redacted]',
+      nickname: '[redacted]',
+      avatar: '[redacted]',
+      sessionId: 'sess_1',
+    });
+  });
+
   it('keeps at most 500 of the newest export entries', () => {
     for (let index = 0; index < 501; index++) {
       traceKeyEvent('ws:connection', { status: String(index) });

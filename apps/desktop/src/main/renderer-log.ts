@@ -29,7 +29,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_LINES = 120;
 
 // Same sensitive-key policy as the renderer's debug/trace.ts sanitizer.
-const SENSITIVE_KEY_RE = /api[_-]?key|authorization|token|secret|password|cookie|credential/i;
+const SENSITIVE_KEY_RE = /api[_-]?key|authorization|token|secret|password|cookie|credential|email|phone|nickname|avatar/i;
 /** Long unbroken base64-ish runs (uploads, inlined images) are size, not signal. */
 const BASE64ISH_RE = /^[A-Za-z0-9+/=_-]{200,}$/;
 /** Credentials riding inside a message string (URL/basic-auth forms). Keys

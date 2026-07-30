@@ -3,7 +3,7 @@
 // request; ConfirmDialogHost (mounted once in App.vue) renders it. Callers
 // `await confirm(...)` from anywhere — components or composables — which is
 // what lets it replace native `confirm()` inside composables too.
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 export type ConfirmVariant = 'primary' | 'danger';
 
@@ -28,6 +28,8 @@ type ConfirmRequest = ConfirmOptions & {
 const current = ref<ConfirmRequest | null>(null);
 /** True while a confirmed request's `action` is still running. */
 const busy = ref(false);
+/** True while a dialog is open — stacked overlays check it to yield Escape. */
+const isConfirmOpen = computed(() => current.value !== null);
 
 function settle(ok: boolean): void {
   const req = current.value;
@@ -75,9 +77,10 @@ function confirm(options: ConfirmOptions): Promise<boolean> {
 export function useConfirmDialog(): {
   current: typeof current;
   busy: typeof busy;
+  isConfirmOpen: typeof isConfirmOpen;
   confirm: typeof confirm;
   settle: typeof settle;
   runAction: typeof runAction;
 } {
-  return { current, busy, confirm, settle, runAction };
+  return { current, busy, isConfirmOpen, confirm, settle, runAction };
 }

@@ -87,6 +87,7 @@ import type {
   ApprovalDecision,
   KimiEventConnection,
   KimiEventMeta,
+  ManagedUserInfo,
   ThinkingLevel,
 } from '../api/types';
 import {
@@ -372,6 +373,9 @@ export interface ExtendedState extends KimiClientState {
   authReady: boolean;
   defaultModel: string | null;
   managedProviderStatus: string | null;
+  /** Signed-in managed-account profile (GET /oauth/userinfo); null until
+      fetched, on fetch failure, and when signed out. */
+  managedUserInfo: ManagedUserInfo | null;
   // Workspace state
   workspaces: AppWorkspace[];
   activeWorkspaceId: string | null;
@@ -444,6 +448,7 @@ const rawState: ExtendedState = reactive({
   authReady: false,
   defaultModel: null,
   managedProviderStatus: null,
+  managedUserInfo: null,
   workspaces: [],
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
   fsHome: null,
@@ -2724,6 +2729,7 @@ const sessionCost = computed<number>(() => {
 const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
+const managedUserInfo = computed<ManagedUserInfo | null>(() => rawState.managedUserInfo);
 const config = computed<AppConfig | null>(() => rawState.config);
 
 /** path → status map for quick badge lookup in the file tree */
@@ -3528,6 +3534,7 @@ export function useKimiWebClient() {
     authReady,
     defaultModel,
     managedProviderStatus,
+    managedUserInfo,
 
     // Config state + actions
     config,

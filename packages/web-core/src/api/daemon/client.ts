@@ -36,6 +36,7 @@ import type {
   KimiEventHandlers,
   KimiWebApi,
   ManagedUsageResult,
+  ManagedUserInfoResult,
   OAuthLoginStartResult,
   UsageRow,
   Page,
@@ -1604,6 +1605,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
               currency: data.extra_usage.currency,
             },
     };
+  }
+
+  async getUserInfo(): Promise<ManagedUserInfoResult> {
+    return this.http.get<ManagedUserInfoResult>('/oauth/userinfo');
   }
 
   // -------------------------------------------------------------------------

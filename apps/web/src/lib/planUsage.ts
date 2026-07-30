@@ -4,9 +4,29 @@
 // reset timestamp) — these helpers localize labels and reset hints, and share
 // the TUI's severity thresholds and currency-symbol rules.
 
-import type { UsageRow } from '../api/types';
+import type { UsageRow, UsageWindow } from '../api/types';
 
 export type UsageTranslator = (key: string, params?: Record<string, unknown>) => string;
+
+/** Structural lookup by renewal window — never match on `name`, which is
+    server-supplied free text. */
+export function findUsageByWindow(
+  limits: UsageRow[],
+  duration: number,
+  unit: UsageWindow['unit'],
+): UsageRow | undefined {
+  return limits.find((row) => row.window?.duration === duration && row.window?.unit === unit);
+}
+
+/** Top plan level in the backend level tables (domains 1 and 3 both cap at 30
+    today) — a backend level bump must update this in step. */
+export const MAX_USER_LEVEL = 30;
+
+/** The upgrade entry only makes sense below the top plan level; an unknown
+    level (profile not loaded yet) stays hidden. */
+export function shouldShowUpgrade(userLevel: number | undefined): boolean {
+  return userLevel !== undefined && userLevel < MAX_USER_LEVEL;
+}
 
 /** Windowed rows get a localized "Nh limit"-style label; rows with only a
     server-supplied custom name pass through verbatim; anything else falls

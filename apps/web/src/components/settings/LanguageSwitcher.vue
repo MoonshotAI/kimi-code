@@ -6,6 +6,14 @@ import { SegmentedControl } from '@moonshot-ai/web-ui';
 
 const { locale } = useI18n();
 
+withDefaults(
+  defineProps<{
+    /** Segmented control size — xs inside dense menus. */
+    size?: 'xs' | 'sm' | 'md';
+  }>(),
+  { size: 'md' },
+);
+
 const options = availableLocales.map((l) => ({ value: l.code, label: l.label }));
 
 function choose(code: string): void {
@@ -15,5 +23,5 @@ function choose(code: string): void {
 </script>
 
 <template>
-  <SegmentedControl :model-value="locale" :options="options" @update:model-value="choose" />
+  <SegmentedControl :model-value="locale" :options="options" :size="size" @update:model-value="choose" />
 </template>

@@ -1,7 +1,7 @@
 // apps/kimi-web/test/confirm-dialog.test.ts
 // Logic tests for the useConfirmDialog singleton: boolean confirm/cancel,
-// supersede, and the async `action` flow (busy state, close-on-settle,
-// rejection propagation).
+// supersede, the isConfirmOpen open-state flag, and the async `action` flow
+// (busy state, close-on-settle, rejection propagation).
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useConfirmDialog } from '../src/composables/useConfirmDialog';
 
@@ -20,7 +20,7 @@ function deferred<T = void>(): {
 }
 
 describe('useConfirmDialog', () => {
-  const { current, busy, confirm, settle, runAction } = useConfirmDialog();
+  const { current, busy, isConfirmOpen, confirm, settle, runAction } = useConfirmDialog();
 
   beforeEach(() => {
     // Drop any pending request so tests don't leak into each other.
@@ -39,6 +39,15 @@ describe('useConfirmDialog', () => {
     const p = confirm({ title: 'Archive?' });
     settle(false);
     expect(current.value).toBeNull();
+    await expect(p).resolves.toBe(false);
+  });
+
+  it('exposes isConfirmOpen while a request is pending', async () => {
+    expect(isConfirmOpen.value).toBe(false);
+    const p = confirm({ title: 'Archive?' });
+    expect(isConfirmOpen.value).toBe(true);
+    settle(false);
+    expect(isConfirmOpen.value).toBe(false);
     await expect(p).resolves.toBe(false);
   });
 

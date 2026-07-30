@@ -15,8 +15,10 @@ const props = withDefaults(
     modelValue: boolean;
     /** Optional sheet title shown in the header strip. */
     title?: string;
+    /** Set false when a stacked overlay (e.g. the global confirm) owns Escape. */
+    closeOnEsc?: boolean;
   }>(),
-  { title: '' },
+  { title: '', closeOnEsc: true },
 );
 
 const emit = defineEmits<{
@@ -31,7 +33,7 @@ function close(): void {
 
 // Close on Escape while open (desktop keyboard / test convenience).
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') close();
+  if (e.key === 'Escape' && props.closeOnEsc) close();
 }
 
 watch(

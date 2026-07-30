@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UsageRow } from '../../src/renderer/api/types';
 import {
+  MAX_USER_LEVEL,
+  findUsageByWindow,
   formatResetAt,
   formatUsageLabel,
   moneyParts,
+  shouldShowUpgrade,
   usagePercent,
   usageSeverity,
 } from '../../src/renderer/lib/planUsage';
@@ -100,6 +103,36 @@ describe('usageSeverity / usagePercent', () => {
     expect(usagePercent(12, 100)).toBe(12);
     expect(usagePercent(150, 100)).toBe(100);
     expect(usagePercent(1, 0)).toBe(0);
+  });
+});
+
+describe('findUsageByWindow', () => {
+  const fiveHour = row({ window: { duration: 5, unit: 'hour' } });
+  const weekly = row({ window: { duration: 1, unit: 'week' } });
+
+  it('matches the window structurally', () => {
+    expect(findUsageByWindow([weekly, fiveHour], 5, 'hour')).toBe(fiveHour);
+    expect(findUsageByWindow([weekly, fiveHour], 1, 'week')).toBe(weekly);
+  });
+
+  it('ignores rows without a window and partial matches', () => {
+    expect(findUsageByWindow([row({ name: '5h booster' })], 5, 'hour')).toBeUndefined();
+    expect(findUsageByWindow([row({ window: { duration: 5, unit: 'day' } })], 5, 'hour')).toBeUndefined();
+    expect(findUsageByWindow([row({ window: { duration: 6, unit: 'hour' } })], 5, 'hour')).toBeUndefined();
+    expect(findUsageByWindow([], 5, 'hour')).toBeUndefined();
+  });
+});
+
+describe('shouldShowUpgrade', () => {
+  it('shows below the top level and hides at/above it', () => {
+    expect(shouldShowUpgrade(0)).toBe(true);
+    expect(shouldShowUpgrade(MAX_USER_LEVEL - 1)).toBe(true);
+    expect(shouldShowUpgrade(MAX_USER_LEVEL)).toBe(false);
+    expect(shouldShowUpgrade(MAX_USER_LEVEL + 1)).toBe(false);
+  });
+
+  it('hides when the level is unknown', () => {
+    expect(shouldShowUpgrade(undefined)).toBe(false);
   });
 });
 

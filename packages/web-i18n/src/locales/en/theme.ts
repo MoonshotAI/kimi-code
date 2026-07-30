@@ -1,5 +1,5 @@
 export default {
-  colorSchemeLabel: 'Light/Dark',
+  colorSchemeLabel: 'Appearance',
   light: 'Moon bright',
   dark: 'Moon dark',
   system: 'System',

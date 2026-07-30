@@ -518,13 +518,45 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  - 'retry'                — transient failure (network, timeout, 5xx); the
    *                             caller should retry instead of treating it as
    *                             "not signed in" */
+  // Generation guard for the fire-and-forget /oauth/userinfo fetch below:
+  // bumped at every checkAuth() entry so the last-issued call wins — a stale
+  // late response must not overwrite, nor a stale rejection clear, the
+  // profile the newest call wrote.
+  let userInfoFetchGeneration = 0;
+
   async function checkAuth(): Promise<AuthCheckResult> {
+    const generation = ++userInfoFetchGeneration;
     try {
       const api = getKimiWebApi();
       const result = await api.getAuth();
       rawState.authReady = result.ready;
       rawState.defaultModel = result.defaultModel;
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
+      if (rawState.managedProviderStatus === 'authenticated') {
+        // Fire-and-forget: the profile is settings-page dressing and must not
+        // block the auth gate. The late callbacks are guarded twice: a logout
+        // during the fetch must not resurrect the profile (status check), and
+        // a superseded call must not answer at all (generation check).
+        void api
+          .getUserInfo()
+          .then((infoResult) => {
+            if (generation !== userInfoFetchGeneration) return;
+            if (rawState.managedProviderStatus !== 'authenticated') return;
+            rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
+          })
+          .catch(() => {
+            // Older daemon without the endpoint or a transient failure — the
+            // account row keeps its anonymous fallback.
+            if (generation !== userInfoFetchGeneration) return;
+            if (rawState.managedProviderStatus === 'authenticated') {
+              rawState.managedUserInfo = null;
+            }
+          });
+      } else {
+        // The entry increment already invalidated any in-flight profile fetch
+        // from a previously authenticated check; just drop the profile.
+        rawState.managedUserInfo = null;
+      }
       connectIssue.value = null;
       return 'proceed';
     } catch (err) {

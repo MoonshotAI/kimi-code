@@ -66,6 +66,15 @@ describe('serializeRendererLogDetail', () => {
   it('redacts sensitive keys at any depth', () => {
     const json = serializeRendererLogDetail({ auth: { accessToken: 't', ok: 1 }, api_key: 'k' });
     expect(json).toBe('{"auth":{"accessToken":"[redacted]","ok":1},"api_key":"[redacted]"}');
+    const pii = serializeRendererLogDetail({
+      email: 'u@example.com',
+      phone: { countryCode: '86', number: '176****0000' },
+      nickname: 'n',
+      avatar: 'https://example.com/a.png',
+    });
+    expect(pii).toBe(
+      '{"email":"[redacted]","phone":"[redacted]","nickname":"[redacted]","avatar":"[redacted]"}',
+    );
   });
 
   it('folds base64-ish runs and truncates long strings', () => {

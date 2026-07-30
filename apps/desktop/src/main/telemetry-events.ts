@@ -216,6 +216,7 @@ export interface DesktopEventPayloads {
   search_executed: SearchExecutedEvent;
   logout: Record<string, never>;
   plan_usage_card_viewed: PlanUsageCardViewedEvent;
+  upgrade_clicked: Record<string, never>;
   telemetry_consent_changed: TelemetryConsentChangedEvent;
   renderer_error: RendererErrorEvent;
   connection_lost: Record<string, never>;

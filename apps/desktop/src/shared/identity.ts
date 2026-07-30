@@ -6,7 +6,7 @@
  *    see src/main/server.ts)
  *  - renderer → local server (clientName / clientVersion / clientUiMode,
  *    see src/renderer/api/config.ts)
- *  - main process → agent system prompt (productName / replyStyleGuide,
+ *  - main process → agent system prompt (displayName / replyStyleGuide,
  *    see src/main/server.ts)
  */
 

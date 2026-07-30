@@ -10,9 +10,11 @@ const { locale } = useI18n();
 const props = withDefaults(
   defineProps<{
     /** Panel hosting the switcher, reported as source_panel. */
-    panel?: 'settings' | 'mobile_settings';
+    panel?: 'settings' | 'mobile_settings' | 'user_menu';
+    /** Segmented control size — xs inside dense menus. */
+    size?: 'xs' | 'sm' | 'md';
   }>(),
-  { panel: 'settings' },
+  { panel: 'settings', size: 'md' },
 );
 
 const options = availableLocales.map((l) => ({ value: l.code, label: l.label }));
@@ -30,5 +32,5 @@ function choose(code: string): void {
 </script>
 
 <template>
-  <SegmentedControl :model-value="locale" :options="options" @update:model-value="choose" />
+  <SegmentedControl :model-value="locale" :options="options" :size="size" @update:model-value="choose" />
 </template>

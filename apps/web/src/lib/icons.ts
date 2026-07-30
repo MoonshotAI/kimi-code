@@ -58,10 +58,12 @@ import KimiFileText from '~icons/kimi/file-text';
 import KimiFolder from '~icons/kimi/folder';
 import KimiFolderOpen from '~icons/kimi/folder-open';
 import KimiAddFolder from '~icons/kimi/folder-plus';
+import KimiFollowSystem from '~icons/kimi/follow-system';
 import KimiFullAccess from '~icons/kimi/full-access';
 import KimiGlobe from '~icons/kimi/globe';
 import KimiGrip from '~icons/kimi/grip';
 import KimiHand from '~icons/kimi/hand';
+import KimiHistogram from '~icons/kimi/histogram';
 import KimiImage from '~icons/kimi/image';
 import KimiImageFailed from '~icons/kimi/image-failed';
 import KimiInfo from '~icons/kimi/info';
@@ -74,6 +76,7 @@ import KimiMail from '~icons/kimi/mail';
 import KimiMinus from '~icons/kimi/minus';
 import KimiMicroscope from '~icons/kimi/microscope';
 import KimiMore from '~icons/kimi/more';
+import KimiMusic from '~icons/kimi/music';
 import KimiPause from '~icons/kimi/pause';
 import KimiPencil from '~icons/kimi/pencil';
 import KimiPlay from '~icons/kimi/play';
@@ -84,6 +87,7 @@ import KimiSend from '~icons/kimi/send';
 import KimiSetting from '~icons/kimi/setting';
 import KimiShieldQuestion from '~icons/kimi/shield-question';
 import KimiSignIn from '~icons/kimi/sign-in';
+import KimiSignOut from '~icons/kimi/sign-out';
 import KimiSliders from '~icons/kimi/sliders';
 import KimiStop from '~icons/kimi/stop';
 import KimiTarget from '~icons/kimi/target';
@@ -91,6 +95,7 @@ import KimiTask from '~icons/kimi/task';
 import KimiTerminal from '~icons/kimi/terminal';
 import KimiThinking from '~icons/kimi/thinking';
 import KimiTodo from '~icons/kimi/todo';
+import KimiTranslate from '~icons/kimi/translate';
 import KimiTrash from '~icons/kimi/trash';
 import KimiUndo from '~icons/kimi/undo';
 import KimiUser from '~icons/kimi/user';
@@ -147,10 +152,12 @@ import RawKimiFileText from '~icons/kimi/file-text?raw';
 import RawKimiFolder from '~icons/kimi/folder?raw';
 import RawKimiFolderOpen from '~icons/kimi/folder-open?raw';
 import RawKimiAddFolder from '~icons/kimi/folder-plus?raw';
+import RawKimiFollowSystem from '~icons/kimi/follow-system?raw';
 import RawKimiFullAccess from '~icons/kimi/full-access?raw';
 import RawKimiGlobe from '~icons/kimi/globe?raw';
 import RawKimiGrip from '~icons/kimi/grip?raw';
 import RawKimiHand from '~icons/kimi/hand?raw';
+import RawKimiHistogram from '~icons/kimi/histogram?raw';
 import RawKimiImage from '~icons/kimi/image?raw';
 import RawKimiImageFailed from '~icons/kimi/image-failed?raw';
 import RawKimiInfo from '~icons/kimi/info?raw';
@@ -163,6 +170,7 @@ import RawKimiMail from '~icons/kimi/mail?raw';
 import RawKimiMinus from '~icons/kimi/minus?raw';
 import RawKimiMicroscope from '~icons/kimi/microscope?raw';
 import RawKimiMore from '~icons/kimi/more?raw';
+import RawKimiMusic from '~icons/kimi/music?raw';
 import RawKimiPause from '~icons/kimi/pause?raw';
 import RawKimiPencil from '~icons/kimi/pencil?raw';
 import RawKimiPlay from '~icons/kimi/play?raw';
@@ -173,6 +181,7 @@ import RawKimiSend from '~icons/kimi/send?raw';
 import RawKimiSetting from '~icons/kimi/setting?raw';
 import RawKimiShieldQuestion from '~icons/kimi/shield-question?raw';
 import RawKimiSignIn from '~icons/kimi/sign-in?raw';
+import RawKimiSignOut from '~icons/kimi/sign-out?raw';
 import RawKimiSliders from '~icons/kimi/sliders?raw';
 import RawKimiStop from '~icons/kimi/stop?raw';
 import RawKimiTarget from '~icons/kimi/target?raw';
@@ -180,6 +189,7 @@ import RawKimiTask from '~icons/kimi/task?raw';
 import RawKimiTerminal from '~icons/kimi/terminal?raw';
 import RawKimiThinking from '~icons/kimi/thinking?raw';
 import RawKimiTodo from '~icons/kimi/todo?raw';
+import RawKimiTranslate from '~icons/kimi/translate?raw';
 import RawKimiTrash from '~icons/kimi/trash?raw';
 import RawKimiUndo from '~icons/kimi/undo?raw';
 import RawKimiUser from '~icons/kimi/user?raw';
@@ -232,7 +242,9 @@ export type IconName =
   | 'sliders'
   | 'light-mode'
   | 'dark-mode'
+  | 'follow-system'
   | 'log-in'
+  | 'log-out'
   | 'hand'
   | 'full-access'
   | 'shield-question'
@@ -271,6 +283,7 @@ export type IconName =
   | 'tool'
   | 'glob'
   | 'globe'
+  | 'translate'
   | 'check-list'
   | 'bolt'
   | 'trash'
@@ -285,6 +298,8 @@ export type IconName =
   | 'clock'
   | 'robot'
   | 'sparkles'
+  | 'histogram'
+  | 'music'
   | 'emoji'
   | 'target'
   | 'pause'
@@ -333,7 +348,9 @@ export const ICONS: Record<IconName, IconEntry> = {
   sliders: entry(KimiSliders, RawKimiSliders),
   'light-mode': entry(KimiLightMode, RawKimiLightMode),
   'dark-mode': entry(KimiDarkMode, RawKimiDarkMode),
+  'follow-system': entry(KimiFollowSystem, RawKimiFollowSystem),
   'log-in': entry(KimiSignIn, RawKimiSignIn),
+  'log-out': entry(KimiSignOut, RawKimiSignOut),
   hand: entry(KimiHand, RawKimiHand),
   'full-access': entry(KimiFullAccess, RawKimiFullAccess),
   'shield-question': entry(KimiShieldQuestion, RawKimiShieldQuestion),
@@ -372,6 +389,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   tool: entry(RiToolsLine, RawToolsLine),
   glob: entry(RiBracesLine, RawBracesLine),
   globe: entry(KimiGlobe, RawKimiGlobe),
+  translate: entry(KimiTranslate, RawKimiTranslate),
   'check-list': entry(KimiTodo, RawKimiTodo),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
   trash: entry(KimiTrash, RawKimiTrash),
@@ -386,6 +404,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   clock: entry(KimiClock, RawKimiClock),
   robot: entry(KimiRobot, RawKimiRobot),
   sparkles: entry(KimiTask, RawKimiTask),
+  histogram: entry(KimiHistogram, RawKimiHistogram),
+  music: entry(KimiMusic, RawKimiMusic),
   emoji: entry(RiEmotionLine, RawEmotionLine),
   target: entry(KimiTarget, RawKimiTarget),
   pause: entry(KimiPause, RawKimiPause),
@@ -441,6 +461,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'settings',
       'sliders',
       'log-in',
+      'log-out',
     ],
   ],
   [
@@ -499,7 +520,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'microscope',
     ],
   ],
-  ['Communication', ['message', 'mail', 'user', 'robot', 'emoji']],
+  ['Communication', ['message', 'mail', 'user', 'robot', 'emoji', 'translate']],
   [
     'Status & media',
     [
@@ -510,6 +531,8 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'full-access',
       'shield-question',
       'clock',
+      'histogram',
+      'music',
       'sparkles',
       'pause',
       'play',
@@ -520,6 +543,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'thinking',
       'light-mode',
       'dark-mode',
+      'follow-system',
     ],
   ],
 ];

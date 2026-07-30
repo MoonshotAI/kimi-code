@@ -144,8 +144,12 @@ if (typeof window !== 'undefined') {
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') window.removeEventListener('keydown', onKeydown);
   // Release this dialog's slot if it unmounts while still open (e.g. the
-  // parent v-if's it away before `open` flips to false).
-  if (props.open) openDialogCount.value = Math.max(0, openDialogCount.value - 1);
+  // parent v-if's it away before `open` flips to false), and run the same
+  // focus restore a normal close would.
+  if (props.open) {
+    openDialogCount.value = Math.max(0, openDialogCount.value - 1);
+    if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+  }
 });
 </script>
 

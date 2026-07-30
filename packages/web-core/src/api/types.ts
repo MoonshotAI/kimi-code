@@ -1083,6 +1083,7 @@ export interface KimiWebApi {
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
   getUsage(): Promise<ManagedUsageResult>;
+  getUserInfo(): Promise<ManagedUserInfoResult>;
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
@@ -1136,4 +1137,33 @@ export interface BoosterWallet {
     (not signed in / endpoint unavailable / fetch failed) without a throw. */
 export type ManagedUsageResult =
   | { kind: 'ok'; summary: UsageRow | null; limits: UsageRow[]; extraUsage: BoosterWallet | null }
+  | { kind: 'error'; message: string; status?: number };
+
+// ---------------------------------------------------------------------------
+// Managed-account profile (GET /api/v1/oauth/userinfo)
+// ---------------------------------------------------------------------------
+
+export interface ManagedUserInfo {
+  userId: string;
+  nickname: string;
+  status: string;
+  region: string;
+  userLevel: number;
+  userLevelName: string;
+  domain: number;
+  domainName: string;
+  globalId?: string;
+  bio?: string;
+  avatar?: string;
+  username?: string;
+  email?: string;
+  phone?: { countryCode: string; number: string };
+  createdTime?: string;
+  lastLoginTime?: string;
+}
+
+/** Same `kind` discrimination as ManagedUsageResult — an older daemon without
+    the endpoint surfaces as the `error` shape, not a throw. */
+export type ManagedUserInfoResult =
+  | { kind: 'ok'; userInfo: ManagedUserInfo }
   | { kind: 'error'; message: string; status?: number };

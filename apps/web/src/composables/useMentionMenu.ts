@@ -57,22 +57,30 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   function update(): void {
     const mt = getMentionToken();
     const search = searchFiles();
-    if (!mt || !search) {
+    if (timer !== null) clearTimeout(timer);
+    // No @token (or only a bare `@` with nothing to search yet) — stay closed.
+    if (!mt || !search || mt.token.length === 0) {
       open.value = false;
+      loading.value = false;
       return;
     }
-    const query = mt.token;
-    if (timer !== null) clearTimeout(timer);
+    const token = mt.token;
     timer = setTimeout(async () => {
       loading.value = true;
       open.value = true;
       active.value = 0;
+      // Apply the response only while it still matches the live @token.
+      const stillCurrent = () => {
+        const live = getMentionToken();
+        return live !== null && live.token === token && open.value;
+      };
       try {
-        items.value = await search(query);
+        const results = await search(token);
+        if (stillCurrent()) items.value = results;
       } catch {
-        items.value = [];
+        if (stillCurrent()) items.value = [];
       } finally {
-        loading.value = false;
+        if (stillCurrent()) loading.value = false;
       }
     }, 200);
   }

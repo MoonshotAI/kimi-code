@@ -109,7 +109,7 @@ const MAX_ARRAY_ITEMS = 50;
 const MAX_OBJECT_KEYS = 50;
 const MAX_DEPTH = 6;
 
-const SENSITIVE_KEY_RE = /api[_-]?key|authorization|token|secret|password|cookie|credential/i;
+const SENSITIVE_KEY_RE = /api[_-]?key|authorization|token|secret|password|cookie|credential|email|phone|nickname|avatar/i;
 /** Long unbroken base64-ish runs (uploads, inlined images) are size, not signal. */
 const BASE64ISH_RE = /^[A-Za-z0-9+/=_-]{200,}$/;
 
