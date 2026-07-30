@@ -97,6 +97,13 @@ interface PlanRevisionPayload {
   readonly bytes?: unknown;
 }
 
+/** `turn.cancel` payload. */
+interface TurnCancelPayload {
+  readonly turnId?: unknown;
+  readonly target?: unknown;
+  readonly reason?: unknown;
+}
+
 /** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
   switch (kind) {
@@ -342,6 +349,17 @@ export function foldWireRecordFacts(
       case 'task.started':
       case 'task.terminated': {
         upsertTask(record);
+        break;
+      }
+      case 'turn.cancel': {
+        const payload = record as TurnCancelPayload;
+        // Only a deliberate user interrupt of a turn that actually ran becomes
+        // a marker: programmatic aborts surface through their own outlets
+        // (errors, goal/task state), and a queued cancel left no visible
+        // residue. Records written before the reason field existed are
+        // skipped — they cannot be attributed.
+        if (payload.reason !== 'user_cancelled' || payload.target === 'queued') break;
+        pushMarker('interruption', record);
         break;
       }
       case 'interaction.request': {
