@@ -72,6 +72,28 @@ export function defineKlientConformance(
       expect(typeof count).toBe('number');
     });
 
+    it('creates a titled session through implicit workspace materialization', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance session',
+      });
+
+      try {
+        expect(created).toMatchObject({
+          title: 'conformance session',
+          cwd: process.cwd(),
+          archived: false,
+        });
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(await target.klient.global.sessions.get(created.id)).toMatchObject({
+          id: created.id,
+          title: 'conformance session',
+        });
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
     it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
