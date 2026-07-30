@@ -170,6 +170,10 @@ export {
   _clearAgentProfileContributionsForTests,
 } from '#/app/agentProfileCatalog/contribution';
 export * from '#/workspace/workspaceAgentProfileLoader/configSection';
+// Public agent-file primitives consumed out-of-package (the v2 print CLI's
+// `--agent-file` path); everything else under `internal/` stays domain-private.
+export { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
+export { resolveAgentPath } from '#/workspace/workspaceAgentProfileLoader/internal/paths';
 export * from '#/workspace/workspaceAgentProfileLoader/agentCatalogRuntimeOptions';
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
