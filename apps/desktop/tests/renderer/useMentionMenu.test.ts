@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref, type Ref } from 'vue';
-import { useMentionMenu } from '../src/composables/useMentionMenu';
-import type { FileItem } from '../src/types';
+import { useMentionMenu } from '../../src/renderer/composables/useMentionMenu';
+import type { FileItem } from '../../src/renderer/types';
 
 interface MockTextarea {
   value: string;

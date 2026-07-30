@@ -563,28 +563,32 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Mention menu navigation
+  // Mention menu navigation. With no items (the bare-@ hint or no-match
+  // state) only Escape is handled — Enter/Tab/arrows keep their normal
+  // composer behavior so the menu never blocks sending.
   if (mentionOpen.value && !mentionLoading.value) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      mentionActive.value = (mentionActive.value + 1) % Math.max(1, mentionItems.value.length);
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      mentionActive.value = (mentionActive.value - 1 + Math.max(1, mentionItems.value.length)) % Math.max(1, mentionItems.value.length);
-      return;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      const item = mentionItems.value[mentionActive.value];
-      if (item) selectMentionItem(item);
-      return;
-    }
     if (e.key === 'Escape') {
       e.preventDefault();
       mentionOpen.value = false;
       return;
+    }
+    if (mentionItems.value.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionActive.value = (mentionActive.value + 1) % mentionItems.value.length;
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionActive.value = (mentionActive.value - 1 + mentionItems.value.length) % mentionItems.value.length;
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const item = mentionItems.value[mentionActive.value];
+        if (item) selectMentionItem(item);
+        return;
+      }
     }
   }
 
