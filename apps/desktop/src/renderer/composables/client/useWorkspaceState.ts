@@ -518,11 +518,52 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  - 'retry'                — transient failure (network, timeout, 5xx); the
    *                             caller should retry instead of treating it as
    *                             "not signed in" */
-  // Generation guard for the fire-and-forget /oauth/userinfo fetch below:
-  // bumped at every checkAuth() entry so the last-issued call wins — a stale
-  // late response must not overwrite, nor a stale rejection clear, the
-  // profile the newest call wrote.
+  // Generation guard for the /oauth/userinfo fetches below: bumped at every
+  // issued fetch so the last-issued call wins — a stale late response must
+  // not overwrite, nor a stale rejection clear, the profile the newest call
+  // wrote.
   let userInfoFetchGeneration = 0;
+
+  /** One guarded /oauth/userinfo fetch. Shared by checkAuth (fire-and-forget,
+   *  so the auth gate never blocks on profile dressing) and
+   *  probeManagedMembership (awaited). Never throws: every failure keeps the
+   *  anonymous fallback and an unknown membership. */
+  async function fetchManagedProfile(generation: number): Promise<void> {
+    try {
+      const infoResult = await getKimiWebApi().getUserInfo();
+      // The two guards: a logout during the fetch must not resurrect the
+      // profile (status check), and a superseded call must not answer at all
+      // (generation check).
+      if (generation !== userInfoFetchGeneration) return;
+      if (rawState.managedProviderStatus !== 'authenticated') return;
+      rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
+      // 402 is the hard "free account" signal: the upstream rejects
+      // non-member accounts on userinfo. Any other failure (network,
+      // 5xx, an older daemon without the endpoint) stays unknown
+      // rather than being mislabeled as free.
+      rawState.managedMembership =
+        infoResult.kind === 'ok' ? 'member' : infoResult.status === 402 ? 'free' : null;
+    } catch {
+      // Older daemon without the endpoint or a transient failure — the
+      // account row keeps its anonymous fallback.
+      if (generation !== userInfoFetchGeneration) return;
+      if (rawState.managedProviderStatus === 'authenticated') {
+        rawState.managedUserInfo = null;
+        rawState.managedMembership = null;
+      }
+    }
+  }
+
+  /** Awaitable membership probe for decisions that can't ride the
+   *  fire-and-forget fetch in checkAuth — the send gate choosing between the
+   *  sign-in and upgrade dialogs would otherwise snapshot a null membership
+   *  inside the probe window and misroute a signed-in free account to login.
+   *  No-op unless the managed account is authenticated; concurrent calls are
+   *  safe (the last-issued probe wins). */
+  async function probeManagedMembership(): Promise<void> {
+    if (rawState.managedProviderStatus !== 'authenticated') return;
+    await fetchManagedProfile(++userInfoFetchGeneration);
+  }
 
   async function checkAuth(): Promise<AuthCheckResult> {
     const generation = ++userInfoFetchGeneration;
@@ -534,28 +575,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
       if (rawState.managedProviderStatus === 'authenticated') {
         // Fire-and-forget: the profile is settings-page dressing and must not
-        // block the auth gate. The late callbacks are guarded twice: a logout
-        // during the fetch must not resurrect the profile (status check), and
-        // a superseded call must not answer at all (generation check).
-        void api
-          .getUserInfo()
-          .then((infoResult) => {
-            if (generation !== userInfoFetchGeneration) return;
-            if (rawState.managedProviderStatus !== 'authenticated') return;
-            rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
-          })
-          .catch(() => {
-            // Older daemon without the endpoint or a transient failure — the
-            // account row keeps its anonymous fallback.
-            if (generation !== userInfoFetchGeneration) return;
-            if (rawState.managedProviderStatus === 'authenticated') {
-              rawState.managedUserInfo = null;
-            }
-          });
+        // block the auth gate.
+        void fetchManagedProfile(generation);
       } else {
         // The entry increment already invalidated any in-flight profile fetch
         // from a previously authenticated check; just drop the profile.
         rawState.managedUserInfo = null;
+        rawState.managedMembership = null;
       }
       connectIssue.value = null;
       return 'proceed';
@@ -3061,6 +3087,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     clearFileDiff,
     loadGitStatus,
     checkAuth,
+    probeManagedMembership,
     loadConfig,
     updateConfig,
     listAllSessionsGlobal,

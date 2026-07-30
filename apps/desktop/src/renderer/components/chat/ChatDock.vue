@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
-import type { PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalPanel from './GoalPanel.vue';
 import QuestionCard from './QuestionCard.vue';
@@ -43,6 +43,12 @@ const props = defineProps<{
   /** Daemon auth/provider readiness (GET /auth ready) — forwarded to the
       Composer for its sign-in affordance. */
   authReady?: boolean;
+  /** Managed-account sign-in state — forwarded to the Composer (a signed-in
+      account never gets the sign-in entry). */
+  managedSignedIn?: boolean;
+  /** Membership of the signed-in managed account — forwarded to the Composer
+      ('free' swaps the model pill for the upgrade entry). */
+  managedMembership?: ManagedMembership;
   starredIds?: string[];
   skills?: AppSkill[];
   goal?: AppGoal | null;
@@ -439,6 +445,8 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       :activation-badges="activationBadges"
       :models="models"
       :auth-ready="authReady"
+      :managed-signed-in="managedSignedIn"
+      :managed-membership="managedMembership"
       :starred-ids="starredIds"
       :skills="skills"
       :starting="starting"

@@ -46,6 +46,7 @@ import { stripSkillPrefix } from './lib/slashCommands';
 import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
+import { openUpgrade } from './lib/upgrade';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -592,14 +593,36 @@ function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
 // draft. Resolves true when the caller may proceed.
 async function passAuthGate(text: string, attachments: PromptAttachment[]): Promise<boolean> {
   if (client.authReady.value) return true;
-  const goLogin = await confirm({
-    title: t('login.requiredTitle'),
-    message: t('login.requiredMessage'),
-    confirmLabel: t('login.goToLogin'),
-    variant: 'primary',
-  });
+  // The userinfo probe is fire-and-forget: a signed-in account whose
+  // membership is still unknown gets an awaited probe first, so a free
+  // account inside the probe window isn't sent back to login.
+  const signedIn = client.managedProviderStatus.value === 'authenticated';
+  if (signedIn && client.managedMembership.value === null) {
+    await client.probeManagedMembership();
+  }
+  // A confirmed free managed account is already signed in — pointing it at
+  // the login flow again makes no sense; the gate becomes the upgrade entry.
+  const isFreeAccount = signedIn && client.managedMembership.value === 'free';
+  const confirmed = await confirm(
+    isFreeAccount
+      ? {
+          title: t('login.upgradeRequiredTitle'),
+          message: t('login.upgradeRequiredMessage'),
+          confirmLabel: t('sidebar.upgrade'),
+          variant: 'primary',
+        }
+      : {
+          title: t('login.requiredTitle'),
+          message: t('login.requiredMessage'),
+          confirmLabel: t('login.goToLogin'),
+          variant: 'primary',
+        },
+  );
   conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
-  if (goLogin) openLogin();
+  if (confirmed) {
+    if (isFreeAccount) openUpgrade();
+    else openLogin();
+  }
   return false;
 }
 
@@ -945,6 +968,8 @@ function openPr(url: string): void {
       :goal-mode="client.goalMode.value"
       :models="client.models.value"
       :auth-ready="client.authReady.value"
+      :managed-signed-in="client.managedProviderStatus.value === 'authenticated'"
+      :managed-membership="client.managedMembership.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"

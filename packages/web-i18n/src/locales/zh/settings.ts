@@ -49,6 +49,8 @@ export default {
     monthlyUsed: '本月已用',
     monthlyLimit: '每月上限',
     unlimited: '不限',
+    freeTitle: '免费账户',
+    freeHint: '升级会员后即可使用 Kimi 模型并查看套餐用量',
   },
   colorSchemeHint: '选择应用的明暗外观',
   appIcon: '程序坞图标',

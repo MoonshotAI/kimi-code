@@ -95,6 +95,7 @@ function createState(): ExtendedState {
     defaultModel: null,
     managedProviderStatus: null,
     managedUserInfo: null,
+    managedMembership: null,
     workspaces: [],
     activeWorkspaceId: null,
     sessionsHasMoreByWorkspace: {},
@@ -1498,6 +1499,107 @@ describe('useWorkspaceState — managed account profile', () => {
     firstUserInfo.reject(new Error('404'));
     await flushUserInfo();
     expect(state.managedUserInfo).toEqual(newestProfile);
+  });
+
+  it('derives member when the profile loads', async () => {
+    const state = createState();
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedMembership).toBe('member');
+  });
+
+  it('derives free when userinfo is rejected with 402 (the non-member signal)', async () => {
+    const state = createState();
+    apiMock.getUserInfo.mockResolvedValue({ kind: 'error', message: 'payment required', status: 402 });
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedMembership).toBe('free');
+  });
+
+  it.each([403, 500])(
+    'stays unknown when userinfo fails with %i (not the non-member signal)',
+    async (status) => {
+      const state = createState();
+      apiMock.getUserInfo.mockResolvedValue({ kind: 'error', message: 'boom', status });
+      const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+      await ws.checkAuth();
+      await flushUserInfo();
+
+      expect(state.managedMembership).toBeNull();
+    },
+  );
+
+  it('stays unknown when userinfo rejects (a transient failure must not be mislabeled)', async () => {
+    const state = createState();
+    state.managedMembership = 'free';
+    apiMock.getUserInfo.mockRejectedValue(new Error('network down'));
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedMembership).toBeNull();
+  });
+
+  it('clears the membership when not authenticated', async () => {
+    const state = createState();
+    state.managedMembership = 'free';
+    apiMock.getAuth.mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(apiMock.getUserInfo).not.toHaveBeenCalled();
+    expect(state.managedMembership).toBeNull();
+  });
+
+  it('probeManagedMembership awaits the fetch and derives the membership', async () => {
+    const state = createState();
+    const deferreds: Array<{ resolve: (value: ManagedUserInfoResult) => void }> = [];
+    apiMock.getUserInfo.mockImplementation(
+      () =>
+        new Promise<ManagedUserInfoResult>((resolve) => {
+          deferreds.push({ resolve });
+        }),
+    );
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+    // Authenticate first (checkAuth fires its own fire-and-forget probe).
+    await ws.checkAuth();
+
+    let settled = false;
+    const probe = ws.probeManagedMembership().then(() => {
+      settled = true;
+    });
+    expect(apiMock.getUserInfo).toHaveBeenCalledTimes(2);
+    await flushUserInfo();
+    // The probe must not settle while its fetch is still in flight.
+    expect(settled).toBe(false);
+
+    deferreds[1]?.resolve({ kind: 'error', message: 'payment required', status: 402 });
+    await probe;
+    expect(settled).toBe(true);
+    expect(state.managedMembership).toBe('free');
+  });
+
+  it('probeManagedMembership is a no-op when not authenticated', async () => {
+    const state = createState();
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.probeManagedMembership();
+
+    expect(apiMock.getUserInfo).not.toHaveBeenCalled();
   });
 });
 

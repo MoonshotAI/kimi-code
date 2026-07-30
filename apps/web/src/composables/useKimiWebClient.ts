@@ -312,6 +312,13 @@ interface QueuedPrompt {
   id?: string;
 }
 
+/** Membership of the signed-in managed account, derived from the
+    /oauth/userinfo probe fired by checkAuth: 'member' when the profile loads,
+    'free' when the upstream rejects it with 402 (non-member accounts cannot
+    call userinfo), null while unknown — signed out, fetch in flight, or a
+    transient failure that must not be mislabeled as free. */
+export type ManagedMembership = 'member' | 'free' | null;
+
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
@@ -376,6 +383,9 @@ export interface ExtendedState extends KimiClientState {
   /** Signed-in managed-account profile (GET /oauth/userinfo); null until
       fetched, on fetch failure, and when signed out. */
   managedUserInfo: ManagedUserInfo | null;
+  /** Membership derived from the userinfo probe (see ManagedMembership) —
+      drives the upgrade entries in the composer / settings / user menu. */
+  managedMembership: ManagedMembership;
   // Workspace state
   workspaces: AppWorkspace[];
   activeWorkspaceId: string | null;
@@ -449,6 +459,7 @@ const rawState: ExtendedState = reactive({
   defaultModel: null,
   managedProviderStatus: null,
   managedUserInfo: null,
+  managedMembership: null,
   workspaces: [],
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
   fsHome: null,
@@ -2730,6 +2741,7 @@ const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
 const managedUserInfo = computed<ManagedUserInfo | null>(() => rawState.managedUserInfo);
+const managedMembership = computed<ManagedMembership>(() => rawState.managedMembership);
 const config = computed<AppConfig | null>(() => rawState.config);
 
 /** path → status map for quick badge lookup in the file tree */
@@ -3535,6 +3547,7 @@ export function useKimiWebClient() {
     defaultModel,
     managedProviderStatus,
     managedUserInfo,
+    managedMembership,
 
     // Config state + actions
     config,
@@ -3542,6 +3555,7 @@ export function useKimiWebClient() {
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,
+    probeManagedMembership: workspaceState.probeManagedMembership,
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,
     cancelOAuthLogin: modelProvider.cancelOAuthLogin,

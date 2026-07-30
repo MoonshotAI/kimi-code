@@ -25,6 +25,7 @@ import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUp
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
+import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import type { IconName } from '../../lib/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
@@ -427,6 +428,12 @@ function setTab(tab: SettingsTab): void {
 // ---------------------------------------------------------------------------
 const client = useKimiWebClient();
 
+// A confirmed free managed account (the userinfo probe was rejected with 402)
+// gets the upgrade entry instead of the plan-usage module — free accounts
+// can't call usages, so there is nothing to meter. While the probe is still
+// unknown the usage card mounts as usual and swaps itself on a 402/403.
+const showPlanUpgrade = computed(() => signedIn.value && client.managedMembership.value === 'free');
+
 const archivedItems = ref<AppSession[]>([]);
 const archivedLoading = ref(false);
 const archivedLoaded = ref(false);
@@ -688,8 +695,9 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
+          <PlanUpgradeCard v-if="showPlanUpgrade" />
           <PlanUsageCard
-            v-if="signedIn"
+            v-else-if="signedIn"
             :on-fetch-usage="props.onFetchUsage"
             :active="activeTab === 'account'"
           />

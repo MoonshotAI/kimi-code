@@ -49,6 +49,8 @@ export default {
     monthlyUsed: 'Used this month',
     monthlyLimit: 'Monthly limit',
     unlimited: 'Unlimited',
+    freeTitle: 'Free account',
+    freeHint: 'Upgrade to a membership to use Kimi models and see plan usage',
   },
   colorSchemeHint: 'Choose the app’s light or dark appearance',
   appIcon: 'Dock icon',

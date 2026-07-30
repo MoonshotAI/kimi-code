@@ -68,6 +68,7 @@ import {
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
 import { track } from './lib/track';
+import { openUpgrade } from './lib/upgrade';
 import { setSessionIntent } from './lib/session-intent';
 import type { SessionCreatedSource } from '../shared/track-events';
 import { isAppActionId, type AppActionId } from '../shared/action-ids';
@@ -914,14 +915,36 @@ async function passAuthGate(text: string, attachments: PromptAttachment[]): Prom
   // before concluding sign-in is required.
   await client.checkAuth();
   if (client.authReady.value) return true;
-  const goLogin = await confirm({
-    title: t('login.requiredTitle'),
-    message: t('login.requiredMessage'),
-    confirmLabel: t('login.goToLogin'),
-    variant: 'primary',
-  });
+  // The userinfo probe fired by checkAuth is fire-and-forget: a signed-in
+  // account whose membership is still unknown gets an awaited probe first,
+  // so a free account inside the probe window isn't sent back to login.
+  const signedIn = client.managedProviderStatus.value === 'authenticated';
+  if (signedIn && client.managedMembership.value === null) {
+    await client.probeManagedMembership();
+  }
+  // A confirmed free managed account is already signed in — pointing it at
+  // the login flow again makes no sense; the gate becomes the upgrade entry.
+  const isFreeAccount = signedIn && client.managedMembership.value === 'free';
+  const confirmed = await confirm(
+    isFreeAccount
+      ? {
+          title: t('login.upgradeRequiredTitle'),
+          message: t('login.upgradeRequiredMessage'),
+          confirmLabel: t('sidebar.upgrade'),
+          variant: 'primary',
+        }
+      : {
+          title: t('login.requiredTitle'),
+          message: t('login.requiredMessage'),
+          confirmLabel: t('login.goToLogin'),
+          variant: 'primary',
+        },
+  );
   conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
-  if (goLogin) openLogin();
+  if (confirmed) {
+    if (isFreeAccount) openUpgrade();
+    else openLogin();
+  }
   return false;
 }
 
@@ -1397,6 +1420,8 @@ function openPr(url: string): void {
       :goal-mode="client.goalMode.value"
       :models="client.models.value"
       :auth-ready="client.authReady.value"
+      :managed-signed-in="client.managedProviderStatus.value === 'authenticated'"
+      :managed-membership="client.managedMembership.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"

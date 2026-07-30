@@ -66,6 +66,11 @@ const persistedModelCount = computed(() => {
   return providerModelRows(p, client.config.value?.models).length;
 });
 
+// A managed provider is read-only here, so with zero models the single blank
+// row adds nothing — its disabled inputs show placeholder hints that read
+// like real values. Show an explicit empty state instead.
+const showModelsEmpty = computed(() => managed.value && persistedModelCount.value === 0);
+
 const typeOptions = computed(() =>
   PROVIDER_TYPES.map((type) => ({ value: type, label: t(`providers.types.${type}`) })),
 );
@@ -323,6 +328,8 @@ function removeModelRow(index: number): void {
     <div class="pf-field">
       <label class="pf-field-label">{{ t('providers.fieldModels') }}<span class="req"> *</span></label>
       <div class="pf-models">
+        <div v-if="showModelsEmpty" class="pf-models-empty">{{ t('providers.noModels') }}</div>
+        <template v-else>
         <div class="pf-model-grid pf-model-head">
           <span>{{ t('providers.colModelId') }}<span class="req"> *</span></span>
           <span>{{ t('providers.colContext') }}<span class="req"> *</span></span>
@@ -369,6 +376,7 @@ function removeModelRow(index: number): void {
             {{ t('providers.addModel') }}
           </Button>
         </div>
+        </template>
       </div>
     </div>
 
@@ -454,6 +462,11 @@ function removeModelRow(index: number): void {
 .pf-model-head span {
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+.pf-models-empty {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
   color: var(--color-text-faint);
 }
 

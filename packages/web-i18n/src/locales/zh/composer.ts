@@ -30,6 +30,7 @@ export default {
   collapseTitle: '收起输入框',
   emptyConversationTitle: 'Kimi Code',
   emptyConversation: '还没有消息 —— 在下方输入开始对话',
+  upgradeBanner: '升级你的 Kimi 账户来使用 Kimi Code',
   quickStartPlaceholder: '输入消息开始新对话…',
   thinkingSuffix: ' · 思考',
   thinkingSuffixEffort: ' · {level}',

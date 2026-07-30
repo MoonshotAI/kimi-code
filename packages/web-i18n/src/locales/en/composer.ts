@@ -30,6 +30,7 @@ export default {
   collapseTitle: 'Collapse input',
   emptyConversationTitle: 'Kimi Code',
   emptyConversation: 'No messages yet — type below to start the conversation',
+  upgradeBanner: 'Upgrade your Kimi account to use Kimi Code',
   quickStartPlaceholder: 'Type a message to start a new conversation…',
   thinkingSuffix: ' · thinking',
   thinkingSuffixEffort: ' · {level}',

@@ -25,7 +25,8 @@ import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
 import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
 import { openFileAttachment } from '../../lib/openFileAttachment';
-import type { PromptAttachment } from '../../composables/useKimiWebClient';
+import { openUpgrade } from '../../lib/upgrade';
+import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
@@ -63,6 +64,12 @@ const props = withDefaults(defineProps<{
       and the catalog is also empty, the model pill slot shows a sign-in
       entry — an empty catalog alone may just be a failed /models fetch. */
   authReady?: boolean;
+  /** Whether the managed Kimi account is signed in. A signed-in account never
+      gets the sign-in entry, even with no usable models. */
+  managedSignedIn?: boolean;
+  /** Membership of the signed-in managed account; 'free' swaps the model pill
+      slot for the upgrade entry when no models are usable. */
+  managedMembership?: ManagedMembership;
   /** Starred model ids shown at the top of the quick-switch dropdown. */
   starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
@@ -975,8 +982,15 @@ const providerModels = computed(() => {
 // shows a sign-in button instead of a meaningless placeholder pill.
 const hasModels = computed(() => (props.models?.length ?? 0) > 0);
 // Gate on explicit unreadiness, not just an empty catalog — a failed /models
-// fetch must not mislabel a signed-in, ready daemon.
-const showSignIn = computed(() => props.authReady === false && !hasModels.value);
+// fetch must not mislabel a signed-in, ready daemon. A signed-in managed
+// account never gets the sign-in entry: a free account (userinfo probe
+// rejected with 402) gets the upgrade entry, and any other signed-in state
+// just leaves the slot empty.
+const noUsableModels = computed(() => props.authReady === false && !hasModels.value);
+const showSignIn = computed(() => noUsableModels.value && !(props.managedSignedIn ?? false));
+const showUpgrade = computed(
+  () => noUsableModels.value && (props.managedSignedIn ?? false) && props.managedMembership === 'free',
+);
 
 const starredSet = computed(() => new Set(props.starredIds ?? []));
 function isStarred(modelId: string): boolean {
@@ -1324,7 +1338,7 @@ function selectModel(modelId: string): void {
 
           <!-- Model pill — click to open quick-switch dropdown -->
           <button
-            v-if="status && !showSignIn"
+            v-if="status && !showSignIn && !showUpgrade"
             ref="modelPillRef"
             type="button"
             class="model-pill"
@@ -1337,10 +1351,21 @@ function selectModel(modelId: string): void {
             <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
             <Icon class="cv" name="chevron-down" size="sm" />
           </button>
+          <!-- Signed-in free managed account / no usable models — the pill slot
+               becomes the upgrade entry (external link). -->
+          <button
+            v-else-if="status && showUpgrade"
+            type="button"
+            class="model-pill login-pill"
+            @click.stop="openUpgrade()"
+          >
+            <Icon name="music" size="sm" />
+            <span class="mp-name">{{ t('sidebar.upgrade') }}</span>
+          </button>
           <!-- Signed out / no models — the pill slot becomes the sign-in entry
                (deep-links into the settings account tab). -->
           <button
-            v-else-if="status"
+            v-else-if="status && showSignIn"
             type="button"
             class="model-pill login-pill"
             @click.stop="emit('login')"
