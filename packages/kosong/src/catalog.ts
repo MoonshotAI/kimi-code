@@ -244,7 +244,12 @@ function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | unde
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
-  if (npm.includes('anthropic') || id.includes('anthropic') || id.includes('claude')) {
+  if (
+    npm.includes('anthropic') ||
+    id.includes('anthropic') ||
+    id.includes('claude') ||
+    hasAnthropicEndpointPath(entry.api)
+  ) {
     return 'anthropic';
   }
   if (id.includes('vertex')) return 'vertexai';
@@ -253,6 +258,24 @@ function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | unde
   }
   if (npm.includes('openai') || id.includes('openai')) return 'openai';
   return undefined;
+}
+
+/**
+ * Detects the Anthropic wire from the declared endpoint when neither `type`
+ * nor `npm`/`id` names it: vendors that speak OpenAI by default expose their
+ * Anthropic-compatible surface under a dedicated `/anthropic` path segment
+ * (e.g. `https://host/anthropic`). Without this the endpoint falls through to
+ * the OpenAI-compatible fallback and its Anthropic URL is persisted under the
+ * OpenAI wire — an incompatible protocol/base-URL pair. The match is on the
+ * URL path only, so a host such as `api.anthropic.com` (whose path is `/v1`)
+ * is left to the `id`/`npm` checks and never triggers here.
+ */
+function hasAnthropicEndpointPath(api: string | undefined): boolean {
+  if (typeof api !== 'string' || api.length === 0) return false;
+  // Drop the scheme + authority so only the path is inspected; a bare
+  // `anthropic` path segment is the endpoint convention for this wire.
+  const path = api.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+  return /(?:^|\/)anthropic(?:\/|$)/i.test(path);
 }
 
 /**

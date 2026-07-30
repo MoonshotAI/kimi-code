@@ -110,6 +110,30 @@ describe('resolveCatalogImport — wire resolution', () => {
       reason: 'proprietary-sdk',
     });
   });
+
+  it('infers anthropic from a declared /anthropic endpoint path when no type or npm/id names it', () => {
+    // A vendor that speaks OpenAI by default but exposes its Anthropic-compatible
+    // surface under a `/anthropic` path: without endpoint inference this fell
+    // through to the OpenAI fallback and the Anthropic URL was persisted under
+    // the OpenAI wire — an incompatible protocol/base-URL pair.
+    expect(
+      resolveCatalogImport({ id: 'gateway', api: 'https://api.example.test/anthropic' }),
+    ).toEqual({
+      kind: 'ok',
+      wire: 'anthropic',
+      guessed: false,
+      baseUrl: 'https://api.example.test/anthropic',
+    });
+    // The regional twin on a different host resolves the same way.
+    expect(
+      resolveCatalogImport({ id: 'gateway', api: 'https://api.example.com/anthropic' }),
+    ).toMatchObject({ kind: 'ok', wire: 'anthropic', guessed: false });
+    // A host that merely contains "anthropic" but serves the OpenAI path is
+    // left to the fallback — the match is on the path, not the host.
+    expect(
+      resolveCatalogImport({ id: 'gateway', api: 'https://anthropic.example.test/v1' }),
+    ).toMatchObject({ kind: 'ok', wire: 'openai', guessed: true });
+  });
 });
 
 describe('resolveCatalogImport — endpoint resolution', () => {
