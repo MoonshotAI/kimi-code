@@ -1821,6 +1821,48 @@ describe('KimiTUI startup', () => {
   });
 });
 
+describe('KimiTUI.restoreEditor scrollback', () => {
+  type RestoreEditorDriver = StartupDriver & {
+    restoreEditor: () => void;
+  };
+
+  function makeRestoreDriver(): RestoreEditorDriver {
+    const driver = makeDriver(makeHarness(), makeStartupInput()) as RestoreEditorDriver;
+    driver.state.terminalState.insideTmux = false;
+    Object.defineProperty(driver.state.terminal, 'columns', { configurable: true, get: () => 80 });
+    Object.defineProperty(driver.state.terminal, 'rows', { configurable: true, get: () => 24 });
+    return driver;
+  }
+
+  it('forces a scrollback-preserving redraw when restored content overflows the viewport', () => {
+    const driver = makeRestoreDriver();
+    vi.spyOn(driver.state.ui, 'render').mockReturnValue(Array.from({ length: 40 }, () => 'line'));
+
+    driver.restoreEditor();
+
+    expect(driver.state.ui.requestRender).toHaveBeenCalledWith(true, { clearScrollback: false });
+  });
+
+  it('does not force a full redraw when restored content fits on one screen', () => {
+    const driver = makeRestoreDriver();
+    vi.spyOn(driver.state.ui, 'render').mockReturnValue(Array.from({ length: 10 }, () => 'line'));
+
+    driver.restoreEditor();
+
+    expect(driver.state.ui.requestRender).toHaveBeenCalledWith(false, undefined);
+  });
+
+  it('does not force a full redraw inside tmux even when content overflows', () => {
+    const driver = makeRestoreDriver();
+    driver.state.terminalState.insideTmux = true;
+    vi.spyOn(driver.state.ui, 'render').mockReturnValue(Array.from({ length: 40 }, () => 'line'));
+
+    driver.restoreEditor();
+
+    expect(driver.state.ui.requestRender).toHaveBeenCalledWith(false, undefined);
+  });
+});
+
 function uiContainsFooter(driver: StartupDriver): boolean {
   const target: unknown = driver.state.footer;
   const visit = (node: unknown): boolean => {

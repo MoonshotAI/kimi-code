@@ -680,6 +680,38 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
+	it("forced redraw can skip clearing terminal scrollback", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 8 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = Array.from({ length: 6 }, (_, i) => `Line ${i}`);
+		tui.requestRender(true, { clearScrollback: false });
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J\x1b[H"), "forced redraw should still clear the live viewport");
+		assert.ok(!writes.includes("\x1b[3J"), "clearScrollback:false must not wipe terminal scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 1", "Line 2", "Line 3", "Line 4", "Line 5"]);
+
+		terminal.clearWrites();
+		component.lines = Array.from({ length: 7 }, (_, i) => `Line ${i}`);
+		tui.requestRender(true);
+		await terminal.waitForRender();
+		assert.ok(
+			terminal.getWrites().includes("\x1b[2J\x1b[H\x1b[3J"),
+			"default forced redraw still clears scrollback",
+		);
+
+		tui.stop();
+	});
+
 	it("appends after a shrink without another full redraw once the viewport is reset", async () => {
 		const terminal = new VirtualTerminal(20, 5);
 		const tui = new TUI(terminal);

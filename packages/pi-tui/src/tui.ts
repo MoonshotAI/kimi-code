@@ -337,6 +337,8 @@ export class TUI extends Container {
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
+	/** When the next forced full clear runs, also emit ESC[3J (clear scrollback). */
+	private pendingClearScrollback = true;
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
@@ -732,7 +734,14 @@ export class TUI extends Container {
 		this.terminal.stop();
 	}
 
-	requestRender(force = false): void {
+	/**
+	 * Queue a render. When `force` is true, invalidate differential caches and
+	 * perform a full redraw. By default a forced redraw also clears terminal
+	 * scrollback (`ESC[3J`). Pass `{ clearScrollback: false }` when the caller
+	 * only needs the live viewport re-anchored (e.g. restoring the editor after
+	 * a modal) so users who scrolled up can still recover their place.
+	 */
+	requestRender(force = false, options?: { clearScrollback?: boolean }): void {
 		if (force) {
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -741,6 +750,9 @@ export class TUI extends Container {
 			this.hardwareCursorRow = 0;
 			this.maxLinesRendered = 0;
 			this.previousViewportTop = 0;
+			// Default true preserves historical force-redraw behavior; opt out to
+			// keep terminal scrollback intact across the clear/home rewrite.
+			this.pendingClearScrollback = options?.clearScrollback !== false;
 			if (this.renderTimer) {
 				clearTimeout(this.renderTimer);
 				this.renderTimer = undefined;
@@ -1330,13 +1342,17 @@ export class TUI extends Container {
 		}
 		newLines = processedLines;
 
-		// Helper to clear scrollback and viewport and render all new lines
+		// Helper to clear the viewport (and optionally scrollback) and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
-				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
+				// ESC[2J ESC[H clears the live viewport; ESC[3J additionally wipes
+				// terminal scrollback. Callers that only need to re-anchor after a
+				// modal close can suppress the scrollback clear via requestRender.
+				buffer += this.pendingClearScrollback ? "\x1b[2J\x1b[H\x1b[3J" : "\x1b[2J\x1b[H";
+				this.pendingClearScrollback = true;
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";

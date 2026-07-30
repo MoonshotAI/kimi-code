@@ -263,6 +263,8 @@ export class CustomEditor extends Editor {
   // Only worthwhile when the session content already overflows one screen; below
   // that a full clear + home would pull the editor to the top and leave a blank
   // tail. Always skipped inside tmux, whose own reflow handles the shrink.
+  // Preserve scrollback so closing the slash menu does not wipe history for
+  // users who had scrolled up (same rationale as restoreEditor / #2296).
   private requestFullRenderOnAutocompleteClose(): void {
     if (isInsideTmux()) return;
     const { columns, rows } = this.tui.terminal;
@@ -270,7 +272,7 @@ export class CustomEditor extends Editor {
     // rows) is safe to clear (no blank tail) and still needs the redraw: the
     // differential renderer keeps the old viewport offset after a shrink.
     if (this.tui.render(columns).length < rows) return;
-    this.tui.requestRender(true);
+    this.tui.requestRender(true, { clearScrollback: false });
   }
 
   // Detect an autocomplete open→close edge from a render frame and force a full

@@ -827,7 +827,7 @@ describe('CustomEditor full re-render on autocomplete close', () => {
 
     renderFrame(editor); // close edge -> schedule helper
     await flushAutocomplete();
-    expect(requestRender).toHaveBeenCalledWith(true);
+    expect(requestRender).toHaveBeenCalledWith(true, { clearScrollback: false });
   });
 
   it('keeps differential rendering when the content fits on one screen', async () => {
@@ -845,6 +845,7 @@ describe('CustomEditor full re-render on autocomplete close', () => {
 
     renderFrame(editor);
     await flushAutocomplete();
+    expect(requestRender).not.toHaveBeenCalledWith(true, expect.anything());
     expect(requestRender).not.toHaveBeenCalledWith(true);
   });
 
@@ -863,7 +864,7 @@ describe('CustomEditor full re-render on autocomplete close', () => {
 
     renderFrame(editor);
     await flushAutocomplete();
-    expect(requestRender).toHaveBeenCalledWith(true);
+    expect(requestRender).toHaveBeenCalledWith(true, { clearScrollback: false });
   });
 
   it('does not force a full re-render inside tmux', async () => {
@@ -881,6 +882,7 @@ describe('CustomEditor full re-render on autocomplete close', () => {
 
     renderFrame(editor);
     await flushAutocomplete();
+    expect(requestRender).not.toHaveBeenCalledWith(true, expect.anything());
     expect(requestRender).not.toHaveBeenCalledWith(true);
   });
 
@@ -909,6 +911,6 @@ describe('CustomEditor full re-render on autocomplete close', () => {
 
     renderFrame(editor); // close edge -> schedule helper
     await flushAutocomplete();
-    expect(requestRender).toHaveBeenCalledWith(true);
+    expect(requestRender).toHaveBeenCalledWith(true, { clearScrollback: false });
   });
 });

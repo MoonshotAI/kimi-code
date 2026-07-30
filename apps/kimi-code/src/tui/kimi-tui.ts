@@ -2804,7 +2804,11 @@ export class KimiTUI {
     // differential rendering leaves the editor shifted up when the bottom-anchored
     // region shrinks in place. Skip under tmux (its own reflow handles the shrink)
     // and when content fits on one screen (a full clear would pull the editor up).
-    this.state.ui.requestRender(!this.state.terminalState.insideTmux && overflowsViewport);
+    // Keep terminal scrollback (no ESC[3J): approving a permission / closing
+    // AskUserQuestion used to wipe history and yank readers who had scrolled up
+    // (#2296). Re-anchoring the live viewport is enough.
+    const force = !this.state.terminalState.insideTmux && overflowsViewport;
+    this.state.ui.requestRender(force, force ? { clearScrollback: false } : undefined);
   }
 
   restoreInputText(text: string): void {
