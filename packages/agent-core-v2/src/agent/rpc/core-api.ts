@@ -121,6 +121,7 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  readonly promptId?: string;
   readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
@@ -207,6 +208,7 @@ export interface SkillSummary {
 export interface ActivateSkillPayload {
   readonly name: string;
   readonly args?: string | undefined;
+  readonly activationId?: string;
 }
 
 export interface ActivatePluginCommandPayload {

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   RequestError,
   type AgentSideConnection,
@@ -71,6 +73,50 @@ export type TelemetryTrackFn = (
   properties?: Record<string, unknown>,
 ) => void;
 
+export interface AcpSessionInteractionHandlers {
+  readonly approval: (request: ApprovalRequest) => Promise<ApprovalResponse>;
+  readonly question: (
+    request: QuestionRequest,
+  ) => Promise<QuestionAnswers | null>;
+}
+
+const interactionHandlersBySession = new WeakMap<
+  AcpSession,
+  AcpSessionInteractionHandlers
+>();
+
+/** @internal Package-local bridge used while a cold ACP session is materializing. */
+export function getAcpSessionInteractionHandlers(
+  session: AcpSession,
+): AcpSessionInteractionHandlers {
+  const handlers = interactionHandlersBySession.get(session);
+  if (handlers === undefined) {
+    throw new Error('ACP session interaction handlers are unavailable');
+  }
+  return handlers;
+}
+
+type PromptCorrelation =
+  | { readonly kind: 'user'; readonly promptId: string }
+  | { readonly kind: 'skill_activation'; readonly activationId: string };
+
+interface PromptAdmission {
+  readonly sessionId: string;
+  readonly correlation: PromptCorrelation;
+  readonly kick: () => Promise<unknown>;
+  readonly resolve: (response: PromptResponse) => void;
+  readonly reject: (error: unknown) => void;
+  turnId?: number;
+  kickStarted: boolean;
+  settled: boolean;
+  unsubscribe?: () => void;
+}
+
+type TaskTerminationEvent = Extract<
+  Event,
+  { readonly type: 'background.task.terminated' | 'task.terminated' }
+>;
+
 /**
  * Adapter-side wrapper around a {@link Session} from the Kimi node SDK.
  *
@@ -87,11 +133,11 @@ export class AcpSession {
    * `toolCallId` (`${turnId}:${rawId}`) so the client can correlate the
    * permission prompt with the tool card it has already rendered.
    *
-   * Updated inside the existing `onEvent` listener in {@link prompt}
-   * (any event carrying a numeric `turnId` advances the value), and
-   * reset to `undefined` on `turn.ended`. Approval flows are gated by
-   * the SDK on the active turn so a stale value is effectively
-   * unreachable in practice; the `undefined` fallback in
+   * Updated by the session-lifetime event bridge (any main-agent event
+   * carrying a numeric `turnId` advances the value), and reset to
+   * `undefined` on `turn.ended`. Approval flows are gated by the SDK on
+   * the active turn so a stale value is effectively unreachable in
+   * practice; the `undefined` fallback in
    * `buildPermissionToolCallUpdate` exists for defence-in-depth.
    */
   private currentTurnId: number | undefined = undefined;
@@ -157,6 +203,29 @@ export class AcpSession {
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
 
   /**
+   * Session-lifetime event projection state.
+   *
+   * ACP permits the agent to send `session/update` notifications when no
+   * `session/prompt` request is in flight. The underlying SDK likewise emits
+   * one session event stream for both client-initiated and runtime-initiated
+   * turns, so update projection must live for the whole {@link AcpSession}
+   * lifetime rather than inside {@link prompt}.
+   */
+  // Streaming tool arguments use replace-content semantics on ACP, so retain
+  // the cumulative text for the active turn. The wire-id set prevents a
+  // `tool.call.started` event from creating a second card when an earlier
+  // `tool.call.delta` already lazy-created it.
+  private readonly argsByToolCall = new Map<string, { args: string }>();
+  private readonly startedToolCalls = new Set<string>();
+  private readonly promptAdmissions: PromptAdmission[] = [];
+  private admittingPrompt: PromptAdmission | undefined;
+  private unsubscribeSessionEvents: (() => void) | undefined;
+  private unsubscribeApprovalHandler: (() => void) | undefined;
+  private unsubscribeQuestionHandler: (() => void) | undefined;
+  private queuedSessionEvents: Event[] | undefined;
+  private disposed = false;
+
+  /**
    * The most recent command palette advertised to the ACP client. Used by
    * `/help` so the response matches the client's `available_commands_update`
    * snapshot, including dynamically discovered skill commands.
@@ -211,9 +280,20 @@ export class AcpSession {
      * Defaults to `'off'` when absent.
      */
     initialThinkingEffort?: string,
+    /**
+     * Live events captured for a known session id while a cold
+     * `session/resume` was materializing its SDK Session. The server
+     * transfers ownership of this FIFO synchronously, after releasing
+     * the temporary raw subscription and before any asynchronous setup.
+     */
+    initialSessionEvents: readonly Event[] = [],
   ) {
     this.currentModelIdInternal = initialModelId ?? '';
     this.currentThinkingEffortInternal = initialThinkingEffort ?? 'off';
+    const approvalHandler = (request: ApprovalRequest) =>
+      this.handleApproval(request);
+    const questionHandler = (request: QuestionRequest) =>
+      this.handleQuestion(request);
     // Register the approval bridge once, at session-construction time —
     // NOT per-prompt — because `setApprovalHandler` is scoped to the
     // SDK session, not the individual turn. The handler captures `this`
@@ -224,15 +304,40 @@ export class AcpSession {
     // tests may omit it. Treat absence as "no approval channel" rather
     // than crashing the constructor — the SDK still works end-to-end,
     // just without reverse-RPC approvals.
-    if (typeof this.session.setApprovalHandler === 'function') {
-      this.session.setApprovalHandler((req) => this.handleApproval(req));
-    }
-    // Same pattern as the approval handler, but for the AskUserQuestion
-    // reverse-RPC channel (Phase 13.1). Pre-Phase-13 builds of the SDK
-    // do not expose `setQuestionHandler`, and unit-test stubs may omit
-    // it; the `typeof === 'function'` guard keeps both cases working.
-    if (typeof this.session.setQuestionHandler === 'function') {
-      this.session.setQuestionHandler(async (req) => this.handleQuestion(req));
+    try {
+      if (typeof this.session.registerApprovalHandler === 'function') {
+        this.unsubscribeApprovalHandler =
+          this.session.registerApprovalHandler(approvalHandler);
+      } else if (typeof this.session.setApprovalHandler === 'function') {
+        this.session.setApprovalHandler(approvalHandler);
+      }
+      // Same pattern as the approval handler, but for the AskUserQuestion
+      // reverse-RPC channel (Phase 13.1). Pre-Phase-13 builds of the SDK
+      // do not expose `setQuestionHandler`, and unit-test stubs may omit
+      // it; the `typeof === 'function'` guard keeps both cases working.
+      if (typeof this.session.registerQuestionHandler === 'function') {
+        this.unsubscribeQuestionHandler =
+          this.session.registerQuestionHandler(questionHandler);
+      } else if (typeof this.session.setQuestionHandler === 'function') {
+        this.session.setQuestionHandler(questionHandler);
+      }
+      this.queuedSessionEvents = [...initialSessionEvents];
+      this.unsubscribeSessionEvents = this.session.onEvent((event) => {
+        const queue = this.queuedSessionEvents;
+        if (queue !== undefined) {
+          queue.push(event);
+          return;
+        }
+        this.handleSessionEvent(event);
+      });
+      this.drainQueuedSessionEvents();
+      interactionHandlersBySession.set(this, {
+        approval: approvalHandler,
+        question: questionHandler,
+      });
+    } catch (error) {
+      this.releaseOwnedRegistrations();
+      throw error;
     }
   }
 
@@ -267,6 +372,97 @@ export class AcpSession {
    */
   get currentModeId(): AcpModeId {
     return this.currentModeIdInternal;
+  }
+
+  /**
+   * Finalize the model/thinking snapshot and reset the ACP mode after the
+   * server's asynchronous config resolution completes.
+   *
+   * A resumed session's event bridge is installed before asynchronous model
+   * metadata lookup, so setup starts with provisional values and reconciles
+   * them before the ACP response is returned.
+   */
+  setInitialConfigState(modelId: string, thinkingEffort: string): void {
+    if (this.disposed) return;
+    this.currentModelIdInternal = modelId;
+    this.currentThinkingEffortInternal = thinkingEffort;
+    this.currentModeIdInternal = DEFAULT_MODE_ID;
+  }
+
+  /**
+   * Release the session-lifetime event bridge.
+   *
+   * `AcpServer` calls this before replacing an adapter with a different SDK
+   * session and when its ACP transport closes. Idempotence matters because a
+   * reconnect can race the old connection's final cleanup. Production SDK
+   * Sessions return ownership-aware handler registrations, so releasing an
+   * old adapter cannot clear a newer adapter's replacement. Partial legacy
+   * test stubs still fall back to the setter-only surface.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.releaseOwnedRegistrations();
+    for (const pending of this.pendingPromptAborts) {
+      pending.aborted = true;
+    }
+    while (this.promptAdmissions.length > 0) {
+      const admission = this.promptAdmissions.at(0);
+      if (admission === undefined) break;
+      this.rejectPromptAdmission(
+        admission,
+        RequestError.internalError(
+          { sessionId: admission.sessionId },
+          'ACP session transport closed before the prompt turn ended',
+        ),
+      );
+    }
+    this.argsByToolCall.clear();
+    this.startedToolCalls.clear();
+    this.currentTurnId = undefined;
+  }
+
+  private releaseOwnedRegistrations(): void {
+    interactionHandlersBySession.delete(this);
+    const releases = [
+      this.unsubscribeSessionEvents,
+      this.unsubscribeApprovalHandler,
+      this.unsubscribeQuestionHandler,
+    ];
+    this.unsubscribeSessionEvents = undefined;
+    this.unsubscribeApprovalHandler = undefined;
+    this.unsubscribeQuestionHandler = undefined;
+    this.queuedSessionEvents?.splice(0);
+    this.queuedSessionEvents = undefined;
+    for (const release of releases) {
+      try {
+        release?.();
+      } catch (error) {
+        log.warn('acp: failed to release session registration', {
+          sessionId: this.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Drain the resume handoff FIFO after the Session listener is installed.
+   *
+   * The queue remains active while it is being drained, so a synchronous
+   * reentrant SDK event is appended and processed after all earlier events.
+   * JavaScript cannot run an unrelated task between the temporary raw
+   * unsubscribe and constructor call, which gives the server a no-gap
+   * handoff without changing the multicast semantics of Session.onEvent.
+   */
+  private drainQueuedSessionEvents(): void {
+    const queue = this.queuedSessionEvents;
+    if (queue === undefined) return;
+    for (let index = 0; !this.disposed && index < queue.length; index += 1) {
+      this.handleSessionEvent(queue[index]!);
+    }
+    queue.splice(0);
+    this.queuedSessionEvents = undefined;
   }
 
   /**
@@ -569,7 +765,7 @@ export class AcpSession {
    *    `toolCalls` entry. A monotonically increasing synthetic `turnId`
    *    starts at 1 and bumps on each assistant message so the wire ids
    *    (`${turnId}:${toolCallId}`) match the live emission scheme used
-   *    in {@link runPromptBody}.
+   *    in {@link handleSessionEvent}.
    *  - role `tool`         → `tool_call_update` with `status: 'completed'`
    *    (or `'failed'` if the SDK marked the message as an error).
    *    `toolCallId` is looked up from the bookkeeping map populated when
@@ -586,7 +782,7 @@ export class AcpSession {
    * Errors thrown by individual `sessionUpdate` calls are caught and
    * logged so a single transient push failure does not truncate the
    * whole replay. The method awaits every push (unlike the live
-   * `runPromptBody` fire-and-forget path) because replay is a one-shot
+   * {@link handleSessionEvent} fire-and-forget path) because replay is a one-shot
    * batch — completion ordering is what tells the caller (`loadSession`)
    * that the response is safe to return.
    */
@@ -767,6 +963,197 @@ export class AcpSession {
     );
   }
 
+  private isFromMainAgent(event: { agentId?: string }): boolean {
+    return event.agentId === undefined || event.agentId === MAIN_AGENT_ID;
+  }
+
+  /**
+   * Project the SDK's session-wide event stream onto ACP updates.
+   *
+   * This listener is registered once in the constructor and remains active
+   * between `session/prompt` requests. Prompt request completion is handled by
+   * a separate, non-projecting listener in {@link runTurnBody}; keeping those
+   * responsibilities separate prevents prompt-driven turns from being emitted
+   * twice while still making runtime-initiated turns visible.
+   */
+  private handleSessionEvent(event: Event): void {
+    if (this.disposed) return;
+    if (!this.isFromMainAgent(event)) return;
+
+    if (event.type === 'background.task.terminated' || event.type === 'task.terminated') {
+      const text = taskCompletionDisplayText(event.info);
+      if (text !== undefined) {
+        this.emitAgentInitiatedUserMessage(text, 'background task');
+      }
+      return;
+    }
+    if (event.type === 'cron.fired') {
+      this.emitAgentInitiatedUserMessage(event.prompt, 'cron');
+      return;
+    }
+    if (event.type === 'turn.started') {
+      // A start is also a recovery boundary if an older turn's terminal event
+      // was lost: never carry partial tool projection state into the new turn.
+      this.argsByToolCall.clear();
+      this.startedToolCalls.clear();
+      this.currentTurnId = event.turnId;
+      return;
+    }
+    if ('turnId' in event && typeof event.turnId === 'number') {
+      this.currentTurnId = event.turnId;
+    }
+
+    if (event.type === 'assistant.delta') {
+      this.conn
+        .sessionUpdate(assistantDeltaToSessionUpdate(this.id, event))
+        .catch((error) => {
+          log.warn('acp: failed to push agent_message_chunk', {
+            sessionId: this.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    if (event.type === 'thinking.delta') {
+      this.conn
+        .sessionUpdate(thinkingDeltaToSessionUpdate(this.id, event))
+        .catch((error) => {
+          log.warn('acp: failed to push agent_thought_chunk', {
+            sessionId: this.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    if (event.type === 'tool.call.started') {
+      this.argsByToolCall.set(event.toolCallId, { args: stringifyArgs(event.args) });
+      const startedWireId = acpToolCallId(event.turnId, event.toolCallId);
+      if (this.startedToolCalls.has(startedWireId)) {
+        this.conn
+          .sessionUpdate(toolCallStartedUpgradeToSessionUpdate(this.id, event))
+          .catch((error) => {
+            log.warn('acp: failed to push tool_call_update (start upgrade)', {
+              sessionId: this.id,
+              toolCallId: event.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      } else {
+        this.startedToolCalls.add(startedWireId);
+        this.conn
+          .sessionUpdate(toolCallStartToSessionUpdate(this.id, event))
+          .catch((error) => {
+            log.warn('acp: failed to push tool_call', {
+              sessionId: this.id,
+              toolCallId: event.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+      if (event.display) {
+        const planNote = planFromDisplayBlock(this.id, event.turnId, event.display);
+        if (planNote !== null) {
+          this.conn.sessionUpdate(planNote).catch((error) => {
+            log.warn('acp: failed to push plan', {
+              sessionId: this.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+      }
+      return;
+    }
+    if (event.type === 'tool.call.delta') {
+      const deltaWireId = acpToolCallId(event.turnId, event.toolCallId);
+      if (!this.startedToolCalls.has(deltaWireId)) {
+        const initial = event.argumentsPart ?? '';
+        this.argsByToolCall.set(event.toolCallId, { args: initial });
+        this.startedToolCalls.add(deltaWireId);
+        this.conn
+          .sessionUpdate(toolCallLazyCreateToSessionUpdate(this.id, event))
+          .catch((error) => {
+            log.warn('acp: failed to push tool_call (lazy create from delta)', {
+              sessionId: this.id,
+              toolCallId: event.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        return;
+      }
+      let accumulator = this.argsByToolCall.get(event.toolCallId);
+      if (accumulator === undefined) {
+        accumulator = { args: '' };
+        this.argsByToolCall.set(event.toolCallId, accumulator);
+      }
+      this.conn
+        .sessionUpdate(toolCallDeltaToSessionUpdate(this.id, event, accumulator))
+        .catch((error) => {
+          log.warn('acp: failed to push tool_call_update (delta)', {
+            sessionId: this.id,
+            toolCallId: event.toolCallId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    if (event.type === 'tool.progress') {
+      const notification = toolProgressToSessionUpdate(this.id, event);
+      if (notification === null) return;
+      this.conn.sessionUpdate(notification).catch((error) => {
+        log.warn('acp: failed to push tool_call_update (progress)', {
+          sessionId: this.id,
+          toolCallId: event.toolCallId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
+    if (event.type === 'tool.result') {
+      this.conn
+        .sessionUpdate(toolResultToSessionUpdate(this.id, event))
+        .catch((error) => {
+          log.warn('acp: failed to push tool_call_update (result)', {
+            sessionId: this.id,
+            toolCallId: event.toolCallId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    if (event.type === 'turn.ended') {
+      this.argsByToolCall.clear();
+      this.startedToolCalls.clear();
+      this.currentTurnId = undefined;
+    }
+  }
+
+  /**
+   * Emit the display-safe user-side half of an autonomous turn.
+   *
+   * Runtime trigger messages in context are XML control payloads intended for
+   * the model, not UI text. Task lifecycle and cron events carry the stable
+   * public fields needed for ACP instead, so this projection never reads the
+   * context message or serializes its internal XML.
+   */
+  private emitAgentInitiatedUserMessage(text: string, source: string): void {
+    if (text.length === 0) return;
+    this.conn
+      .sessionUpdate({
+        sessionId: this.id,
+        update: {
+          sessionUpdate: 'user_message_chunk',
+          content: { type: 'text', text },
+        },
+      })
+      .catch((error) => {
+        log.warn('acp: failed to push autonomous user_message_chunk', {
+          sessionId: this.id,
+          source,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
   /**
    * Run an ACP `session/prompt` against the underlying SDK session.
    *
@@ -782,10 +1169,9 @@ export class AcpSession {
    *    a synchronous `session.prompt(...)` rejection. Both are
    *    routed through {@link mapPromptError} for parity.
    *
-   * Subscribes to the session event stream; for every `assistant.delta`,
-   * pushes an `agent_message_chunk` `session/update` notification to the
-   * client. Resolves with the ACP `PromptResponse` (containing
-   * `stopReason`) when a `turn.ended` event arrives.
+   * The session-lifetime event bridge streams updates independently of this
+   * request. This method only waits for the turn's terminal event and resolves
+   * with the ACP `PromptResponse` containing its `stopReason`.
    *
    * Cleanup invariants:
    *  - The event subscription is unsubscribed on EVERY exit path
@@ -795,6 +1181,12 @@ export class AcpSession {
    *    sees a JSON-RPC error rather than a hung request.
    */
   async prompt(blocks: readonly ContentBlock[]): Promise<PromptResponse> {
+    if (this.disposed) {
+      throw RequestError.internalError(
+        { sessionId: this.id },
+        'ACP session transport closed before the prompt turn started',
+      );
+    }
     // Compression happens before any turn exists, so honor a `session/cancel`
     // that arrives during it: flip the flag from cancel() and bail out here
     // rather than launching a turn the client already asked to stop.
@@ -823,7 +1215,6 @@ export class AcpSession {
       return { stopReason: 'cancelled' };
     }
     const sessionId = this.id;
-    const conn = this.conn;
 
     // ACP clients send slash commands as plain text `ContentBlock`s in
     // `session/prompt`. Intercept only commands the adapter can execute
@@ -835,12 +1226,17 @@ export class AcpSession {
       this.emitTelemetry('acp_skill_activated', { skill_name: intent.skillName });
       const skillName = intent.skillName;
       const skillArgs = intent.args;
-      return this.runTurnBody(sessionId, conn, () =>
+      const activationId = randomUUID();
+      return this.runTurnBody(sessionId, { kind: 'skill_activation', activationId }, () =>
         // `activateSkill` accepts `args?: string | undefined`; pass the
         // empty string through verbatim — the SDK's
         // `normalizeOptionalString` converts `''` to `undefined`, which
         // is the canonical "no args" form for the skill renderer.
-        this.session.activateSkill(skillName, skillArgs.length > 0 ? skillArgs : undefined),
+        this.session.activateSkill(
+          skillName,
+          skillArgs.length > 0 ? skillArgs : undefined,
+          { activationId },
+        ),
       );
     }
     if (intent.kind === 'builtin') {
@@ -850,7 +1246,10 @@ export class AcpSession {
       return this.runUnknownSlashCommand(intent.name);
     }
 
-    return this.runTurnBody(sessionId, conn, () => this.session.prompt(parts));
+    const promptId = randomUUID();
+    return this.runTurnBody(sessionId, { kind: 'user', promptId }, () =>
+      this.session.prompt(parts, { promptId }),
+    );
   }
 
   private async runBuiltInCommand(
@@ -973,313 +1372,170 @@ export class AcpSession {
   }
 
   /**
-   * Body of {@link prompt}, extracted so the event-listener invariants
-   * — single `onEvent` subscription, `settled` flag semantics,
-   * `currentTurnId` reset — live in one place and can be driven by
+   * Body of {@link prompt}, extracted so the prompt-completion listener
+   * invariants live in one place and can be driven by
    * either `Session.prompt(parts)` or `Session.activateSkill(name, args)`.
-   * Both entry points trigger the same downstream turn (skill
-   * activation internally calls `agent.turn.prompt(...)` after
-   * injecting the `<kimi-skill-loaded>` block — see
-   * `packages/agent-core/src/agent/skill/index.ts`), so the event
-   * subscription's `turn.started` / `turn.ended` semantics apply
-   * uniformly.
+   * Both entry points carry a caller-generated correlation id that the SDK
+   * echoes in `turn.started.origin`. A request owns a turn only after that id
+   * matches, then accepts only the same turn id's terminal event. The admission
+   * gate permits only one not-yet-owned kick at a time so v1's uncorrelated
+   * `TURN_AGENT_BUSY` event can reject only the request that caused it.
    */
   private runTurnBody(
     sessionId: string,
-    conn: AgentSideConnection,
+    correlation: PromptCorrelation,
     kick: () => Promise<unknown>,
   ): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
-      let settled = false;
-      const isFromMainAgent = (event: { agentId?: string }): boolean =>
-        event.agentId === undefined || event.agentId === MAIN_AGENT_ID;
-      // Per-tool-call streaming args accumulator. Lives in the Promise
-      // executor closure so each `prompt()` invocation gets its own
-      // map and no state leaks across concurrent or sequential turns.
-      // Keyed on the **SDK** `toolCallId` (not the ACP-prefixed one)
-      // because the SDK delta events only carry the raw id.
-      const argsByToolCall = new Map<string, { args: string }>();
-      // Set of **wire-level** (turn-prefixed) tool-call ids for which
-      // we have already sent the `tool_call` CREATE notification. The
-      // agent-core actually emits `tool.call.delta` events BEFORE
-      // `tool.call.started` (deltas come from the model's args stream;
-      // the started event comes from the loop dispatching the call
-      // afterwards). Without this set, the naive "started → tool_call,
-      // delta → tool_call_update" mapping puts updates on the wire
-      // ahead of the create, and clients such as Zed surface "Tool
-      // call not found" until the create eventually lands. We instead
-      // lazy-create the wire `tool_call` on the first delta and
-      // downgrade the eventual started event into a `tool_call_update`
-      // carrying the canonical title/kind/rawInput (and any
-      // `display`-derived diff).
-      //
-      // Keyed on the wire id (`${turnId}:${rawToolCallId}`) — not the
-      // raw SDK `toolCallId` — because providers may legitimately
-      // reuse the same raw id across turns within one prompt, and
-      // each turn produces a distinct wire-level tool call that needs
-      // its own CREATE.
-      const startedToolCalls = new Set<string>();
-      const initialActiveTurnId = this.currentTurnId;
-      let hasReceivedOwnTurnStarted = false;
-      const unsub = this.session.onEvent((event) => {
-        if (
-          event.type === 'turn.started' &&
-          isFromMainAgent(event) &&
-          (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
-        ) {
-          hasReceivedOwnTurnStarted = true;
-        }
-        // Track the active turn so `handleApproval` (registered once at
-        // construction, called via `setApprovalHandler`) can compose the
-        // prefixed `${turnId}:${toolCallId}` wire id that matches the
-        // tool card the client already rendered. This branch is purely
-        // additive: it runs before the existing dispatch and never
-        // returns, so the if-chain below behaves exactly as in Phase 4.
-        // Subagent turn events carry their own `turnId`; filtering on
-        // `agentId` keeps `currentTurnId` aligned with the parent turn
-        // that the approval prompt actually belongs to.
-        if (
-          'turnId' in event &&
-          typeof event.turnId === 'number' &&
-          isFromMainAgent(event)
-        ) {
-          this.currentTurnId = event.turnId;
-        }
-        if (event.type === 'error') {
-          if (settled) return;
-          if (!isFromMainAgent(event)) return;
-          if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
-          if (hasReceivedOwnTurnStarted) return;
-          settled = true;
-          argsByToolCall.clear();
-          startedToolCalls.clear();
-          this.currentTurnId = undefined;
-          unsub();
-          log.warn('acp: prompt rejected because another turn is active', {
-            sessionId,
-            details: event.details,
-          });
-          reject(
-            RequestError.invalidRequest(
-              { code: event.code, details: event.details },
-              event.message,
-            ),
-          );
-          return;
-        }
-        if (event.type === 'assistant.delta') {
-          if (!isFromMainAgent(event)) return;
-          // `sessionUpdate` is itself async (it serializes onto the
-          // ndjson stream). The text deltas form a strictly ordered
-          // single-producer/single-consumer pipeline, so each await
-          // would force the next delta to wait for the previous flush.
-          // Fire-and-forget keeps the stream pumping; we log push
-          // failures rather than dropping them silently.
-          conn
-            .sessionUpdate(assistantDeltaToSessionUpdate(sessionId, event))
-            .catch((err) => {
-              log.warn('acp: failed to push agent_message_chunk', {
-                sessionId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'thinking.delta') {
-          if (!isFromMainAgent(event)) return;
-          conn
-            .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, event))
-            .catch((err) => {
-              log.warn('acp: failed to push agent_thought_chunk', {
-                sessionId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'tool.call.started') {
-          if (!isFromMainAgent(event)) return;
-          // Seed the accumulator with the **stringified initial args**.
-          // The wire-level `tool_call_update` is REPLACE-content (not
-          // append) so each subsequent delta emits the cumulative args
-          // string; if we seeded with an empty string the first delta
-          // would silently drop the initial args from the rendered card.
-          argsByToolCall.set(event.toolCallId, { args: stringifyArgs(event.args) });
-          // Branch on whether a streaming delta already lazy-created
-          // the wire `tool_call` for this id:
-          //  - YES → we cannot send a second `tool_call` CREATE; emit a
-          //    `tool_call_update` (the "upgrade") so `title`/`kind`/
-          //    `rawInput`/`display`-derived diff land on the existing
-          //    card and `status` flips to `'in_progress'`.
-          //  - NO  → no prior deltas (e.g. provider doesn't stream args);
-          //    take the original path and emit the `tool_call` CREATE.
-          const startedWireId = acpToolCallId(event.turnId, event.toolCallId);
-          if (startedToolCalls.has(startedWireId)) {
-            conn
-              .sessionUpdate(toolCallStartedUpgradeToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call_update (start upgrade)', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-          } else {
-            startedToolCalls.add(startedWireId);
-            conn
-              .sessionUpdate(toolCallStartToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-          }
-          // Phase 9.3: when the tool exposed a structured TodoList
-          // display, additionally fire a `plan` session_update so ACP
-          // clients can render the agent's evolving TODO list. Other
-          // display kinds (diff/file_io/command/…) are already folded
-          // into the tool_call card; only `todo_list` becomes a plan.
-          // The emission is fire-and-forget under the same idle-stream
-          // discipline as the assistant deltas above.
-          if (event.display) {
-            const planNote = planFromDisplayBlock(sessionId, event.turnId, event.display);
-            if (planNote !== null) {
-              conn.sessionUpdate(planNote).catch((err) => {
-                log.warn('acp: failed to push plan', {
-                  sessionId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            }
-          }
-          return;
-        }
-        if (event.type === 'tool.call.delta') {
-          if (!isFromMainAgent(event)) return;
-          // The agent-core emits these args-stream deltas BEFORE the
-          // `tool.call.started` event (deltas come from the provider's
-          // streaming phase; started is dispatched afterwards). If we
-          // haven't yet sent a `tool_call` CREATE for this id, do so now
-          // from the delta — Zed otherwise sees a `tool_call_update`
-          // for an unknown id and surfaces "Tool call not found" until
-          // the start eventually lands.
-          const deltaWireId = acpToolCallId(event.turnId, event.toolCallId);
-          if (!startedToolCalls.has(deltaWireId)) {
-            const initial = event.argumentsPart ?? '';
-            argsByToolCall.set(event.toolCallId, { args: initial });
-            startedToolCalls.add(deltaWireId);
-            conn
-              .sessionUpdate(toolCallLazyCreateToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call (lazy create from delta)', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            return;
-          }
-          // Subsequent delta — accumulate then emit an update with the
-          // cumulative args text (REPLACE-content semantics).
-          let acc = argsByToolCall.get(event.toolCallId);
-          if (!acc) {
-            acc = { args: '' };
-            argsByToolCall.set(event.toolCallId, acc);
-          }
-          conn
-            .sessionUpdate(toolCallDeltaToSessionUpdate(sessionId, event, acc))
-            .catch((err) => {
-              log.warn('acp: failed to push tool_call_update (delta)', {
-                sessionId,
-                toolCallId: event.toolCallId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'tool.progress') {
-          if (!isFromMainAgent(event)) return;
-          const note = toolProgressToSessionUpdate(sessionId, event);
-          if (note === null) return;
-          conn.sessionUpdate(note).catch((err) => {
-            log.warn('acp: failed to push tool_call_update (progress)', {
-              sessionId,
-              toolCallId: event.toolCallId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-          return;
-        }
-        if (event.type === 'tool.result') {
-          if (!isFromMainAgent(event)) return;
-          conn
-            .sessionUpdate(toolResultToSessionUpdate(sessionId, event))
-            .catch((err) => {
-              log.warn('acp: failed to push tool_call_update (result)', {
-                sessionId,
-                toolCallId: event.toolCallId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'turn.ended') {
-          if (settled) return;
-          if (!isFromMainAgent(event)) return;
-          settled = true;
-          if (event.reason === 'failed') {
-            // Failures bubble up via the SDK `error` payload. Phase 11.1
-            // upgrades the prior "log + resolve end_turn" behaviour to
-            // route auth-coded failures through `RequestError.authRequired()`
-            // so the client can trigger its re-auth UX. Other failure
-            // codes still resolve with `end_turn` (the spec discourages
-            // signaling errors through `stopReason`; the failure is
-            // observable in the log).
-            log.warn('acp: turn ended with failed reason', {
-              sessionId,
-              error: event.error,
-            });
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            this.currentTurnId = undefined;
-            unsub();
-            const authErr = authRequiredFromPayload(event.error);
-            if (authErr) {
-              reject(authErr);
-              return;
-            }
-          } else {
-            if (event.reason === 'blocked') {
-              // Provider safety and prompt hooks both map to ACP `refusal`
-              // (see turnEndReasonToStopReason); log them here too so the
-              // block stays observable in the agent logs, mirroring the
-              // `failed` branch above.
-              log.warn('acp: turn ended with blocked reason', {
-                reason: event.reason,
-                sessionId,
-              });
-            }
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            // Drop the turnId so a late-arriving approval (e.g. an SDK
-            // reverse-RPC racing the turn boundary) falls back to the raw
-            // SDK id rather than re-prefixing with a stale value.
-            this.currentTurnId = undefined;
-            unsub();
-          }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
-        }
+      if (this.disposed) {
+        reject(
+          RequestError.internalError(
+            { sessionId },
+            'ACP session transport closed before the prompt turn started',
+          ),
+        );
+        return;
+      }
+      const admission: PromptAdmission = {
+        sessionId,
+        correlation,
+        kick,
+        resolve,
+        reject,
+        kickStarted: false,
+        settled: false,
+      };
+      admission.unsubscribe = this.session.onEvent((event) => {
+        this.handlePromptAdmissionEvent(admission, event);
       });
-
-      kick().catch((err) => {
-        if (settled) return;
-        settled = true;
-        unsub();
-        reject(mapPromptError(err, sessionId));
-      });
+      this.promptAdmissions.push(admission);
+      this.startNextPromptAdmission();
     });
+  }
+
+  private startNextPromptAdmission(): void {
+    if (this.disposed || this.admittingPrompt !== undefined) return;
+    const admission = this.promptAdmissions.find((candidate) => !candidate.kickStarted);
+    if (admission === undefined) return;
+    admission.kickStarted = true;
+    this.admittingPrompt = admission;
+    let kicked: Promise<unknown>;
+    try {
+      kicked = admission.kick();
+    } catch (error) {
+      this.rejectPromptAdmission(admission, mapPromptError(error, admission.sessionId));
+      return;
+    }
+    void kicked.catch((error) => {
+      if (admission.settled) return;
+      if (admission.turnId !== undefined) {
+        log.warn('acp: prompt launch rejected after its turn started; waiting for turn end', {
+          sessionId: admission.sessionId,
+          turnId: admission.turnId,
+          error: errorMessage(error),
+        });
+        return;
+      }
+      this.rejectPromptAdmission(admission, mapPromptError(error, admission.sessionId));
+    });
+  }
+
+  private handlePromptAdmissionEvent(admission: PromptAdmission, event: Event): void {
+    if (admission.settled || !this.isFromMainAgent(event)) return;
+    if (event.type === 'prompt.completed') {
+      if (
+        this.admittingPrompt !== admission ||
+        admission.turnId !== undefined ||
+        admission.correlation.kind !== 'user' ||
+        event.promptId !== admission.correlation.promptId
+      ) {
+        return;
+      }
+      if (event.reason === 'failed' || event.reason === 'blocked') {
+        log.warn('acp: prompt completed before a turn was launched', {
+          sessionId: admission.sessionId,
+          reason: event.reason,
+        });
+      }
+      this.resolvePromptAdmission(admission, {
+        stopReason: turnEndReasonToStopReason(event.reason ?? 'completed'),
+      });
+      return;
+    }
+    if (event.type === 'turn.started') {
+      if (!admission.kickStarted || !matchesPromptCorrelation(event.origin, admission.correlation)) {
+        return;
+      }
+      admission.turnId = event.turnId;
+      if (this.admittingPrompt === admission) {
+        this.admittingPrompt = undefined;
+        queueMicrotask(() => this.startNextPromptAdmission());
+      }
+      return;
+    }
+    if (event.type === 'error') {
+      if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
+      if (this.admittingPrompt !== admission || admission.turnId !== undefined) return;
+      log.warn('acp: prompt rejected because another turn is active', {
+        sessionId: admission.sessionId,
+        details: event.details,
+      });
+      this.rejectPromptAdmission(
+        admission,
+        RequestError.invalidRequest(
+          { code: event.code, details: event.details },
+          event.message,
+        ),
+      );
+      return;
+    }
+    if (event.type !== 'turn.ended' || event.turnId !== admission.turnId) return;
+    if (event.reason === 'failed') {
+      log.warn('acp: turn ended with failed reason', {
+        sessionId: admission.sessionId,
+        error: event.error,
+      });
+      const authErr = authRequiredFromPayload(event.error);
+      if (authErr) {
+        this.rejectPromptAdmission(admission, authErr);
+        return;
+      }
+    } else if (event.reason === 'blocked') {
+      log.warn('acp: turn ended with blocked reason', {
+        reason: event.reason,
+        sessionId: admission.sessionId,
+      });
+    }
+    this.resolvePromptAdmission(admission, {
+      stopReason: turnEndReasonToStopReason(event.reason, event.error),
+    });
+  }
+
+  private resolvePromptAdmission(
+    admission: PromptAdmission,
+    response: PromptResponse,
+  ): void {
+    if (!this.finishPromptAdmission(admission)) return;
+    admission.resolve(response);
+  }
+
+  private rejectPromptAdmission(admission: PromptAdmission, error: unknown): void {
+    if (!this.finishPromptAdmission(admission)) return;
+    admission.reject(error);
+  }
+
+  private finishPromptAdmission(admission: PromptAdmission): boolean {
+    if (admission.settled) return false;
+    admission.settled = true;
+    admission.unsubscribe?.();
+    admission.unsubscribe = undefined;
+    const index = this.promptAdmissions.indexOf(admission);
+    if (index >= 0) this.promptAdmissions.splice(index, 1);
+    if (this.admittingPrompt === admission) {
+      this.admittingPrompt = undefined;
+      queueMicrotask(() => this.startNextPromptAdmission());
+    }
+    return true;
   }
 
   /**
@@ -1655,6 +1911,54 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
     }
   }
   return undefined;
+}
+
+function matchesPromptCorrelation(
+  origin: Extract<Event, { type: 'turn.started' }>['origin'],
+  correlation: PromptCorrelation,
+): boolean {
+  if (correlation.kind === 'user') {
+    return origin.kind === 'user' && origin.promptId === correlation.promptId;
+  }
+  return (
+    origin.kind === 'skill_activation' &&
+    origin.activationId === correlation.activationId
+  );
+}
+
+/**
+ * Build the user-visible portion of a background-task completion without
+ * exposing the model-facing `<notification>` XML or its output-control
+ * instructions. The task description is already public lifecycle metadata
+ * used by client task lists; stop reasons and output are deliberately omitted.
+ */
+function taskCompletionDisplayText(
+  info: TaskTerminationEvent['info'],
+): string | undefined {
+  if (
+    info.status === 'running' ||
+    info.detached === false ||
+    info.terminalNotificationSuppressed === true
+  ) {
+    return undefined;
+  }
+  const description = info.description.trim();
+  const subject =
+    description.length > 0
+      ? description
+      : `Background ${info.kind} task`;
+  switch (info.status) {
+    case 'completed':
+      return `${subject} completed.`;
+    case 'failed':
+      return `${subject} failed.`;
+    case 'timed_out':
+      return `${subject} timed out.`;
+    case 'killed':
+      return `${subject} was stopped.`;
+    case 'lost':
+      return `${subject} was lost.`;
+  }
 }
 
 /**

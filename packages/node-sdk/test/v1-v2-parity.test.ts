@@ -162,7 +162,7 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
 }
 
 /**
- * Understood v1↔v2 return-value gaps, pinned per method with the reason.
+ * Understood v1↔v2 return-value/event gaps, pinned per surface with the reason.
  * Each entry is a projection applied to BOTH results before comparison, so
  * the comparison still covers everything not listed here. Keep empty unless a
  * gap is genuinely accepted; remove entries as gaps close.
@@ -290,6 +290,15 @@ const KNOWN_DIFFS = {
   // ever runs) and compares in full there.
   getMcpStartupMetrics: (metrics: McpStartupMetrics): unknown =>
     Object.keys(metrics).length === 1 ? {} : metrics,
+  // The v2 prompt scheduler owns a correlated `prompt.completed` resource
+  // fact; v1 has no in-process prompt-resource service and therefore cannot
+  // emit the same event. The v2 SDK intentionally forwards this additive
+  // public fact because a blocked/failed prompt can complete before any turn
+  // exists. Comparisons project it out, while the event case below asserts
+  // its full promptId/reason payload so this richer surface cannot disappear
+  // silently.
+  eventPromptCompleted: (events: readonly Event[]): readonly Event[] =>
+    events.filter((event) => event.type !== 'prompt.completed'),
   // Session export: `zipPath` is the caller-chosen output (different per
   // engine by construction) — deleted. `sessionDir` compares after the
   // home-prefix scrub (same `<home>/sessions/<workdir-key>/<id>` layout on
@@ -2456,9 +2465,24 @@ describe('v1↔v2 agent interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_agent_skill' });
       const input = { sessionId: 'session_parity_agent_skill' } as const;
+      const activationId = 'activation-parity-skill';
+      const v1Events: Event[] = [];
+      const v2Events: Event[] = [];
+      pair.v1.onEvent((event) => v1Events.push(event));
+      pair.v2.onEvent((event) => v2Events.push(event));
       await Promise.all([
-        pair.v1.activateSkill({ ...input, name: 'parity-skill', args: 'some args' }),
-        pair.v2.activateSkill({ ...input, name: 'parity-skill', args: 'some args' }),
+        pair.v1.activateSkill({
+          ...input,
+          name: 'parity-skill',
+          args: 'some args',
+          activationId,
+        }),
+        pair.v2.activateSkill({
+          ...input,
+          name: 'parity-skill',
+          args: 'some args',
+          activationId,
+        }),
       ]);
       const project = KNOWN_DIFFS.listSessions;
       const [v1List, v2List] = await Promise.all([
@@ -2469,6 +2493,16 @@ describe('v1↔v2 agent interaction parity', () => {
         normalize(project(v1List, pair.v1Home), 'id'),
       );
       expect(v1List[0]?.lastPrompt).toBe('/parity-skill some args');
+      expect(
+        v1Events.find((event) => event.type === 'turn.started'),
+      ).toMatchObject({
+        origin: { kind: 'skill_activation', activationId },
+      });
+      expect(
+        v2Events.find((event) => event.type === 'turn.started'),
+      ).toMatchObject({
+        origin: { kind: 'skill_activation', activationId },
+      });
       // An unknown skill rejects synchronously with the same code and text.
       const rejection = 'Skill "missing-skill" was not found';
       await expect(
@@ -4010,11 +4044,20 @@ describe('v1↔v2 event & interaction parity', () => {
       const input = { sessionId: 'session_parity_events_prompt' } as const;
       const v1Events: Event[] = [];
       const v2Events: Event[] = [];
+      const promptId = 'prompt-parity-events';
       pair.v1.onEvent((event) => v1Events.push(event));
       pair.v2.onEvent((event) => v2Events.push(event));
       await Promise.all([
-        pair.v1.prompt({ ...input, input: [{ type: 'text', text: 'hello events' }] }),
-        pair.v2.prompt({ ...input, input: [{ type: 'text', text: 'hello events' }] }),
+        pair.v1.prompt({
+          ...input,
+          input: [{ type: 'text', text: 'hello events' }],
+          promptId,
+        }),
+        pair.v2.prompt({
+          ...input,
+          input: [{ type: 'text', text: 'hello events' }],
+          promptId,
+        }),
       ]);
       await settleTurns();
       // Two pinned engine-internal differences in the failure path, both
@@ -4025,7 +4068,10 @@ describe('v1↔v2 event & interaction parity', () => {
       // login-guided 'LLM not set' text; v2: 'Model not set' — the same
       // pinned wording family as setModel / generateAgentsMd).
       const projectFailure = (events: readonly Event[]): unknown[] =>
-        projectEventStream(events, input.sessionId).flatMap((projected) => {
+        projectEventStream(
+          KNOWN_DIFFS.eventPromptCompleted(events),
+          input.sessionId,
+        ).flatMap((projected) => {
           const entry = projected as { type: string; code?: string };
           if (entry.type === 'turn.step.interrupted') return [];
           if (entry.type === 'error') return { type: entry.type, code: entry.code };
@@ -4039,6 +4085,23 @@ describe('v1↔v2 event & interaction parity', () => {
       expect(v1Projected.map((event) => (event as { type: string }).type)).toEqual(
         expect.arrayContaining(['session.meta.updated', 'turn.started', 'turn.ended']),
       );
+      expect(
+        v1Events.find((event) => event.type === 'turn.started'),
+      ).toMatchObject({ origin: { kind: 'user', promptId } });
+      expect(
+        v2Events.find((event) => event.type === 'turn.started'),
+      ).toMatchObject({ origin: { kind: 'user', promptId } });
+      expect(v1Events.filter((event) => event.type === 'prompt.completed')).toEqual([]);
+      expect(v2Events.filter((event) => event.type === 'prompt.completed')).toEqual([
+        expect.objectContaining({
+          type: 'prompt.completed',
+          sessionId: input.sessionId,
+          agentId: 'main',
+          promptId,
+          reason: 'failed',
+          finishedAt: expect.any(String),
+        }),
+      ]);
     } finally {
       await closeSessionPair(pair);
       restoreEnv();

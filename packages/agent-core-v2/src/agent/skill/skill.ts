@@ -5,6 +5,7 @@ import type { Turn } from '#/agent/loop/loop';
 export interface SkillActivationInput {
   readonly name: string;
   readonly args?: string;
+  readonly activationId?: string;
 }
 
 export interface IAgentSkillService {

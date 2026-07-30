@@ -9,6 +9,7 @@ import {
 
 import { Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
+import type { ApprovalHandler, Event, QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
@@ -33,6 +34,7 @@ import type {
   TelemetryContextPatch,
   TelemetryProperties,
   TestMcpServerOptions,
+  Unsubscribe,
 } from '#/types';
 
 export interface KimiHarnessRuntimeOptions {
@@ -163,6 +165,38 @@ export class KimiHarness {
     this.trackSessionStarted(summary.id, true, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
+  }
+
+  /**
+   * Subscribe to live transport events for one session id without first
+   * materializing a {@link Session}. This does not replay persisted history;
+   * the caller owns the returned subscription and must release it.
+   */
+  onSessionEvent(sessionId: string, listener: (event: Event) => void): Unsubscribe {
+    const id = normalizeSessionId(sessionId);
+    return this.rpc.onEvent((event) => {
+      if (event.sessionId === id) listener(event);
+    });
+  }
+
+  /**
+   * Install an ownership-aware approval handler before a Session object
+   * exists. Releasing it only removes this exact handler, so a later Session
+   * handoff cannot be accidentally cleared.
+   */
+  registerSessionApprovalHandler(
+    sessionId: string,
+    handler: ApprovalHandler,
+  ): Unsubscribe {
+    return this.rpc.registerApprovalHandler(normalizeSessionId(sessionId), handler);
+  }
+
+  /** Ownership-aware counterpart of {@link registerSessionApprovalHandler}. */
+  registerSessionQuestionHandler(
+    sessionId: string,
+    handler: QuestionHandler,
+  ): Unsubscribe {
+    return this.rpc.registerQuestionHandler(normalizeSessionId(sessionId), handler);
   }
 
   async reloadSession(input: ReloadSessionInput): Promise<Session> {

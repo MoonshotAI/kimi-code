@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import {
   type IAgentScopeHandle,
   LifecycleScope,
@@ -394,6 +394,24 @@ class NoopSessionExternalHooksService implements ISessionExternalHooksService {
   declare readonly _serviceBrand: undefined;
 }
 
+let disposedSessionScopes: string[] = [];
+
+class RecordingSessionDisposalService
+  extends Disposable
+  implements ISessionExternalHooksService
+{
+  declare readonly _serviceBrand: undefined;
+
+  constructor(@ISessionContext context: ISessionContext) {
+    super();
+    this._register(
+      toDisposable(() => {
+        disposedSessionScopes.push(context.sessionId);
+      }),
+    );
+  }
+}
+
 let recordedSessionHookEvents: string[] = [];
 
 class RecordingSessionExternalHooksService
@@ -425,6 +443,7 @@ describe('SessionLifecycleService', () => {
   let tmpRoots: string[];
 
   beforeEach(() => {
+    disposedSessionScopes = [];
     recordedSessionHookEvents = [];
     telemetryRecords = [];
     tmpRoots = [];
@@ -474,7 +493,10 @@ describe('SessionLifecycleService', () => {
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
       stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
-      stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
+      stubPair(ISessionCronService, {
+        _serviceBrand: undefined,
+        start: () => Promise.resolve(),
+      } as unknown as ISessionCronService),
       stubPair(ISessionSecondaryModelWarningService, {
         _serviceBrand: undefined,
         getSecondaryModelWarning: () => undefined,
@@ -839,6 +861,134 @@ describe('SessionLifecycleService', () => {
     expect(captured).toMatchObject({ sessionId: 's1', handle: h, source: 'startup' });
   });
 
+  it('runs creation hooks before starting the session cron scheduler', async () => {
+    const order: string[] = [];
+    const svc = build([
+      stubPair(ISessionCronService, {
+        _serviceBrand: undefined,
+        start: () => {
+          order.push('cron');
+          return Promise.resolve();
+        },
+      } as unknown as ISessionCronService),
+    ]);
+    svc.hooks.onDidCreateSession.register('observer', async (_event, next) => {
+      order.push('observer');
+      await next();
+    });
+
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    expect(order).toEqual(['observer', 'cron']);
+  });
+
+  it('lets resume hooks observe main-agent creation before restore producers start', async () => {
+    const order: string[] = [];
+    const main = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: () => {
+          throw new Error('unexpected main agent service access');
+        },
+      },
+      dispose: () => {},
+    } as IAgentScopeHandle;
+    let liveMain: IAgentScopeHandle | undefined;
+    const svc = build([
+      stubPair(IWorkspaceService, persistentWorkspaceStub()),
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        get: (id: string) => (id === MAIN_AGENT_ID ? liveMain : undefined),
+        create: () => {
+          order.push('main');
+          liveMain = main;
+          return Promise.resolve(main);
+        },
+      }),
+      stubPair(ISessionCronService, {
+        _serviceBrand: undefined,
+        start: () => {
+          order.push('cron');
+          return Promise.resolve();
+        },
+      } as unknown as ISessionCronService),
+    ]);
+    svc.hooks.onDidCreateSession.register('observer', async (_event, next) => {
+      order.push('observer-before');
+      await next();
+      order.push('observer-after');
+    });
+
+    await svc.resume('s1');
+
+    expect(order).toEqual(['observer-before', 'main', 'cron', 'observer-after']);
+  });
+
+  it('removes a fresh session when cron scheduler startup fails', async () => {
+    const startupError = new Error('cron startup failed');
+    const main = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: () => {
+          throw new Error('unexpected main agent service access');
+        },
+      },
+      dispose: () => {},
+    } as IAgentScopeHandle;
+    let liveMain: IAgentScopeHandle | undefined;
+    const removeAgent = vi.fn((agentId: string) => {
+      if (liveMain?.id === agentId) liveMain = undefined;
+      return Promise.resolve();
+    });
+    const removeSessionDir = vi.fn(() => Promise.resolve());
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const svc = build([
+      stubPair(IHostFileSystem, {
+        remove: removeSessionDir,
+      } as unknown as IHostFileSystem),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        create: () => {
+          liveMain = main;
+          return Promise.resolve(main);
+        },
+        get: (id: string) => (id === MAIN_AGENT_ID ? liveMain : undefined),
+        list: () => (liveMain === undefined ? [] : [liveMain]),
+        remove: removeAgent,
+      }),
+      stubPair(ISessionCronService, {
+        _serviceBrand: undefined,
+        start: () => Promise.reject(startupError),
+      } as unknown as ISessionCronService),
+    ]);
+    const created: string[] = [];
+    svc.onDidCreateSession((event) => created.push(event.sessionId));
+
+    await expect(
+      svc.create({
+        sessionId: 's1',
+        workDir: '/tmp/proj',
+        mainAgentBinding: { profile: 'agent', model: 'mock' },
+      }),
+    ).rejects.toBe(startupError);
+
+    expect(svc.get('s1')).toBeUndefined();
+    expect(svc.list()).toEqual([]);
+    expect(created).toEqual([]);
+    expect(removeAgent).toHaveBeenCalledWith(MAIN_AGENT_ID);
+    expect(removeSessionDir).toHaveBeenCalledOnce();
+    expect(disposedSessionScopes).toEqual(['s1']);
+  });
+
   it('emits session_started with resumed: false and the bound session id on create', async () => {
     const svc = build();
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
@@ -917,6 +1067,57 @@ describe('SessionLifecycleService', () => {
     expect(telemetryRecords).toContainEqual({
       event: 'session_load_failed',
       properties: { sessionId: 's1', reason: 'TypeError' },
+    });
+  });
+
+  it('removes a resumed session when cron scheduler startup fails', async () => {
+    const startupError = new Error('cron startup failed');
+    const main = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: () => {
+          throw new Error('unexpected main agent service access');
+        },
+      },
+      dispose: () => {},
+    } as IAgentScopeHandle;
+    let liveMain: IAgentScopeHandle | undefined = main;
+    const removeAgent = vi.fn((agentId: string) => {
+      if (liveMain?.id === agentId) liveMain = undefined;
+      return Promise.resolve();
+    });
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const svc = build([
+      stubPair(IWorkspaceService, persistentWorkspaceStub()),
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        get: (id: string) => (id === MAIN_AGENT_ID ? liveMain : undefined),
+        list: () => (liveMain === undefined ? [] : [liveMain]),
+        remove: removeAgent,
+      }),
+      stubPair(ISessionCronService, {
+        _serviceBrand: undefined,
+        start: () => Promise.reject(startupError),
+      } as unknown as ISessionCronService),
+    ]);
+
+    await expect(svc.resume('s1')).rejects.toBe(startupError);
+
+    expect(svc.get('s1')).toBeUndefined();
+    expect(svc.list()).toEqual([]);
+    expect(removeAgent).toHaveBeenCalledWith(MAIN_AGENT_ID);
+    expect(disposedSessionScopes).toEqual(['s1']);
+    expect(telemetryRecords).toContainEqual({
+      event: 'session_load_failed',
+      properties: { sessionId: 's1', reason: 'Error' },
     });
   });
 

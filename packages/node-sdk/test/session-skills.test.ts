@@ -138,8 +138,9 @@ describe('Session skills', () => {
         (event) => event.type === 'session.meta.updated',
       );
       const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+      const activationId = 'activation_sdk_review';
 
-      await session.activateSkill(' review ', ' src/app.ts ');
+      await session.activateSkill(' review ', ' src/app.ts ', { activationId });
       const activatedEvent = await activated;
       const metaEvent = await metaUpdated;
       await ended;
@@ -161,6 +162,9 @@ describe('Session skills', () => {
       expect(events.findIndex((event) => event.type === 'turn.started')).toBeGreaterThan(
         events.findIndex((event) => event.type === 'skill.activated'),
       );
+      expect(events.find((event) => event.type === 'turn.started')).toMatchObject({
+        origin: { kind: 'skill_activation', activationId },
+      });
       expect(metaEvent).toMatchObject({
         type: 'session.meta.updated',
         sessionId: session.id,

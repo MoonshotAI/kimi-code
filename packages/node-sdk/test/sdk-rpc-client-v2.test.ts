@@ -13,6 +13,14 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import {
+  IAgentLifecycleService,
+  IEventBus,
+  ISessionLifecycleService,
+  MAIN_AGENT_ID,
+  type DomainEvent,
+} from '@moonshot-ai/agent-core-v2';
+
 import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness, SDKRpcClientV2 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import { IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
@@ -140,6 +148,151 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(await rpc.reloadPlugins()).toEqual({ added: [], removed: [], errors: [] });
       await expect(rpc.getPluginInfo('missing-plugin')).rejects.toThrow();
     } finally {
+      await rpc.close();
+    }
+  });
+
+  it('wires session events before downstream creation hooks can emit', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_resume_hook_event';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    let releaseHook!: () => void;
+    const hookGate = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    let signalEventPublished!: () => void;
+    const eventPublished = new Promise<void>((resolve) => {
+      signalEventPublished = resolve;
+    });
+    const events: Array<{ readonly type: string; readonly sessionId?: string }> = [];
+    const unsubscribe = rpc.onEvent((event) => {
+      events.push(event);
+    });
+    let resumeSettled = false;
+    let resume: Promise<unknown> | undefined;
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    const hook = lifecycle.hooks.onDidCreateSession.register(
+      'test-resume-hook-event',
+      async (event, next) => {
+        if (event.source === 'resume' && event.sessionId === sessionId) {
+          const agentLifecycle = event.handle.accessor.get(IAgentLifecycleService);
+          const onDidCreate = agentLifecycle.onDidCreate((main) => {
+            if (main.id !== MAIN_AGENT_ID) return;
+            main.accessor.get(IEventBus).publish({
+              type: 'assistant.delta',
+              turnId: 1,
+              delta: 'Published before resume returned.',
+            } as DomainEvent);
+            signalEventPublished();
+          });
+          try {
+            // The terminal materializes the main agent. SessionEventWiring's
+            // earlier onDidCreate listener must attach its event bus before
+            // this callback publishes, and the outer hook stays pending so
+            // the assertion runs before resume can settle.
+            await next();
+            await hookGate;
+          } finally {
+            onDidCreate.dispose();
+          }
+          return;
+        }
+        await next();
+      },
+    );
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+      events.length = 0;
+
+      resume = rpc.resumeSession({ id: sessionId }).finally(() => {
+        resumeSettled = true;
+      });
+      await eventPublished;
+
+      expect(resumeSettled).toBe(false);
+      expect(events).toContainEqual({
+        type: 'assistant.delta',
+        sessionId,
+        agentId: MAIN_AGENT_ID,
+        turnId: 1,
+        delta: 'Published before resume returned.',
+      });
+    } finally {
+      releaseHook();
+      await resume?.catch(() => undefined);
+      hook.dispose();
+      unsubscribe();
+      await rpc.close();
+    }
+  });
+
+  it('drops provisional event wiring when a downstream creation hook fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_resume_hook_failure';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    const startupError = new Error('downstream startup failed');
+    let rejectNextResume = true;
+    const hook = lifecycle.hooks.onDidCreateSession.register(
+      'test-resume-hook-failure',
+      async (event, next) => {
+        if (
+          event.source === 'resume' &&
+          event.sessionId === sessionId &&
+          rejectNextResume
+        ) {
+          rejectNextResume = false;
+          throw startupError;
+        }
+        await next();
+      },
+    );
+    const events: Array<{ readonly type: string; readonly sessionId?: string }> = [];
+    const unsubscribe = rpc.onEvent((event) => {
+      events.push(event);
+    });
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+      events.length = 0;
+
+      await expect(rpc.resumeSession({ id: sessionId })).rejects.toBe(startupError);
+      expect(lifecycle.get(sessionId)).toBeUndefined();
+
+      await rpc.resumeSession({ id: sessionId });
+      const resumed = lifecycle.get(sessionId);
+      if (resumed === undefined) throw new Error('session was not resumed');
+      const main = resumed.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      if (main === undefined) throw new Error('resumed session has no main agent');
+      main.accessor.get(IEventBus).publish({
+        type: 'assistant.delta',
+        turnId: 2,
+        delta: 'Published after retry.',
+      } as DomainEvent);
+
+      expect(
+        events.filter((event) => event.type === 'assistant.delta'),
+      ).toEqual([
+        {
+          type: 'assistant.delta',
+          sessionId,
+          agentId: MAIN_AGENT_ID,
+          turnId: 2,
+          delta: 'Published after retry.',
+        },
+      ]);
+    } finally {
+      hook.dispose();
+      unsubscribe();
       await rpc.close();
     }
   });

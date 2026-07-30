@@ -98,16 +98,30 @@ export class Session {
     this.rpc.setApprovalHandler(this.id, handler);
   }
 
+  registerApprovalHandler(handler: ApprovalHandler): Unsubscribe {
+    this.ensureOpen();
+    return this.rpc.registerApprovalHandler(this.id, handler);
+  }
+
   setQuestionHandler(handler: QuestionHandler | undefined): void {
     this.ensureOpen();
     this.rpc.setQuestionHandler(this.id, handler);
   }
 
-  async prompt(input: string | PromptInput): Promise<void> {
+  registerQuestionHandler(handler: QuestionHandler): Unsubscribe {
+    this.ensureOpen();
+    return this.rpc.registerQuestionHandler(this.id, handler);
+  }
+
+  async prompt(
+    input: string | PromptInput,
+    options?: { readonly promptId?: string },
+  ): Promise<void> {
     this.ensureOpen();
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+      promptId: options?.promptId,
     });
   }
 
@@ -548,7 +562,11 @@ export class Session {
     return this.rpc.getPluginInfo(id);
   }
 
-  async activateSkill(name: string, args?: string | undefined): Promise<void> {
+  async activateSkill(
+    name: string,
+    args?: string | undefined,
+    options?: { readonly activationId?: string },
+  ): Promise<void> {
     this.ensureOpen();
     const skillName = normalizeRequiredString(
       name,
@@ -560,6 +578,7 @@ export class Session {
       sessionId: this.id,
       name: skillName,
       ...(skillArgs !== undefined ? { args: skillArgs } : {}),
+      activationId: options?.activationId,
     });
   }
 

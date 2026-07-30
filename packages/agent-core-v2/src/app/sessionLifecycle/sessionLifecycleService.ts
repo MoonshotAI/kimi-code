@@ -9,7 +9,9 @@
  * broadcasts through `event`; session start and resume failures are reported
  * through `telemetry`. Each Session scope receives a telemetry view bound to
  * its session id, while failures before a scope is available use an ephemeral
- * context view.
+ * context view. Creation hooks wrap the session's cron scheduler start, so
+ * edge adapters can subscribe before autonomous work begins and unwind their
+ * subscriptions if a downstream hook or scheduler startup fails.
  * Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
@@ -73,6 +75,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
@@ -165,6 +168,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         opts.workDir,
         handle.accessor.get(ISessionContext).workspaceId,
       );
+      await this.announceCreated({ sessionId, handle, source: 'startup' });
+      return handle;
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
@@ -173,8 +178,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'startup' });
-    return handle;
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
@@ -249,8 +252,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.appendLogStore.flush();
   }
 
-  private async announceCreated(event: SessionCreatedEvent): Promise<void> {
-    await this.hooks.onDidCreateSession.run(event);
+  private async announceCreated(
+    event: SessionCreatedEvent,
+    prepare?: () => Promise<void>,
+  ): Promise<void> {
+    await this.hooks.onDidCreateSession.run(event, async ({ handle }) => {
+      await prepare?.();
+      await handle.accessor.get(ISessionCronService).start();
+    });
     this._onDidCreateSession.fire(event);
     event.handle.accessor
       .get(ITelemetryService)
@@ -297,12 +306,30 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       workspaceId: summary.workspaceId,
     });
-    const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.get(MAIN_AGENT_ID) === undefined) {
-      await agents.create({ agentId: MAIN_AGENT_ID });
+    try {
+      const agents = handle.accessor.get(IAgentLifecycleService);
+      // Main-agent wire restore can publish task reconciliation events. Keep
+      // materialization inside the hook terminal so edge observers subscribe
+      // to onDidCreate before the wire begins restoring.
+      await this.announceCreated(
+        { sessionId, handle, source: 'resume' },
+        async () => {
+          if (agents.get(MAIN_AGENT_ID) === undefined) {
+            await agents.create({ agentId: MAIN_AGENT_ID });
+          }
+        },
+      );
+      return handle;
+    } catch (error) {
+      if (this.sessions.get(sessionId) === handle) {
+        this.sessions.delete(sessionId);
+      }
+      await this.drainAgents(handle).catch(() => {});
+      try {
+        handle.dispose();
+      } catch {}
+      throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'resume' });
-    return handle;
   }
 
   list(): readonly ISessionScopeHandle[] {

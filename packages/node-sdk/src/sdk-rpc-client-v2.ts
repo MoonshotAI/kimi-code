@@ -385,11 +385,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private readonly globalMcpOAuthFlows = new Map<string, { flow: BeginAuthorizationResult }>();
   /**
    * Per-live-session event/interaction wirings (`src/v2/session-wiring.ts`):
-   * created when a session materializes through this client (create / resume /
-   * fork / reload), dropped on close (ours or the engine's). Each wiring feeds
-   * the base class's event listeners from the session's per-agent event buses
-   * and bridges its pending approvals / questions / user-tool calls to the
-   * registered handlers.
+   * created from the session-lifecycle hook before autonomous producers start,
+   * then confirmed idempotently by create / resume / fork / reload. Dropped on
+   * close (ours or the engine's). Each wiring feeds the base class's event
+   * listeners from the session's per-agent event buses and bridges its pending
+   * approvals / questions / user-tool calls to the registered handlers.
    */
   private readonly sessionWirings = new Map<string, SessionEventWiring>();
   /** App-scope subscriptions (global event forwarding, lifecycle tracking), disposed in {@link close}. */
@@ -444,6 +444,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       app.accessor.get(IProviderService).ready,
     ]).then(() => undefined);
     this.appSubscriptions.push(
+      this.app.accessor
+        .get(ISessionLifecycleService)
+        .hooks.onDidCreateSession.register(
+          'node-sdk-event-wiring',
+          async (event, next) => {
+            this.wireSession(event.handle);
+            try {
+              await next();
+            } catch (error) {
+              this.unwireSession(event.sessionId);
+              throw error;
+            }
+          },
+        ),
       // v1's stream carries `session.meta.updated` (the prompt metadata
       // path) — the one v1-visible fact the v2 engine publishes on the
       // process-global IEventService rather than a per-agent bus. Every other
@@ -1477,7 +1491,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
-    await agent.prompt({ input: input.input, disabledTools: input.disabledTools });
+    await agent.prompt({
+      input: input.input,
+      promptId: input.promptId,
+      disabledTools: input.disabledTools,
+    });
   }
 
   /**
@@ -1535,7 +1553,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentSkillService).activate({ name: input.name, args: input.args });
+    await agent.accessor.get(IAgentSkillService).activate({
+      name: input.name,
+      args: input.args,
+      activationId: input.activationId,
+    });
     if (this.interactiveAgentId === MAIN_AGENT_ID) {
       await this.updatePromptMetadata(input.sessionId, promptMetadataTextFromSkill(input));
     }

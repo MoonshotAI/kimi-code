@@ -32,6 +32,7 @@ export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[numbe
 export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
+    promptId?: string;
     disabledTools?: readonly string[];
   }): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;

@@ -74,7 +74,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     const turn = await this.recordActivation(
       {
         kind: 'skill_activation',
-        activationId: randomUUID(),
+        activationId: input.activationId ?? randomUUID(),
         skillName: skill.name,
         trigger: 'user-slash',
         skillType: skill.metadata.type,

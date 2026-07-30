@@ -639,6 +639,7 @@ export interface SessionStateSnapshot {
     readonly providerMessageId?: string;
     readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'user';
+      readonly promptId?: string;
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly activationId: string;
@@ -715,6 +716,7 @@ export interface AgentStateSnapshot {
       readonly turnId: number;
       readonly origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'user';
+        readonly promptId?: string;
       } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'skill_activation';
         readonly activationId: string;
@@ -839,6 +841,7 @@ export interface AgentStateSnapshot {
     turnId: number;
     origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'user';
+      readonly promptId?: string;
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly activationId: string;
@@ -895,6 +898,7 @@ export interface AgentStateSnapshot {
       readonly turnId: number;
       readonly origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'user';
+        readonly promptId?: string;
       } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'skill_activation';
         readonly activationId: string;
@@ -1008,7 +1012,7 @@ export interface AgentStateSnapshot {
   'llmRequester.lastConfigLogSignature': string | undefined;
   'llmRequester.mediaDegradedTurns': Set<number>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand@2656": undefined;
+    readonly "__@mediaStripSnapshotBrand@2657": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {

@@ -1,3 +1,9 @@
+/**
+ * Scenario: ACP slash-command routing and concurrent skill activations.
+ * Responsibilities: route known skill commands locally and correlate each ACP request to its turn.
+ * Wiring: real ACP NDJSON connections; only the node SDK Session boundary is scripted.
+ * Run: pnpm --filter @moonshot-ai/acp-adapter exec vitest run test/session-slash.test.ts
+ */
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -21,17 +27,37 @@ import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
 class CollectingClient implements Client {
   readonly updates: SessionNotification[] = [];
+  private readonly updateWaiters = new Set<{
+    readonly predicate: (notification: SessionNotification) => boolean;
+    readonly resolve: (notification: SessionNotification) => void;
+  }>();
+
   async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('requestPermission should not be called');
   }
   async sessionUpdate(n: SessionNotification): Promise<void> {
     this.updates.push(n);
+    for (const waiter of this.updateWaiters) {
+      if (!waiter.predicate(n)) continue;
+      this.updateWaiters.delete(waiter);
+      waiter.resolve(n);
+    }
   }
   async writeTextFile(_p: WriteTextFileRequest): Promise<WriteTextFileResponse> {
     throw new Error('writeTextFile should not be called');
   }
   async readTextFile(_p: ReadTextFileRequest): Promise<ReadTextFileResponse> {
     throw new Error('readTextFile should not be called');
+  }
+
+  waitForUpdate(
+    predicate: (notification: SessionNotification) => boolean,
+  ): Promise<SessionNotification> {
+    const existing = this.updates.find(predicate);
+    if (existing !== undefined) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      this.updateWaiters.add({ predicate, resolve });
+    });
   }
 }
 
@@ -72,21 +98,57 @@ function makeFakeSession(
     prompt: 0,
     activate: [] as Array<{ name: string; args?: string | undefined }>,
   };
-  const emit = async (): Promise<void> => {
+  const emit = async (
+    origin:
+      | { readonly kind: 'user'; readonly promptId?: string }
+      | {
+          readonly kind: 'skill_activation';
+          readonly activationId?: string;
+          readonly skillName: string;
+          readonly trigger: 'user-slash';
+        },
+  ): Promise<void> => {
     await Promise.resolve();
+    const firstTurnEvent = script.find(
+      (event): event is Event & { turnId: number } =>
+        'turnId' in event && typeof event.turnId === 'number',
+    );
+    if (firstTurnEvent !== undefined) {
+      for (const fn of listeners) {
+        fn({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: firstTurnEvent.turnId,
+          origin,
+        } as Event);
+      }
+    }
     for (const ev of script) {
       for (const fn of listeners) fn(ev);
     }
   };
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
       calls.prompt += 1;
-      await emit();
+      await emit({ kind: 'user', promptId: options?.promptId });
     },
-    activateSkill: async (name: string, args?: string | undefined) => {
+    activateSkill: async (
+      name: string,
+      args?: string | undefined,
+      options?: { readonly activationId?: string },
+    ) => {
       calls.activate.push({ name, args });
-      await emit();
+      await emit({
+        kind: 'skill_activation',
+        activationId: options?.activationId,
+        skillName: name,
+        trigger: 'user-slash',
+      });
     },
     cancel: async () => undefined,
     onEvent: (fn: (event: Event) => void) => {
@@ -114,30 +176,14 @@ function endedTurn(sessionId: string): Event {
   return { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event;
 }
 
-/**
- * Wait for the client to receive an `available_commands_update` push.
- * The server schedules it via `setTimeout(0)` after `session/new`
- * resolves, so we need a microtask boundary before sending a prompt
- * that relies on the per-session `skillCommandMap` being seeded.
- */
 async function waitForAvailableCommands(
   collecting: CollectingClient,
-  timeoutMs = 200,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (
-      collecting.updates.some(
-        (n) =>
-          (n.update as { sessionUpdate?: string }).sessionUpdate ===
-          'available_commands_update',
-      )
-    ) {
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error('available_commands_update never arrived');
+  await collecting.waitForUpdate(
+    (notification) =>
+      (notification.update as { sessionUpdate?: string }).sessionUpdate ===
+      'available_commands_update',
+  );
 }
 
 describe('AcpSession slash routing', () => {
@@ -220,6 +266,167 @@ describe('AcpSession slash routing', () => {
 
     expect(calls.prompt).toBe(0);
     expect(calls.activate).toEqual([{ name: 'foo', args: undefined }]);
+  });
+
+  it('keeps concurrent activations of the same skill bound to their correlation ids', async () => {
+    const sessionId = 'sess-slash-same-skill-concurrent';
+    const listeners = new Set<(event: Event) => void>();
+    const activationCalls: Array<{
+      readonly args?: string;
+      readonly activationId?: string;
+    }> = [];
+    let signalFirstActivation!: () => void;
+    let signalSecondActivation!: () => void;
+    const firstActivation = new Promise<void>((resolve) => {
+      signalFirstActivation = resolve;
+    });
+    const secondActivation = new Promise<void>((resolve) => {
+      signalSecondActivation = resolve;
+    });
+    const emit = (event: Event): void => {
+      for (const listener of listeners) listener(event);
+    };
+    const session = {
+      id: sessionId,
+      prompt: async () => {
+        throw new Error('plain prompt should not run for a known skill command');
+      },
+      activateSkill: async (
+        _name: string,
+        args?: string,
+        options?: { readonly activationId?: string },
+      ) => {
+        activationCalls.push({ args, activationId: options?.activationId });
+        if (activationCalls.length === 1) signalFirstActivation();
+        if (activationCalls.length === 2) signalSecondActivation();
+      },
+      cancel: async () => undefined,
+      onEvent: (listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      listSkills: async () => [
+        {
+          name: 'foo',
+          description: 'foo skill',
+          path: '/tmp/foo.md',
+          source: 'user' as const,
+          type: 'prompt',
+        },
+      ],
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection(
+      (connection) =>
+        new AcpServer(harness, connection, {
+          slashCommands: async (sdkSession) => {
+            const skills = await sdkSession.listSkills();
+            return {
+              commands: skills.map((skill) => ({
+                name: `skill:${skill.name}`,
+                description: skill.description,
+              })),
+              skillCommandMap: new Map([['skill:foo', 'foo']]),
+            };
+          },
+        }),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    const firstPrompt = client.prompt({
+      sessionId,
+      prompt: [textBlock('/skill:foo first')],
+    });
+    const secondPrompt = client.prompt({
+      sessionId,
+      prompt: [textBlock('/skill:foo second')],
+    });
+
+    await firstActivation;
+    expect(activationCalls).toHaveLength(1);
+    const firstActivationId = activationCalls[0]?.activationId;
+    expect(firstActivationId).toEqual(expect.any(String));
+
+    emit({
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 50,
+      origin: {
+        kind: 'skill_activation',
+        activationId: 'external-same-skill',
+        skillName: 'foo',
+        skillArgs: 'first',
+        trigger: 'user-slash',
+      },
+    } as Event);
+    emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 50,
+      reason: 'cancelled',
+    } as Event);
+    emit({
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 51,
+      origin: {
+        kind: 'skill_activation',
+        activationId: firstActivationId,
+        skillName: 'foo',
+        skillArgs: 'first',
+        trigger: 'user-slash',
+      },
+    } as Event);
+    emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 51,
+      reason: 'completed',
+    } as Event);
+
+    await secondActivation;
+    expect(activationCalls).toHaveLength(2);
+    const secondActivationId = activationCalls[1]?.activationId;
+    expect(secondActivationId).toEqual(expect.any(String));
+    expect(secondActivationId).not.toBe(firstActivationId);
+    emit({
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 52,
+      origin: {
+        kind: 'skill_activation',
+        activationId: secondActivationId,
+        skillName: 'foo',
+        skillArgs: 'second',
+        trigger: 'user-slash',
+      },
+    } as Event);
+    emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 52,
+      reason: 'cancelled',
+    } as Event);
+
+    await expect(firstPrompt).resolves.toEqual({ stopReason: 'end_turn' });
+    await expect(secondPrompt).resolves.toEqual({ stopReason: 'cancelled' });
   });
 
   it('intercepts unknown slash commands locally and lets non-slash text flow to Session.prompt', async () => {

@@ -6,6 +6,7 @@ import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly promptId?: string;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };

@@ -77,10 +77,12 @@ function makeInMemoryStreamPair(): {
  * `session/cancel` notification reached the SDK while another request
  * was parked.
  */
-function makeCancellableApprovalSession(sessionId: string): {
+function makeCancellableApprovalSession(sessionId: string, turnId: number): {
   session: Session;
   emit: (event: Event) => void;
   invokeHandler: (req: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse;
+  promptStarted: Promise<void>;
+  cancelled: Promise<void>;
   resolvePrompt: () => void;
   cancelCalls: () => number;
 } {
@@ -88,16 +90,42 @@ function makeCancellableApprovalSession(sessionId: string): {
   let approvalHandler: ApprovalHandler | undefined;
   let releasePrompt: (() => void) | undefined;
   let cancelCount = 0;
+  let signalPromptStarted!: () => void;
+  const promptStarted = new Promise<void>((resolve) => {
+    signalPromptStarted = resolve;
+  });
+  let signalCancelled!: () => void;
+  const cancelled = new Promise<void>((resolve) => {
+    signalCancelled = resolve;
+  });
 
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
+      const promptId = options?.promptId;
+      if (promptId === undefined) {
+        throw new Error('AcpSession did not correlate the SDK prompt');
+      }
+      for (const fn of listeners) {
+        fn({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId,
+          origin: { kind: 'user', promptId },
+        } as Event);
+      }
+      signalPromptStarted();
       await new Promise<void>((resolve) => {
         releasePrompt = resolve;
       });
     },
     cancel: async () => {
       cancelCount += 1;
+      signalCancelled();
     },
     onEvent: (fn: (event: Event) => void) => {
       listeners.add(fn);
@@ -121,6 +149,8 @@ function makeCancellableApprovalSession(sessionId: string): {
       }
       return approvalHandler(req);
     },
+    promptStarted,
+    cancelled,
     resolvePrompt: () => releasePrompt?.(),
     cancelCalls: () => cancelCount,
   };
@@ -186,7 +216,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
   it('processes session/cancel without blocking on an in-flight requestPermission, and the parked request can still settle to { decision: cancelled }', async () => {
     const sessionId = 'sess-cancel-while-approval';
     const turnId = 11;
-    const handle = makeCancellableApprovalSession(sessionId);
+    const handle = makeCancellableApprovalSession(sessionId, turnId);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
       createSession: async () => handle.session,
@@ -206,8 +236,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
       prompt: [textBlock('do the thing')],
     });
 
-    // Yield once so the agent-side subscribes to events before we emit.
-    await new Promise((r) => setTimeout(r, 5));
+    await handle.promptStarted;
 
     // Advance the turnId so `buildPermissionToolCallUpdate` uses the
     // prefixed `${turnId}:${rawId}` form — proves the cancel test also
@@ -246,8 +275,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     // blocked on the pending request, `Session.cancel()` would never
     // fire and this would hang / fail.
     await clientConn.cancel({ sessionId });
-    // Give the agent a tick to dispatch the notification.
-    await new Promise((r) => setTimeout(r, 10));
+    await handle.cancelled;
     expect(handle.cancelCalls()).toBe(1);
 
     // Now the client honours the cancel by closing the permission
@@ -281,7 +309,8 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     // the approval outcome — and we want a regression that fails if
     // that changes silently.
     const sessionId = 'sess-cancel-independent-approval';
-    const handle = makeCancellableApprovalSession(sessionId);
+    const turnId = 1;
+    const handle = makeCancellableApprovalSession(sessionId, turnId);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
       createSession: async () => handle.session,
@@ -297,13 +326,13 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
       sessionId,
       prompt: [textBlock('hi')],
     });
-    await new Promise((r) => setTimeout(r, 5));
+    await handle.promptStarted;
 
     handle.emit({
       type: 'tool.call.started',
       sessionId,
       agentId: 'main',
-      turnId: 1,
+      turnId,
       toolCallId: 'tc-ind',
       name: 'Bash',
       args: { command: 'echo hi' },
@@ -320,7 +349,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
 
     await client.received;
     await clientConn.cancel({ sessionId });
-    await new Promise((r) => setTimeout(r, 10));
+    await handle.cancelled;
     expect(handle.cancelCalls()).toBe(1);
 
     // Client decides to approve anyway. The bridge does not unilaterally
@@ -335,7 +364,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
       type: 'turn.ended',
       sessionId,
       agentId: 'main',
-      turnId: 1,
+      turnId,
       reason: 'cancelled',
     } as Event);
     handle.resolvePrompt();

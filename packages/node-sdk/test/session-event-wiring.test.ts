@@ -1,10 +1,10 @@
 /**
  * `SessionEventWiring` — the in-process v1 edge over the v2 per-agent event
- * bus. Covers the status-snapshot fold: v2 emits `agent.status.updated` in
- * slices and the model slice rides only the bind-time emission, so the
- * wiring merges a consistent usage + context + model snapshot into every
- * status event (mirrors kap-server's broadcaster bridge), including the
- * secondary-model derived id resolution.
+ * bus. Covers correlated terminal forwarding plus the status-snapshot fold:
+ * v2 emits `agent.status.updated` in slices and the model slice rides only
+ * the bind-time emission, so the wiring merges a consistent usage + context
+ * + model snapshot into every status event (mirrors kap-server's broadcaster
+ * bridge), including the secondary-model derived id resolution.
  * Run: pnpm exec vitest run test/session-event-wiring.test.ts
  */
 import { describe, expect, it } from 'vitest';
@@ -124,7 +124,34 @@ function bindStatusServices(agent: FakeAgentHandle, model: string): void {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('SessionEventWiring status snapshot fold', () => {
+describe('SessionEventWiring event translation', () => {
+  it('forwards a correlated prompt.completed terminal fact with session and agent stamps', () => {
+    const main = new FakeAgentHandle('main');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([main]), sink);
+    try {
+      main.bus.emit({
+        type: 'prompt.completed',
+        promptId: 'prompt-before-turn',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason: 'blocked',
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'prompt.completed',
+        promptId: 'prompt-before-turn',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason: 'blocked',
+        sessionId: 's1',
+        agentId: 'main',
+      },
+    ]);
+  });
+
   it('folds a consistent usage + context + model snapshot into every status event', () => {
     const sub = new FakeAgentHandle('agent-1');
     bindStatusServices(sub, 'sub-model');

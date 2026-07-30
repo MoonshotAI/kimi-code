@@ -196,6 +196,7 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  readonly promptId?: string;
   /**
    * Client-managed session denylist, applied via
    * `IAgentProfileService.setSessionDisabledTools` before the prompt is
@@ -312,6 +313,7 @@ export interface SkillSummary {
 export interface ActivateSkillPayload {
   readonly name: string;
   readonly args?: string | undefined;
+  readonly activationId?: string;
 }
 
 export interface ListWorkspaceSkillsPayload {

@@ -550,7 +550,7 @@ export class Agent {
   get rpcMethods(): PromisableMethods<AgentAPI> {
     return {
       prompt: (payload) => {
-        this.turn.prompt(payload.input);
+        this.turn.prompt(payload.input, { kind: 'user', promptId: payload.promptId });
       },
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),

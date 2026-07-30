@@ -162,7 +162,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
           this.tasks.set(id, task as CronTask);
         }
         await this.loadFromStore({ replace: false });
-        await this.start();
         await next();
       }),
     );

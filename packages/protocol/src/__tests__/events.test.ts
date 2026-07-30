@@ -120,6 +120,21 @@ describe('events / display re-exports', () => {
     expect(parsed.sessionId).toBe('sess_1');
   });
 
+  it('preserves an optional prompt correlation id on turn.started', () => {
+    const parsed = eventSchema.parse({
+      type: 'turn.started',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      turnId: 2,
+      origin: { kind: 'user', promptId: 'prompt_from_acp' },
+    });
+
+    expect(parsed).toMatchObject({
+      type: 'turn.started',
+      origin: { kind: 'user', promptId: 'prompt_from_acp' },
+    });
+  });
+
   it('validates prompt.submitted events', () => {
     const parsed = eventSchema.parse({
       type: 'prompt.submitted',

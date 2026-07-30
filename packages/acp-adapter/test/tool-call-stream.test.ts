@@ -66,11 +66,41 @@ function makeScriptedSession(
   script: readonly Event[],
 ): Session {
   const listeners = new Set<(event: Event) => void>();
+  const emit = (event: Event, promptId: string | undefined): void => {
+    const correlatedEvent =
+      event.type === 'turn.started' &&
+      event.origin.kind === 'user' &&
+      event.origin.promptId === undefined
+        ? ({ ...event, origin: { ...event.origin, promptId } } as Event)
+        : event;
+    for (const fn of listeners) fn(correlatedEvent);
+  };
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
+      if (!script.some((event) => event.type === 'turn.started')) {
+        const firstTurnEvent = script.find(
+          (event): event is Event & { turnId: number } =>
+            'turnId' in event && typeof event.turnId === 'number',
+        );
+        if (firstTurnEvent !== undefined) {
+          emit(
+            {
+              type: 'turn.started',
+              sessionId,
+              agentId: 'main',
+              turnId: firstTurnEvent.turnId,
+              origin: { kind: 'user', promptId: options?.promptId },
+            } as Event,
+            options?.promptId,
+          );
+        }
+      }
       for (const ev of script) {
-        for (const fn of listeners) fn(ev);
+        emit(ev, options?.promptId);
       }
     },
     cancel: async () => undefined,
@@ -181,11 +211,23 @@ describe('AcpServer tool-call streaming', () => {
   });
 
   it('uses turn-prefixed toolCallId so identical SDK ids across turns do not collide', async () => {
-    // We script two consecutive `tool.call.started` events with the
-    // SAME SDK `toolCallId` but DIFFERENT `turnId` to assert the ACP
-    // wire ids are distinct.
+    // Complete an autonomous turn, then launch the correlated prompt turn
+    // with the SAME SDK `toolCallId`. The ACP wire ids must remain distinct
+    // across the legal turn boundary.
     const sessionId = 'sess-tc-collision';
     const session = makeScriptedSession(sessionId, [
+      {
+        type: 'turn.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        origin: {
+          kind: 'background_task',
+          taskId: 'task-before-prompt',
+          status: 'completed',
+          notificationId: 'task:task-before-prompt:completed',
+        },
+      } as Event,
       {
         type: 'tool.call.started',
         sessionId,
@@ -194,6 +236,14 @@ describe('AcpServer tool-call streaming', () => {
         toolCallId: 'X',
         name: 'Bash',
         args: { cmd: 'ls' },
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      {
+        type: 'turn.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 2,
+        origin: { kind: 'user' },
       } as Event,
       {
         type: 'tool.call.started',

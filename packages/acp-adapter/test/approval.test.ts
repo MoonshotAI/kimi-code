@@ -52,22 +52,41 @@ function makeInMemoryStreamPair(): {
  * Mirrors the pattern from `session-prompt.test.ts` but exposes the
  * captured handler so the test can drive the reverse-RPC end-to-end.
  */
-function makeApprovalSession(sessionId: string): {
+function makeApprovalSession(sessionId: string, turnId: number): {
   session: Session;
   emit: (event: Event) => void;
   invokeHandler: (req: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse;
-  promptStarted: () => boolean;
+  promptStarted: Promise<void>;
   resolvePrompt: () => void;
 } {
   const listeners = new Set<(event: Event) => void>();
   let approvalHandler: ApprovalHandler | undefined;
-  let started = false;
   let releasePrompt: (() => void) | undefined;
+  let signalPromptStarted!: () => void;
+  const promptStarted = new Promise<void>((resolve) => {
+    signalPromptStarted = resolve;
+  });
 
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
-      started = true;
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
+      const promptId = options?.promptId;
+      if (promptId === undefined) {
+        throw new Error('AcpSession did not correlate the SDK prompt');
+      }
+      for (const fn of listeners) {
+        fn({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId,
+          origin: { kind: 'user', promptId },
+        } as Event);
+      }
+      signalPromptStarted();
       // Park the prompt so the test can drive events and invoke the
       // approval handler before the turn settles. The test resolves
       // this promise explicitly via `resolvePrompt`.
@@ -98,7 +117,7 @@ function makeApprovalSession(sessionId: string): {
       }
       return approvalHandler(req);
     },
-    promptStarted: () => started,
+    promptStarted,
     resolvePrompt: () => releasePrompt?.(),
   };
 }
@@ -231,7 +250,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
   it('emits a request_permission with options length 3 and prefixed toolCallId when the SDK invokes the registered handler, and resolves it to { decision: approved }', async () => {
     const sessionId = 'sess-approval-wire';
     const turnId = 7;
-    const handle = makeApprovalSession(sessionId);
+    const handle = makeApprovalSession(sessionId, turnId);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
       createSession: async () => handle.session,
@@ -257,11 +276,9 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       prompt: [textBlock('hi')],
     });
 
-    // Wait one tick for prompt() to subscribe via onEvent.
-    await new Promise((r) => setTimeout(r, 5));
+    await handle.promptStarted;
 
-    // Fire a tool-call-started event so the adapter learns the
-    // current turnId (any event with `turnId` advances it).
+    // Fire a tool-call-started event after the correlated turn has begun.
     handle.emit({
       type: 'tool.call.started',
       sessionId,
@@ -313,7 +330,8 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
 
   it('returns { decision: rejected } when the client throws', async () => {
     const sessionId = 'sess-approval-fail';
-    const handle = makeApprovalSession(sessionId);
+    const turnId = 1;
+    const handle = makeApprovalSession(sessionId, turnId);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
       createSession: async () => handle.session,
@@ -333,7 +351,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       sessionId,
       prompt: [textBlock('x')],
     });
-    await new Promise((r) => setTimeout(r, 5));
+    await handle.promptStarted;
 
     const decision = await handle.invokeHandler({
       toolCallId: 'tc-x',
@@ -347,7 +365,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       type: 'turn.ended',
       sessionId,
       agentId: 'main',
-      turnId: 1,
+      turnId,
       reason: 'completed',
     } as Event);
     handle.resolvePrompt();

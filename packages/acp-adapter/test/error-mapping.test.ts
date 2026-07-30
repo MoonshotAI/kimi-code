@@ -71,13 +71,43 @@ function makeScriptedSession(
 ): ScriptedSession {
   const listeners = new Set<(event: Event) => void>();
   let unsubCount = 0;
+  const emit = (event: Event, promptId: string | undefined): void => {
+    const correlatedEvent =
+      event.type === 'turn.started' &&
+      event.origin.kind === 'user' &&
+      event.origin.promptId === undefined
+        ? ({ ...event, origin: { ...event.origin, promptId } } as Event)
+        : event;
+    for (const fn of listeners) fn(correlatedEvent);
+  };
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
       if (opts.rejectWith) throw opts.rejectWith;
       if (opts.script) {
+        if (!opts.script.some((event) => event.type === 'turn.started')) {
+          const firstTurnEvent = opts.script.find(
+            (event): event is Event & { turnId: number } =>
+              'turnId' in event && typeof event.turnId === 'number',
+          );
+          if (firstTurnEvent !== undefined) {
+            emit(
+              {
+                type: 'turn.started',
+                sessionId,
+                agentId: 'main',
+                turnId: firstTurnEvent.turnId,
+                origin: { kind: 'user', promptId: options?.promptId },
+              } as Event,
+              options?.promptId,
+            );
+          }
+        }
         for (const ev of opts.script) {
-          for (const fn of listeners) fn(ev);
+          emit(ev, options?.promptId);
         }
       }
     },

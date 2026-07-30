@@ -79,6 +79,24 @@ describe('Session.prompt input normalization', () => {
     expect(prompt).toHaveBeenCalledWith({
       sessionId: 'ses_multimodal_prompt',
       input,
+      promptId: undefined,
+    });
+  });
+
+  it('forwards a caller-supplied prompt correlation id', async () => {
+    const prompt = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_correlated_prompt',
+      workDir: '/tmp/work',
+      rpc: { prompt } as unknown as SDKRpcClientBase,
+    });
+
+    await session.prompt('correlated', { promptId: 'prompt_acp_1' });
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: 'ses_correlated_prompt',
+      input: [{ type: 'text', text: 'correlated' }],
+      promptId: 'prompt_acp_1',
     });
   });
 
@@ -120,6 +138,7 @@ describe('Session.prompt input normalization', () => {
         sessionId: 'ses_scoped_agent',
         agentId: 'agent-btw',
         input: [{ type: 'text', text: 'side question' }],
+        promptId: undefined,
       },
     ]);
     expect(rpc.enterPlanCalls).toEqual([{ sessionId: 'ses_scoped_agent', agentId: 'agent-btw' }]);

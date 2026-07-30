@@ -74,11 +74,30 @@ function makeInMemoryStreamPair(): {
 
 function makeScriptedSession(sessionId: string, script: readonly Event[]): Session {
   const listeners = new Set<(event: Event) => void>();
+  const emit = (event: Event): void => {
+    for (const fn of listeners) fn(event);
+  };
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
+      const firstTurnEvent = script.find(
+        (event): event is Event & { turnId: number } =>
+          'turnId' in event && typeof event.turnId === 'number',
+      );
+      if (firstTurnEvent !== undefined) {
+        emit({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: firstTurnEvent.turnId,
+          origin: { kind: 'user', promptId: options?.promptId },
+        } as Event);
+      }
       for (const ev of script) {
-        for (const fn of listeners) fn(ev);
+        emit(ev);
       }
     },
     cancel: async () => undefined,

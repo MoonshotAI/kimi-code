@@ -46,19 +46,41 @@ function makeInMemoryStreamPair(): {
   return { agentStream, clientStream };
 }
 
-function makeApprovalSession(sessionId: string): {
+function makeApprovalSession(sessionId: string, turnId: number): {
   session: Session;
   emit: (event: Event) => void;
   invokeHandler: (req: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse;
+  promptStarted: Promise<void>;
   resolvePrompt: () => void;
 } {
   const listeners = new Set<(event: Event) => void>();
   let approvalHandler: ApprovalHandler | undefined;
   let releasePrompt: (() => void) | undefined;
+  let signalPromptStarted!: () => void;
+  const promptStarted = new Promise<void>((resolve) => {
+    signalPromptStarted = resolve;
+  });
 
   const session = {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
+      const promptId = options?.promptId;
+      if (promptId === undefined) {
+        throw new Error('AcpSession did not correlate the SDK prompt');
+      }
+      for (const fn of listeners) {
+        fn({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId,
+          origin: { kind: 'user', promptId },
+        } as Event);
+      }
+      signalPromptStarted();
       await new Promise<void>((resolve) => {
         releasePrompt = resolve;
       });
@@ -86,6 +108,7 @@ function makeApprovalSession(sessionId: string): {
       }
       return approvalHandler(req);
     },
+    promptStarted,
     resolvePrompt: () => releasePrompt?.(),
   };
 }
@@ -285,7 +308,7 @@ describe('AcpSession ↔ requestPermission bridge (selectedLabel end-to-end)', (
   it('attaches the matched option name as ApprovalResponse.selectedLabel and forwards a diff entry in toolCall.content', async () => {
     const sessionId = 'sess-approval-display';
     const turnId = 11;
-    const handle = makeApprovalSession(sessionId);
+    const handle = makeApprovalSession(sessionId, turnId);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
       createSession: async () => handle.session,
@@ -305,8 +328,7 @@ describe('AcpSession ↔ requestPermission bridge (selectedLabel end-to-end)', (
       sessionId,
       prompt: [textBlock('approve me')],
     });
-    // Let the agent-side subscribe before we emit events.
-    await new Promise((r) => setTimeout(r, 5));
+    await handle.promptStarted;
 
     handle.emit({
       type: 'tool.call.started',

@@ -57,6 +57,14 @@ class UnsavedBufferClient implements Client {
   readonly readRequests: ReadTextFileRequest[] = [];
   readonly updates: SessionNotification[] = [];
   unsavedContent = 'UNSAVED BUFFER CONTENT';
+  readonly agentMessageReceived: Promise<void>;
+  private signalAgentMessageReceived: (() => void) | undefined;
+
+  constructor() {
+    this.agentMessageReceived = new Promise((resolve) => {
+      this.signalAgentMessageReceived = resolve;
+    });
+  }
 
   async readTextFile(p: ReadTextFileRequest): Promise<ReadTextFileResponse> {
     this.readRequests.push(p);
@@ -67,6 +75,10 @@ class UnsavedBufferClient implements Client {
   }
   async sessionUpdate(n: SessionNotification): Promise<void> {
     this.updates.push(n);
+    if (n.update.sessionUpdate === 'agent_message_chunk') {
+      this.signalAgentMessageReceived?.();
+      this.signalAgentMessageReceived = undefined;
+    }
   }
   async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('requestPermission not exercised in this e2e test');
@@ -87,9 +99,25 @@ function makeReadingSession(
   const listeners = new Set<(event: Event) => void>();
   return {
     id: sessionId,
-    prompt: async (_input: unknown) => {
+    prompt: async (
+      _input: unknown,
+      options?: { readonly promptId?: string },
+    ) => {
       if (kaos === undefined) {
         throw new Error('kaos missing — boundary injection failed');
+      }
+      const promptId = options?.promptId;
+      if (promptId === undefined) {
+        throw new Error('AcpSession did not correlate the SDK prompt');
+      }
+      for (const fn of listeners) {
+        fn({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: 1,
+          origin: { kind: 'user', promptId },
+        } as Event);
       }
       const content = await kaos.readText(targetPath);
 
@@ -177,9 +205,7 @@ describe('end-to-end FS reverse-RPC', () => {
       path: expectedWirePath,
     });
 
-    // Give the agent a tick to flush the queued sessionUpdate write
-    // through the ndjson stream.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await bufferClient.agentMessageReceived;
 
     const chunkUpdate = bufferClient.updates.find(
       (u) => u.update.sessionUpdate === 'agent_message_chunk',
@@ -203,7 +229,23 @@ describe('end-to-end FS reverse-RPC', () => {
         capturedSessionId = options.id ?? 'fallback';
         return {
           id: capturedSessionId,
-          prompt: async () => {
+          prompt: async (
+            _input: unknown,
+            promptOptions?: { readonly promptId?: string },
+          ) => {
+            const promptId = promptOptions?.promptId;
+            if (promptId === undefined) {
+              throw new Error('AcpSession did not correlate the SDK prompt');
+            }
+            for (const fn of listeners) {
+              fn({
+                type: 'turn.started',
+                sessionId: capturedSessionId,
+                agentId: 'main',
+                turnId: 1,
+                origin: { kind: 'user', promptId },
+              } as Event);
+            }
             for (const fn of listeners) {
               fn({
                 type: 'turn.ended',

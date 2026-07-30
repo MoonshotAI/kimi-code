@@ -24,9 +24,11 @@ import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
  *   edge), `context.spliced`, `task.notified`, `plan.revision`, and the
  *   `permission.approval.*` pair (v1 surfaces approvals through the
  *   `requestApproval` callback, never as events).
- * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
- *   v1 they are synthesized by the daemon services layer onto the global
- *   `IEventService` — the in-process SDK client never sees them.
+ * - most `prompt.*`: the v2 prompt service publishes them on the agent bus,
+ *   but in v1 they are synthesized by the daemon services layer onto the
+ *   global `IEventService` — the in-process SDK client never sees them.
+ *   `prompt.completed` is retained because it is the only correlated terminal
+ *   signal when a v2 prompt is blocked or fails before a turn is launched.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.activity.updated',
@@ -36,7 +38,6 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'permission.approval.requested',
   'permission.approval.resolved',
   'prompt.submitted',
-  'prompt.completed',
   'prompt.aborted',
   'prompt.steered',
 ]);
