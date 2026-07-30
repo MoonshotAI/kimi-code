@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
@@ -22,10 +23,10 @@ import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppModel, ManagedUsageResult } from '../../api/types';
+import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
 import type { IconName } from '../../lib/icons';
-import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
+import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -61,6 +62,10 @@ const props = defineProps<{
       account row keys off THIS, not a global "any usable model exists" flag —
       third-party providers keep readiness true after a Kimi logout. */
   managedProviderStatus?: string | null;
+  /** Signed-in managed-account profile (GET /oauth/userinfo); drives the
+      avatar and nickname on the account row, which keeps its anonymous
+      fallback while the profile is absent or still loading. */
+  managedUserInfo?: ManagedUserInfo | null;
   /** Fetches managed-account plan usage for the Plan Usage section (account
       tab, signed-in only); failures surface inline in the card. */
   onFetchUsage: () => Promise<ManagedUsageResult>;
@@ -95,6 +100,25 @@ const emit = defineEmits<{
 }>();
 
 const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
+
+const accountName = computed(() => {
+  if (!signedIn.value) return t('sidebar.notSignedIn');
+  return props.managedUserInfo?.nickname || t('sidebar.defaultUserName');
+});
+
+// Server-supplied level label (may be ''), shown as a badge next to the name.
+const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim() ?? '');
+
+// A broken avatar URL falls back to the placeholder glyph; a new profile
+// (re-login) re-arms the <img>.
+const avatarLoadFailed = ref(false);
+watch(
+  () => props.managedUserInfo?.avatar,
+  () => {
+    avatarLoadFailed.value = false;
+  },
+);
+const showAvatar = computed(() => Boolean(props.managedUserInfo?.avatar) && !avatarLoadFailed.value);
 
 const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
@@ -147,8 +171,11 @@ const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
 const dialogRef = ref<HTMLElement | null>(null);
 useDialogFocus(dialogRef);
 
+// A stacked global confirm (e.g. sign-out) owns Escape while it's open.
+const { isConfirmOpen } = useConfirmDialog();
+
 function handleKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') emit('close');
+  if (e.key === 'Escape' && !isConfirmOpen.value) emit('close');
 }
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => {
@@ -646,10 +673,14 @@ function archiveTime(iso: string): string {
             <div class="settings-group">
             <div class="account-row">
               <span class="account-avatar" aria-hidden="true">
-                <Icon name="user" size="md" />
+                <img v-if="showAvatar" :src="props.managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
+                <Icon v-else name="user" size="md" />
               </span>
               <span class="account-meta">
-                <span class="account-name">{{ signedIn ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
+                <span class="account-name-row">
+                  <span class="account-name">{{ accountName }}</span>
+                  <Badge v-if="accountLevel" class="account-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
+                </span>
                 <span class="account-sub">{{ accountSubtitle }}</span>
               </span>
               <Button v-if="signedIn" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
@@ -1054,6 +1085,24 @@ function archiveTime(iso: string): string {
   border-radius: 50%;
   background: var(--color-surface-sunken);
   color: var(--color-text-muted);
+}
+.account-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.account-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.account-level {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .account-meta {
   display: flex;

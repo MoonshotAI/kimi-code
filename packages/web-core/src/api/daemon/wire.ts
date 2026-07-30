@@ -648,6 +648,10 @@ export interface WireUsageError {
 
 export type WireUsageResult = WireUsageOk | WireUsageError;
 
+// GET /oauth/userinfo needs no wire DTOs: the oauth payload is already
+// camelCase, identical to ManagedUserInfoResult in ../types — the client
+// returns it unmapped.
+
 // ---------------------------------------------------------------------------
 // File upload wire DTOs
 // ---------------------------------------------------------------------------

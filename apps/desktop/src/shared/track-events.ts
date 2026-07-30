@@ -13,7 +13,7 @@ const optionalBooleanSchema = z.boolean().optional().catch(undefined);
 const optionalDurationSchema = z.number().int().nonnegative().max(3_600_000).optional().catch(undefined);
 
 const settingsSourcePanel = {
-  source_panel: z.enum(['settings', 'mobile_settings', 'update_prompt']).optional().catch(undefined),
+  source_panel: z.enum(['settings', 'mobile_settings', 'update_prompt', 'user_menu']).optional().catch(undefined),
 };
 
 const shortcutBindingChangedPropertiesSchema = z.discriminatedUnion('op', [
@@ -204,6 +204,10 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
   z.object({
     event: z.literal('plan_usage_card_viewed'),
     properties: z.object({ usage_bucket: z.enum(['ok', 'warn', 'danger']) }),
+  }),
+  z.object({
+    event: z.literal('upgrade_clicked'),
+    properties: z.object({}),
   }),
   z.object({
     event: z.literal('telemetry_consent_changed'),

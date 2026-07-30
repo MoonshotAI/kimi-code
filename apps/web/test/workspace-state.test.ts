@@ -5,7 +5,7 @@
 
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
+import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask, ManagedUserInfo, ManagedUserInfoResult } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
@@ -28,6 +28,7 @@ const apiMock = vi.hoisted(() => ({
   dismissQuestion: vi.fn(),
   cancelTask: vi.fn(),
   getAuth: vi.fn(),
+  getUserInfo: vi.fn(),
   getConfig: vi.fn(),
   getFsHome: vi.fn(),
   getHealth: vi.fn(),
@@ -93,6 +94,7 @@ function createState(): ExtendedState {
     authReady: true,
     defaultModel: null,
     managedProviderStatus: null,
+    managedUserInfo: null,
     workspaces: [],
     activeWorkspaceId: null,
     sessionsHasMoreByWorkspace: {},
@@ -1276,6 +1278,227 @@ describe('useWorkspaceState — first-load auth gate', () => {
       }
     },
   );
+});
+
+describe('useWorkspaceState — managed account profile', () => {
+  const profile: ManagedUserInfo = {
+    userId: 'u_1',
+    nickname: 'Kimi User',
+    status: 'active',
+    region: 'cn',
+    userLevel: 3,
+    userLevelName: 'Vivace',
+    domain: 1,
+    domainName: 'DOMAIN_EXAMPLE',
+    avatar: 'https://cdn.example/avatar.png',
+  };
+
+  beforeEach(() => {
+    apiMock.getAuth.mockReset().mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: { status: 'authenticated' },
+    });
+    apiMock.getUserInfo.mockReset().mockResolvedValue({ kind: 'ok', userInfo: profile });
+  });
+
+  function createAuthDeps(connectIssue: Ref<string | null>): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      connectIssue,
+    } as unknown as UseWorkspaceStateDeps;
+  }
+
+  // The getUserInfo chain is fire-and-forget; a macrotask boundary drains its
+  // microtasks (the .catch on a rejection settles one tick after .then).
+  function flushUserInfo(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('stores the profile after an authenticated checkAuth (fire-and-forget /oauth/userinfo)', async () => {
+    const state = createState();
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await expect(ws.checkAuth()).resolves.toBe('proceed');
+    await flushUserInfo();
+
+    expect(apiMock.getUserInfo).toHaveBeenCalledTimes(1);
+    expect(state.managedUserInfo).toEqual(profile);
+  });
+
+  it('clears the profile when /oauth/userinfo answers the error shape', async () => {
+    const state = createState();
+    state.managedUserInfo = profile;
+    apiMock.getUserInfo.mockResolvedValue({ kind: 'error', message: 'endpoint unavailable' });
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedUserInfo).toBeNull();
+  });
+
+  it('clears the profile when /oauth/userinfo rejects (older daemon / transient failure)', async () => {
+    const state = createState();
+    state.managedUserInfo = profile;
+    apiMock.getUserInfo.mockRejectedValue(new Error('404'));
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedUserInfo).toBeNull();
+  });
+
+  it('skips /oauth/userinfo and clears the profile when not authenticated', async () => {
+    const state = createState();
+    state.managedUserInfo = profile;
+    apiMock.getAuth.mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(apiMock.getUserInfo).not.toHaveBeenCalled();
+    expect(state.managedUserInfo).toBeNull();
+  });
+
+  it('does not resurrect the profile when a logout lands while /oauth/userinfo is in flight', async () => {
+    const state = createState();
+    let resolveUserInfo!: (value: ManagedUserInfoResult) => void;
+    apiMock.getUserInfo.mockImplementation(
+      () =>
+        new Promise<ManagedUserInfoResult>((done) => {
+          resolveUserInfo = done;
+        }),
+    );
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    // Logout's own checkAuth flips the status before the profile lands.
+    state.managedProviderStatus = null;
+    state.managedUserInfo = null;
+    resolveUserInfo({ kind: 'ok', userInfo: profile });
+    await flushUserInfo();
+
+    expect(state.managedUserInfo).toBeNull();
+  });
+
+  it('lets the newest request win when overlapping checkAuth profile fetches race', async () => {
+    const state = createState();
+    const deferreds: Array<{
+      resolve: (value: ManagedUserInfoResult) => void;
+      reject: (err: Error) => void;
+    }> = [];
+    apiMock.getUserInfo.mockImplementation(
+      () =>
+        new Promise<ManagedUserInfoResult>((resolve, reject) => {
+          deferreds.push({ resolve, reject });
+        }),
+    );
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+    const newestProfile = { ...profile, nickname: 'Newest' };
+
+    await ws.checkAuth();
+    await ws.checkAuth();
+    expect(apiMock.getUserInfo).toHaveBeenCalledTimes(2);
+    const [stale, newest] = deferreds;
+    if (!stale || !newest) throw new Error('expected two in-flight requests');
+
+    // The newer request settles first and stores its profile…
+    newest.resolve({ kind: 'ok', userInfo: newestProfile });
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(newestProfile);
+
+    // …and the superseded request's late answer must not overwrite it.
+    stale.resolve({ kind: 'ok', userInfo: profile });
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(newestProfile);
+  });
+
+  it('does not let a superseded rejection clear the profile written by the newest request', async () => {
+    const state = createState();
+    const deferreds: Array<{
+      resolve: (value: ManagedUserInfoResult) => void;
+      reject: (err: Error) => void;
+    }> = [];
+    apiMock.getUserInfo.mockImplementation(
+      () =>
+        new Promise<ManagedUserInfoResult>((resolve, reject) => {
+          deferreds.push({ resolve, reject });
+        }),
+    );
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await ws.checkAuth();
+    const [stale, newest] = deferreds;
+    if (!stale || !newest) throw new Error('expected two in-flight requests');
+
+    newest.resolve({ kind: 'ok', userInfo: profile });
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(profile);
+
+    stale.reject(new Error('404'));
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(profile);
+  });
+
+  it('lets the last-issued checkAuth win when the first call\'s /auth is slower', async () => {
+    const state = createState();
+    const authResponse = {
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: { status: 'authenticated' },
+    };
+    let resolveFirstAuth!: (value: typeof authResponse) => void;
+    apiMock.getAuth
+      .mockImplementationOnce(
+        () =>
+          new Promise<typeof authResponse>((resolve) => {
+            resolveFirstAuth = resolve;
+          }),
+      )
+      .mockResolvedValue(authResponse);
+    const deferreds: Array<{
+      resolve: (value: ManagedUserInfoResult) => void;
+      reject: (err: Error) => void;
+    }> = [];
+    apiMock.getUserInfo.mockImplementation(
+      () =>
+        new Promise<ManagedUserInfoResult>((resolve, reject) => {
+          deferreds.push({ resolve, reject });
+        }),
+    );
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+    const newestProfile = { ...profile, nickname: 'Newest' };
+
+    // The first call's /auth is slower: the second call settles first and its
+    // userinfo writes the profile.
+    const first = ws.checkAuth();
+    await expect(ws.checkAuth()).resolves.toBe('proceed');
+    expect(apiMock.getUserInfo).toHaveBeenCalledTimes(1);
+    const [secondUserInfo] = deferreds;
+    if (!secondUserInfo) throw new Error('expected an in-flight userinfo request');
+    secondUserInfo.resolve({ kind: 'ok', userInfo: newestProfile });
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(newestProfile);
+
+    // The slower first call's /auth finally lands; its superseded userinfo
+    // rejection must not clear the newer profile.
+    resolveFirstAuth(authResponse);
+    await expect(first).resolves.toBe('proceed');
+    expect(apiMock.getUserInfo).toHaveBeenCalledTimes(2);
+    const [, firstUserInfo] = deferreds;
+    if (!firstUserInfo) throw new Error('expected a second in-flight userinfo request');
+    firstUserInfo.reject(new Error('404'));
+    await flushUserInfo();
+    expect(state.managedUserInfo).toEqual(newestProfile);
+  });
 });
 
 describe('useWorkspaceState — session list loading', () => {

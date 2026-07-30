@@ -9,9 +9,10 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
+import type { AppModel, AppSession, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import {
   commitLevel,
   effectiveThinkingLevel,
@@ -23,9 +24,12 @@ import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import { logWarn } from '../../lib/log';
 import { formatTokens } from '../../lib/formatTokens';
-import { Button, Input, SegmentedControl } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, Input, SegmentedControl } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
+
+// A stacked global confirm (e.g. sign-out) owns Escape while it's open.
+const { isConfirmOpen } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -40,6 +44,9 @@ const props = withDefaults(
         sign-in/out row (third-party providers must not keep it "signed in"
         after a Kimi logout). */
     managedProviderStatus?: string | null;
+    /** Signed-in managed-account profile (GET /oauth/userinfo) — avatar +
+        nickname on the account row; absent while loading or on older daemons. */
+    managedUserInfo?: ManagedUserInfo | null;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
     /** Available models — used to derive the current model's thinking segments. */
@@ -49,6 +56,7 @@ const props = withDefaults(
     colorScheme: 'system',
     fontScale: 'medium',
     managedProviderStatus: null,
+    managedUserInfo: null,
     serverVersion: '',
     models: () => [],
   },
@@ -95,6 +103,20 @@ const thinkingOptions = computed(() =>
 );
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
+
+// A broken avatar URL falls back to the placeholder glyph; a new profile
+// (re-login) re-arms the <img>.
+const avatarLoadFailed = ref(false);
+watch(
+  () => props.managedUserInfo?.avatar,
+  () => {
+    avatarLoadFailed.value = false;
+  },
+);
+const showAvatar = computed(() => Boolean(props.managedUserInfo?.avatar) && !avatarLoadFailed.value);
+
+// Server-supplied level label (may be ''), shown as a badge next to the name.
+const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim() ?? '');
 
 // Same escalation colours as the Composer's permission menu: yolo is the
 // warning level, auto (fully autonomous, never asks) is the danger level.
@@ -240,6 +262,7 @@ watch(
   <BottomSheet
     :model-value="modelValue"
     :title="t('mobile.settingsTitle')"
+    :close-on-esc="!isConfirmOpen"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <template v-if="view === 'main'">
@@ -370,7 +393,20 @@ watch(
       />
     </div>
 
-    <!-- Account: sign in / out -->
+    <!-- Account: signed-in profile + sign in / out -->
+    <div v-if="managedProviderStatus === 'authenticated'" class="srow read-only acct-profile">
+      <span class="acct-avatar" aria-hidden="true">
+        <img v-if="showAvatar" :src="managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
+        <Icon v-else name="user" size="md" />
+      </span>
+      <span class="srow-main">
+        <span class="acct-name-row">
+          <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
+          <Badge v-if="accountLevel" class="acct-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
+        </span>
+        <span class="srow-sub">{{ t('settings.signedIn') }}</span>
+      </span>
+    </div>
     <button v-if="managedProviderStatus === 'authenticated'" type="button" class="srow acct out" @click="onLogout">
       <span class="srow-main">
         <span class="srow-label">{{ t('sidebar.signOut') }}</span>
@@ -544,6 +580,40 @@ watch(
 /* Account rows */
 .srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
 .srow.acct.out .srow-label { color: var(--color-danger); }
+.acct-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
+.acct-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.acct-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.acct-name-row .srow-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-level {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Context meter (96px prototype) */
 .ctx-meter {

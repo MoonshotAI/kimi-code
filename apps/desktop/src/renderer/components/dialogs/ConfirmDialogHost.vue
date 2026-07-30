@@ -15,13 +15,20 @@ function onConfirm(): void {
 </script>
 
 <template>
+  <!-- Mount on demand, not once at startup: sibling Dialog overlays all sit
+       at --z-modal and tie-break by DOM order, and a Teleport's slot in <body>
+       is reserved when the component mounts. A startup-mounted host would land
+       before every later-opened dialog (Settings…) and paint underneath; a
+       confirm mounts last, so it always lands on top. While a modal confirm
+       is up, no other dialog can be opened (dispatcher overlay gating). -->
   <ConfirmDialog
-    :open="current !== null"
-    :title="current?.title ?? ''"
-    :message="current?.message"
-    :confirm-label="current?.confirmLabel"
-    :cancel-label="current?.cancelLabel"
-    :variant="current?.variant"
+    v-if="current !== null"
+    :open="true"
+    :title="current.title"
+    :message="current.message"
+    :confirm-label="current.confirmLabel"
+    :cancel-label="current.cancelLabel"
+    :variant="current.variant"
     :loading="busy"
     @confirm="onConfirm"
     @cancel="settle(false)"

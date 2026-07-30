@@ -734,6 +734,17 @@ function openLogin(): void {
   showLogin.value = true;
 }
 
+// Sign-out always confirms through the shared modal (the sidebar user menu
+// confirms on its own; the settings dialogs route their logout event here).
+async function confirmLogout(): Promise<void> {
+  await confirm({
+    title: t('sidebar.logoutConfirmTitle'),
+    message: t('sidebar.logoutConfirmMessage'),
+    variant: 'danger',
+    action: () => client.logout(),
+  });
+}
+
 // The wizard's custom-provider card: first run completes via this detour
 // (same as skipping the login step), landing directly on the Providers tab.
 function handleWizardAddProvider(): void {
@@ -1340,6 +1351,7 @@ function openPr(url: string): void {
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
         @open-settings="openSettingsFromButton"
+        @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
       />
       <ResizeHandle
@@ -1629,6 +1641,7 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
+      :managed-user-info="client.managedUserInfo.value"
       :on-fetch-usage="client.getUsage"
       :notify="client.notifyEnabled.value"
       :notify-permission="client.notifyPermission.value"
@@ -1645,7 +1658,7 @@ function openPr(url: string): void {
       @set-notify-sound="client.setNotifySound($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @logout="confirmLogout"
       @close="showSettings = false; settingsInitialTab = undefined"
     />
 
@@ -1722,6 +1735,7 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :font-scale="client.fontScale.value"
       :managed-provider-status="client.managedProviderStatus.value"
+      :managed-user-info="client.managedUserInfo.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
@@ -1731,7 +1745,7 @@ function openPr(url: string): void {
       @set-color-scheme="setColorSchemeFromSettings($event, 'mobile_settings')"
       @set-font-scale="setFontScaleFromSettings($event, 'mobile_settings')"
       @login="() => { showMobileSettings = false; openLogin(); }"
-      @logout="client.logout"
+      @logout="confirmLogout"
     />
     </div>
     <!-- First-run onboarding wizard (language → appearance → notifications →

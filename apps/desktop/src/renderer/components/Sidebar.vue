@@ -29,15 +29,16 @@ import {
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
+import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
-import { isDesktop, isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
+import { isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
-import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -51,7 +52,6 @@ const { vibrancy } = useVibrancy();
 // proxy forwards to — click it to switch presets without restarting Vite. In
 // production this is all inert.
 const isDev = import.meta.env.DEV;
-const isProd = import.meta.env.PROD;
 const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
 if (isDev) {
   onMounted(async () => {
@@ -142,6 +142,7 @@ const emit = defineEmits<{
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
+  login: [];
   collapse: [];
 }>();
 
@@ -1012,13 +1013,9 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
-      <!-- Footer: settings entry pinned under the session list -->
+      <!-- Footer: account area (user menu) pinned under the session list -->
       <div class="side-footer" :class="{ 'side-footer--shadowed': sessionsCanScrollDown }">
-        <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
-          <Icon name="settings" />
-          <span class="btn-settings-label">{{ t('settings.title') }}</span>
-          <Badge v-if="isDesktop && isProd" class="btn-settings-badge" variant="warning" size="sm">{{ t('settings.internalTest') }}</Badge>
-        </button>
+        <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
       </div>
 
       <!-- Folder-drop affordance (desktop only): shown while a folder drag
@@ -1469,9 +1466,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--color-text) 25%, transparent);
 }
 
-/* Footer — settings entry pinned under the session list. Same list-style
-   control family as search / New chat (full-width, left-aligned, hover
-   sunken — not a Button). */
+/* Footer — account area (UserMenu) pinned under the session list. */
 .side-footer {
   flex: none;
   position: relative;
@@ -1489,36 +1484,6 @@ onBeforeUnmount(() => {
   transition-duration: var(--duration-slow);
 }
 .side-footer--shadowed::before { opacity: 1; }
-.btn-settings {
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
-  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
-}
-.btn-settings:hover { background: var(--sb-hover); }
-.btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.btn-settings svg { flex: none; }
-.btn-settings-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.btn-settings-badge {
-  margin-left: var(--space-2);
-  flex: none;
-}
 
 /* Section label — heads the workspace list below the action buttons. Aligns
    with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
