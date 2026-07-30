@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
     isPackaged: true,
     getVersion: vi.fn(() => '0.0.0-test'),
     setAppUserModelId: vi.fn(),
+    setAsDefaultProtocolClient: vi.fn(),
     requestSingleInstanceLock: vi.fn(() => true),
     quit: vi.fn(),
     on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
@@ -109,6 +110,95 @@ describe('app second-instance routing', () => {
 
     expect(mocks.sendLaunchAction).toHaveBeenCalledWith({ action: 'new-chat' });
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('queues deep links received before the window is ready and shows the window after', async () => {
+    main();
+
+    const onOpenUrl = mocks.listeners.get('open-url');
+    expect(onOpenUrl).toBeTypeOf('function');
+    const event = { preventDefault: vi.fn() };
+    onOpenUrl?.(event, 'kimi-code://auth/success');
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(mocks.showMainWindow).not.toHaveBeenCalled();
+
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('shows the window for a whitelisted deep link after ready and ignores unknown URLs', async () => {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    const onOpenUrl = mocks.listeners.get('open-url');
+    const event = { preventDefault: vi.fn() };
+    onOpenUrl?.(event, 'kimi-code://unknown/path');
+    expect(mocks.showMainWindow).not.toHaveBeenCalled();
+
+    onOpenUrl?.(event, 'kimi-code://auth/success');
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('gates deep-link second instances through the whitelist (Windows/Linux argv)', async () => {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    const onSecondInstance = mocks.listeners.get('second-instance');
+    onSecondInstance?.({}, ['electron.exe', 'kimi-code://unknown/path']);
+    expect(mocks.showMainWindow).not.toHaveBeenCalled();
+
+    onSecondInstance?.({}, ['electron.exe', 'kimi-code://auth/success']);
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('gates an uppercased-scheme deep link instead of treating it as a plain relaunch', async () => {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    const onSecondInstance = mocks.listeners.get('second-instance');
+    // Same protocol despite the case (RFC 3986): it must hit the whitelist,
+    // not the unconditional plain-relaunch focus.
+    onSecondInstance?.({}, ['electron.exe', 'KIMI-CODE://unknown/path']);
+    expect(mocks.showMainWindow).not.toHaveBeenCalled();
+
+    onSecondInstance?.({}, ['electron.exe', 'KIMI-CODE://auth/success']);
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('applies the same whitelist gate to deep-link launches queued before ready', async () => {
+    main();
+
+    const onSecondInstance = mocks.listeners.get('second-instance');
+    onSecondInstance?.({}, ['electron.exe', 'kimi-code://unknown/path']);
+    onSecondInstance?.({}, ['electron.exe', 'kimi-code://auth/success']);
+
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    // Only the whitelisted URL surfaces the window; the unknown one is dropped.
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('self-registers the deep link scheme on Windows (packaged or dev)', () => {
+    // beforeEach pins win32: NSIS writes no protocol registry entry, so the
+    // app always registers itself there.
+    main();
+    expect(mocks.app.setAsDefaultProtocolClient).toHaveBeenCalledWith('kimi-code');
+
+    vi.clearAllMocks();
+    mocks.listeners.clear();
+    mocks.app.isPackaged = false;
+    main();
+    expect(mocks.app.setAsDefaultProtocolClient).toHaveBeenCalledWith(
+      'kimi-code',
+      process.execPath,
+      [process.argv[1] ?? '.'],
+    );
   });
 
   it('does not block quit while closing the embedded server', () => {

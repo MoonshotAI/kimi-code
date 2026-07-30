@@ -89,6 +89,12 @@ module.exports = {
 
   afterPack: embedTahoeIconCatalog,
 
+  // OS-level deep link scheme (`kimi-code://auth/success`) for the OAuth
+  // device-flow completion page to surface the app after browser
+  // authorization — macOS Info.plist CFBundleURLTypes, Windows registry,
+  // Linux x-scheme-handler in the desktop file. Runtime side: src/main/deep-link.ts.
+  protocols: [{ name: 'Kimi Code', role: 'Viewer', schemes: ['kimi-code'] }],
+
   directories: {
     output: 'dist-app',
   },

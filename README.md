@@ -82,6 +82,12 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 
 更多用法见 `agent-browser skills get electron`。
 
+## Desktop 自定义协议
+
+### `kimi-code://auth/success`
+
+OAuth 授权完成页唤起桌面端窗口（登录态由 daemon 轮询完成，协议不携带凭证）。对外契约，改动需与授权页团队同步。
+
 ## 开发
 
 - **联调 kimi-code 的 server 改动**：在你的 kimi-code 工作克隆里 `pnpm dev:server`，然后 `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop`（desktop 不再启动内嵌 server）。完整流程见 `AGENTS.md` 的"双仓工作流"。

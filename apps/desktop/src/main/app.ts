@@ -14,6 +14,7 @@ import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
+import { handleDeepLink, extractDeepLink, registerDeepLinkScheme } from './deep-link';
 import { trackDesktopEvent } from './track';
 import { finalizeWindowLifecycle } from './window-lifecycle';
 
@@ -29,6 +30,20 @@ function forwardLaunchArgs(argv: readonly string[]): void {
   if (launch.workspace !== undefined) {
     sendLaunchAction({ action: 'open-workspace', root: launch.workspace });
   }
+}
+
+/** Route a second-instance argv (Windows/Linux): a plain relaunch (taskbar
+    icon, Jump List) always surfaces the window, but a deep-link launch only
+    surfaces it when the URL passes the whitelist — any webpage can fire the
+    scheme, so an unknown URL must not steal focus. */
+function handleSecondInstanceArgv(argv: readonly string[]): void {
+  const deepLink = extractDeepLink(argv);
+  if (deepLink !== undefined) {
+    handleDeepLink(deepLink, showMainWindow);
+    return;
+  }
+  showMainWindow();
+  forwardLaunchArgs(argv);
 }
 
 export function main(): void {
@@ -50,15 +65,33 @@ export function main(): void {
     return;
   }
 
+  // OS-level `kimi-code://` deep links (OAuth device-flow completion page).
+  // Packaged builds are registered by electron-builder `protocols`; dev needs
+  // the explicit call. Delivery: macOS `open-url` below, Windows/Linux argv
+  // (second-instance / cold-start routing below).
+  registerDeepLinkScheme();
+
   const pendingSecondInstanceArgv: string[][] = [];
+  const pendingDeepLinks: string[] = [];
   let launchRoutingReady = false;
   app.on('second-instance', (_event, argv) => {
     if (!launchRoutingReady) {
       pendingSecondInstanceArgv.push(argv);
       return;
     }
-    showMainWindow();
-    forwardLaunchArgs(argv);
+    handleSecondInstanceArgv(argv);
+  });
+
+  // macOS fires `open-url` for deep links — including cold starts, where it
+  // can arrive before the window exists, so queue until launch routing is up
+  // (same pattern as pendingSecondInstanceArgv).
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    if (!launchRoutingReady) {
+      pendingDeepLinks.push(url);
+      return;
+    }
+    handleDeepLink(url, showMainWindow);
   });
 
   registerIpcHandlers();
@@ -155,12 +188,14 @@ export function main(): void {
     initAutoUpdater();
     // Launch flags from the very first invocation (Jump List item click).
     forwardLaunchArgs(process.argv);
-    const hadPendingSecondInstance = pendingSecondInstanceArgv.length > 0;
     for (const argv of pendingSecondInstanceArgv.splice(0)) {
-      forwardLaunchArgs(argv);
+      handleSecondInstanceArgv(argv);
     }
+    const deepLinks = pendingDeepLinks.splice(0);
     launchRoutingReady = true;
-    if (hadPendingSecondInstance) showMainWindow();
+    for (const url of deepLinks) {
+      handleDeepLink(url, showMainWindow);
+    }
     app.on('activate', () => {
       // macOS Dock click: un-hide the window (hide-on-close leaves it alive
       // but hidden), or recreate it after a real destroy.
