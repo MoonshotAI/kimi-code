@@ -9,8 +9,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 
-import { KIMI_CHANNEL_NOTIFICATION_METHOD } from '#/agent/mcp/channel-notification';
-import { createMcpSdkClient } from '#/agent/mcp/client-shared';
+import { KIMI_CHANNEL_NOTIFICATION_METHOD } from '#/mcpCore/channel-notification';
+import { createMcpSdkClient } from '#/mcpCore/client-shared';
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));

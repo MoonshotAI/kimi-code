@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   KIMI_CHANNEL_NOTIFICATION_METHOD,
   KimiChannelNotificationSchema,
-} from '#/agent/mcp/channel-notification';
+} from '#/mcpCore/channel-notification';
 
 describe('KimiChannelNotificationSchema', () => {
   it('parses a valid notification with optional fields omitted', () => {

@@ -14,13 +14,13 @@ import { LifecycleScope } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { McpChannelMessage } from '#/agent/mcp/connection-manager';
+import type { McpChannelMessage } from '#/mcpCore/connection-manager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IFlagService } from '#/app/flag/flag';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { SessionMcpChannelBridgeImpl } from '#/session/mcp/sessionMcpChannelBridgeImpl';
-import type { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
@@ -33,16 +33,15 @@ function harness(options: { readonly flagEnabled?: boolean } = {}) {
 
   let channelListener: ((message: McpChannelMessage) => void) | undefined;
   const unsubscribe = vi.fn();
-  const connectionManager = vi.fn(() => ({
-    onChannelMessage: (listener: (message: McpChannelMessage) => void) => {
-      channelListener = listener;
-      return unsubscribe;
-    },
-  }));
-  const sessionMcp = {
-    ensureMcpReady: vi.fn(),
+  const onChannelMessage = vi.fn((listener: (message: McpChannelMessage) => void) => {
+    channelListener = listener;
+    return unsubscribe;
+  });
+  const connectionManager = { onChannelMessage };
+  const sessionMcpHandle = {
+    ready: Promise.resolve(),
     connectionManager,
-  } as unknown as ISessionMcpService;
+  } as unknown as ISessionMcpHandle;
 
   const inject = vi.fn().mockResolvedValue(undefined);
   const promptService = { inject } as unknown as IAgentPromptService;
@@ -79,11 +78,11 @@ function harness(options: { readonly flagEnabled?: boolean } = {}) {
   } as unknown as ILogService;
 
   return {
-    sessionMcp,
+    sessionMcpHandle,
     agentLifecycle,
     flags,
     log,
-    connectionManager,
+    onChannelMessage,
     inject,
     unsubscribe,
     publish,
@@ -98,7 +97,7 @@ function harness(options: { readonly flagEnabled?: boolean } = {}) {
 describe('SessionMcpChannelBridgeImpl', () => {
   it('injects a channel message into the main agent with a distinct origin, wrapped in an XML envelope', async () => {
     const h = harness();
-    new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
 
     h.fireChannelMessage({ server: 'discord', text: 'hello from discord', chatId: 'chat-1' });
 
@@ -132,7 +131,7 @@ describe('SessionMcpChannelBridgeImpl', () => {
 
   it('escapes tag-like characters and attribute quotes in the pushed text so it cannot break out of the envelope', () => {
     const h = harness();
-    new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
 
     h.fireChannelMessage({
       server: 'weird"server',
@@ -149,7 +148,7 @@ describe('SessionMcpChannelBridgeImpl', () => {
   it('drops the message when there is no main agent yet', () => {
     const h = harness();
     h.clearMainAgent();
-    new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
 
     h.fireChannelMessage({ server: 'discord', text: 'hello' });
 
@@ -158,7 +157,7 @@ describe('SessionMcpChannelBridgeImpl', () => {
 
   it('unsubscribes from the connection manager on dispose', () => {
     const h = harness();
-    const bridge = new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    const bridge = new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
     bridge.dispose();
     expect(h.unsubscribe).toHaveBeenCalledTimes(1);
   });
@@ -166,7 +165,7 @@ describe('SessionMcpChannelBridgeImpl', () => {
   it('logs an error and does not throw when injection rejects', async () => {
     const h = harness();
     h.inject.mockReset().mockRejectedValueOnce(new Error('inject failed'));
-    new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
 
     h.fireChannelMessage({ server: 'discord', text: 'hello' });
     await flushMicrotasks();
@@ -181,9 +180,9 @@ describe('SessionMcpChannelBridgeImpl', () => {
 
   it('does nothing at all when the mcp-channel flag is disabled: no subscription, no delivery', () => {
     const h = harness({ flagEnabled: false });
-    const bridge = new SessionMcpChannelBridgeImpl(h.sessionMcp, h.agentLifecycle, h.flags, h.log);
+    const bridge = new SessionMcpChannelBridgeImpl(h.sessionMcpHandle, h.agentLifecycle, h.flags, h.log);
 
-    expect(h.connectionManager).not.toHaveBeenCalled();
+    expect(h.onChannelMessage).not.toHaveBeenCalled();
 
     h.fireChannelMessage({ server: 'discord', text: 'hello' });
     expect(h.inject).not.toHaveBeenCalled();

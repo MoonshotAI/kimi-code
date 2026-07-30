@@ -30,7 +30,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
-import type { McpChannelMessage } from '#/agent/mcp/connection-manager';
+import type { McpChannelMessage } from '#/mcpCore/connection-manager';
 import type { ContextMessage, McpChannelOrigin } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IEventBus } from '#/app/event/eventBus';
@@ -39,7 +39,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 
 import { MCP_CHANNEL_FLAG_ID } from './mcpChannelFlag';
 import { ISessionMcpChannelBridge } from './sessionMcpChannelBridge';
-import { ISessionMcpService } from './sessionMcp';
+import { ISessionMcpHandle } from './sessionMcpHandle';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -56,7 +56,7 @@ export class SessionMcpChannelBridgeImpl extends Disposable implements ISessionM
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
+    @ISessionMcpHandle private readonly sessionMcpHandle: ISessionMcpHandle,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
@@ -66,7 +66,7 @@ export class SessionMcpChannelBridgeImpl extends Disposable implements ISessionM
 
     this._register(
       toDisposable(
-        this.sessionMcp.connectionManager().onChannelMessage((message) => {
+        this.sessionMcpHandle.connectionManager.onChannelMessage((message) => {
           this.deliver(message);
         }),
       ),
