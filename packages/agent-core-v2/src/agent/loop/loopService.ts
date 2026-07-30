@@ -284,6 +284,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private cancelActiveTurn(turnId: number | undefined, cancellation: unknown): boolean {
     const job = this.activeTurnJob;
     if (job === undefined || (turnId !== undefined && job.turn.id !== turnId)) return false;
+    if (job.controller.signal.aborted) return true;
     this.wire.dispatch(
       cancelTurn({ turnId: job.turn.id, target: 'active', reason: cancelReasonFor(cancellation) }),
     );
@@ -892,17 +893,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  /**
-   * `appendResponseContent` runs only after a full LLM response, so an abort
-   * mid-stream would otherwise lose every token the model already produced
-   * (the fold then drops the step's empty partial assistant as vacuous). When
-   * the turn itself was aborted, persist the accumulated partial text/thinking
-   * parts so the interrupted step replays to the same partial assistant
-   * message the user saw. Gated on the turn signal, not the step signal: a
-   * step-level cancel lets the turn continue with a regenerated step, and a
-   * failed (non-abort) attempt is retried — both keep their partial output
-   * out of the record because what follows re-generates it.
-   */
   private appendInterruptedStreamContent(
     turnId: number,
     currentStep: number,
@@ -1080,14 +1070,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): StreamPartCollector {
     const callsByIndex = new Map<number | string | undefined, { id: string; name: string }>();
     const partialContent: ContentPart[] = [];
-    let mergeBroken = false;
-    // Mirror kosong's stream merge (`mergeInPlace` + flush-on-boundary,
-    // including the tool-call boundary) so the drained partials match the
-    // parts a completed response would have carried.
+    let forceContentPartBoundary = false;
     const accumulate = (part: ContentPart): void => {
       const last = partialContent.at(-1);
-      if (!mergeBroken && last !== undefined && mergeInPlace(last, part)) return;
-      mergeBroken = false;
+      if (!forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return;
+      forceContentPartBoundary = false;
       partialContent.push({ ...part });
     };
 
@@ -1110,7 +1097,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             return;
           case 'function': {
             onResponseEvent();
-            mergeBroken = true;
+            forceContentPartBoundary = true;
             callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
             this.eventBus.publish({
               type: 'tool.call.delta',
@@ -1203,11 +1190,6 @@ type BeginStepResult = { readonly step: StepRuntime } | { readonly result: LoopR
 
 interface StreamPartCollector {
   readonly handle: (part: StreamedMessagePart) => void;
-  /**
-   * Drains the merged partial text/thinking parts accumulated from the stream
-   * so far (vacuous parts dropped). Never called on a completed request — the
-   * full response's content is authoritative and lands separately.
-   */
   drainInterruptedContent(): ContentPart[];
 }
 

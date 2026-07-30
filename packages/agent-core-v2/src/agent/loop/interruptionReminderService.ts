@@ -1,26 +1,10 @@
 /**
- * `loop` domain (L4) — user-interruption reminder aspect.
+ * `loop` domain (L4) — `IAgentLoopInterruptionReminderService` implementation.
  *
- * A turn the user deliberately cancelled (Esc) would otherwise leave no mark
- * the model can see: the next user prompt lands as an ordinary message right
- * after the interrupted turn's residue, with nothing saying the previous turn
- * was cut off on purpose. This service watches `turn.ended` and appends a
- * durable `<system-reminder>` (`origin: { kind: 'injection', variant:
- * 'interruption' }`) at the context tail — after the interrupted turn's
- * residue, before the next user message — so the marker persists to the wire,
- * replays on resume, and stays hidden from transcripts, all through the
- * existing injection machinery. Only `user_cancelled` qualifies: timeouts,
- * programmatic aborts, and steer (which never cancels the turn) produce no
- * marker, and a cancelled queued turn publishes no `turn.ended` at all. If
- * the last durable message already is the interruption reminder (repeated
- * cancellations with no message in between, a trailing vacuous open
- * assistant left by the cancelled turn notwithstanding), appending is
- * skipped so markers do not stack in practice — a reminder still deferred
- * behind an unsettled tool exchange is invisible to that check, accepted
- * since a second cancellation cannot normally arrive before the exchange
- * settles. Bound at Agent scope and constructed with the scope so the
- * subscription exists before the first turn runs (same rationale as
- * `loopContinuation`).
+ * Observes turn completion through `event`, persists reminder completion through
+ * `turn`, reads conversation history through `contextMemory`, and appends
+ * model-visible notices through `systemReminder`. Reconciles reminders left
+ * pending by an interrupted restore. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -30,8 +14,10 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentLoopInterruptionReminderService } from './interruptionReminder';
+import { interruptionReminderRecorded, TurnModel } from './turnOps';
 
 export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
 
@@ -51,33 +37,50 @@ export class AgentLoopInterruptionReminderService
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this._register(
+      this.wire.hooks.onDidRestore.register('interruption-reminder', async (_ctx, next) => {
+        this.reconcilePendingReminders();
+        await next();
+      }),
+    );
+    this._register(
       eventBus.subscribe('turn.ended', (event) => {
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
-        this.appendInterruptionReminder();
+        this.recordReminder(event.turnId, true);
       }),
     );
   }
 
-  private appendInterruptionReminder(): void {
-    const origin = lastDurableMessageOrigin(this.context.get());
-    if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
+  private reconcilePendingReminders(): void {
+    const pending = this.wire.getModel(TurnModel).pendingUserInterruptionTurnIds;
+    for (const turnId of pending) this.recordReminder(turnId);
+  }
+
+  private recordReminder(turnId: number, allowUntracked = false): void {
+    const pending = this.wire.getModel(TurnModel).pendingUserInterruptionTurnIds.includes(turnId);
+    if (!pending && !allowUntracked) return;
+    if (!this.appendInterruptionReminder()) return;
+    if (pending) this.wire.dispatch(interruptionReminderRecorded({ turnId }));
+  }
+
+  private appendInterruptionReminder(): boolean {
+    const before = this.context.get();
+    const origin = lastDurableMessageOrigin(before);
+    if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return true;
     this.reminders.appendSystemReminder(INTERRUPTION_REMINDER, {
       kind: 'injection',
       variant: INTERRUPTION_REMINDER_VARIANT,
     });
+    const after = this.context.get();
+    if (after === before) return false;
+    const appended = lastDurableMessageOrigin(after);
+    return appended?.kind === 'injection' && appended.variant === INTERRUPTION_REMINDER_VARIANT;
   }
 }
 
-/**
- * Origin of the last message that survives the fold, skipping a trailing open
- * assistant the cancelled turn left with nothing sendable recorded (the fold
- * drops it as vacuous at the next `step.begin`). Judging dedup against it
- * would let markers stack around the dropped shell (e.g. an empty retry turn
- * interrupted before its first token).
- */
 function lastDurableMessageOrigin(
   messages: readonly ContextMessage[],
 ): ContextMessage['origin'] | undefined {

@@ -21,12 +21,6 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 /** Why a turn ended. `blocked` folds into `failed` at the wire edge. */
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
-/**
- * Why a non-completed turn stopped early — the same enum the `turn_interrupted`
- * telemetry event reports. `user_cancelled` marks a deliberate user interrupt
- * (Esc); every other value is a programmatic or provider-side stop. Absent on
- * `turn.ended` when the turn completed.
- */
 export type TurnInterruptReason =
   | 'user_cancelled'
   | 'aborted'
@@ -64,7 +58,6 @@ export interface TurnEndedEvent {
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
-  /** Present iff `reason` is not `'completed'`. */
   readonly interruptReason?: TurnInterruptReason;
 }
 
