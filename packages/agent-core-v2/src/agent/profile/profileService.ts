@@ -379,7 +379,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(profileBind({
-      cwd: input.cwd,
+      // Persist the RESOLVED cwd (the bind input's, or the session's when the
+      // input omits it): the Model's cwd is creation-fixed, and every later
+      // reader — `data()`, `refreshSystemPrompt` — must never see it unset.
+      cwd: context.cwd,
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
@@ -690,7 +693,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get cwd(): string {
-    return this.profileState.cwd ?? this.readConfiguredCwd() ?? '';
+    // `profileState.cwd` is creation-fixed by `profile.bind`; a legacy agent
+    // bound before the bind payload recorded the resolved cwd falls back to
+    // the session's own cwd — the same value its bind resolved against —
+    // never to a bare '' (which would read the server process's cwd).
+    return this.profileState.cwd ?? this.readConfiguredCwd() ?? this.sessionContext.cwd;
   }
 
   private get model(): string {

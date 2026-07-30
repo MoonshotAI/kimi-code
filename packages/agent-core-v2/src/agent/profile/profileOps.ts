@@ -22,7 +22,8 @@
  * NOT part of `apply`: it runs after
  * `wire.dispatch` on the live path only, so `wire.replay` rebuilds the Model
  * silently. `cwd` is creation-fixed: it enters the Model through `profile.bind`
- * and no later Op may change it.
+ * as the bind's RESOLVED effective cwd (the input's, or the session's when the
+ * input omits it) and no later Op may change it.
  *
  * Also declares `ActiveToolsModel` (`readonly string[] | undefined`, initial
  * `undefined` = every tool active), the `tools.set_active_tools` whole-set

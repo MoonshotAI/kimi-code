@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -196,6 +196,45 @@ describe('AgentProfileService.bind', () => {
       profileName: 'delegates-explore',
       subagents: ['explore'],
     });
+  });
+
+  it('records the resolved session cwd in the binding when the input omits it', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
+    try {
+      const persistence = new InMemoryWireRecordPersistence();
+      ctx = createTestAgent({ persistence, cwd: workDir }, hostEnvironmentServices(homeDir));
+
+      await ctx.get(IAgentProfileService).bind({
+        profile: 'delegates-explore',
+        model: MOCK_MODEL,
+      });
+      await ctx.get(IWireService).flush();
+
+      expect(
+        persistence.records.find((record) => record.type === 'profile.bind'),
+      ).toMatchObject({ cwd: workDir });
+      expect(ctx.get(IAgentProfileService).data().cwd).toBe(workDir);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refreshes the system prompt from the session cwd after a default bind', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
+    try {
+      await writeFile(join(workDir, 'AGENTS.md'), 'v1 instructions', 'utf-8');
+      ctx = createTestAgent(hostEnvironmentServices(homeDir), { cwd: workDir });
+      const svc = ctx.get(IAgentProfileService);
+      await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+      expect(svc.data().cwd).toBe(workDir);
+
+      await writeFile(join(workDir, 'AGENTS.md'), 'v2 instructions', 'utf-8');
+      await svc.refreshSystemPrompt();
+
+      expect(svc.getSystemPrompt()).toContain('v2 instructions');
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   });
 
   it('setModel applies the default profile when none is bound yet', async () => {
