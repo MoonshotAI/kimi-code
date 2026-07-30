@@ -181,7 +181,7 @@ export type ApprovalBlock =
     }
   | { kind: 'generic'; summary: string };
 
-export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron';
+export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron' | 'mcp_channel';
 
 export interface FilePreviewRequest {
   path: string;
@@ -214,6 +214,14 @@ export interface CronTurnData {
   coalescedCount?: number;
   stale?: boolean;
   missedCount?: number;
+}
+
+/** Metadata carried by an MCP channel push (role 'mcp_channel'): an MCP
+ *  server — e.g. a Discord bridge — pushed a message that woke the agent.
+ *  Mirrors the TUI's McpChannelTranscriptData. */
+export interface McpChannelTurnData {
+  server: string;
+  chatId?: string;
 }
 
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
@@ -274,6 +282,9 @@ export interface ChatTurn {
       scheduled reminder rather than a real user. Mirrors the TUI's
       CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
   cron?: CronTurnData;
+  /** MCP channel push metadata (role 'mcp_channel'): set when a turn was
+      triggered by an MCP server pushing a message rather than a real user. */
+  mcpChannel?: McpChannelTurnData;
 }
 
 /**

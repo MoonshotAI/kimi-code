@@ -1,5 +1,10 @@
 /**
- * `mcpCore` domain (L2) — shared MCP client helpers — request options, liveness probes, result conversion.
+ * `mcpCore` domain (L2) — shared MCP client helpers: request options,
+ * liveness probes, result conversion, and the push-channel wiring shared by
+ * every transport wrapper (stdio / http / sse) — declares the
+ * `experimental.channel` capability, handles `notifications/kimi/channel`,
+ * and buffers a notification that arrives before a listener is attached so
+ * none are lost before `McpConnectionManager` subscribes post-connect.
  */
 
 import { getCoreVersion } from '#/_base/version';
@@ -138,13 +143,6 @@ export const KIMI_CLIENT_CAPABILITIES: ClientCapabilities = {
 
 export type ChannelMessageListener = (message: MCPChannelMessage) => void;
 
-/**
- * Buffers channel messages that arrive before a listener is attached (a real
- * possibility: `setNotificationHandler` is registered at construction time,
- * before `McpConnectionManager` gets a chance to subscribe post-connect).
- * Once a listener is set, messages deliver synchronously and any buffered
- * backlog flushes in order.
- */
 export class ChannelMessageHub {
   private listener: ChannelMessageListener | undefined;
   private readonly pending: MCPChannelMessage[] = [];
@@ -165,12 +163,6 @@ export class ChannelMessageHub {
   }
 }
 
-/**
- * Builds an MCP SDK `Client` pre-wired for the push channel: declares the
- * `experimental.channel` capability and registers a handler that forwards
- * `notifications/kimi/channel` into the returned hub. Shared by all three
- * transport wrappers (stdio / http / sse) so the wiring lives in one place.
- */
 export function createMcpSdkClient(
   name: string,
   version: string,

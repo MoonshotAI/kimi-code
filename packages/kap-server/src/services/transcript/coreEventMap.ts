@@ -42,6 +42,9 @@
  *     as an extra event shape beyond `DomainEvent` for edge synthesis; the
  *     terminal events synthesize a minimal entity when submitted was missed.
  *   - `hook.result` becomes a 'hook' marker with the raw payload.
+ *   - `mcp.channel.received` (an MCP server pushing a message, e.g. a Discord
+ *     bridge) becomes a 'mcp.channel.received' marker with the raw payload
+ *     (`server` / `chatId` / `text` / `receivedAt`).
  *   - `context.spliced` (undo/clear) is projected as a bare 'undo' marker with
  *     the raw payload — no `items.remove` reconstruction in v1. Known
  *     limitation.
@@ -271,6 +274,8 @@ export class AgentTranscriptProjector {
         return [this.markerOp('skill', { ...restOf(event), variant: 'plugin_command' })];
       case 'cron.fired':
         return [this.markerOp('cron.fired', restOf(event))];
+      case 'mcp.channel.received':
+        return [this.markerOp('mcp.channel.received', restOf(event))];
       case 'compaction.started':
       case 'compaction.blocked':
       case 'compaction.cancelled':

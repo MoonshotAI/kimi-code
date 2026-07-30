@@ -1139,6 +1139,15 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
     feed(ev({ type: 'cron.fired', origin: { kind: 'cron_job', jobId: 'j1' }, prompt: 'ping' }));
+    feed(
+      ev({
+        type: 'mcp.channel.received',
+        server: 'discord',
+        chatId: 'chat-1',
+        text: 'hi',
+        receivedAt: '2024-01-01T00:00:00.000Z',
+      }),
+    );
     feed(ev({ type: 'compaction.started', trigger: 'auto' }));
     feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
     // `hook.result` carries an optional turnId — absent here, payload verbatim.
@@ -1161,6 +1170,7 @@ describe('AgentTranscriptProjector', () => {
       'skill',
       'skill',
       'cron.fired',
+      'mcp.channel.received',
       'compaction',
       'compaction',
       'hook',
@@ -1168,16 +1178,22 @@ describe('AgentTranscriptProjector', () => {
       'undo',
     ]);
     expect(markers[1]!.payload).toMatchObject({ variant: 'plugin_command' });
-    expect(markers[3]!.payload).toMatchObject({ phase: 'started' });
-    expect(markers[4]!.payload).toMatchObject({ phase: 'completed' });
-    expect(markers[5]!.payload).toEqual({ hookEvent: 'SessionStart', content: 'hook says hi' });
-    expect(markers[6]!.payload).toEqual({
+    expect(markers[3]!.payload).toEqual({
+      server: 'discord',
+      chatId: 'chat-1',
+      text: 'hi',
+      receivedAt: '2024-01-01T00:00:00.000Z',
+    });
+    expect(markers[4]!.payload).toMatchObject({ phase: 'started' });
+    expect(markers[5]!.payload).toMatchObject({ phase: 'completed' });
+    expect(markers[6]!.payload).toEqual({ hookEvent: 'SessionStart', content: 'hook says hi' });
+    expect(markers[7]!.payload).toEqual({
       turnId: 3,
       hookEvent: 'UserPromptSubmit',
       content: 'blocked by hook',
       blocked: true,
     });
-    expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
+    expect(markers[8]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
   it('projects error / warning events as notice markers outside any step', () => {

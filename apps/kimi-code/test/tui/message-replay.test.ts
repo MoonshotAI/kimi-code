@@ -1009,6 +1009,33 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
+  it('renders mcp_channel origin records during replay without exposing raw XML, matching the live-rendered (unescaped) text', async () => {
+    const mcpChannelPush = '<mcp-channel server="discord" chatId="chat-1">\na &lt; b\n</mcp-channel>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: mcpChannelPush }], {
+        origin: { kind: 'mcp_channel', server: 'discord', chatId: 'chat-1' },
+      }),
+    ]);
+
+    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+    expect(transcript).not.toContain('<mcp-channel');
+    expect(transcript).not.toContain('&lt;');
+    expect(transcript).toContain('Message received via discord');
+    expect(transcript).toContain('a < b');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['real prompt']);
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'mcp_channel')
+        .map((entry) => entry.content),
+    ).toEqual(['a < b']);
+  });
+
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {
     const activation = message(
       'user',

@@ -39,4 +39,7 @@ export default {
     expand: '展开',
     collapse: '收起',
   },
+  mcpChannel: {
+    received: '通过 {server} 收到消息',
+  },
 } as const;

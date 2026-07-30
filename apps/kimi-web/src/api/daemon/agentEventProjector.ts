@@ -1389,6 +1389,34 @@ export function createAgentProjector(): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
+      case 'mcp.channel.received': {
+        // An MCP server (e.g. a Discord bridge) pushed a message that woke
+        // the session. Same situation as cron.fired: agent-core persists the
+        // injected user message (rendered via messagesToTurns on refresh),
+        // but the steer that delivers it does not broadcast a
+        // prompt.submitted / message.created — synthesize one here so it
+        // shows up live too. The event's own `text` is the raw, unescaped
+        // message (the XML envelope only exists on the persisted copy), so
+        // no unwrapping is needed here.
+        const server = stringField(p ?? {}, 'server');
+        const text = stringField(p ?? {}, 'text');
+        const chatId = stringField(p ?? {}, 'chatId');
+        if (server && text) {
+          const msg: AppMessage = {
+            id: ulid('mcpchan_'),
+            sessionId,
+            role: 'user',
+            content: [{ type: 'text', text }],
+            createdAt: new Date().toISOString(),
+            metadata: { origin: { kind: 'mcp_channel', server, chatId } },
+          };
+          s.messages.push(msg);
+          out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+        }
+        break;
+      }
+
+      // -----------------------------------------------------------------------
       // Explicitly known but not projected
       case 'compaction.blocked':
       case 'hook.result':
@@ -1475,6 +1503,7 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'background.task.started',
   'background.task.terminated',
   'cron.fired',
+  'mcp.channel.received',
 ]);
 
 /**

@@ -9,6 +9,7 @@ import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
+import McpChannelNotice from './McpChannelNotice.vue';
 import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import AttachmentChip from './AttachmentChip.vue';
@@ -372,7 +373,7 @@ function copyConversation(): void {
   if (props.turns.length === 0) return;
   const lines: string[] = [];
   for (const turn of props.turns) {
-    if (turn.role === 'compaction' || turn.role === 'cron') continue; // dividers / cron notices don't copy
+    if (turn.role === 'compaction' || turn.role === 'cron' || turn.role === 'mcp_channel') continue; // dividers / notices don't copy
     const roleLabel = turn.role === 'user' ? 'User' : 'Assistant';
     const content = turnToMarkdown(turn);
     if (content.trim()) {
@@ -632,6 +633,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
            a lightweight in-transcript notice rather than a user bubble. -->
       <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" :created-at="turn.createdAt" />
+      <McpChannelNotice v-else-if="turn.role === 'mcp_channel'" :text="turn.text" :mcp-channel="turn.mcpChannel" :turn-id="turn.id" :created-at="turn.createdAt" />
 
       <!-- Assistant turn → left-aligned, no name/role label. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">

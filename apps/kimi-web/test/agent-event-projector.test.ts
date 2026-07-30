@@ -148,6 +148,33 @@ describe('cron.fired', () => {
   });
 });
 
+describe('mcp.channel.received', () => {
+  it('synthesizes a user message so the push notice renders live', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'mcp.channel.received',
+      { server: 'discord', chatId: 'chat-1', text: 'hi there', receivedAt: '2024-01-01T00:00:00.000Z' },
+      's1',
+    );
+    const created = events.find((e) => e.type === 'messageCreated');
+    expect(created).toBeDefined();
+    expect(created).toMatchObject({
+      type: 'messageCreated',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'hi there' }],
+        metadata: { origin: { kind: 'mcp_channel', server: 'discord', chatId: 'chat-1' } },
+      },
+    });
+  });
+
+  it('ignores mcp.channel.received events missing a server or text', () => {
+    const projector = createAgentProjector();
+    expect(projector.project('mcp.channel.received', { server: 'discord' }, 's1')).toEqual([]);
+    expect(projector.project('mcp.channel.received', { text: 'hi' }, 's1')).toEqual([]);
+  });
+});
+
 describe('cron.fired prompt id isolation', () => {
   it('omits promptId so the synthesized notice does not clobber the abort cache', () => {
     const projector = createAgentProjector();

@@ -861,6 +861,44 @@ describe('messagesToTurns cron', () => {
   });
 });
 
+describe('messagesToTurns mcp channel', () => {
+  it('renders an mcp_channel push as its own notice with the unwrapped, unescaped text', () => {
+    const envelope = '<mcp-channel server="discord" chatId="chat-1">\na &lt; b\n</mcp-channel>';
+    const turns = messagesToTurns(
+      [
+        message('m1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: { origin: { kind: 'mcp_channel', server: 'discord', chatId: 'chat-1' } },
+        }),
+      ],
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      role: 'mcp_channel',
+      text: 'a < b',
+      mcpChannel: { server: 'discord', chatId: 'chat-1' },
+    });
+  });
+
+  it('does not also render a user bubble for an mcp_channel push', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'm2',
+          'user',
+          [{ type: 'text', text: '<mcp-channel server="discord">\nhi\n</mcp-channel>' }],
+          { metadata: { origin: { kind: 'mcp_channel', server: 'discord' } } },
+        ),
+      ],
+      [],
+    );
+
+    expect(turns.some((t) => t.role === 'user')).toBe(false);
+    expect(turns).toHaveLength(1);
+  });
+});
+
 describe('isPlayableMediaUrl', () => {
   // Gates the file-preview media source: a playable url feeds a native
   // <video>/<img> src; a non-playable one falls through to the no-preview card.

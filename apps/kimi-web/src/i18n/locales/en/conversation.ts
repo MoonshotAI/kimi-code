@@ -39,4 +39,7 @@ export default {
     expand: 'Show more',
     collapse: 'Show less',
   },
+  mcpChannel: {
+    received: 'Message received via {server}',
+  },
 } as const;

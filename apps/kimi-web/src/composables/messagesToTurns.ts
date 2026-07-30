@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, McpChannelTurnData, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -469,6 +469,47 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
   return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
 }
 
+/**
+ * Pull the message body out of an MCP channel push envelope. Server-side, a
+ * push reaches the transcript as a user message whose text is wrapped in
+ * `<mcp-channel server="…" chatId="…">\n…\n</mcp-channel>`, with the body
+ * itself `<`/`>`-escaped (see renderMcpChannelXml in agent-core-v2 — unlike
+ * cron's envelope, which escapes nothing). Mirrors the TUI's
+ * stripMcpChannelEnvelope.
+ */
+function mcpChannelOrigin(msg: AppMessage): McpChannelTurnData | undefined {
+  const origin = msg.metadata?.['origin'] as { kind?: string; server?: string; chatId?: string } | undefined;
+  if (origin?.kind !== 'mcp_channel' || typeof origin.server !== 'string') return undefined;
+  return { server: origin.server, chatId: origin.chatId };
+}
+
+function mcpChannelText(msg: AppMessage): string {
+  const raw = msg.content
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
+  return unescapeMcpChannelText(stripMcpChannelEnvelope(raw));
+}
+
+function stripMcpChannelEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<mcp-channel ') &&
+    lines.at(-1) === '</mcp-channel>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function unescapeMcpChannelText(text: string): string {
+  return text.replaceAll('&lt;', '<').replaceAll('&gt;', '>');
+}
+
+function buildMcpChannelTurn(msg: AppMessage, no: number, mcpChannel: McpChannelTurnData): ChatTurn {
+  return { id: msg.id, role: 'mcp_channel', no, text: mcpChannelText(msg), createdAt: msg.createdAt, mcpChannel };
+}
 
 /**
  * Whether a USER-role message should be shown. Mirrors agent-core's
@@ -771,13 +812,18 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       const cronKind = cronOriginKind(msg);
-      // A cron injection always renders as its own standalone turn: agent-core
-      // buffers steer input while a turn is in flight and only injects it at the
-      // turn boundary, so the cron message does not land between a tool use and
-      // its result in practice.
+      const mcpChannel = mcpChannelOrigin(msg);
+      // A cron injection / MCP channel push always renders as its own
+      // standalone turn: agent-core buffers steer input while a turn is in
+      // flight and only injects it at the turn boundary, so neither lands
+      // between a tool use and its result in practice.
       flushGroup();
       if (cronKind !== undefined) {
         turns.push(buildCronTurn(msg, no++, cronKind));
+        continue;
+      }
+      if (mcpChannel !== undefined) {
+        turns.push(buildMcpChannelTurn(msg, no++, mcpChannel));
         continue;
       }
       // Hide system-injected user turns (TUI parity) — they end the previous

@@ -798,7 +798,14 @@ function stripMcpChannelEnvelope(text: string): string {
     lines[0]?.startsWith('<mcp-channel ') &&
     lines.at(-1) === '</mcp-channel>'
   ) {
-    return lines.slice(1, -1).join('\n');
+    return unescapeMcpChannelText(lines.slice(1, -1).join('\n'));
   }
   return text;
+}
+
+// Exact inverse of the plugin bridge's `escapeXmlTags` (which only escapes
+// `<`/`>` in the message body, unlike the attribute escaping used for
+// `server`/`chatId`) — so live rendering (raw `event.text`) and replay agree.
+function unescapeMcpChannelText(text: string): string {
+  return text.replaceAll('&lt;', '<').replaceAll('&gt;', '>');
 }
