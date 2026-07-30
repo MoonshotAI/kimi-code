@@ -69,6 +69,19 @@ export class StubConfigService implements IConfigService {
     return Promise.resolve();
   }
 
+  replaceSections(sections: Readonly<Record<string, unknown>>): Promise<void> {
+    for (const [domain, value] of Object.entries(sections)) {
+      const previousValue = this._values.get(domain);
+      if (value === undefined) {
+        this._values.delete(domain);
+      } else {
+        this._values.set(domain, value);
+      }
+      this._onDidChange.fire({ domain, source: 'set', value, previousValue });
+    }
+    return Promise.resolve();
+  }
+
   /**
    * Mutate a section WITHOUT firing the change event — simulates a config
    * write that bypasses the services' change events (the cache-invalidation
