@@ -242,6 +242,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "GET",
       "/asyncapi.json",
     ],
     [
@@ -391,6 +395,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/workspaces",
+    ],
+    [
+      "POST",
+      "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "POST",
+      "/api/v1/workspaces/{workspace_id}/untrust",
     ],
     [
       "PUT",

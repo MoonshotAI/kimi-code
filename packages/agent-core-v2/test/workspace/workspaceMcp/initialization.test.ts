@@ -36,6 +36,7 @@ import {
   type IHostFsWatchHandle,
 } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -95,6 +96,11 @@ describe('Workspace MCP initialization', () => {
           }),
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.definePartialInstance(IWorkspaceTrust, {
+          ready: Promise.resolve(),
+          isTrusted: () => true,
+          onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
+        });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },

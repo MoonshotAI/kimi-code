@@ -35,6 +35,10 @@ import {
 } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
+  IWorkspaceTrust,
+  type WorkspaceTrustChange,
+} from '#/workspace/workspaceTrust/workspaceTrust';
+import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
@@ -53,6 +57,8 @@ describe('WorkspaceMcpConfigService', () => {
   let watchFires: Map<string, Emitter<HostFsChange>>;
   let pluginServers: Record<string, McpServerConfig>;
   let pluginReloads: Emitter<ReloadSummary>;
+  let trusted: boolean;
+  let trustFlips: Emitter<WorkspaceTrustChange>;
   let changes: McpServersChange[];
 
   beforeEach(() => {
@@ -62,6 +68,8 @@ describe('WorkspaceMcpConfigService', () => {
     watchFires = new Map();
     pluginServers = {};
     pluginReloads = new Emitter<ReloadSummary>();
+    trusted = true;
+    trustFlips = new Emitter<WorkspaceTrustChange>();
     changes = [];
   });
 
@@ -106,6 +114,11 @@ describe('WorkspaceMcpConfigService', () => {
         });
         reg.defineInstance(IHostFsWatchService, fsWatchStub());
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.definePartialInstance(IWorkspaceTrust, {
+          ready: Promise.resolve(),
+          isTrusted: () => trusted,
+          onDidChange: trustFlips.event,
+        });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
       },
     });
@@ -136,6 +149,58 @@ describe('WorkspaceMcpConfigService', () => {
     });
     expect(changes).toEqual([]);
   });
+
+  it('skips the project-level config files while the workspace is untrusted', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+    pluginServers = { pluginOnly: stdioConfig('plugin') };
+    trusted = false;
+
+    const service = createService();
+    await service.ready;
+
+    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+  });
+
+  it('picks up the project servers when the workspace becomes trusted', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+    trusted = false;
+    const service = createService();
+    await service.ready;
+    expect(service.servers()).toEqual({});
+
+    trusted = true;
+    trustFlips.fire({ trusted: true });
+
+    await vi.waitFor(
+      () => {
+        expect(changes).toEqual([{ upsert: { fileOnly: stdioConfig('file') }, remove: [] }]);
+      },
+      { timeout: 10000, interval: 50 },
+    );
+    expect(service.servers()).toEqual({ fileOnly: stdioConfig('file') });
+  }, 20000);
+
+  it('drops the project servers when the workspace loses trust', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+    pluginServers = { pluginOnly: stdioConfig('plugin') };
+    const service = createService();
+    await service.ready;
+    expect(service.servers()).toEqual({
+      fileOnly: stdioConfig('file'),
+      pluginOnly: stdioConfig('plugin'),
+    });
+
+    trusted = false;
+    trustFlips.fire({ trusted: false });
+
+    await vi.waitFor(
+      () => {
+        expect(changes).toEqual([{ upsert: {}, remove: ['fileOnly'] }]);
+      },
+      { timeout: 10000, interval: 50 },
+    );
+    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+  }, 20000);
 
   it('exposes the [mcp] section as tunables, resolved live', async () => {
     const service = createService({ startupTimeoutMs: 1234, toolTimeoutMs: 5678 });

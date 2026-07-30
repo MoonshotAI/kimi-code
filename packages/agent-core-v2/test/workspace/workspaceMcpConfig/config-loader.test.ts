@@ -102,6 +102,41 @@ describe('loadMcpServers', () => {
     });
   });
 
+  it('loads only the user file when includeProject is false (untrusted workspace)', async () => {
+    const home = makeTempDir();
+    const repoRoot = makeTempDir();
+    const cwd = join(repoRoot, 'packages', 'agent-core');
+    await mkdir(join(repoRoot, '.git'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        shared: { transport: 'stdio', command: 'shared-user' },
+        userOnly: { transport: 'stdio', command: 'user-only' },
+      },
+    });
+    await writeJson(join(repoRoot, '.mcp.json'), {
+      mcpServers: {
+        shared: { transport: 'stdio', command: 'shared-root' },
+        rootOnly: { command: 'root-only' },
+      },
+    });
+    await writeJson(join(cwd, '.kimi-code', 'mcp.json'), {
+      mcpServers: {
+        shared: { transport: 'stdio', command: 'shared-project' },
+        projectOnly: { transport: 'http', url: 'https://mcp.example.com' },
+      },
+    });
+
+    const servers = await loadMcpServers({ fs, cwd, homeDir: home, includeProject: false });
+
+    expect(Object.keys(servers).toSorted()).toEqual(['shared', 'userOnly']);
+    expect(servers['shared']).toEqual({
+      transport: 'stdio',
+      command: 'shared-user',
+    });
+  });
+
   it('loads root .mcp.json from the repo root and lets project-local override it', async () => {
     const home = makeTempDir();
     const repoRoot = makeTempDir();

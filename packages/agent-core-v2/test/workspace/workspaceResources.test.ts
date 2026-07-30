@@ -83,6 +83,7 @@ import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpServic
 import { IMcpOAuthStore, McpOAuthStoreAdapter } from '#/app/mcpConfig/oauthStore';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
@@ -126,6 +127,24 @@ function pluginStub(): IPluginService {
     enabledMcpServers: async () => ({}),
     pluginSkillRoots: async () => [],
   } as unknown as IPluginService;
+}
+
+class TrustedWorkspaceTrustStub implements IWorkspaceTrust {
+  declare readonly _serviceBrand: undefined;
+  readonly ready = Promise.resolve();
+  readonly onDidChange = Event.None as IWorkspaceTrust['onDidChange'];
+  isTrusted(): boolean {
+    return true;
+  }
+  get(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+  trust(): Promise<void> {
+    return Promise.resolve();
+  }
+  untrust(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 describe('workspace resource sharing (handler chain)', () => {
@@ -197,6 +216,13 @@ describe('workspace resource sharing (handler chain)', () => {
       WorkspaceMcpConfigService,
       ScopeActivation.OnScopeCreated,
       'workspaceMcpConfig',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceTrust,
+      TrustedWorkspaceTrustStub,
+      ScopeActivation.OnDemand,
+      'workspaceTrust',
     );
     registerScopedService(
       LifecycleScope.App,

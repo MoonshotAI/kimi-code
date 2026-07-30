@@ -6,7 +6,10 @@
  * `git` domain's work-tree probe — and `.kimi-code/mcp.json` under the cwd)
  * and loads them with user < project-root < project precedence, normalizing
  * relative stdio `cwd` entries against the project-root file's directory.
- * All filesystem access goes through the os `IHostFileSystem`, supplied by
+ * `includeProject: false` skips the two project-level files and loads the
+ * user file only — the workspace-trust gate: the project files ship with
+ * the checkout, so an untrusted workspace must never see them. All
+ * filesystem access goes through the os `IHostFileSystem`, supplied by
  * the caller. Pure functions — no scoped state.
  */
 
@@ -51,12 +54,17 @@ export interface LoadMcpServersInput {
   readonly fs: IHostFileSystem;
   readonly cwd: string;
   readonly homeDir?: string;
+  /** Defaults to true; false loads the user file only (untrusted workspace). */
+  readonly includeProject?: boolean;
 }
 
 export async function loadMcpServers(
   input: LoadMcpServersInput,
 ): Promise<Record<string, McpServerConfig>> {
   const paths = await resolveMcpJsonPaths(input);
+  if (input.includeProject === false) {
+    return readMcpJson(input.fs, paths.user);
+  }
   const [user, projectRoot, project] = await Promise.all([
     readMcpJson(input.fs, paths.user),
     readMcpJson(input.fs, paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),

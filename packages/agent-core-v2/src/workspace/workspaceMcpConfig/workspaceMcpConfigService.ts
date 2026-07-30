@@ -7,8 +7,12 @@
  * `.mcp.json`, `.kimi-code/mcp.json` — read through the os `hostFs`) and the
  * enabled plugins; on a name collision the file config wins, and when one
  * source's server vanishes the same-named entry from the other source takes
- * over. The config files are watched (the user file directly, the project
- * root recursively pruned to the two project candidates) and plugin
+ * over. The two project-level files are gated by `workspaceTrust`: while the
+ * workspace is untrusted they are skipped (the user file and plugin
+ * contributions still load), and a trust flip triggers the same reload path
+ * as a file edit, so trusting connects the project servers and untrusting
+ * drops them. The config files are watched (the user file directly, the
+ * project root recursively pruned to the two project candidates) and plugin
  * contributions follow `plugins.onDidReload`; every re-resolve recomputes the
  * merged view and publishes the fingerprint diff through `onDidChange`, so a
  * config edit or a plugin installed, enabled or reloaded AFTER the handler
@@ -35,6 +39,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
 import { loadMcpServers, resolveMcpJsonPaths } from './config-loader';
 import {
@@ -69,6 +74,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     @IConfigService private readonly config: IConfigService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
   ) {
     super();
     this.ready = this.initialize().catch((error: unknown) => {
@@ -78,6 +84,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       this.plugins.onDidReload(() => {
         void this.reloadPluginServers().catch((error) => {
           this.log.warn(`mcp plugin reload failed: ${String(error)}`);
+        });
+      }),
+    );
+    this._register(
+      this.trust.onDidChange(() => {
+        void this.reloadFileServers().catch((error) => {
+          this.log.warn(`mcp trust reload failed: ${String(error)}`);
         });
       }),
     );
@@ -104,11 +117,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
 
   private async initialize(): Promise<void> {
     await this.config.ready;
+    await this.trust.ready;
     const [fileServers, pluginServers] = await Promise.all([
       loadMcpServers({
         fs: this.fs,
         cwd: this.workspace.cwd,
         homeDir: this.bootstrap.homeDir,
+        includeProject: this.trust.isTrusted(),
       }),
       this.plugins.enabledMcpServers(),
     ]);
@@ -171,6 +186,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         fs: this.fs,
         cwd: this.workspace.cwd,
         homeDir: this.bootstrap.homeDir,
+        includeProject: this.trust.isTrusted(),
       });
       this.fileServers = new Map(Object.entries(fresh));
       this.publishIfChanged();

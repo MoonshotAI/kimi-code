@@ -169,6 +169,11 @@ const DOMAIN_LAYER = new Map([
   // veto set (runtime capabilities keyed off the handler's os backend); it
   // hands every session the `sessionToolPolicyGate` seed contract (L1).
   ['workspaceToolPolicy', 2],
+  // `workspaceTrust` is the Workspace-scope owner of the per-workspace trust
+  // marker that gates project-level config (first consumer:
+  // `workspaceMcpConfig`); its only collaborators are the handler's
+  // `workspaceContext` (L1) and the `persistence` document store.
+  ['workspaceTrust', 2],
   // `sessionToolPolicyGate` is the Session-scope seeded workspace tool-veto
   // contract (`ISessionToolPolicyGate`): a pure data + change-event
   // injection contract (the Workspace-scope `workspaceToolPolicy` impl hands

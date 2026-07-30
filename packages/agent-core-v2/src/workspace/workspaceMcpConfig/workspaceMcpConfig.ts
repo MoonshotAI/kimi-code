@@ -6,7 +6,9 @@
  * MCP servers should this workspace run": it resolves the MCP config files
  * (user `mcp.json`, project-root `.mcp.json`, `.kimi-code/mcp.json`) and the
  * enabled plugins' contributions — on a name collision the file config wins —
- * then tracks both sources (fs watch on the config files,
+ * with the two project-level files gated by `workspaceTrust` (an untrusted
+ * workspace gets the user file and plugin contributions only), then tracks
+ * both sources (fs watch on the config files,
  * `plugins.onDidReload`) and publishes the reconciled effective set as a
  * snapshot plus already-diffed change events. Consumers never read config
  * files, the plugin registry, or the `[mcp]` config section themselves: the

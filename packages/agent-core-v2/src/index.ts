@@ -413,6 +413,8 @@ export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGateService';
 export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
+export * from '#/workspace/workspaceTrust/workspaceTrust';
+export * from '#/workspace/workspaceTrust/workspaceTrustService';
 export * from '#/app/hostFolderBrowser/hostFolderBrowser';
 export * from '#/app/hostFolderBrowser/hostFolderBrowserService';
 export * from '#/persistence/interface/storage';
