@@ -435,6 +435,35 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
+    // Empty query: no fuzzy matching — list the workspace root's top-level
+    // entries (dirs first) so clients can show a starting set for @-mention
+    // style file pickers.
+    if (req.query === '') {
+      const listed = await this.list({
+        path: '.',
+        depth: 1,
+        limit: req.limit,
+        show_hidden: false,
+        follow_gitignore: req.follow_gitignore,
+        exclude_globs: req.exclude_globs,
+        sort: 'type_first',
+        include_git_status: false,
+      });
+      const items = listed.items
+        .filter(
+          (entry) =>
+            req.include_globs === undefined || matchesAnyGlob(entry.path, req.include_globs),
+        )
+        .map((entry) => ({
+          path: entry.path,
+          name: entry.name,
+          kind: entry.kind,
+          score: 1,
+          match_positions: [],
+        }));
+      return { items, truncated: listed.truncated };
+    }
+
     const matcher = req.follow_gitignore ? await this.matcher() : undefined;
     const candidates: FsSearchHit[] = [];
     const queryLower = req.query.toLowerCase();

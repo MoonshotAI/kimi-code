@@ -479,6 +479,40 @@ describe('WorkspaceFsService.search', () => {
     expect(result.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
     expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
   });
+
+  it('lists the workspace root top-level entries when the query is empty', async () => {
+    const fs = makeSession(
+      { 'src/foo.ts': '', 'src/nested/deep.ts': '', 'README.md': '', '.hidden.ts': '' },
+      emptyHandler,
+    );
+    const result = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    // Dirs first, then files, alphabetical inside each group; hidden entries
+    // and nested paths are not listed.
+    expect(result.items.map((i) => i.path)).toEqual(['src', 'README.md']);
+    expect(result.items[0]).toMatchObject({
+      name: 'src',
+      kind: 'directory',
+      score: 1,
+      match_positions: [],
+    });
+    expect(result.truncated).toBe(false);
+  });
+
+  it('truncates the empty-query listing at the limit', async () => {
+    const fs = makeSession({ 'a.ts': '', 'b.ts': '', 'c.ts': '' }, emptyHandler);
+    const result = await fs.search({ query: '', limit: 2, follow_gitignore: false });
+    expect(result.items.map((i) => i.path)).toEqual(['a.ts', 'b.ts']);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('respects .gitignore in the empty-query listing', async () => {
+    const fs = makeSession(
+      { '.gitignore': 'ignored.ts\n', 'ignored.ts': '', 'kept.ts': '' },
+      emptyHandler,
+    );
+    const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
+    expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
+  });
 });
 
 describe('WorkspaceFsService.grep', () => {

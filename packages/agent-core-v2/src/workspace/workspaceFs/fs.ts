@@ -181,7 +181,10 @@ export const fsStatManyResponseSchema = z.object({
 export type FsStatManyResponse = z.infer<typeof fsStatManyResponseSchema>;
 
 export const fsSearchRequestSchema = z.object({
-  query: z.string().min(1),
+  // An empty query is allowed: the service then lists the workspace root's
+  // top-level entries (dirs first) instead of fuzzy-matching — the starting
+  // set for @-mention style file pickers.
+  query: z.string(),
   limit: z.number().int().min(1).max(200).default(50),
   include_globs: z.array(z.string()).optional(),
   exclude_globs: z.array(z.string()).optional(),
