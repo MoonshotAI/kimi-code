@@ -27,6 +27,7 @@ import {
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 interface Envelope<T> {
   code: number;
@@ -52,6 +53,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
       homeDir: home,
       logLevel: 'silent',
       debugEndpoints: true,
+      hostIdentity: TEST_HOST_IDENTITY,
     });
     base = `http://127.0.0.1:${server.port}`;
   });

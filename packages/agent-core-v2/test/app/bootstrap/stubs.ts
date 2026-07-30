@@ -19,10 +19,9 @@ export const stubClientIdentity = {
 } as const;
 
 export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
-  const sessionsScope = 'sessions';
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
-    sessions: sessionsScope,
+    sessions: 'sessions',
     blobs: 'blobs',
     store: 'store',
     logs: 'logs',
@@ -30,9 +29,6 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     credentials: 'credentials',
     cron: 'cron',
   };
-  const sessionScope = (wsId: string, sId: string): string => `${sessionsScope}/${wsId}/${sId}`;
-  const agentScope = (wsId: string, sId: string, aId: string): string =>
-    `${sessionScope(wsId, sId)}/agents/${aId}`;
   return {
     _serviceBrand: undefined,
     platform: 'linux',
@@ -50,10 +46,6 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     logsDir: `${homeDir}/logs`,
     getEnv: (name) => env[name],
     scope: (name) => scopes[name],
-    sessionScope,
-    agentScope,
-    sessionDir: (wsId, sId) => `${homeDir}/${sessionScope(wsId, sId)}`,
-    agentHomedir: (wsId, sId, aId) => `${homeDir}/${agentScope(wsId, sId, aId)}`,
   };
 }
 

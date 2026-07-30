@@ -71,10 +71,6 @@ export interface IBootstrapService {
   readonly logsDir: string;
   getEnv(name: string): string | undefined;
   scope(name: PersistenceScopeName): string;
-  sessionScope(workspaceId: string, sessionId: string): string;
-  agentScope(workspaceId: string, sessionId: string, agentId: string): string;
-  sessionDir(workspaceId: string, sessionId: string): string;
-  agentHomedir(workspaceId: string, sessionId: string, agentId: string): string;
   readonly configKey: string;
 }
 

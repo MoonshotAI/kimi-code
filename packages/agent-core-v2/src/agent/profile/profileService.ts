@@ -33,10 +33,9 @@
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it. The AGENTS.md portion of the system-prompt
  * context comes from the seeded `ISessionInstructionsProvider` (the
- * workspace handler's shared, watch-refreshed snapshot) whenever the
- * effective cwd is the session cwd — a divergent cwd falls back to reading
- * the files directly — and the provider's change event drives a
- * `refreshSystemPrompt`. Prompt builds inject the enabled plugins'
+ * workspace handler's shared, watch-refreshed snapshot — the working
+ * directory is always the session's frozen cwd, so the snapshot always
+ * applies), and the provider's change event drives a `refreshSystemPrompt`. Prompt builds inject the enabled plugins'
  * system-prompt sections (budget-capped, see `PLUGIN_SECTIONS_MAX_BYTES`);
  * plugin changes reach the prompt when the skill catalog re-pulls its plugin
  * source on explicit plugin reload (the Workspace-scope catalog forwards the
@@ -95,7 +94,7 @@ import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
