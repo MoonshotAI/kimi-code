@@ -2,12 +2,15 @@
  * `sessionIndex` domain (L2) — session index contract.
  *
  * `ISessionIndex` is a domain-specific persistence Store: a backend-neutral
- * query facade over the set of persisted sessions (open or closed). It
- * enumerates sessions and derives session identity (`workspaceId`), returning
- * data (`SessionSummary`) or counts — never filesystem paths or live handles.
- * Writes (create / archive) live in `sessionLifecycle` / `session`; the index
- * is a read model. Backends are deployment-specific (local filesystem today;
- * database / query store on a server).
+ * query facade over the set of persisted sessions (open or closed), plus
+ * invalidation of a derived summary after its expected authoritative session
+ * directory is rolled back. It enumerates sessions and derives session
+ * identity (`workspaceId`), returning data (`SessionSummary`) or counts —
+ * never filesystem paths or live handles. Authoritative writes (create /
+ * archive) live in `sessionLifecycle` / `session`; invalidation may only evict
+ * a matching derived value, never delete authoritative session state. Backends
+ * are deployment-specific (local filesystem today; database / query store on
+ * a server). App-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -53,6 +56,7 @@ export interface ISessionIndex {
   /** List persisted sessions, optionally filtered by a set of workspace ids. */
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
+  invalidate(id: string, expectedWorkspaceId: string): Promise<void>;
   /** Count non-archived sessions across the given set of workspace ids. */
   countActive(workspaceIds: readonly string[]): Promise<number>;
 }

@@ -347,7 +347,7 @@ describe('AcpServer session/prompt', () => {
     expect(unsubCount).toBe(1);
   });
 
-  it('rejects prompt when the SDK emits a turn.agent_busy error event', async () => {
+  it('rejects prompt when session resume emits turn.agent_busy before a turn starts', async () => {
     const sessionId = 'sess-busy';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
       {
@@ -355,8 +355,7 @@ describe('AcpServer session/prompt', () => {
         sessionId,
         agentId: 'main',
         code: 'turn.agent_busy',
-        message: 'Cannot launch a new turn while another turn (ID 0) is active',
-        details: { turnId: 0 },
+        message: 'Cannot launch a new turn while session resume is in progress',
         retryable: true,
       } as unknown as Event,
     ]);
@@ -375,6 +374,76 @@ describe('AcpServer session/prompt', () => {
       client.prompt({ sessionId, prompt: [textBlock('hi')] }),
     ).rejects.toMatchObject({ code: -32600 });
     expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('admits the next correlated turn after a pre-turn busy rejection', async () => {
+    const sessionId = 'sess-busy-retry';
+    let resolveFirstKicked: ((promptId: string) => void) | undefined;
+    const firstKicked = new Promise<string>((resolve) => {
+      resolveFirstKicked = resolve;
+    });
+    let resolveSecondKicked: ((promptId: string) => void) | undefined;
+    const secondKicked = new Promise<string>((resolve) => {
+      resolveSecondKicked = resolve;
+    });
+    const controlled = makeControlledAdmissionSession(
+      sessionId,
+      (promptId, call) => {
+        if (call === 1) {
+          resolveFirstKicked?.(promptId);
+        } else {
+          resolveSecondKicked?.(promptId);
+        }
+        return new Promise<void>(() => undefined);
+      },
+    );
+    const acpSession = directAcpSession(controlled.session);
+
+    const first = acpSession.prompt([textBlock('first')]);
+    const second = acpSession.prompt([textBlock('second')]);
+    const firstPromptId = await firstKicked;
+    controlled.emit({
+      type: 'error',
+      sessionId,
+      agentId: 'main',
+      code: 'turn.agent_busy',
+      message: 'Cannot launch a new turn while session resume is in progress',
+      retryable: true,
+    } as unknown as Event);
+
+    await expect(first).rejects.toMatchObject({ code: -32600 });
+    const secondPromptId = await secondKicked;
+    controlled.emit({
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 1,
+      origin: { kind: 'user', promptId: firstPromptId },
+    } as Event);
+    controlled.emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 1,
+      reason: 'blocked',
+    } as Event);
+    controlled.emit({
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 2,
+      origin: { kind: 'user', promptId: secondPromptId },
+    } as Event);
+    controlled.emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 2,
+      reason: 'completed',
+    } as Event);
+
+    await expect(second).resolves.toEqual({ stopReason: 'end_turn' });
+    acpSession.dispose();
   });
 
   it('does not reject an already-started prompt when a later prompt gets busy', async () => {

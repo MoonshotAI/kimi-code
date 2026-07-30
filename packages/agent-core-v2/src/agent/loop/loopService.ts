@@ -27,11 +27,9 @@
  * events through `event`, persists loop events through `contextMemory`, and
  * reads the step budget from `config`.
  *
- * Quiescence acquisition synchronously holds later admissions while the
- * already-admitted Turn FIFO drains, then blocks pumping until its lease is
- * released. `settled` tracks that admitted FIFO rather than held admissions,
- * so lifecycle disposal can drain Turns and abort the held receipts instead
- * of waiting on work that only the lease release could admit.
+ * Provides a quiescence lease that drains already-admitted Turns while holding
+ * later admissions. Settlement excludes held work so lifecycle teardown can
+ * complete without waiting on work owned by the lease.
  *
  * The plain-data loop state
  * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered

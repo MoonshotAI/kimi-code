@@ -112,6 +112,128 @@ describe('Agent turn flow', () => {
     expect(generateCalls).toBe(1);
   });
 
+  it('rejects a prompt without accepting work while session resume holds turn starts', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const generate = vi.fn<GenerateFn>();
+    const ctx = testAgent({ generate, persistence });
+    ctx.configure();
+    const recordCount = persistence.records.length;
+    const release = ctx.agent.turn.holdTurnStarts();
+
+    await ctx.rpc.prompt({
+      promptId: 'prompt-rejected-during-resume',
+      input: [{ type: 'text', text: 'do not accept this prompt yet' }],
+    });
+
+    expect(ctx.newEvents()).toContainEqual({
+      type: '[rpc]',
+      event: 'error',
+      args: {
+        code: ErrorCodes.TURN_AGENT_BUSY,
+        message: 'Cannot launch a new turn while session resume is in progress',
+        retryable: true,
+      },
+    });
+    expect(persistence.records.slice(recordCount)).toEqual([]);
+    expect(generate).not.toHaveBeenCalled();
+
+    release();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('keeps an earlier gated producer turn free of a later rejected prompt', async () => {
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-producer-before-prompt',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'producer handled' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+    const release = ctx.agent.turn.holdTurnStarts();
+
+    ctx.agent.turn.steer(
+      [{ type: 'text', text: 'background producer completed' }],
+      { kind: 'system_trigger', name: 'background-producer' },
+    );
+    await ctx.rpc.prompt({
+      promptId: 'prompt-after-producer',
+      input: [{ type: 'text', text: 'must remain a separate prompt' }],
+    });
+
+    const turnEnded = ctx.untilTurnEnd();
+    release();
+    await turnEnded;
+
+    const modelText = histories[0]!
+      .flatMap((message) => message.content)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(modelText).toContain('background producer completed');
+    expect(modelText).not.toContain('must remain a separate prompt');
+  });
+
+  it('starts a retried prompt as its own turn after the session resume gate releases', async () => {
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-retried-prompt-after-resume',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'retry completed' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+    const release = ctx.agent.turn.holdTurnStarts();
+    const prompt = {
+      promptId: 'retry-after-resume',
+      input: [{ type: 'text' as const, text: 'retry me after resume' }],
+    };
+
+    await ctx.rpc.prompt(prompt);
+    release();
+    expect(histories).toHaveLength(0);
+    ctx.newEvents();
+
+    const turnEnded = ctx.untilTurnEnd();
+    await ctx.rpc.prompt(prompt);
+
+    expect(ctx.newEvents()).toContainEqual({
+      type: '[rpc]',
+      event: 'turn.started',
+      args: {
+        turnId: 0,
+        origin: { kind: 'user', promptId: 'retry-after-resume' },
+      },
+    });
+    await turnEnded;
+    expect(
+      histories[0]!
+        .flatMap((message) => message.content)
+        .filter(
+          (part) =>
+            part.type === 'text' &&
+            part.text === 'retry me after resume',
+        ),
+    ).toHaveLength(1);
+  });
+
   it('preserves live gated producer input when cold-replay cleanup discards historical steer state', async () => {
     let generateCalls = 0;
     const generate: GenerateFn = async () => {

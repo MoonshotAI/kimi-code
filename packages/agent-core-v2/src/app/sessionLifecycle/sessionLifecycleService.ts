@@ -1,39 +1,16 @@
 /**
  * `sessionLifecycle` domain (L6) — `ISessionLifecycleService` implementation.
  *
- * Owns the process-wide registry of open Session child scopes, creating them
- * through the DI scope tree and seeding each with its identity and storage
- * addressing, running lifecycle hook slots, and tearing them down on
- * close/archive, with an expected-handle rollback path for failed resume
- * handoffs — archiving flags the session's `sessionMetadata`, removes its
- * `agentLifecycle` agents, restoring clears the archived flag, and broadcasts
- * through `event`; session start and resume failures are reported through
- * `telemetry`. Each Session scope receives a telemetry view bound to
- * its session id, while failures before a scope is available use an ephemeral
- * context view. Creation hooks wrap the session's cron scheduler start, so
- * edge adapters can subscribe before autonomous work begins and unwind their
- * subscriptions if a downstream hook or scheduler startup fails.
- * Materializes the session's initial metadata on
- * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
- * sessions are discovered through the `sessionIndex` read model, and workspace
- * roots are remembered through `workspace`. On create / fork the
- * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine; the entry is
- * indexed under the registry-resolved workspace id — the same id seeding the
- * session's storage scope — so an alias spelling of the workDir cannot split
- * the session into a bucket v1 readers never look in. Fork flushes
- * live Agent wire journals, normalizes a missing protocol envelope, and
- * appends the fork boundary before restoring the target Agent. On
- * materialize, the session's metadata, tool policy, and agent-profile catalog
- * are awaited before the handle is published — agent-file discovery is local-
- * fs and cheap, and a resumed session's first turn must see file-defined
- * agent types in the `Agent` tool description; the catalog's `ready` only
- * rejects for a fatal explicit-source error, exactly the case that should
- * fail fast, and on that failure the half-materialized handle is disposed
- * instead of poisoning the session cache (the skill catalog, by contrast, is
- * kicked fire-and-forget). The session-level services whose subscriptions
- * must exist before the first agent / turn (external hooks, cron, the
- * secondary-model startup warning) opt into `OnScopeCreated` activation.
+ * Owns the process-wide registry of live Session child scopes and implements
+ * create, resume, fork, close, archive, restore, and failed-resume rollback.
+ * It seeds session identity and storage context, prepares session catalogs and
+ * MCP policy, runs lifecycle hooks and cron startup, and tears down Agents and
+ * scopes. `bootstrap`, `workspace`, and `sessionIndex` provide persisted-session
+ * addressing and discovery; successful create/fork operations are mirrored to
+ * the v1 session index. Fresh startup persistence is removed only while it is
+ * still discardable, while resumed or retained sessions remain recoverable.
+ * Lifecycle events are published through `event` and `telemetry`. Bound at App
+ * scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -69,9 +46,10 @@ import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLoca
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { createHooks } from '#/hooks';
+import { createHooks, type HookSlot } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -110,9 +88,50 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly workspaceId?: string;
 };
 
+interface MaterializedSession {
+  readonly handle: ISessionScopeHandle;
+  readonly node: SessionMaterializationNode;
+  readonly context: ISessionContext;
+}
+
+interface MaterializeSessionPolicy {
+  readonly cleanupFreshOnFailure: boolean;
+  readonly requireFreshPath?: boolean;
+  readonly prepare?: (context: ISessionContext) => Promise<void>;
+}
+
+interface AnnounceCreatedOptions {
+  readonly prepare?: () => Promise<void>;
+  readonly commit?: () => Promise<void>;
+  readonly validate?: () => void;
+  readonly beforePublish?: () => void;
+}
+
+interface SessionMaterializationNode {
+  readonly handle: ISessionScopeHandle;
+  readonly context: ISessionContext;
+  readonly state: SessionPathState;
+  globalPrev: SessionMaterializationNode | undefined;
+  globalNext: SessionMaterializationNode | undefined;
+  pathPrev: SessionMaterializationNode | undefined;
+  pathNext: SessionMaterializationNode | undefined;
+  retired: boolean;
+}
+
+interface SessionPathState {
+  cleanupOnFailure: boolean;
+}
+
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
+  private readonly sessionTails = new Map<string, SessionMaterializationNode>();
+  private readonly pathMutationTails = new Map<string, Promise<void>>();
+  private readonly pathTails = new Map<string, SessionMaterializationNode>();
+  private readonly handleNodes = new WeakMap<
+    ISessionScopeHandle,
+    SessionMaterializationNode
+  >();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
   readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
@@ -121,10 +140,19 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly onDidArchiveSession: Event<SessionArchivedEvent> = this._onDidArchiveSession.event;
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
-  readonly hooks = createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
+  private readonly lifecycleHooks = createHooks<
+    SessionLifecycleHooks,
+    keyof SessionLifecycleHooks
+  >([
     'onDidCreateSession',
     'onWillCloseSession',
   ]);
+  readonly hooks = {
+    onDidCreateSession: withHandledDetachedNext(
+      this.lifecycleHooks.onDidCreateSession,
+    ),
+    onWillCloseSession: this.lifecycleHooks.onWillCloseSession,
+  };
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
@@ -148,7 +176,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
-    const handle = await this.materializeSession({ ...opts, sessionId });
+    const materialized = await this.materializeSession(
+      { ...opts, sessionId },
+      { cleanupFreshOnFailure: true },
+    );
+    const { handle } = materialized;
     try {
       const main =
         opts.mainAgentBinding === undefined
@@ -164,24 +196,36 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       // Index the session under the workspace id the registry actually resolved
       // (the same one seeding the session's storage scope), not a recomputed
       // `encodeWorkDirKey` — with root folding the two can diverge.
-      await this.appendSessionIndexEntry(
-        sessionId,
-        opts.workDir,
-        handle.accessor.get(ISessionContext).workspaceId,
+      await this.announceCreated(
+        { sessionId, handle, source: 'startup' },
+        {
+          commit: async () => {
+            this.assertCurrentMaterialization(materialized);
+            await this.commitSessionPersistence(materialized);
+            this.assertCurrentMaterialization(materialized);
+            await this.appendSessionIndexEntry(
+              sessionId,
+              opts.workDir,
+              handle.accessor.get(ISessionContext).workspaceId,
+            );
+          },
+          validate: () => {
+            this.assertCurrentMaterialization(materialized);
+          },
+        },
       );
-      await this.announceCreated({ sessionId, handle, source: 'startup' });
+      this.assertCurrentMaterialization(materialized);
       return handle;
     } catch (error) {
-      const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
-      this.sessions.delete(sessionId);
-      await this.drainAgents(handle).catch(() => {});
-      handle.dispose();
-      await this.hostFs.remove(sessionDir).catch(() => {});
+      await this.rollbackCreatedSession(materialized, true);
       throw error;
     }
   }
 
-  private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
+  private async materializeSession(
+    opts: MaterializeSessionOptions,
+    policy: MaterializeSessionPolicy,
+  ): Promise<MaterializedSession> {
     const workspace = await this.workspaces.createOrTouch(opts.workDir);
     const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
@@ -204,32 +248,88 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
     const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        extra: [
-          ...sessionContextSeed(ctx),
-          [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-        ],
-      },
-    ) as ISessionScopeHandle;
-    if (additionalDirs.length > 0) {
-      handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
-    }
-    try {
-      await handle.accessor.get(ISessionMetadata).ready;
-      await handle.accessor.get(ISessionToolPolicy).ready;
-      void handle.accessor.get(ISessionSkillCatalog).ready;
-      await handle.accessor.get(ISessionAgentProfileCatalog).ready;
-      await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-    } catch (error) {
-      handle.dispose();
-      throw error;
-    }
-    this.sessions.set(opts.sessionId, handle);
-    return handle;
+    return this.withPathMutation(sessionDir, async () => {
+      const pathTailAtStart = this.pathTails.get(sessionDir);
+      const sessionDirExists = await this.sessionDirExists(sessionDir);
+      const sessionDirExisted = pathTailAtStart !== undefined || sessionDirExists;
+      const initialPathState: SessionPathState = policy.cleanupFreshOnFailure
+        ? pathTailAtStart?.state ?? { cleanupOnFailure: !sessionDirExisted }
+        : { cleanupOnFailure: false };
+      let handle: ISessionScopeHandle | undefined;
+      try {
+        if (policy.requireFreshPath === true && sessionDirExisted) {
+          throw new Error2(
+            ErrorCodes.SESSION_ALREADY_EXISTS,
+            `Session "${opts.sessionId}" already exists`,
+          );
+        }
+        await policy.prepare?.(ctx);
+        handle = createScopedChildHandle(
+          this.instantiation,
+          LifecycleScope.Session,
+          opts.sessionId,
+          {
+            extra: [
+              ...sessionContextSeed(ctx),
+              [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
+            ],
+          },
+        ) as ISessionScopeHandle;
+        if (additionalDirs.length > 0) {
+          handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
+        }
+        await handle.accessor.get(ISessionMetadata).ready;
+        await handle.accessor.get(ISessionToolPolicy).ready;
+        void handle.accessor.get(ISessionSkillCatalog).ready;
+        await handle.accessor.get(ISessionAgentProfileCatalog).ready;
+        await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+
+        const globalPrev = this.sessionTails.get(opts.sessionId);
+        const pathPrev = this.pathTails.get(sessionDir);
+        const pathState = pathPrev?.state ?? initialPathState;
+        if (!policy.cleanupFreshOnFailure) pathState.cleanupOnFailure = false;
+        const node: SessionMaterializationNode = {
+          handle,
+          context: ctx,
+          state: pathState,
+          globalPrev,
+          globalNext: undefined,
+          pathPrev,
+          pathNext: undefined,
+          retired: false,
+        };
+        if (globalPrev !== undefined) globalPrev.globalNext = node;
+        if (pathPrev !== undefined) pathPrev.pathNext = node;
+        this.sessions.set(opts.sessionId, handle);
+        this.sessionTails.set(opts.sessionId, node);
+        this.pathTails.set(sessionDir, node);
+        this.handleNodes.set(handle, node);
+        const disposeScope = handle.dispose.bind(handle);
+        handle.dispose = () => {
+          this.retireNode(node);
+          disposeScope();
+        };
+        return {
+          handle,
+          node,
+          context: ctx,
+        };
+      } catch (error) {
+        if (handle !== undefined) {
+          try {
+            handle.dispose();
+          } catch {}
+        }
+        if (
+          policy.cleanupFreshOnFailure &&
+          initialPathState.cleanupOnFailure &&
+          this.pathTails.get(sessionDir) === undefined
+        ) {
+          await this.removeSessionPersistence(ctx);
+        }
+        throw error;
+      }
+    });
   }
 
   /**
@@ -255,16 +355,220 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async announceCreated(
     event: SessionCreatedEvent,
-    prepare?: () => Promise<void>,
+    options: AnnounceCreatedOptions = {},
   ): Promise<void> {
-    await this.hooks.onDidCreateSession.run(event, async ({ handle }) => {
-      await prepare?.();
-      await handle.accessor.get(ISessionCronService).start();
-    });
+    let terminal: Promise<void> | undefined;
+    let terminalOpen = true;
+    let hookFailed = false;
+    let hookError: unknown;
+    try {
+      await this.hooks.onDidCreateSession.run(
+        event,
+        () => {
+          if (!terminalOpen && terminal === undefined) {
+            const rejected = Promise.reject(
+              new Error('Session creation hook terminal is already closed'),
+            );
+            void rejected.catch(() => {});
+            return rejected;
+          }
+          return (terminal ??= (async () => {
+            await options.prepare?.();
+            await event.handle.accessor.get(ISessionCronService).start();
+            await options.commit?.();
+          })());
+        },
+      );
+    } catch (error) {
+      hookFailed = true;
+      hookError = error;
+    }
+    terminalOpen = false;
+    if (terminal === undefined) {
+      if (hookFailed) throw hookError;
+      throw new Error('Session creation hooks did not reach the lifecycle terminal');
+    }
+    let terminalFailed = false;
+    let terminalError: unknown;
+    try {
+      await terminal;
+    } catch (error) {
+      terminalFailed = true;
+      terminalError = error;
+    }
+    if (hookFailed) throw hookError;
+    if (terminalFailed) throw terminalError;
+    options.validate?.();
+    options.beforePublish?.();
+    options.validate?.();
+    const sessionTelemetry = event.handle.accessor.get(ITelemetryService);
     this._onDidCreateSession.fire(event);
-    event.handle.accessor
-      .get(ITelemetryService)
-      .track2('session_started', { resumed: event.source === 'resume' });
+    options.validate?.();
+    sessionTelemetry.track2('session_started', { resumed: event.source === 'resume' });
+  }
+
+  private async rollbackCreatedSession(
+    materialized: MaterializedSession,
+    removePersistence: boolean,
+  ): Promise<boolean> {
+    const { handle, node, context } = materialized;
+    return this.withPathMutation(context.sessionDir, async () => {
+      const ownedSession = this.sessionTails.get(handle.id) === node;
+      const retired = this.retireNode(node);
+      if (retired) {
+        await this.drainAgents(handle).catch(() => {});
+        try {
+          handle.dispose();
+        } catch {}
+      }
+
+      if (
+        removePersistence &&
+        node.state.cleanupOnFailure &&
+        this.pathTails.get(context.sessionDir) === undefined
+      ) {
+        await this.removeSessionPersistence(context);
+      }
+      return ownedSession && retired;
+    });
+  }
+
+  private async withPathMutation<T>(
+    sessionDir: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const predecessor = this.pathMutationTails.get(sessionDir);
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.pathMutationTails.set(sessionDir, tail);
+    if (predecessor !== undefined) await predecessor;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.pathMutationTails.get(sessionDir) === tail) {
+        this.pathMutationTails.delete(sessionDir);
+      }
+    }
+  }
+
+  private async sessionDirExists(sessionDir: string): Promise<boolean> {
+    try {
+      await this.hostFs.stat(sessionDir);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof HostFsError &&
+        error.code === OsFsErrors.codes.OS_FS_NOT_FOUND
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async removeSessionPersistence(context: ISessionContext): Promise<void> {
+    try {
+      await this.hostFs.remove(context.sessionDir);
+    } catch {
+      return;
+    }
+    await this.index.invalidate(context.sessionId, context.workspaceId).catch(() => {});
+  }
+
+  private async commitSessionPersistence(
+    materialized: MaterializedSession,
+  ): Promise<void> {
+    const { node, context } = materialized;
+    node.state.cleanupOnFailure = false;
+    await this.withPathMutation(context.sessionDir, async () => {});
+  }
+
+  private assertCurrentMaterialization(materialized: MaterializedSession): void {
+    const { handle, node, context } = materialized;
+    if (
+      node.retired ||
+      this.sessionTails.get(handle.id) !== node ||
+      this.pathTails.get(context.sessionDir) !== node
+    ) {
+      throw new Error2(
+        ErrorCodes.SESSION_NOT_FOUND,
+        `Session "${handle.id}" is no longer current`,
+      );
+    }
+  }
+
+  private retireNode(node: SessionMaterializationNode): boolean {
+    if (node.retired) return false;
+    node.retired = true;
+
+    const { globalPrev, globalNext, pathPrev, pathNext } = node;
+    if (globalPrev !== undefined) globalPrev.globalNext = globalNext;
+    if (globalNext !== undefined) globalNext.globalPrev = globalPrev;
+    if (this.sessionTails.get(node.handle.id) === node) {
+      if (globalPrev === undefined) {
+        this.sessionTails.delete(node.handle.id);
+        this.sessions.delete(node.handle.id);
+      } else {
+        this.sessionTails.set(node.handle.id, globalPrev);
+        this.sessions.set(node.handle.id, globalPrev.handle);
+      }
+    }
+
+    const sessionDir = node.context.sessionDir;
+    if (pathPrev !== undefined) pathPrev.pathNext = pathNext;
+    if (pathNext !== undefined) pathNext.pathPrev = pathPrev;
+    if (this.pathTails.get(sessionDir) === node) {
+      if (pathPrev === undefined) {
+        this.pathTails.delete(sessionDir);
+      } else {
+        this.pathTails.set(sessionDir, pathPrev);
+      }
+    }
+
+    this.handleNodes.delete(node.handle);
+    node.globalPrev = undefined;
+    node.globalNext = undefined;
+    node.pathPrev = undefined;
+    node.pathNext = undefined;
+    return true;
+  }
+
+  private terminalCut(handle: ISessionScopeHandle): SessionMaterializationNode[] {
+    const node = this.handleNodes.get(handle);
+    if (node === undefined || node.retired) return [];
+    const cut: SessionMaterializationNode[] = [];
+    let candidate: SessionMaterializationNode | undefined = node;
+    while (candidate !== undefined) {
+      cut.push(candidate);
+      candidate = candidate.globalPrev;
+    }
+    for (const item of cut) {
+      item.state.cleanupOnFailure = false;
+      this.retireNode(item);
+    }
+    return cut;
+  }
+
+  private async disposeNodes(
+    nodes: readonly SessionMaterializationNode[],
+  ): Promise<unknown[]> {
+    const errors: unknown[] = [];
+    for (const node of nodes) {
+      try {
+        await this.drainAgents(node.handle);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        node.handle.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    return errors;
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
@@ -302,33 +606,34 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const workDir = summary.cwd ?? workspace?.root;
     if (workDir === undefined) return undefined;
 
-    const handle = await this.materializeSession({
-      sessionId,
-      workDir,
-      workspaceId: summary.workspaceId,
-    });
+    const materialized = await this.materializeSession(
+      {
+        sessionId,
+        workDir,
+        workspaceId: summary.workspaceId,
+      },
+      { cleanupFreshOnFailure: false },
+    );
+    const { handle } = materialized;
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
-      // Main-agent wire restore can publish task reconciliation events. Keep
-      // materialization inside the hook terminal so edge observers subscribe
-      // to onDidCreate before the wire begins restoring.
       await this.announceCreated(
         { sessionId, handle, source: 'resume' },
-        async () => {
-          if (agents.get(MAIN_AGENT_ID) === undefined) {
-            await agents.create({ agentId: MAIN_AGENT_ID });
-          }
+        {
+          prepare: async () => {
+            if (agents.get(MAIN_AGENT_ID) === undefined) {
+              await agents.create({ agentId: MAIN_AGENT_ID });
+            }
+          },
+          validate: () => {
+            this.assertCurrentMaterialization(materialized);
+          },
         },
       );
+      this.assertCurrentMaterialization(materialized);
       return handle;
     } catch (error) {
-      if (this.sessions.get(sessionId) === handle) {
-        this.sessions.delete(sessionId);
-      }
-      await this.drainAgents(handle).catch(() => {});
-      try {
-        handle.dispose();
-      } catch {}
+      await this.rollbackCreatedSession(materialized, false);
       throw error;
     }
   }
@@ -342,12 +647,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   rollbackResume(handle: ISessionScopeHandle): void {
-    const removed = this.sessions.get(handle.id) === handle;
-    if (removed) this.sessions.delete(handle.id);
+    const node = this.handleNodes.get(handle);
+    if (node === undefined || node.retired) return;
+    const removed = this.sessionTails.get(handle.id) === node;
+    const restored = removed && node.globalPrev !== undefined;
+    this.retireNode(node);
     try {
       handle.dispose();
     } finally {
-      if (removed) this._onDidCloseSession.fire({ sessionId: handle.id });
+      if (removed && !restored && this.sessions.get(handle.id) === undefined) {
+        this._onDidCloseSession.fire({ sessionId: handle.id });
+      }
     }
   }
 
@@ -355,23 +665,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    if (this.sessions.get(sessionId) !== handle) {
-      this.rollbackResume(handle);
-      return;
+    const cut = this.terminalCut(handle);
+    const errors = await this.disposeNodes(cut);
+    if (cut.length > 0 && this.sessions.get(sessionId) === undefined) {
+      this._onDidCloseSession.fire({ sessionId });
     }
-    this.sessions.delete(sessionId);
-    const errors: unknown[] = [];
-    try {
-      await this.drainAgents(handle);
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      handle.dispose();
-    } catch (error) {
-      errors.push(error);
-    }
-    this._onDidCloseSession.fire({ sessionId });
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) {
       throw new AggregateError(errors, `Failed to close session "${sessionId}"`);
@@ -381,17 +679,35 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async archive(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
+    const node = this.handleNodes.get(handle);
+    if (node === undefined) return;
     const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    await this.drainAgents(handle);
-    this.event.publish({
-      type: 'event.session.archived',
-      payload: { sessionId },
-    });
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    this.sessions.delete(sessionId);
-    handle.dispose();
-    this._onDidArchiveSession.fire({ sessionId });
+    const { cut, archived } = await this.withPathMutation(
+      node.context.sessionDir,
+      async () => {
+        if (node.retired) return { cut: [], archived: false };
+        let archived = false;
+        if (this.pathTails.get(node.context.sessionDir) === node) {
+          await meta.setArchived(true);
+          archived =
+            !node.retired && this.pathTails.get(node.context.sessionDir) === node;
+        }
+        return { cut: this.terminalCut(handle), archived };
+      },
+    );
+    const errors = await this.disposeNodes(cut);
+    if (archived && cut.length > 0 && this.sessions.get(sessionId) === undefined) {
+      this.event.publish({
+        type: 'event.session.archived',
+        payload: { sessionId },
+      });
+      this._onDidArchiveSession.fire({ sessionId });
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(errors, `Failed to archive session "${sessionId}"`);
+    }
   }
 
   async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
@@ -433,8 +749,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // quiesce: the only requirement is a durable copy point, which
     // `copyAgentWire`'s flush provides.
     let targetId: string | undefined;
-    let target: ISessionScopeHandle | undefined;
-    let targetSessionDir: string | undefined;
+    let materializedTarget: MaterializedSession | undefined;
     try {
       const workspace = await this.workspaces.get(workspaceId);
       if (workspace === undefined) {
@@ -454,16 +769,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      targetSessionDir = this.bootstrap.sessionDir(workspaceId, targetId);
-      await this.copySessionFiles(
-        this.bootstrap.sessionDir(workspaceId, sourceId),
-        targetSessionDir,
+      const createdTargetId = targetId;
+      const materialized = await this.materializeSession(
+        {
+          sessionId: createdTargetId,
+          workDir: workspace.root,
+          workspaceId,
+        },
+        {
+          cleanupFreshOnFailure: true,
+          requireFreshPath: true,
+          prepare: (context) =>
+            this.copySessionFiles(
+              this.bootstrap.sessionDir(workspaceId, sourceId),
+              context.sessionDir,
+            ),
+        },
       );
-
-      target = await this.materializeSession({
-        sessionId: targetId,
-        workDir: workspace.root,
-      });
+      materializedTarget = materialized;
+      const target = materialized.handle;
       const targetCtx = target.accessor.get(ISessionContext);
       const targetMeta = target.accessor.get(ISessionMetadata);
 
@@ -501,26 +825,36 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      await this.appendSessionIndexEntry(targetId, workspace.root, targetCtx.workspaceId);
-      this._onDidForkSession.fire({
-        sourceSessionId: sourceId,
-        sessionId: targetId,
-        handle: target,
-      });
-      await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
+      await this.announceCreated(
+        { sessionId: targetId, handle: target, source: 'fork' },
+        {
+          commit: async () => {
+            this.assertCurrentMaterialization(materialized);
+            await this.commitSessionPersistence(materialized);
+            this.assertCurrentMaterialization(materialized);
+            await this.appendSessionIndexEntry(
+              createdTargetId,
+              workspace.root,
+              targetCtx.workspaceId,
+            );
+          },
+          validate: () => {
+            this.assertCurrentMaterialization(materialized);
+          },
+          beforePublish: () => {
+            this._onDidForkSession.fire({
+              sourceSessionId: sourceId,
+              sessionId: createdTargetId,
+              handle: target,
+            });
+          },
+        },
+      );
+      this.assertCurrentMaterialization(materialized);
       return target;
     } catch (error) {
-      if (targetId !== undefined) {
-        this.sessions.delete(targetId);
-      }
-      if (target !== undefined) {
-        try {
-          target.dispose();
-        } catch {
-        }
-      }
-      if (targetSessionDir !== undefined) {
-        await this.hostFs.remove(targetSessionDir).catch(() => {});
+      if (materializedTarget !== undefined) {
+        await this.rollbackCreatedSession(materializedTarget, true);
       }
       throw error;
     }
@@ -674,6 +1008,24 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'sessionLifecycle',
 );
+
+function withHandledDetachedNext<TContext>(slot: HookSlot<TContext>): HookSlot<TContext> {
+  return {
+    register: (id, handler, options) =>
+      slot.register(
+        id,
+        (context, next) =>
+          handler(context, (override) => {
+            const result = next(override);
+            void result.catch(() => {});
+            return result;
+          }),
+        options,
+      ),
+    delete: (id) => slot.delete(id),
+    run: (context, terminal) => slot.run(context, terminal),
+  };
+}
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];

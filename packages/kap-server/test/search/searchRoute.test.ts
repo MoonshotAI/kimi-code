@@ -49,6 +49,7 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
     _serviceBrand: undefined,
     list: async () => ({ items: summaries, nextCursor: undefined }),
     get: async () => undefined,
+    invalidate: async () => {},
     countActive: async () => summaries.length,
   };
 }

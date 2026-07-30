@@ -35,6 +35,8 @@ class FakeSessionIndex implements ISessionIndex {
     return undefined;
   }
 
+  async invalidate(_id: string, _expectedWorkspaceId: string): Promise<void> {}
+
   async countActive(_workspaceIds: readonly string[]): Promise<number> {
     return 0;
   }

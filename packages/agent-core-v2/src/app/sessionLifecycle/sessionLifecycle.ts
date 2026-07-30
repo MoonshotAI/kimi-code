@@ -1,18 +1,12 @@
 /**
  * `sessionLifecycle` domain (L6) — creates and tracks sessions at the process root.
  *
- * Defines the public contract of session lifecycle: the `CreateSessionOptions`,
- * `ForkSessionOptions`, `CreateChildSessionOptions`, and the
- * `ISessionLifecycleService` used to create sessions (`create`), look up the
- * live ones (`get` / `list`), close them (`close`), roll back an exact resumed
- * handle (`rollbackResume`), archive/restore them, fork them (`fork`), and
- * fork-then-tag them as direct children (`createChild`). Announces lifecycle
- * transitions through ordered hook slots plus
- * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
- * `onDidForkSession`. App-scoped — a single
- * process-wide instance owns the live session scope tree. Persisted
- * sessions (open or closed) are the `sessionIndex` read model; per-session
- * behaviour lives in the Session-scoped domains.
+ * Defines the App-scoped public contract for creating, discovering, closing,
+ * archiving, restoring, and forking sessions, including ordered lifecycle
+ * hooks/events and exact-handle rollback for a failed resume attachment. One
+ * process-wide instance owns the live Session scope tree. Persisted sessions
+ * (open or closed) are discovered through the `sessionIndex` read model;
+ * per-session behaviour lives in the Session-scoped domains.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

@@ -1,8 +1,17 @@
+/**
+ * Scenario: legacy and MiniDB-backed discovery of filesystem-persisted sessions.
+ * Responsibilities: list/get/count authoritative sessions and invalidate only matching stale
+ * summaries.
+ * Wiring: real FileStorage/atomic documents; the read-model suite uses real MiniDB, while legacy
+ * uses its boundary stub.
+ * Run from the package:
+ *   pnpm exec vitest run test/app/sessionIndex/sessionIndex.test.ts
+ */
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LifecycleScope,
@@ -53,6 +62,7 @@ describe('FileSessionIndex (legacy)', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     disposeHost?.();
     disposeHost = undefined;
     await fsp.rm(homeDir, { recursive: true, force: true });
@@ -264,6 +274,7 @@ describe('FileSessionIndex (read model)', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     disposeHost?.();
     disposeHost = undefined;
     await fsp.rm(homeDir, { recursive: true, force: true });
@@ -325,10 +336,53 @@ describe('FileSessionIndex (read model)', () => {
   });
 
   it('get prefers the read model over disk', async () => {
+    await seedSession('warm', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
     const store = build();
     await queryStore.put(SESSION_COLLECTION, 'warm', summary('warm', { title: 'cached' }));
     const got = await store.get('warm');
     expect(got?.title).toBe('cached');
+  });
+
+  it('get invalidates a cached summary whose authoritative directory is missing', async () => {
+    const store = build();
+    await queryStore.put(SESSION_COLLECTION, 'stale', summary('stale', { title: 'cached' }));
+
+    expect(await store.get('stale')).toBeUndefined();
+    expect(await queryStore.get(SESSION_COLLECTION, 'stale')).toBeUndefined();
+  });
+
+  it('get does not return a stale summary when best-effort invalidation fails', async () => {
+    const store = build();
+    const cached = summary('stale', { title: 'cached' });
+    await queryStore.put(SESSION_COLLECTION, 'stale', cached);
+    vi.spyOn(queryStore, 'delete').mockRejectedValueOnce(new Error('delete failed'));
+
+    expect(await store.get('stale')).toBeUndefined();
+    expect(await queryStore.get(SESSION_COLLECTION, 'stale')).toEqual(cached);
+  });
+
+  it('invalidate preserves a summary while its authoritative directory exists', async () => {
+    await seedSession('active', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    const cached = summary('active', { title: 'cached' });
+    await queryStore.put(SESSION_COLLECTION, 'active', cached);
+
+    await store.invalidate('active', workspaceId);
+
+    expect(await queryStore.get(SESSION_COLLECTION, 'active')).toEqual(cached);
+  });
+
+  it('invalidate preserves a summary owned by a different workspace', async () => {
+    const store = build();
+    const cached = summary('replacement', {
+      workspaceId: encodeWorkDirKey('/home/user/replacement'),
+      title: 'replacement',
+    });
+    await queryStore.put(SESSION_COLLECTION, 'replacement', cached);
+
+    await store.invalidate('replacement', workspaceId);
+
+    expect(await queryStore.get(SESSION_COLLECTION, 'replacement')).toEqual(cached);
   });
 
   it('list treats a cache entry missing required fields as a cold miss', async () => {

@@ -27,9 +27,13 @@
  * re-parsing `state.json` on every call. Listing still enumerates the directory
  * (a cheap `readdir`) to discover `(workspaceId, sessionId)` pairs, but each
  * summary is resolved through the read model — falling back to a disk read +
- * backfill on a cold miss. Writes (create / archive / metadata update) keep the
- * read model warm via `SessionMetadata`; new sessions that have not been
- * mirrored yet are simply a cold miss and backfilled on first read. The legacy
+ * backfill on a cold miss. Read-model hits remain subordinate to authoritative
+ * session directories, and rollback invalidation is ownership-aware so stale
+ * summaries cannot resurrect removed sessions or evict replacements. Writes
+ * (create / archive / metadata update) keep the read model warm via
+ * `SessionMetadata`; new
+ * sessions that have not been mirrored yet are simply a cold miss and
+ * backfilled on first read. The legacy
  * N+1 path remains as the flag-off fallback — and as the runtime fallback if
  * the query store ever reports `storage.locked`: the first lock warns once and
  * disables the read model for the rest of the process lifetime. (The minidb
@@ -144,6 +148,14 @@ export class FileSessionIndex implements ISessionIndex {
     );
   }
 
+  async invalidate(id: string, expectedWorkspaceId: string): Promise<void> {
+    if (!this.readModelEnabled()) return;
+    await this.withReadModelFallback(
+      () => this.invalidateFromReadModel(id, expectedWorkspaceId),
+      () => Promise.resolve(),
+    );
+  }
+
   async countActive(workspaceIds: readonly string[]): Promise<number> {
     if (!this.readModelEnabled()) return this.countActiveLegacy(workspaceIds);
     return this.withReadModelFallback(
@@ -194,12 +206,38 @@ export class FileSessionIndex implements ISessionIndex {
 
   private async getFromReadModel(id: string): Promise<SessionSummary | undefined> {
     const cached: unknown = await this.queryStore.get(SESSION_COLLECTION, id);
-    if (isSessionSummaryShape(cached)) return cached;
+    if (isSessionSummaryShape(cached)) {
+      if (await this.hasAuthoritativeSession(cached.workspaceId, id)) return cached;
+      try {
+        await this.invalidateFromReadModel(id, cached.workspaceId);
+      } catch (error) {
+        if (isStorageError(error, StorageErrors.codes.STORAGE_LOCKED)) throw error;
+        this.log.warn('failed to invalidate stale session summary', {
+          sessionId: id,
+          error: String(error),
+        });
+      }
+    }
     for (const workspaceId of await this.listWorkspaceIds()) {
       if (!(await this.hasSession(workspaceId, id))) continue;
       return this.getCachedSummary(workspaceId, id);
     }
     return undefined;
+  }
+
+  private async invalidateFromReadModel(
+    id: string,
+    expectedWorkspaceId: string,
+  ): Promise<void> {
+    const cached: unknown = await this.queryStore.get(SESSION_COLLECTION, id);
+    if (
+      isSessionSummaryShape(cached) &&
+      cached.workspaceId !== expectedWorkspaceId
+    ) {
+      return;
+    }
+    if (await this.hasAuthoritativeSession(expectedWorkspaceId, id)) return;
+    await this.queryStore.delete(SESSION_COLLECTION, id);
   }
 
   private async countActiveFromReadModel(workspaceIds: readonly string[]): Promise<number> {
@@ -238,7 +276,7 @@ export class FileSessionIndex implements ISessionIndex {
     sessionId: string,
   ): Promise<SessionSummary | undefined> {
     const cached: unknown = await this.queryStore.get(SESSION_COLLECTION, sessionId);
-    if (isSessionSummaryShape(cached)) return cached;
+    if (isSessionSummaryShape(cached) && cached.workspaceId === workspaceId) return cached;
     const summary = await this.readSummary(workspaceId, sessionId);
     if (summary !== undefined) {
       // Also overwrites a cache entry that failed the shape check above.
@@ -314,6 +352,14 @@ export class FileSessionIndex implements ISessionIndex {
 
   private async hasSession(workspaceId: string, sessionId: string): Promise<boolean> {
     const ids = await this.listSessionIds(workspaceId);
+    return ids.includes(sessionId);
+  }
+
+  private async hasAuthoritativeSession(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<boolean> {
+    const ids = await this.storage.list(`${this.sessionsScope}/${workspaceId}`);
     return ids.includes(sessionId);
   }
 

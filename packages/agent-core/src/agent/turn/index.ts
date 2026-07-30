@@ -195,6 +195,19 @@ export class TurnFlow {
     // so no caller — the SDK/RPC prompt path included — can poison the
     // session. Upstream ingestion points already gate; this is the backstop.
     const gated = gateImageFormatParts(input);
+    if (this.turnStartGateCount > 0) {
+      // A prompt admission needs its own matching turn.started event. Do not
+      // put it behind producer steers in the shared gate FIFO, where it could
+      // be folded into the producer's turn and leave the caller waiting.
+      this.agent.emitEvent({
+        type: 'error',
+        ...makeErrorPayload(
+          ErrorCodes.TURN_AGENT_BUSY,
+          'Cannot launch a new turn while session resume is in progress',
+        ),
+      });
+      return null;
+    }
     this.agent.records.logRecord({
       type: 'turn.prompt',
       input: gated,
