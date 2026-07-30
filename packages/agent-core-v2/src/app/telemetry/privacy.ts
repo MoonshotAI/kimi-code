@@ -6,6 +6,18 @@
  * paths become labeled `<REDACTED: ...>` placeholders, while `node_modules/`
  * path tails are kept because they carry diagnostic value without user data.
  * App-scoped, no collaborators.
+ *
+ * Path segments are matched by exclusion rather than with `\w`, which is
+ * ASCII-only and so left the tail of any path under a `李明`, `иван` or `josé`
+ * home directory in the payload. A segment may contain interior spaces
+ * (`Program Files`, `alice chen`); the final segment may too, but only when it
+ * ends in a file extension, so a path followed by prose is redacted without
+ * swallowing the sentence. A POSIX path must not start right after an
+ * alphanumeric, or chained fractions such as `read 1/2 then 3/4` would read as
+ * one. Absolute paths match as a single alternation in one pass, because
+ * running the branches separately let a later branch re-scan an earlier one's
+ * replacement. The behaviour these rules produce is pinned case by case in
+ * `test/app/telemetry/privacy.test.ts`.
  */
 
 const REDACTED_PATH = '<REDACTED: user-file-path>';
@@ -21,55 +33,21 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:sk|pk|ak)-[A-Za-z0-9_-]{16,}\b/g, '<REDACTED: API Key>'],
 ];
 
-/**
- * One path segment, defined by exclusion: anything that is not a separator,
- * whitespace, or a character no filesystem allows in a name.
- *
- * Deliberately not `\w`, which is ASCII-only — a home directory named `李明`,
- * `иван`, or `josé` ends the match at the first non-ASCII byte and the rest of
- * the path survives into the payload. Excluding rather than enumerating also
- * covers names containing an apostrophe, e.g. `O'Brien`.
- *
- * Each fragment below is a self-contained group so that appending a quantifier
- * to it applies to the whole fragment — bare `[^…]+` followed by `?` would read
- * as a lazy `+?` instead of an optional segment.
- */
 const SEGMENT = String.raw`(?:[^\\/\s"<>|:*?]+)`;
-
-/**
- * A segment that may contain interior spaces — `Program Files`, `alice chen`.
- *
- * Only used where the segment is followed by a separator, which is what keeps it
- * from running into surrounding prose: in `C:\proj\file.txt failed to open`
- * there is no separator after `open`, so the match ends at `file.txt`. A final
- * segment therefore uses `SEGMENT`, which stops at the first space.
- */
 const SEGMENT_WITH_SPACES = String.raw`(?:${SEGMENT}(?: +${SEGMENT})*)`;
-
-/** Zero or more interior segments, each consumed together with its separator. */
 const INTERIOR = String.raw`(?:${SEGMENT_WITH_SPACES}[\\/])`;
+const FINAL_SEGMENT = String.raw`(?:${SEGMENT_WITH_SPACES}\.[A-Za-z][A-Za-z0-9]{0,9}(?![^\s"'<>])|${SEGMENT})`;
 
-/**
- * Absolute file paths, as one alternation so a single pass consumes each whole
- * path. Running the branches as separate passes let a later one re-scan an
- * earlier one's replacement, which produced `node_modules<REDACTED: ...>`.
- */
 const ABSOLUTE_PATH = new RegExp(
   [
-    // Drive-letter, either separator, optional `\\?\` / `\\.\` long-path prefix:
-    // C:\a\b, C:/a/b, \\?\C:\a\b
-    String.raw`(?:\\\\[?.]\\)?[A-Za-z]:[\\/]${INTERIOR}*${SEGMENT}?`,
-    // UNC: \\server\share\...
-    String.raw`\\\\${INTERIOR}+${SEGMENT}?`,
-    // POSIX; the leading group is required, so a lone `/tmp` and the `/4` in
-    // `3/4` are left alone
-    String.raw`(?:\/${SEGMENT_WITH_SPACES}(?=\/))+\/${SEGMENT}\/?`,
+    String.raw`(?:\\\\[?.]\\)?[A-Za-z]:[\\/]${INTERIOR}*${FINAL_SEGMENT}?`,
+    String.raw`\\\\${INTERIOR}+${FINAL_SEGMENT}?`,
+    String.raw`(?<![A-Za-z0-9])(?:\/${SEGMENT_WITH_SPACES}(?=\/))+\/${FINAL_SEGMENT}\/?`,
   ].join('|'),
   'g',
 );
 
 function redactPath(match: string): string {
-  // Normalize separators so the `node_modules/` marker is found on Windows too.
   const normalized = match.replaceAll('\\', '/');
   const index = normalized.indexOf(NODE_MODULES_MARKER);
   return index === -1 ? REDACTED_PATH : normalized.slice(index);

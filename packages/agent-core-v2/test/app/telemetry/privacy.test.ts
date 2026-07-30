@@ -58,15 +58,35 @@ describe('cleanTelemetryString', () => {
       );
     });
 
-    it('stops a space-tolerant segment at the end of the path, not mid-sentence', () => {
-      // An interior segment may contain spaces, but only because a separator has
-      // to follow it. The last segment stops at the first space, so trailing
-      // prose is not swallowed into the placeholder.
+    it('redacts a filename containing a space', () => {
+      // The last segment is where the filename lives, so a space in it must not
+      // end the match — that would leave the rest of the name on the wire.
+      expect(cleanTelemetryString(String.raw`C:\Users\alice\secret file.txt`)).toBe(
+        '<REDACTED: user-file-path>',
+      );
+      expect(cleanTelemetryString('/home/alice/proj/secret file.txt')).toBe(
+        '<REDACTED: user-file-path>',
+      );
+      expect(cleanTelemetryString(String.raw`\\fileserver\home\secret file.txt`)).toBe(
+        '<REDACTED: user-file-path>',
+      );
+      expect(cleanTelemetryString(String.raw`C:\Users\alice\my report v2.final.docx`)).toBe(
+        '<REDACTED: user-file-path>',
+      );
+    });
+
+    it('stops a space-tolerant final segment at the path, not mid-sentence', () => {
+      // A space may continue the final segment only when what follows it still
+      // ends in an extension. Trailing prose does not, so the match backtracks
+      // to the filename instead of swallowing the sentence.
       expect(cleanTelemetryString(String.raw`C:\Program Files\a.txt could not be read`)).toBe(
         '<REDACTED: user-file-path> could not be read',
       );
-      expect(cleanTelemetryString('/home/alice chen/a.txt could not be read')).toBe(
+      expect(cleanTelemetryString('/home/alice chen/proj/a.txt could not be read')).toBe(
         '<REDACTED: user-file-path> could not be read',
+      );
+      expect(cleanTelemetryString(String.raw`C:\proj\a.txt failed at step 2.5`)).toBe(
+        '<REDACTED: user-file-path> failed at step 2.5',
       );
     });
   });
@@ -128,6 +148,20 @@ describe('cleanTelemetryString', () => {
       expect(
         cleanTelemetryString(String.raw`C:\Users\alice.chen\repo\node_modules\pkg\index.js`),
       ).toBe('node_modules/pkg/index.js');
+    });
+
+    it('leaves consecutive fractions alone', () => {
+      // A space-tolerant segment lets `2 then 3` read as one segment, so without
+      // the alphanumeric lookbehind the run from `/2` to `/6` matches as a path.
+      expect(cleanTelemetryString('read 1/2 then 3/4 then 5/6')).toBe(
+        'read 1/2 then 3/4 then 5/6',
+      );
+      expect(cleanTelemetryString('ratio 1/2 and 3/4')).toBe('ratio 1/2 and 3/4');
+    });
+
+    it('still redacts a two-segment absolute path', () => {
+      expect(cleanTelemetryString('/tmp/kimi-scratch.json')).toBe('<REDACTED: user-file-path>');
+      expect(cleanTelemetryString('/etc/passwd')).toBe('<REDACTED: user-file-path>');
     });
 
     it('leaves text that is not an absolute path alone', () => {
