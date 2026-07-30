@@ -42,6 +42,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'turn.steer':
       agent.turn.restoreSteer(input.input, input.origin);
       return;
+    case 'turn.defer':
+      agent.turn.restoreDeferredInput(input.id, input.input, input.origin);
+      return;
+    case 'turn.defer.consume':
+      agent.turn.restoreDeferredInputConsumed(input.id);
+      return;
     case 'turn.cancel':
       agent.turn.cancel(input.turnId);
       return;
@@ -85,7 +91,8 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       agent.swarmMode.exit();
       return;
     case 'context.append_message':
-      agent.context.appendMessage(input.message);
+      agent.turn.observeRestoredContextMessage(input.message, input.deferredInputId);
+      agent.context.appendMessage(input.message, input.deferredInputId);
       return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);
@@ -289,7 +296,12 @@ export class AgentRecords {
             protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
           };
         }
-        replayedRecords?.push(migratedRecord);
+        replayedRecords?.push(
+          shouldRewrite && this.agent.blobStore !== undefined
+            ? structuredClone(migratedRecord)
+            : migratedRecord,
+        );
+        await this.agent.blobStore?.rehydrate(migratedRecord);
         if (this.restore(migratedRecord)) {
           completed = false;
           break;

@@ -157,6 +157,56 @@ export const WIRE_RENDERERS: RendererMap = {
     ),
   },
 
+  'turn.defer': {
+    tone: 'warning',
+    label: 'defer',
+    headline: (r) => {
+      const text = firstText(r.input);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Pill tone="turn" variant="soft">
+              {r.origin.kind}
+            </Pill>
+            <span className="truncate text-fg-1">pending → {truncate(text, 80)}</span>
+          </span>
+        ),
+        right: <Mono>#{r.id.slice(0, 8)}</Mono>,
+      };
+    },
+    detail: (r) => (
+      <div className="space-y-2">
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="id">
+            <Mono>{r.id}</Mono>
+          </FieldRow>
+          <FieldRow label="origin" wide>
+            <JsonViewer value={r.origin} defaultOpenDepth={2} />
+          </FieldRow>
+        </div>
+        <div>
+          <div className="mb-1 text-fg-2">
+            input ({r.input.length} part{r.input.length === 1 ? '' : 's'})
+          </div>
+          <div className="space-y-1">
+            {r.input.map((part, i) => (
+              <ContentPartView key={i} part={part} />
+            ))}
+          </div>
+        </div>
+      </div>
+    ),
+  },
+
+  'turn.defer.consume': {
+    tone: 'lifecycle',
+    label: 'defer·consume',
+    headline: (r) => ({
+      main: <Dim>deferred input entered context</Dim>,
+      right: <Mono>#{r.id.slice(0, 8)}</Mono>,
+    }),
+  },
+
   'turn.cancel': {
     tone: 'warning',
     label: 'cancel',

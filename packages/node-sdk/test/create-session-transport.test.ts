@@ -1,6 +1,6 @@
 /**
  * Scenario: KimiHarness session creation and resume transport behavior.
- * Responsibilities: SDK options reach the in-process core and session identity remains stable.
+ * Responsibilities: SDK options reach the in-process core; session identity and resume handoffs remain stable.
  * Wiring: the real SDK/core are used; model/network boundaries are configured but never called.
  * Run: pnpm -C packages/node-sdk exec vitest run test/create-session-transport.test.ts
  */
@@ -13,10 +13,13 @@ import { join } from 'node:path';
 import type { Kaos } from '@moonshot-ai/kaos';
 import {
   createKimiHarness,
+  createKimiHarnessV2,
   KimiHarness,
+  SDKRpcClient,
   type ApprovalHandler,
   type Event,
   type QuestionHandler,
+  type Session,
 } from '#/index';
 import type { KimiError } from '#/index';
 import type { ResumeSessionInput, ResumedSessionSummary } from '#/types';
@@ -44,6 +47,14 @@ async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-create-'));
   tempDirs.push(dir);
   return dir;
+}
+
+function createSignal(): { readonly promise: Promise<void>; fire: () => void } {
+  let fire!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    fire = resolve;
+  });
+  return { promise, fire };
 }
 
 async function writeTestModelConfig(homeDir: string, modelName = 'kimi-test-model'): Promise<void> {
@@ -115,7 +126,10 @@ class StubRpc extends SDKRpcClientBase {
 class ResumeEventRpc extends SDKRpcClientBase {
   private subscriptions = 0;
 
-  constructor(private readonly rejectResume = false) {
+  constructor(
+    private readonly rejectResume = false,
+    private readonly onResume?: () => void,
+  ) {
     super();
   }
 
@@ -140,6 +154,7 @@ class ResumeEventRpc extends SDKRpcClientBase {
   }
 
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
+    this.onResume?.();
     for (const event of resumeEvents(input.id)) {
       this.receiveEvent(event);
     }
@@ -150,6 +165,63 @@ class ResumeEventRpc extends SDKRpcClientBase {
   }
 
   override async closeSession(): Promise<void> {}
+}
+
+class HandoffRpc extends StubRpc {
+  closeCalls = 0;
+
+  constructor(private readonly resumeSummary: ResumedSessionSummary) {
+    super();
+  }
+
+  override async resumeSessionWithHandoff(
+    _input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    onSnapshotStart?.();
+    onSnapshotReady?.();
+    await handoff(this.resumeSummary);
+    return this.resumeSummary;
+  }
+
+  override async closeSession(): Promise<void> {
+    this.closeCalls += 1;
+  }
+}
+
+class RollbackOwningHandoffRpc extends HandoffRpc {
+  override readonly handlesResumeHandoffFailure = true;
+}
+
+class DelayedFirstRollbackOwningHandoffRpc extends RollbackOwningHandoffRpc {
+  private resumeCount = 0;
+
+  constructor(
+    resumeSummary: ResumedSessionSummary,
+    private readonly firstResumeReady: Promise<void>,
+  ) {
+    super(resumeSummary);
+  }
+
+  override async resumeSessionWithHandoff(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    const resumeIndex = this.resumeCount++;
+    if (resumeIndex === 0) {
+      await this.firstResumeReady;
+    }
+    return super.resumeSessionWithHandoff(
+      input,
+      handoff,
+      onSnapshotStart,
+      onSnapshotReady,
+    );
+  }
 }
 
 function resumedSummary(id: string): ResumedSessionSummary {
@@ -228,6 +300,16 @@ function makeStubHarness(rpc: SDKRpcClientBase): KimiHarness {
     onClose: () => undefined,
   });
 }
+
+interface HandoffHarnessCase {
+  readonly engine: 'v1' | 'v2';
+  readonly createHarness: typeof createKimiHarness;
+}
+
+const HANDOFF_HARNESS_CASES: readonly HandoffHarnessCase[] = [
+  { engine: 'v1', createHarness: createKimiHarness },
+  { engine: 'v2', createHarness: createKimiHarnessV2 },
+];
 
 describe('KimiHarness.createSession transport link', () => {
   it('emits session_started with client attribution when a session is opened', async () => {
@@ -987,6 +1069,371 @@ effort = "medium"
       kaos,
       persistenceKaos: undefined,
     });
+  });
+
+  it('runs the default snapshot-start hook once at the beginning of the resume lifecycle', async () => {
+    const sessionId = 'ses_default_handoff';
+    const order: string[] = [];
+    const rpc = new ResumeEventRpc(false, () => order.push('resume'));
+
+    const resume = rpc.resumeSessionWithHandoff(
+      { id: sessionId },
+      async () => {
+        order.push('handoff');
+      },
+      () => order.push('snapshot-start'),
+      () => order.push('snapshot-ready'),
+    );
+
+    expect(order).toEqual(['snapshot-start', 'resume']);
+    await resume;
+    expect(order).toEqual([
+      'snapshot-start',
+      'resume',
+      'snapshot-ready',
+      'handoff',
+    ]);
+  });
+
+  it('registers a cold Session before resumeSessionWithHandoff invokes the host callback', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const sessionId = 'ses_cold_handoff';
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const created = await harness.createSession({ id: sessionId, workDir });
+      await created.close();
+
+      const resumed = await harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async (session) => {
+          expect(harness.sessions.get(sessionId)).toBe(session);
+        },
+      );
+
+      expect(resumed).toBe(harness.sessions.get(sessionId));
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it.each(HANDOFF_HARNESS_CASES)(
+    'keeps the successful cold Session live when a concurrent $engine handoff rejects',
+    async ({ engine, createHarness }) => {
+      const homeDir = await makeTempDir();
+      const workDir = await makeTempDir();
+      const sessionId = `ses_concurrent_${engine}_handoff`;
+      const harness = createHarness({ identity: TEST_IDENTITY, homeDir });
+      const successfulHandoffReturned = createSignal();
+      const handoffError = new Error(`${engine} concurrent handoff rejected`);
+
+      const created = await harness.createSession({ id: sessionId, workDir });
+      await created.close();
+
+      const successfulResume = harness.resumeSessionWithHandoff(
+        { id: ` ${sessionId} ` },
+        async () => undefined,
+      );
+      const rejectedResume = harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          await successfulHandoffReturned.promise;
+          throw handoffError;
+        },
+      );
+      void rejectedResume.catch(() => undefined);
+
+      try {
+        const successfulSession = await successfulResume;
+        successfulHandoffReturned.fire();
+        await expect(rejectedResume).rejects.toThrow(handoffError.message);
+
+        expect(harness.getSession(sessionId)).toBe(successfulSession);
+        await expect(successfulSession.getContext()).resolves.toMatchObject({
+          history: [],
+        });
+      } finally {
+        successfulHandoffReturned.fire();
+        await Promise.allSettled([successfulResume, rejectedResume]);
+        await harness.close();
+      }
+    },
+  );
+
+  it('keeps a successful direct v1 cold handoff live when the next handoff rejects', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const sessionId = 'ses_direct_concurrent_v1_handoff';
+    const rpc = new SDKRpcClient({ identity: TEST_IDENTITY, homeDir });
+    const handoffError = new Error('direct v1 concurrent handoff rejected');
+
+    await rpc.createSession({ id: sessionId, workDir });
+    await rpc.closeSession({ sessionId });
+
+    let successfulResume!: ReturnType<SDKRpcClient['resumeSessionWithHandoff']>;
+    successfulResume = rpc.resumeSessionWithHandoff(
+      { id: sessionId },
+      async () => undefined,
+    );
+    const rejectedResume = rpc.resumeSessionWithHandoff(
+      { id: sessionId },
+      async () => {
+        await successfulResume;
+        throw handoffError;
+      },
+    );
+    void rejectedResume.catch(() => undefined);
+
+    try {
+      await expect(successfulResume).resolves.toMatchObject({ id: sessionId });
+      await expect(rejectedResume).rejects.toBe(handoffError);
+      expect(rpc.core.sessions.has(sessionId)).toBe(true);
+
+      await expect(
+        rpc.resumeSessionWithHandoff(
+          { id: ` ${sessionId} ` },
+          async () => undefined,
+        ),
+      ).resolves.toMatchObject({ id: sessionId });
+      expect(rpc.core.sessions.has(sessionId)).toBe(true);
+    } finally {
+      await Promise.allSettled([successfulResume, rejectedResume]);
+      await rpc.closeSession({ sessionId });
+      await rpc.close();
+    }
+  });
+
+  it('serializes an ordinary v2 resume with a rejecting handoff resume', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const sessionId = 'ses_v2_ordinary_and_handoff_resume';
+    const harness = createKimiHarnessV2({ identity: TEST_IDENTITY, homeDir });
+    const handoffError = new Error('v2 mixed resume handoff rejected');
+
+    const created = await harness.createSession({ id: sessionId, workDir });
+    await created.close();
+
+    const ordinaryResume = harness.resumeSession({ id: ` ${sessionId} ` });
+    const rejectedResume = harness.resumeSessionWithHandoff(
+      { id: sessionId },
+      async () => {
+        await ordinaryResume;
+        throw handoffError;
+      },
+    );
+    void rejectedResume.catch(() => undefined);
+
+    try {
+      const session = await ordinaryResume;
+      await expect(rejectedResume).rejects.toBe(handoffError);
+      expect(harness.getSession(sessionId)).toBe(session);
+      await expect(session.getContext()).resolves.toMatchObject({ history: [] });
+
+      await expect(
+        harness.resumeSessionWithHandoff(
+          { id: sessionId },
+          async () => undefined,
+        ),
+      ).resolves.toBe(session);
+    } finally {
+      await Promise.allSettled([ordinaryResume, rejectedResume]);
+      await harness.close();
+    }
+  });
+
+  it('preserves a successful wrapper interaction handler when a concurrent handoff rejects', async () => {
+    const sessionId = 'ses_concurrent_handoff_handler';
+    const firstResumeReady = createSignal();
+    const successfulHandoffReturned = createSignal();
+    const rpc = new DelayedFirstRollbackOwningHandoffRpc(
+      resumedSummary(sessionId),
+      firstResumeReady.promise,
+    );
+    const harness = makeStubHarness(rpc);
+    const handoffError = new Error('concurrent handoff rejected');
+    let releaseApprovalHandler: (() => void) | undefined;
+
+    const successfulResume = harness.resumeSessionWithHandoff(
+      { id: ` ${sessionId} ` },
+      async (session) => {
+        releaseApprovalHandler = session.registerApprovalHandler(
+          () => ({ decision: 'approved' }),
+        );
+      },
+    );
+    const rejectedResume = harness.resumeSessionWithHandoff(
+      { id: sessionId },
+      async () => {
+        await successfulHandoffReturned.promise;
+        throw handoffError;
+      },
+    );
+    void rejectedResume.catch(() => undefined);
+    firstResumeReady.fire();
+
+    try {
+      const successfulSession = await successfulResume;
+      successfulHandoffReturned.fire();
+      await expect(rejectedResume).rejects.toThrow(handoffError.message);
+
+      expect(harness.getSession(sessionId)).toBe(successfulSession);
+      await expect(
+        rpc.requestApproval({
+          sessionId,
+          agentId: 'main',
+          toolCallId: 'tool-concurrent-handoff',
+          toolName: 'Bash',
+          action: 'run command',
+          display: { kind: 'command', command: 'echo ready' },
+        }),
+      ).resolves.toEqual({ decision: 'approved' });
+    } finally {
+      firstResumeReady.fire();
+      successfulHandoffReturned.fire();
+      await Promise.allSettled([successfulResume, rejectedResume]);
+      releaseApprovalHandler?.();
+      await harness.close();
+    }
+  });
+
+  it('runs a later handoff after an earlier handoff rejects', async () => {
+    const sessionId = 'ses_handoff_after_rejection';
+    const rpc = new RollbackOwningHandoffRpc(resumedSummary(sessionId));
+    const harness = makeStubHarness(rpc);
+
+    try {
+      await expect(
+        harness.resumeSessionWithHandoff(
+          { id: sessionId },
+          async () => {
+            throw new Error('first handoff rejected');
+          },
+        ),
+      ).rejects.toThrow('first handoff rejected');
+
+      const resumed = await harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => undefined,
+      );
+
+      expect(harness.getSession(sessionId)).toBe(resumed);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('calls snapshot-start once before the v1 cold handoff callback', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const sessionId = 'ses_v1_snapshot_start';
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const order: string[] = [];
+
+    try {
+      const created = await harness.createSession({ id: sessionId, workDir });
+      await created.close();
+
+      await harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          order.push('handoff');
+        },
+        () => order.push('snapshot-start'),
+        () => order.push('snapshot-ready'),
+      );
+
+      expect(order).toEqual(['snapshot-start', 'snapshot-ready', 'handoff']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('refreshes an active Session snapshot before resumeSessionWithHandoff invokes the host callback', async () => {
+    const sessionId = 'ses_active_handoff';
+    const summary: ResumedSessionSummary = {
+      ...resumedSummary(sessionId),
+      warning: 'Recovered a partial replay.',
+    };
+    const harness = makeStubHarness(new HandoffRpc(summary));
+    try {
+      const active = await harness.createSession({ id: sessionId, workDir: '/tmp/work' });
+
+      const resumed = await harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async (session) => {
+          expect(session.getResumeState()?.warning).toBe('Recovered a partial replay.');
+        },
+      );
+
+      expect(resumed).toBe(active);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('forwards snapshot-start once before an active handoff callback', async () => {
+    const sessionId = 'ses_active_snapshot_start';
+    const harness = makeStubHarness(new HandoffRpc(resumedSummary(sessionId)));
+    const order: string[] = [];
+
+    try {
+      await harness.createSession({ id: sessionId, workDir: '/tmp/work' });
+
+      await harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          order.push('handoff');
+        },
+        () => order.push('snapshot-start'),
+        () => order.push('snapshot-ready'),
+      );
+
+      expect(order).toEqual(['snapshot-start', 'snapshot-ready', 'handoff']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('removes a cold Session when the resumeSessionWithHandoff callback rejects', async () => {
+    const sessionId = 'ses_rejected_handoff';
+    const rpc = new HandoffRpc(resumedSummary(sessionId));
+    const harness = makeStubHarness(rpc);
+
+    await expect(
+      harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          throw new Error('handoff rejected');
+        },
+      ),
+    ).rejects.toThrow('handoff rejected');
+
+    expect(harness.sessions.has(sessionId)).toBe(false);
+    expect(rpc.closeCalls).toBe(1);
+    await harness.close();
+  });
+
+  it('discards only the wrapper when the transport already rolled back a failed handoff', async () => {
+    const sessionId = 'ses_transport_owned_rollback';
+    const rpc = new RollbackOwningHandoffRpc(resumedSummary(sessionId));
+    const harness = makeStubHarness(rpc);
+    let handedOff: Session | undefined;
+
+    await expect(
+      harness.resumeSessionWithHandoff(
+        { id: sessionId },
+        async (session) => {
+          handedOff = session;
+          throw new Error('handoff rejected after engine rollback');
+        },
+      ),
+    ).rejects.toThrow('handoff rejected after engine rollback');
+
+    expect(rpc.closeCalls).toBe(0);
+    expect(harness.sessions.has(sessionId)).toBe(false);
+    expect(() => handedOff?.getResumeState()).toThrow('Session is closed');
+    await harness.close();
   });
 
   it('filters session events before resume resolves and then stays live', async () => {

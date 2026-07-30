@@ -575,6 +575,100 @@ describe('Agent loop', () => {
     await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
   });
 
+  it('holds new admissions while admitted turns drain into quiescence', async () => {
+    const started: number[] = [];
+    const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
+      started.push(event.turnId);
+    });
+    let activeStarted!: () => void;
+    const activeDidStart = new Promise<void>((resolve) => {
+      activeStarted = resolve;
+    });
+    let releaseActive!: () => void;
+    const activeCanFinish = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register(
+      'test-acquire-quiescence',
+      async (_hookCtx, next) => {
+        activeStarted();
+        await activeCanFinish;
+        await next();
+      },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'active complete' });
+    ctx.mockNextResponse({ type: 'text', text: 'queued complete' });
+    ctx.mockNextResponse({ type: 'text', text: 'held complete' });
+
+    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    await activeDidStart;
+    const queued = (await loop.enqueue(nextTurnMessage('queued')).assigned).turn;
+    const acquiring = loop.acquireQuiescence();
+    const held = loop.enqueue(nextTurnMessage('held during drain'));
+    let heldAssigned = false;
+    void held.assigned.then(() => {
+      heldAssigned = true;
+    });
+
+    await Promise.resolve();
+    expect(started).toEqual([0]);
+    expect(heldAssigned).toBe(false);
+
+    releaseActive();
+    const [lease] = await Promise.all([acquiring, active.result, queued.result]);
+
+    expect(started).toEqual([0, 1]);
+    expect(heldAssigned).toBe(false);
+    expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: true });
+
+    hook.dispose();
+    lease.dispose();
+    const resumed = (await held.assigned).turn;
+    await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
+    expect(started).toEqual([0, 1, 2]);
+    subscription.dispose();
+  });
+
+  it('rejects a draining acquisition and its held admissions when disposed', async () => {
+    let activeStarted!: () => void;
+    const activeDidStart = new Promise<void>((resolve) => {
+      activeStarted = resolve;
+    });
+    loop.hooks.onWillBeginStep.register(
+      'test-dispose-acquire-quiescence',
+      async (hookContext, next) => {
+        activeStarted();
+        await new Promise<void>((_, reject) => {
+          if (hookContext.signal.aborted) {
+            reject(hookContext.signal.reason);
+            return;
+          }
+          hookContext.signal.addEventListener(
+            'abort',
+            () => {
+              reject(hookContext.signal.reason);
+            },
+            { once: true },
+          );
+        });
+        await next();
+      },
+    );
+
+    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    await activeDidStart;
+    const acquiring = loop.acquireQuiescence();
+    const held = loop.enqueue(nextTurnMessage('held during disposal'));
+    const acquisitionRejected = expect(acquiring).rejects.toBeDefined();
+    const assignmentRejected = expect(held.assigned).rejects.toBeDefined();
+
+    (loop as IAgentLoopService & { dispose(): void }).dispose();
+
+    await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+    await Promise.all([acquisitionRejected, assignmentRejected]);
+    expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+  });
+
   it('can abort an admission while quiescence holds it', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();

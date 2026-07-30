@@ -501,9 +501,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       persistenceKaos?: Kaos;
       forcePluginSessionStartReminder?: boolean;
       refreshPluginAgents?: boolean;
+      handoff?: (summary: ResumeSessionResult) => Promise<void>;
+      onSnapshotStart?: () => void;
+      eventDeliveryBarrierToken?: string;
     },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
+    const crossEventDeliveryBarrier = async (): Promise<void> => {
+      if (overrides.eventDeliveryBarrierToken === undefined) return;
+      await (await this.sdk).eventDeliveryBarrier?.({
+        sessionId: summary.id,
+        agentId: 'main',
+        token: overrides.eventDeliveryBarrierToken,
+      });
+    };
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
     // Read `.kimi-code/local.toml` through the persistence (local) kaos, not the
     // tool kaos — see createSessionWithOverrides and issue #988.
@@ -527,16 +538,33 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
       await active.setBaseAdditionalDirs(additionalDirs);
-      return withAdditionalDirs(
-        await resumeSessionResult(
-          summary,
+      const turnGateAcquisition =
+        overrides.handoff === undefined
+          ? undefined
+          : active.acquireMainTurnStartGate();
+      let releaseTurnGate: ((discardBuffered?: boolean) => void) | undefined;
+      try {
+        if (overrides.handoff !== undefined) {
+          overrides.onSnapshotStart?.();
+        }
+        releaseTurnGate = await turnGateAcquisition;
+        const result = withAdditionalDirs(
+          await resumeSessionResult(
+            summary,
+            active,
+            undefined,
+            input.includeSubagents,
+            input.replayTurnLimit,
+          ),
           active,
-          undefined,
-          input.includeSubagents,
-          input.replayTurnLimit,
-        ),
-        active,
-      );
+        );
+        await crossEventDeliveryBarrier();
+        await overrides.handoff?.(result);
+        return result;
+      } finally {
+        releaseTurnGate ??= await turnGateAcquisition?.catch(() => undefined);
+        releaseTurnGate?.();
+      }
     }
 
     const config = this.reloadProviderManager();
@@ -585,35 +613,61 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       appVersion: this.appVersion,
       additionalDirs,
     });
-    let warning: string | undefined;
+    let turnGateAcquisition: Promise<(discardBuffered?: boolean) => void> | undefined;
+    let releaseTurnGate: ((discardBuffered?: boolean) => void) | undefined;
+    let succeeded = false;
     try {
+      // Acquire before replay starts. Session records the hold even though the
+      // cold main Agent does not exist yet, then installs it synchronously when
+      // replay materializes that Agent.
+      turnGateAcquisition =
+        overrides.handoff === undefined
+          ? undefined
+          : session.acquireMainTurnStartGate();
+      if (overrides.handoff !== undefined) {
+        overrides.onSnapshotStart?.();
+      }
+      releaseTurnGate = await turnGateAcquisition;
       const resumeResult = await session.resume();
-      warning = resumeResult.warning;
       await session.assertMainProfileSelection(input.agentProfile);
       await this.refreshSessionRuntimeConfig(session, config);
       if (overrides.refreshPluginAgents === true) {
         await session.writeMetadata();
       }
+      this.sessions.set(summary.id, session);
+      if (overrides.forcePluginSessionStartReminder === true) {
+        // Append before constructing the result so the returned ResumeSessionResult
+        // (and any SDK caller's resumeState) reflects the refreshed plugin context.
+        await session.appendPluginSessionStartReminder();
+      }
+      const result = await resumeSessionResult(
+        summary,
+        session,
+        resumeResult.warning,
+        input.includeSubagents,
+        input.replayTurnLimit,
+      );
+      await crossEventDeliveryBarrier();
+      await overrides.handoff?.(result);
+      succeeded = true;
+      return result;
     } catch (error) {
+      if (this.sessions.get(summary.id) === session) {
+        this.sessions.delete(summary.id);
+      }
       await session.close().catch(() => {});
       withTelemetryContext(this.telemetry, { sessionId: summary.id }).track('session_load_failed', {
         reason: telemetryErrorReason(error),
       });
       throw error;
+    } finally {
+      // A failed cold resume is discarded, so no producer input buffered on
+      // its temporary Session may launch after close. A successful handoff
+      // releases normally and starts the buffered producer turn only after the
+      // consumer is installed.
+      releaseTurnGate ??= await turnGateAcquisition?.catch(() => undefined);
+      releaseTurnGate?.(!succeeded);
     }
-    this.sessions.set(summary.id, session);
-    if (overrides.forcePluginSessionStartReminder === true) {
-      // Append before constructing the result so the returned ResumeSessionResult
-      // (and any SDK caller's resumeState) reflects the refreshed plugin context.
-      await session.appendPluginSessionStartReminder();
-    }
-    return resumeSessionResult(
-      summary,
-      session,
-      warning,
-      input.includeSubagents,
-      input.replayTurnLimit,
-    );
   }
 
   async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {

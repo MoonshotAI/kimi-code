@@ -8,6 +8,8 @@ import type { AgentRecord } from '../../src/agent';
 import type { PromptOrigin } from '../../src/agent/context';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
+  BlobStore,
+  FileSystemAgentRecordPersistence,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
 import { limitAgentReplayByTurns } from '../../src/agent/replay/turns';
@@ -204,6 +206,128 @@ describe('Agent resume', () => {
           user: text "Fresh prompt after deferred resume"
     `);
     await ctx.expectResumeMatches();
+  });
+
+  it('rehydrates deferred media during filesystem replay without appending it twice', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-deferred-media-resume-'));
+    const blobsDir = join(homeDir, 'blobs');
+    const wirePath = join(homeDir, 'wire.jsonl');
+    const payload = 'M'.repeat(5000);
+    const dataUri = `data:image/png;base64,${payload}`;
+    const input = [{ type: 'image_url' as const, imageUrl: { url: dataUri } }];
+    const origin = { kind: 'system_trigger' as const, name: 'producer-completion' };
+
+    try {
+      const writer = new FileSystemAgentRecordPersistence(wirePath, {
+        blobStore: new BlobStore({ blobsDir }),
+      });
+      writer.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      });
+      writer.append({ type: 'turn.defer', id: 'deferred-media', input, origin });
+      writer.append({
+        type: 'context.append_message',
+        message: { role: 'user', content: input, toolCalls: [], origin },
+      });
+      await writer.close();
+
+      const persistence = new FileSystemAgentRecordPersistence(wirePath, {
+        blobStore: new BlobStore({ blobsDir }),
+      });
+      const ctx = testAgent({ persistence, homedir: homeDir });
+      const release = ctx.agent.turn.holdTurnStarts();
+
+      await ctx.agent.resume();
+      ctx.configure();
+      ctx.mockNextResponse({ type: 'text', text: 'media recovered' });
+      const turnEnded = ctx.untilTurnEnd();
+      release();
+      await turnEnded;
+      await ctx.agent.records.flush();
+
+      const imageUrls = ctx.agent.context.history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(imageUrls).toEqual([dataUri]);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the deferred id to recover resolved local video without appending it twice', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-resolved-video-resume-'));
+    const wirePath = join(homeDir, 'wire.jsonl');
+    const deferredId = 'deferred-local-video';
+    const origin = { kind: 'system_trigger' as const, name: 'producer-completion' };
+    const rawInput = [
+      {
+        type: 'video_url' as const,
+        videoUrl: { url: 'file:///tmp/example-video.mp4' },
+      },
+    ];
+    const resolvedInput = [
+      {
+        type: 'text' as const,
+        text: '<video path="/tmp/example-video.mp4"></video>',
+      },
+    ];
+
+    try {
+      const writer = new FileSystemAgentRecordPersistence(wirePath);
+      writer.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      });
+      writer.append({ type: 'turn.defer', id: deferredId, input: rawInput, origin });
+      writer.append({
+        type: 'context.append_message',
+        deferredInputId: deferredId,
+        message: {
+          role: 'user',
+          content: resolvedInput,
+          toolCalls: [],
+          origin,
+        },
+      });
+      await writer.close();
+
+      const persistence = new FileSystemAgentRecordPersistence(wirePath);
+      const ctx = testAgent({ persistence, homedir: homeDir });
+      const release = ctx.agent.turn.holdTurnStarts();
+
+      await ctx.agent.resume();
+      ctx.configure();
+      ctx.mockNextResponse({ type: 'text', text: 'video recovered' });
+      const turnEnded = ctx.untilTurnEnd();
+      release();
+      await turnEnded;
+      await ctx.agent.records.flush();
+
+      expect(
+        ctx.agent.context.history
+          .flatMap((message) => message.content)
+          .filter(
+            (part) =>
+              part.type === 'text' &&
+              part.text === '<video path="/tmp/example-video.mp4"></video>',
+          ),
+      ).toHaveLength(1);
+      const persisted: AgentRecord[] = [];
+      for await (const record of persistence.read()) {
+        persisted.push(record);
+      }
+      expect(
+        persisted
+          .filter((record) => record.type === 'turn.defer.consume')
+          .map((record) => record.id),
+      ).toEqual([deferredId]);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 
   it('restores tool store state from persisted records', async () => {

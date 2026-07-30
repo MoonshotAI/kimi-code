@@ -15,7 +15,17 @@
  * NOT here. The peer-service interfaces stay SDK-shaped.
  */
 
-import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../../rpc';
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  Event,
+  EventDeliveryBarrierRequest,
+  QuestionRequest,
+  QuestionResult,
+  SDKAPI,
+  ToolCallRequest,
+  ToolCallResponse,
+} from '../../rpc';
 
 import type { IApprovalService } from '../approval/approval';
 import type { IEventService } from '../event/event';
@@ -43,6 +53,12 @@ export class BridgeClientAPI implements SDKAPI {
       '[DBG coreProcessClient.emitEvent]',
     );
     this.deps.eventService.publish(event);
+  }
+
+  eventDeliveryBarrier(
+    _request: EventDeliveryBarrierRequest & { sessionId: string; agentId: string },
+  ): void {
+    // Reaching this ordered RPC handler is the barrier.
   }
 
   async requestApproval(

@@ -377,7 +377,7 @@ describe('AcpServer end-to-end happy path', () => {
     const harness = makeHarness(session);
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
-    const agentConnection = new AgentSideConnection(
+    void new AgentSideConnection(
       (connection) => new AcpServer(harness, connection),
       agentStream,
     );
@@ -476,20 +476,12 @@ describe('AcpServer end-to-end happy path', () => {
       reason: 'completed',
     } as Event);
 
-    const barrier = collecting.waitForUpdate(
+    await collecting.waitForUpdate(
       (notification) =>
-        (notification.update._meta as { barrier?: string } | null | undefined)?.barrier ===
-        'after-autonomous-turn',
+        notification.update.sessionUpdate === 'agent_message_chunk' &&
+        notification.update.content.type === 'text' &&
+        notification.update.content.text === 'Scheduled review finished.',
     );
-    await agentConnection.sessionUpdate({
-      update: {
-        sessionUpdate: 'available_commands_update',
-        availableCommands: [],
-        _meta: { barrier: 'after-autonomous-turn' },
-      },
-      sessionId,
-    });
-    await barrier;
 
     // ACP projects only the display-safe task lifecycle summary. Internal
     // task identifiers and stop details must not cross the wire.
@@ -1019,6 +1011,577 @@ describe('AcpServer end-to-end happy path', () => {
     ]);
     expect(rawListeners.size).toBe(0);
     expect(rawUnsubscribeCount).toBe(1);
+    expect(listenerCount()).toBe(1);
+  });
+
+  it('replays a frozen history once before post-snapshot events during cold load', async () => {
+    const sessionId = 'sess-e2e-cold-load-events';
+    const { session, emit, listenerCount } = makeScriptedSession(sessionId, []);
+    Object.assign(session, {
+      getResumeState: () => ({
+        agents: {
+          main: {
+            context: {
+                  history: [
+                    {
+                      role: 'user',
+                      content: [{ type: 'text', text: 'Earlier question.' }],
+                      toolCalls: [],
+                },
+                {
+                  role: 'assistant',
+                      content: [{ type: 'text', text: 'Earlier answer.' }],
+                      toolCalls: [],
+                    },
+                    {
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text:
+                            '<cron-fire jobId="cron-load-example" cron="0 9 * * *" recurring="true" ' +
+                            'coalescedCount="1" stale="false">\n' +
+                            '<prompt>\nReview the newly scheduled report.\n</prompt>\n</cron-fire>',
+                        },
+                      ],
+                      toolCalls: [],
+                      origin: {
+                        kind: 'cron_job',
+                        jobId: 'cron-load-example',
+                        cron: '0 9 * * *',
+                        recurring: true,
+                        coalescedCount: 1,
+                        stale: false,
+                      },
+                    },
+                  ],
+                  tokenCount: 0,
+                },
+              },
+        },
+      }),
+    });
+    const rawListeners = new Set<(event: Event) => void>();
+    let rawUnsubscribeCount = 0;
+    const preSnapshotEvents = [
+      {
+        type: 'turn.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        origin: { kind: 'user', promptId: 'prompt-earlier' },
+      },
+      {
+        type: 'assistant.delta',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        delta: 'Earlier answer.',
+      },
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        reason: 'completed',
+      },
+    ] as const satisfies readonly Event[];
+    const duringSnapshotEvents = [
+      {
+        type: 'assistant.delta',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        delta: 'Earlier answer.',
+      },
+      {
+        type: 'cron.fired',
+        sessionId,
+        agentId: 'main',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'cron-load-example',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: 'Review the newly scheduled report.',
+      },
+    ] as const satisfies readonly Event[];
+    const postSnapshotEvents = [
+      {
+        type: 'cron.fired',
+        sessionId,
+        agentId: 'main',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'cron-load-example',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: 'Review the newly scheduled report.',
+      },
+      {
+        type: 'turn.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        origin: {
+          kind: 'cron_job',
+          jobId: 'cron-load-example',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      },
+      {
+        type: 'thinking.delta',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        delta: 'Checking the report.',
+      },
+      {
+        type: 'tool.call.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        toolCallId: 'tool-load-report',
+        name: 'Read',
+        args: { path: '/tmp/example.txt' },
+      },
+      {
+        type: 'tool.progress',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        toolCallId: 'tool-load-report',
+        update: { kind: 'status', text: 'Reading report.' },
+      },
+      {
+        type: 'tool.result',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        toolCallId: 'tool-load-report',
+        output: 'Report is ready.',
+      },
+      {
+        type: 'assistant.delta',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        delta: 'Scheduled review finished.',
+      },
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId: 8,
+        reason: 'completed',
+      },
+    ] as const satisfies readonly Event[];
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      onSessionEvent: (
+        subscribedSessionId: string,
+        listener: (event: Event) => void,
+      ) => {
+        expect(subscribedSessionId).toBe(sessionId);
+        rawListeners.add(listener);
+        return () => {
+          if (!rawListeners.delete(listener)) return;
+          rawUnsubscribeCount += 1;
+        };
+      },
+      resumeSessionWithHandoff: async (
+        _input: unknown,
+        handoff: (resumed: Session) => Promise<void>,
+        onSnapshotStart?: () => void,
+        onSnapshotReady?: () => void,
+      ) => {
+        for (const event of preSnapshotEvents) {
+          for (const listener of rawListeners) listener(event);
+        }
+        onSnapshotStart?.();
+        for (const event of duringSnapshotEvents) {
+          for (const listener of rawListeners) listener(event);
+        }
+        onSnapshotReady?.();
+        const setup = handoff(session);
+        await Promise.resolve();
+        for (const event of postSnapshotEvents) {
+          for (const listener of rawListeners) listener(event);
+          emit(event);
+        }
+        await setup;
+        return session;
+      },
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-coder',
+        models: makeModelsMap([
+          { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: false },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    const agentConnection = new AgentSideConnection(
+      (connection) => new AcpServer(harness, connection),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.loadSession({ sessionId, cwd: '/tmp/work', mcpServers: [] });
+    const barrier = collecting.waitForUpdate(
+      (notification) =>
+        (notification.update._meta as { barrier?: string } | null | undefined)?.barrier ===
+        'after-cold-load-events',
+    );
+    await agentConnection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [],
+        _meta: { barrier: 'after-cold-load-events' },
+      },
+    });
+    await barrier;
+
+    expect(
+      collecting.promptUpdates.map((notification) => notification.update),
+    ).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Earlier question.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Earlier answer.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Review the newly scheduled report.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Review the newly scheduled report.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'Checking the report.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call',
+        toolCallId: '8:tool-load-report',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '8:tool-load-report',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '8:tool-load-report',
+        status: 'completed',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Scheduled review finished.' },
+      }),
+    ]);
+    expect(rawListeners.size).toBe(0);
+    expect(rawUnsubscribeCount).toBe(1);
+    expect(listenerCount()).toBe(1);
+  });
+
+  it('pauses an existing live bridge at the active-load snapshot cut', async () => {
+    const sessionId = 'sess-e2e-active-load-cut';
+    const { session, emit, listenerCount } = makeScriptedSession(sessionId, []);
+    let history: ReadonlyArray<unknown> = [];
+    Object.assign(session, {
+      getResumeState: () => ({
+        agents: {
+          main: {
+            context: { history, tokenCount: 0 },
+          },
+        },
+      }),
+    });
+    const rawListeners = new Set<(event: Event) => void>();
+    let rawUnsubscribeCount = 0;
+    const publish = (event: Event): void => {
+      for (const listener of rawListeners) listener(event);
+      emit(event);
+    };
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+      onSessionEvent: (
+        subscribedSessionId: string,
+        listener: (event: Event) => void,
+      ) => {
+        expect(subscribedSessionId).toBe(sessionId);
+        rawListeners.add(listener);
+        return () => {
+          if (rawListeners.delete(listener)) rawUnsubscribeCount += 1;
+        };
+      },
+      resumeSessionWithHandoff: async (
+        _input: unknown,
+        handoff: (resumed: Session) => Promise<void>,
+        onSnapshotStart?: () => void,
+        onSnapshotReady?: () => void,
+      ) => {
+        onSnapshotStart?.();
+        publish({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: 2,
+          origin: { kind: 'user', promptId: 'prompt-before-load' },
+        } as Event);
+        publish({
+          type: 'assistant.delta',
+          sessionId,
+          agentId: 'main',
+          turnId: 2,
+          delta: 'Settled before snapshot.',
+        } as Event);
+        publish({
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 2,
+          reason: 'completed',
+        } as Event);
+        publish({
+          type: 'cron.fired',
+          sessionId,
+          agentId: 'main',
+          origin: {
+            kind: 'cron_job',
+            jobId: 'cron-active-load-example',
+            cron: '0 9 * * *',
+            recurring: true,
+            coalescedCount: 1,
+            stale: false,
+          },
+          prompt: 'Review after the active load.',
+        } as Event);
+        history = [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Question before load.' }],
+            toolCalls: [],
+          },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Settled before snapshot.' }],
+            toolCalls: [],
+          },
+        ];
+        onSnapshotReady?.();
+        publish({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: 3,
+          origin: {
+            kind: 'cron_job',
+            jobId: 'cron-active-load-example',
+            cron: '0 9 * * *',
+            recurring: true,
+            coalescedCount: 1,
+            stale: false,
+          },
+        } as Event);
+        publish({
+          type: 'assistant.delta',
+          sessionId,
+          agentId: 'main',
+          turnId: 3,
+          delta: 'Finished after snapshot.',
+        } as Event);
+        await handoff(session);
+        publish({
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 3,
+          reason: 'completed',
+        } as Event);
+        return session;
+      },
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-coder',
+        models: makeModelsMap([
+          { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: false },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    const agentConnection = new AgentSideConnection(
+      (connection) => new AcpServer(harness, connection),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    collecting.updates.length = 0;
+
+    await client.loadSession({ sessionId, cwd: '/tmp/work', mcpServers: [] });
+    const barrier = collecting.waitForUpdate(
+      (notification) =>
+        (notification.update._meta as { barrier?: string } | null | undefined)?.barrier ===
+        'after-active-load-cut',
+    );
+    await agentConnection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [],
+        _meta: { barrier: 'after-active-load-cut' },
+      },
+    });
+    await barrier;
+
+    expect(collecting.promptUpdates.map((notification) => notification.update)).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Question before load.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Settled before snapshot.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Review after the active load.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Finished after snapshot.' },
+      }),
+    ]);
+    expect(rawListeners.size).toBe(0);
+    expect(rawUnsubscribeCount).toBe(1);
+    expect(listenerCount()).toBe(1);
+  });
+
+  it('restores an existing live bridge when load setup fails after pausing it', async () => {
+    const sessionId = 'sess-e2e-load-rollback';
+    const { session, emit, listenerCount } = makeScriptedSession(sessionId, []);
+    Object.assign(session, {
+      getResumeState: () => ({
+        agents: {
+          main: {
+            context: { history: [], tokenCount: 0 },
+          },
+        },
+      }),
+    });
+    let failConfig = false;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+      resumeSessionWithHandoff: async (
+        _input: unknown,
+        handoff: (resumed: Session) => Promise<void>,
+        onSnapshotStart?: () => void,
+        onSnapshotReady?: () => void,
+      ) => {
+        onSnapshotStart?.();
+        onSnapshotReady?.();
+        await handoff(session);
+        return session;
+      },
+      getConfig: async () => {
+        if (failConfig) {
+          const config = {
+            providers: {},
+            defaultModel: 'kimi-coder',
+          };
+          Object.defineProperty(config, 'models', {
+            get() {
+              emit({
+                type: 'assistant.delta',
+                sessionId,
+                agentId: 'main',
+                turnId: 4,
+                delta: 'Update during failed load.',
+              } as Event);
+              throw new Error('model catalog unavailable during load');
+            },
+          });
+          return config;
+        }
+        return {
+          providers: {},
+          defaultModel: 'kimi-coder',
+          models: makeModelsMap([
+            { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: false },
+          ]),
+        };
+      },
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    const agentConnection = new AgentSideConnection(
+      (connection) => new AcpServer(harness, connection),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    failConfig = true;
+    await expect(
+      client.loadSession({ sessionId, cwd: '/tmp/work', mcpServers: [] }),
+    ).rejects.toBeDefined();
+
+    emit({
+      type: 'assistant.delta',
+      sessionId,
+      agentId: 'main',
+      turnId: 5,
+      delta: 'Update after failed load.',
+    } as Event);
+    const barrier = collecting.waitForUpdate(
+      (notification) =>
+        (notification.update._meta as { barrier?: string } | null | undefined)?.barrier ===
+        'after-load-rollback',
+    );
+    await agentConnection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [],
+        _meta: { barrier: 'after-load-rollback' },
+      },
+    });
+    await barrier;
+
+    expect(
+      collecting.promptUpdates
+        .filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'agent_message_chunk',
+        )
+        .map((notification) =>
+          notification.update.sessionUpdate === 'agent_message_chunk' &&
+          notification.update.content.type === 'text'
+            ? notification.update.content.text
+            : undefined,
+        ),
+    ).toEqual(['Update during failed load.', 'Update after failed load.']);
     expect(listenerCount()).toBe(1);
   });
 

@@ -223,6 +223,9 @@ export class AcpSession {
   private unsubscribeApprovalHandler: (() => void) | undefined;
   private unsubscribeQuestionHandler: (() => void) | undefined;
   private queuedSessionEvents: Event[] | undefined;
+  private snapshotQueuedSessionEventCount = 0;
+  private drainingSessionEvents: Promise<void> | undefined;
+  private sessionEventTail: Promise<void> = Promise.resolve();
   private disposed = false;
 
   /**
@@ -282,11 +285,18 @@ export class AcpSession {
     initialThinkingEffort?: string,
     /**
      * Live events captured for a known session id while a cold
-     * `session/resume` was materializing its SDK Session. The server
+     * `session/load` or `session/resume` was materializing its SDK Session.
+     * The server
      * transfers ownership of this FIFO synchronously, after releasing
      * the temporary raw subscription and before any asynchronous setup.
      */
     initialSessionEvents: readonly Event[] = [],
+    /**
+     * Keep the session event FIFO paused until setup establishes the ACP
+     * history/live boundary. Load drains after history replay; resume drains
+     * after its asynchronous configuration setup.
+     */
+    deferInitialSessionEvents = false,
   ) {
     this.currentModelIdInternal = initialModelId ?? '';
     this.currentThinkingEffortInternal = initialThinkingEffort ?? 'off';
@@ -328,9 +338,11 @@ export class AcpSession {
           queue.push(event);
           return;
         }
-        this.handleSessionEvent(event);
+        void this.enqueueSessionEvent(event);
       });
-      this.drainQueuedSessionEvents();
+      if (!deferInitialSessionEvents) {
+        void this.flushInitialSessionEvents();
+      }
       interactionHandlersBySession.set(this, {
         approval: approvalHandler,
         question: questionHandler,
@@ -434,6 +446,7 @@ export class AcpSession {
     this.unsubscribeQuestionHandler = undefined;
     this.queuedSessionEvents?.splice(0);
     this.queuedSessionEvents = undefined;
+    this.snapshotQueuedSessionEventCount = 0;
     for (const release of releases) {
       try {
         release?.();
@@ -447,7 +460,7 @@ export class AcpSession {
   }
 
   /**
-   * Drain the resume handoff FIFO after the Session listener is installed.
+   * Drain the load/resume handoff FIFO after the Session listener is installed.
    *
    * The queue remains active while it is being drained, so a synchronous
    * reentrant SDK event is appended and processed after all earlier events.
@@ -455,14 +468,91 @@ export class AcpSession {
    * unsubscribe and constructor call, which gives the server a no-gap
    * handoff without changing the multicast semantics of Session.onEvent.
    */
-  private drainQueuedSessionEvents(): void {
+  async flushInitialSessionEvents(): Promise<void> {
+    if (this.queuedSessionEvents === undefined) return;
+    this.drainingSessionEvents ??= this.drainQueuedSessionEvents().finally(() => {
+      this.drainingSessionEvents = undefined;
+    });
+    await this.drainingSessionEvents;
+  }
+
+  /** @internal Pause live projection after all already-dispatched updates settle. */
+  async pauseSessionEvents(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('Cannot pause events for a disposed ACP session');
+    }
+    this.queuedSessionEvents ??= [];
+    await this.sessionEventTail;
+  }
+
+  /**
+   * @internal Reconcile the paused live FIFO against a frozen resume snapshot.
+   *
+   * Delta/tool/turn events from the turn that settled into the snapshot would
+   * otherwise be projected twice when history is replayed. Candidate
+   * autonomous trigger events are retained until replay confirms which ones
+   * received a persisted display-safe projection; matching pre-snapshot events
+   * are then removed. Resetting projection bookkeeping makes the replay the
+   * sole source of pre-cut tool/turn state.
+   */
+  pausedSessionEventCount(): number {
+    return this.queuedSessionEvents?.length ?? 0;
+  }
+
+  reconcilePausedSessionEvents(
+    snapshotEventCount: number,
+    predicate: (event: Event) => boolean,
+  ): void {
     const queue = this.queuedSessionEvents;
     if (queue === undefined) return;
-    for (let index = 0; !this.disposed && index < queue.length; index += 1) {
-      this.handleSessionEvent(queue[index]!);
+    const boundary = Math.min(Math.max(snapshotEventCount, 0), queue.length);
+    const retainedSnapshotEvents = queue.slice(0, boundary).filter(predicate);
+    const postSnapshotEvents = queue.slice(boundary);
+    queue.splice(0, queue.length, ...retainedSnapshotEvents, ...postSnapshotEvents);
+    this.snapshotQueuedSessionEventCount = retainedSnapshotEvents.length;
+    this.argsByToolCall.clear();
+    this.startedToolCalls.clear();
+    this.currentTurnId = undefined;
+  }
+
+  /**
+   * @internal Mark the prefix captured before the frozen resume snapshot.
+   *
+   * A newly-created ACP bridge receives an already-reconciled queue from the
+   * server, so it cannot infer this boundary itself. Events appended after this
+   * call remain live suffix events and are never removed as replay duplicates.
+   */
+  setPausedSessionEventSnapshotBoundary(snapshotEventCount: number): void {
+    const queue = this.queuedSessionEvents;
+    this.snapshotQueuedSessionEventCount =
+      queue === undefined
+        ? 0
+        : Math.min(Math.max(snapshotEventCount, 0), queue.length);
+  }
+
+  private async drainQueuedSessionEvents(): Promise<void> {
+    const queue = this.queuedSessionEvents;
+    if (queue === undefined) return;
+    while (!this.disposed && queue.length > 0) {
+      await this.enqueueSessionEvent(queue.shift()!);
     }
-    queue.splice(0);
-    this.queuedSessionEvents = undefined;
+    if (this.disposed) queue.splice(0);
+    if (this.queuedSessionEvents === queue) {
+      this.queuedSessionEvents = undefined;
+      this.snapshotQueuedSessionEventCount = 0;
+    }
+  }
+
+  private enqueueSessionEvent(event: Event): Promise<void> {
+    const delivery = this.sessionEventTail.then(() => this.handleSessionEvent(event));
+    this.sessionEventTail = delivery.catch((error) => {
+      log.warn('acp: failed to project session event', {
+        sessionId: this.id,
+        eventType: event.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return this.sessionEventTail;
   }
 
   /**
@@ -781,18 +871,31 @@ export class AcpSession {
    *
    * Errors thrown by individual `sessionUpdate` calls are caught and
    * logged so a single transient push failure does not truncate the
-   * whole replay. The method awaits every push (unlike the live
-   * {@link handleSessionEvent} fire-and-forget path) because replay is a one-shot
+   * whole replay. The method awaits every push because replay is a one-shot
    * batch — completion ordering is what tells the caller (`loadSession`)
-   * that the response is safe to return.
+   * that the response is safe to return. Events captured after the resume
+   * snapshot are flushed only after the historical batch, preserving the
+   * history/live boundary.
    */
   async replayHistory(agentId: string = MAIN_AGENT_ID): Promise<void> {
+    try {
+      const replayedAutonomousTriggers = await this.replayHistorySnapshot(agentId);
+      this.removeReplayedAutonomousTriggers(replayedAutonomousTriggers);
+    } finally {
+      await this.flushInitialSessionEvents();
+    }
+  }
+
+  private async replayHistorySnapshot(
+    agentId: string,
+  ): Promise<ReadonlyMap<string, number>> {
+    const replayedAutonomousTriggers = new Map<string, number>();
     const sessionId = this.id;
     const conn = this.conn;
     const resumeState = this.session.getResumeState?.();
     if (!resumeState) {
       log.warn('acp: replayHistory called on session without resume state', { sessionId });
-      return;
+      return replayedAutonomousTriggers;
     }
     const agent = resumeState.agents?.[agentId];
     if (!agent) {
@@ -801,7 +904,7 @@ export class AcpSession {
         agentId,
         knownAgents: resumeState.agents ? Object.keys(resumeState.agents) : [],
       });
-      return;
+      return replayedAutonomousTriggers;
     }
 
     let turnId = 0;
@@ -809,10 +912,13 @@ export class AcpSession {
     // the assistant message that issued the call is replayed and read
     // when the tool result lands. Lives for the duration of one replay.
     const toolCallTurnIds = new Map<string, number>();
+    const backgroundTasks = new Map(
+      (agent.background ?? []).map((task) => [task.taskId, task] as const),
+    );
 
     for (const message of agent.context.history) {
       try {
-        await this.replayMessage(message, sessionId, conn, {
+        const autonomousTriggerKey = await this.replayMessage(message, sessionId, conn, {
           getTurnId: () => turnId,
           beginAssistantTurn: () => {
             turnId += 1;
@@ -821,15 +927,94 @@ export class AcpSession {
             toolCallTurnIds.set(toolCallId, turnId);
           },
           lookupToolCallTurnId: (toolCallId) => toolCallTurnIds.get(toolCallId),
+          backgroundTasks,
         });
-      } catch (err) {
+        if (autonomousTriggerKey !== undefined) {
+          replayedAutonomousTriggers.set(
+            autonomousTriggerKey,
+            (replayedAutonomousTriggers.get(autonomousTriggerKey) ?? 0) + 1,
+          );
+        }
+      } catch (error) {
+        const queuedFallbackKey =
+          message.role === 'user'
+            ? persistedAutonomousTrigger(message, backgroundTasks)?.key
+            : undefined;
+        const usedQueuedTriggerFallback =
+          queuedFallbackKey === undefined
+            ? false
+            : await this.replayQueuedAutonomousTriggerFallback(queuedFallbackKey);
         log.warn('acp: replayHistory failed to emit a message; continuing', {
           sessionId,
           role: message.role,
-          error: err instanceof Error ? err.message : String(err),
+          usedQueuedTriggerFallback,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
+    return replayedAutonomousTriggers;
+  }
+
+  private removeReplayedAutonomousTriggers(
+    replayed: ReadonlyMap<string, number>,
+  ): void {
+    const queue = this.queuedSessionEvents;
+    if (
+      queue === undefined ||
+      this.snapshotQueuedSessionEventCount === 0 ||
+      replayed.size === 0
+    ) {
+      return;
+    }
+    const boundary = Math.min(this.snapshotQueuedSessionEventCount, queue.length);
+    const remaining = new Map(replayed);
+    const retainedSnapshotEvents = queue.slice(0, boundary).filter((event) => {
+      const key = autonomousTriggerEventKey(event);
+      if (key === undefined) return true;
+      const count = remaining.get(key) ?? 0;
+      if (count === 0) return true;
+      if (count === 1) {
+        remaining.delete(key);
+      } else {
+        remaining.set(key, count - 1);
+      }
+      return false;
+    });
+    const postSnapshotEvents = queue.slice(boundary);
+    queue.splice(0, queue.length, ...retainedSnapshotEvents, ...postSnapshotEvents);
+    this.snapshotQueuedSessionEventCount = retainedSnapshotEvents.length;
+  }
+
+  /**
+   * Deliver the matching pre-snapshot live trigger immediately when its
+   * display-safe historical projection failed.
+   *
+   * Waiting for the ordinary final FIFO drain would put the initiating user
+   * chunk after the persisted assistant/tool messages that belong to it. Only
+   * the snapshot prefix is eligible: an identical event appended after the cut
+   * is independent live work and must remain queued.
+   */
+  private async replayQueuedAutonomousTriggerFallback(key: string): Promise<boolean> {
+    const queue = this.queuedSessionEvents;
+    if (queue === undefined || this.snapshotQueuedSessionEventCount === 0) {
+      return false;
+    }
+    const boundary = Math.min(this.snapshotQueuedSessionEventCount, queue.length);
+    let matchIndex = -1;
+    for (let index = 0; index < boundary; index += 1) {
+      const event = queue[index];
+      if (event !== undefined && autonomousTriggerEventKey(event) === key) {
+        matchIndex = index;
+        break;
+      }
+    }
+    if (matchIndex === -1) return false;
+
+    const [event] = queue.splice(matchIndex, 1);
+    this.snapshotQueuedSessionEventCount -= 1;
+    if (event === undefined) return false;
+    await this.enqueueSessionEvent(event);
+    return true;
   }
 
   /**
@@ -849,10 +1034,25 @@ export class AcpSession {
       beginAssistantTurn: () => void;
       recordToolCall: (toolCallId: string) => void;
       lookupToolCallTurnId: (toolCallId: string) => number | undefined;
+      backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
     },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     switch (message.role) {
-      case 'user':
+      case 'user': {
+        const autonomousTrigger = persistedAutonomousTrigger(
+          message,
+          ctx.backgroundTasks,
+        );
+        if (autonomousTrigger !== undefined) {
+          await conn.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: 'user_message_chunk',
+              content: { type: 'text', text: autonomousTrigger.text },
+            },
+          });
+          return autonomousTrigger.key;
+        }
         for (const part of message.content) {
           if (part.type === 'text' && part.text) {
             await conn.sessionUpdate({
@@ -864,7 +1064,8 @@ export class AcpSession {
             });
           }
         }
-        return;
+        return undefined;
+      }
       case 'assistant': {
         ctx.beginAssistantTurn();
         const turnId = ctx.getTurnId();
@@ -875,7 +1076,7 @@ export class AcpSession {
           ctx.recordToolCall(toolCall.id);
           await this.replaySyntheticToolCall(toolCall, sessionId, conn, turnId);
         }
-        return;
+        return undefined;
       }
       case 'tool': {
         const rawToolCallId = message.toolCallId;
@@ -884,7 +1085,7 @@ export class AcpSession {
           // than crash. The on-disk session is the source of truth;
           // we cannot synthesize a missing id.
           log.warn('acp: replayHistory skipped tool message with no toolCallId', { sessionId });
-          return;
+          return undefined;
         }
         const turnId = ctx.lookupToolCallTurnId(rawToolCallId);
         if (turnId === undefined) {
@@ -892,7 +1093,7 @@ export class AcpSession {
             sessionId,
             toolCallId: rawToolCallId,
           });
-          return;
+          return undefined;
         }
         const isError = message.isError === true;
         await conn.sessionUpdate({
@@ -904,11 +1105,11 @@ export class AcpSession {
             content: toolMessageContentToAcpToolCallContent(message.content),
           },
         });
-        return;
+        return undefined;
       }
       default:
         // system / unknown roles — ACP has no analogue; skip.
-        return;
+        return undefined;
     }
   }
 
@@ -976,19 +1177,19 @@ export class AcpSession {
    * responsibilities separate prevents prompt-driven turns from being emitted
    * twice while still making runtime-initiated turns visible.
    */
-  private handleSessionEvent(event: Event): void {
+  private async handleSessionEvent(event: Event): Promise<void> {
     if (this.disposed) return;
     if (!this.isFromMainAgent(event)) return;
 
     if (event.type === 'background.task.terminated' || event.type === 'task.terminated') {
       const text = taskCompletionDisplayText(event.info);
       if (text !== undefined) {
-        this.emitAgentInitiatedUserMessage(text, 'background task');
+        await this.emitAgentInitiatedUserMessage(text, 'background task');
       }
       return;
     }
     if (event.type === 'cron.fired') {
-      this.emitAgentInitiatedUserMessage(event.prompt, 'cron');
+      await this.emitAgentInitiatedUserMessage(event.prompt, 'cron');
       return;
     }
     if (event.type === 'turn.started') {
@@ -1004,7 +1205,7 @@ export class AcpSession {
     }
 
     if (event.type === 'assistant.delta') {
-      this.conn
+      await this.conn
         .sessionUpdate(assistantDeltaToSessionUpdate(this.id, event))
         .catch((error) => {
           log.warn('acp: failed to push agent_message_chunk', {
@@ -1015,7 +1216,7 @@ export class AcpSession {
       return;
     }
     if (event.type === 'thinking.delta') {
-      this.conn
+      await this.conn
         .sessionUpdate(thinkingDeltaToSessionUpdate(this.id, event))
         .catch((error) => {
           log.warn('acp: failed to push agent_thought_chunk', {
@@ -1029,7 +1230,7 @@ export class AcpSession {
       this.argsByToolCall.set(event.toolCallId, { args: stringifyArgs(event.args) });
       const startedWireId = acpToolCallId(event.turnId, event.toolCallId);
       if (this.startedToolCalls.has(startedWireId)) {
-        this.conn
+        await this.conn
           .sessionUpdate(toolCallStartedUpgradeToSessionUpdate(this.id, event))
           .catch((error) => {
             log.warn('acp: failed to push tool_call_update (start upgrade)', {
@@ -1040,7 +1241,7 @@ export class AcpSession {
           });
       } else {
         this.startedToolCalls.add(startedWireId);
-        this.conn
+        await this.conn
           .sessionUpdate(toolCallStartToSessionUpdate(this.id, event))
           .catch((error) => {
             log.warn('acp: failed to push tool_call', {
@@ -1053,7 +1254,7 @@ export class AcpSession {
       if (event.display) {
         const planNote = planFromDisplayBlock(this.id, event.turnId, event.display);
         if (planNote !== null) {
-          this.conn.sessionUpdate(planNote).catch((error) => {
+          await this.conn.sessionUpdate(planNote).catch((error) => {
             log.warn('acp: failed to push plan', {
               sessionId: this.id,
               error: error instanceof Error ? error.message : String(error),
@@ -1069,7 +1270,7 @@ export class AcpSession {
         const initial = event.argumentsPart ?? '';
         this.argsByToolCall.set(event.toolCallId, { args: initial });
         this.startedToolCalls.add(deltaWireId);
-        this.conn
+        await this.conn
           .sessionUpdate(toolCallLazyCreateToSessionUpdate(this.id, event))
           .catch((error) => {
             log.warn('acp: failed to push tool_call (lazy create from delta)', {
@@ -1085,7 +1286,7 @@ export class AcpSession {
         accumulator = { args: '' };
         this.argsByToolCall.set(event.toolCallId, accumulator);
       }
-      this.conn
+      await this.conn
         .sessionUpdate(toolCallDeltaToSessionUpdate(this.id, event, accumulator))
         .catch((error) => {
           log.warn('acp: failed to push tool_call_update (delta)', {
@@ -1099,7 +1300,7 @@ export class AcpSession {
     if (event.type === 'tool.progress') {
       const notification = toolProgressToSessionUpdate(this.id, event);
       if (notification === null) return;
-      this.conn.sessionUpdate(notification).catch((error) => {
+      await this.conn.sessionUpdate(notification).catch((error) => {
         log.warn('acp: failed to push tool_call_update (progress)', {
           sessionId: this.id,
           toolCallId: event.toolCallId,
@@ -1109,7 +1310,7 @@ export class AcpSession {
       return;
     }
     if (event.type === 'tool.result') {
-      this.conn
+      await this.conn
         .sessionUpdate(toolResultToSessionUpdate(this.id, event))
         .catch((error) => {
           log.warn('acp: failed to push tool_call_update (result)', {
@@ -1135,9 +1336,12 @@ export class AcpSession {
    * public fields needed for ACP instead, so this projection never reads the
    * context message or serializes its internal XML.
    */
-  private emitAgentInitiatedUserMessage(text: string, source: string): void {
+  private async emitAgentInitiatedUserMessage(
+    text: string,
+    source: string,
+  ): Promise<void> {
     if (text.length === 0) return;
-    this.conn
+    await this.conn
       .sessionUpdate({
         sessionId: this.id,
         update: {
@@ -1927,6 +2131,171 @@ function matchesPromptCorrelation(
 }
 
 /**
+ * Autonomous task/cron turns persist their model-facing control envelope as a
+ * user-role context message. A live ACP bridge projects the corresponding
+ * lifecycle event as display-safe text, so replaying the envelope would both
+ * leak internal XML and represent the same trigger twice.
+ *
+ * Require both the autonomous origin and a known envelope tag. This preserves
+ * literal XML entered by a user and remains compatible with v2's runtime
+ * `task` origin, whose wire shape is intentionally cast to the v1 SDK type.
+ */
+function modelInternalAutonomousOrigin(
+  message: ContextMessage,
+):
+  | {
+      readonly kind: 'background_task' | 'task';
+      readonly taskId?: string;
+      readonly status?: string;
+    }
+  | {
+      readonly kind: 'cron_job';
+      readonly jobId?: unknown;
+      readonly cron?: unknown;
+      readonly recurring?: unknown;
+      readonly coalescedCount?: unknown;
+      readonly stale?: unknown;
+    }
+  | undefined {
+  const originKind = (message.origin as { readonly kind?: string } | undefined)?.kind;
+  if (
+    originKind !== 'background_task' &&
+    originKind !== 'task' &&
+    originKind !== 'cron_job'
+  ) {
+    return undefined;
+  }
+  const hasKnownEnvelope = message.content.some(
+    (part) =>
+      part.type === 'text' &&
+      /^\s*<(?:notification|cron-fire)\b/u.test(part.text),
+  );
+  if (!hasKnownEnvelope) return undefined;
+  if (originKind === 'cron_job') {
+    const origin = message.origin as unknown as Record<string, unknown>;
+    return {
+      kind: originKind,
+      jobId: origin['jobId'],
+      cron: origin['cron'],
+      recurring: origin['recurring'],
+      coalescedCount: origin['coalescedCount'],
+      stale: origin['stale'],
+    };
+  }
+  const origin = message.origin as {
+    readonly taskId?: unknown;
+    readonly status?: unknown;
+  };
+  return {
+    kind: originKind,
+    taskId: typeof origin.taskId === 'string' ? origin.taskId : undefined,
+    status: typeof origin.status === 'string' ? origin.status : undefined,
+  };
+}
+
+/**
+ * Reconstruct the display-safe user half of a persisted autonomous turn.
+ *
+ * Live projection uses the task lifecycle metadata or the cron event's prompt,
+ * never the model-facing control envelope. Cold replay must make the same
+ * distinction: replacing the user message keeps the following assistant/tool
+ * messages attached to a visible trigger without exposing internal XML.
+ */
+function persistedAutonomousTrigger(
+  message: ContextMessage,
+  backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>,
+): { readonly key?: string; readonly text: string } | undefined {
+  const origin = modelInternalAutonomousOrigin(message);
+  if (origin === undefined) return undefined;
+  if (origin.kind === 'cron_job') {
+    const prompt = cronPromptFromInternalMessage(message);
+    return {
+      key: cronAutonomousTriggerKey(origin, prompt),
+      text: prompt ?? 'Scheduled task fired.',
+    };
+  }
+
+  const task =
+    origin.taskId === undefined
+      ? undefined
+      : backgroundTasks.get(origin.taskId);
+  const description = task?.description.trim();
+  const subject =
+    description === undefined || description.length === 0
+      ? task === undefined
+        ? 'Background task'
+        : `Background ${task.kind} task`
+      : description;
+  return {
+    key:
+      origin.taskId === undefined
+        ? undefined
+        : taskAutonomousTriggerKey(origin.taskId, origin.status),
+    text:
+      taskStatusDisplayText(subject, origin.status ?? task?.status) ??
+      'Background task finished.',
+  };
+}
+
+function autonomousTriggerEventKey(event: Event): string | undefined {
+  if (event.type === 'background.task.terminated' || event.type === 'task.terminated') {
+    return taskAutonomousTriggerKey(event.info.taskId, event.info.status);
+  }
+  if (event.type !== 'cron.fired') return undefined;
+  return cronAutonomousTriggerKey(event.origin, event.prompt);
+}
+
+function taskAutonomousTriggerKey(
+  taskId: string,
+  status: string | undefined,
+): string {
+  return JSON.stringify(['task', taskId, status ?? 'unknown']);
+}
+
+function cronAutonomousTriggerKey(
+  origin: {
+    readonly jobId?: unknown;
+    readonly cron?: unknown;
+    readonly recurring?: unknown;
+    readonly coalescedCount?: unknown;
+    readonly stale?: unknown;
+  },
+  prompt: string | undefined,
+): string | undefined {
+  if (
+    typeof origin.jobId !== 'string' ||
+    typeof origin.cron !== 'string' ||
+    typeof origin.recurring !== 'boolean' ||
+    typeof origin.coalescedCount !== 'number' ||
+    typeof origin.stale !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return JSON.stringify([
+    'cron',
+    origin.jobId,
+    origin.cron,
+    origin.recurring,
+    origin.coalescedCount,
+    origin.stale,
+    prompt ?? '',
+  ]);
+}
+
+function cronPromptFromInternalMessage(message: ContextMessage): string | undefined {
+  const prefixPattern = /^\s*<cron-fire\b[^>]*>\n<prompt>\n/u;
+  const suffix = '\n</prompt>\n</cron-fire>';
+  for (const part of message.content) {
+    if (part.type !== 'text') continue;
+    const prefix = prefixPattern.exec(part.text)?.[0];
+    if (prefix === undefined || !part.text.endsWith(suffix)) continue;
+    const prompt = part.text.slice(prefix.length, -suffix.length);
+    if (prompt.length > 0) return prompt;
+  }
+  return undefined;
+}
+
+/**
  * Build the user-visible portion of a background-task completion without
  * exposing the model-facing `<notification>` XML or its output-control
  * instructions. The task description is already public lifecycle metadata
@@ -1947,7 +2316,14 @@ function taskCompletionDisplayText(
     description.length > 0
       ? description
       : `Background ${info.kind} task`;
-  switch (info.status) {
+  return taskStatusDisplayText(subject, info.status);
+}
+
+function taskStatusDisplayText(
+  subject: string,
+  status: string | undefined,
+): string | undefined {
+  switch (status) {
     case 'completed':
       return `${subject} completed.`;
     case 'failed':
@@ -1958,6 +2334,8 @@ function taskCompletionDisplayText(
       return `${subject} was stopped.`;
     case 'lost':
       return `${subject} was lost.`;
+    case undefined:
+      return undefined;
   }
 }
 

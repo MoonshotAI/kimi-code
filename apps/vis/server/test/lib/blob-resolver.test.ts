@@ -130,6 +130,27 @@ describe('blob-resolver', () => {
       );
     });
 
+    it('resolves media held in a deferred turn input', () => {
+      const data: Record<string, unknown> = {
+        type: 'turn.defer',
+        id: 'deferred-1',
+        input: [
+          {
+            type: 'image_url',
+            imageUrl: { url: 'blobref:image/png;hashD' },
+          },
+        ],
+        origin: { kind: 'cron' },
+      };
+      const entries = [{ lineNo: 1, data: data as any, raw: {} }];
+
+      rehydrateWireEntries(entries, 'sess-4', 'main');
+
+      expect((entries[0]!.data as any).input[0].imageUrl.url).toBe(
+        '/api/sessions/sess-4/blobs/hashD?agent=main&mime=image%2Fpng',
+      );
+    });
+
     it('ignores records without media URLs', () => {
       const data = { type: 'config.update', cwd: '/tmp' };
       const entries = [{ lineNo: 1, data: data as any, raw: {} }];

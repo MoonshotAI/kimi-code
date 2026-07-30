@@ -49,6 +49,21 @@ export interface AgentRecordEvents {
     input: readonly ContentPart[];
     origin: PromptOrigin;
   };
+  /**
+   * Producer input accepted while a resume handoff holds turn starts.
+   *
+   * The matching consume record is written only after the input enters
+   * context. Until then, replay treats this as durable pending work so a
+   * failed cold handoff can be retried without launching work after failure.
+   */
+  'turn.defer': {
+    id: string;
+    input: readonly ContentPart[];
+    origin: PromptOrigin;
+  };
+  'turn.defer.consume': {
+    id: string;
+  };
   'turn.cancel': { turnId?: number };
 
   'config.update': AgentConfigUpdateData;
@@ -99,7 +114,15 @@ export interface AgentRecordEvents {
   'full_compaction.complete': {};
   'micro_compaction.apply': { cutoff: number };
 
-  'context.append_message': { message: ContextMessage };
+  'context.append_message': {
+    message: ContextMessage;
+    /**
+     * Stable identity for a turn input durably deferred by a resume handoff.
+     * Kept on the record rather than the message so it never reaches model or
+     * UI projections.
+     */
+    deferredInputId?: string;
+  };
   'context.append_loop_event': { event: LoopRecordedEvent };
   'context.update_token_count': { tokenCount: number };
   'context.clear': {};

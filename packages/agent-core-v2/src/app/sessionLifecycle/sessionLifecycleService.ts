@@ -4,10 +4,11 @@
  * Owns the process-wide registry of open Session child scopes, creating them
  * through the DI scope tree and seeding each with its identity and storage
  * addressing, running lifecycle hook slots, and tearing them down on
- * close/archive — archiving flags the session's `sessionMetadata`, removes
- * its `agentLifecycle` agents, restoring clears the archived flag, and
- * broadcasts through `event`; session start and resume failures are reported
- * through `telemetry`. Each Session scope receives a telemetry view bound to
+ * close/archive, with an expected-handle rollback path for failed resume
+ * handoffs — archiving flags the session's `sessionMetadata`, removes its
+ * `agentLifecycle` agents, restoring clears the archived flag, and broadcasts
+ * through `event`; session start and resume failures are reported through
+ * `telemetry`. Each Session scope receives a telemetry view bound to
  * its session id, while failures before a scope is available use an ephemeral
  * context view. Creation hooks wrap the session's cron scheduler start, so
  * edge adapters can subscribe before autonomous work begins and unwind their
@@ -340,14 +341,41 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return ready;
   }
 
+  rollbackResume(handle: ISessionScopeHandle): void {
+    const removed = this.sessions.get(handle.id) === handle;
+    if (removed) this.sessions.delete(handle.id);
+    try {
+      handle.dispose();
+    } finally {
+      if (removed) this._onDidCloseSession.fire({ sessionId: handle.id });
+    }
+  }
+
   async close(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    if (this.sessions.get(sessionId) !== handle) {
+      this.rollbackResume(handle);
+      return;
+    }
     this.sessions.delete(sessionId);
-    await this.drainAgents(handle);
-    handle.dispose();
+    const errors: unknown[] = [];
+    try {
+      await this.drainAgents(handle);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      handle.dispose();
+    } catch (error) {
+      errors.push(error);
+    }
     this._onDidCloseSession.fire({ sessionId });
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(errors, `Failed to close session "${sessionId}"`);
+    }
   }
 
   async archive(sessionId: string): Promise<void> {

@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import {
@@ -39,7 +40,11 @@ import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
-import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import {
+  USER_PROMPT_ORIGIN,
+  type ContextMessage,
+  type PromptOrigin,
+} from '../context';
 import {
   captureMediaStripSnapshot,
   stripMediaPartsBySnapshot,
@@ -61,7 +66,16 @@ interface ActiveTurn {
 interface BufferedSteer {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly deferredId?: string;
+  readonly inputAlreadyInContext?: boolean;
 }
+
+type DeferredInputState = Pick<
+  BufferedSteer,
+  'deferredId' | 'inputAlreadyInContext'
+>;
+
+type TurnStartGateRelease = (discardBuffered?: boolean) => void;
 
 export interface TurnEndResult {
   readonly event: TurnEndedEvent;
@@ -138,6 +152,18 @@ const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
 
 export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
+  /**
+   * Live inputs received while a resume handoff owns the turn-start gate.
+   *
+   * This must stay separate from `steerBuffer`: replay uses that buffer for
+   * historical `turn.steer` records and deliberately clears it in
+   * `finishResume()`. A background/cron completion that arrives during a cold
+   * resume is live input and must survive that cleanup until the handoff has
+   * installed its consumer.
+   */
+  private gatedTurnBuffer: BufferedSteer[] = [];
+  private readonly restoredDeferredInputs = new Map<string, BufferedSteer>();
+  private turnStartGateCount = 0;
   private turnId = -1;
   private activeTurn: 'resuming' | ActiveTurn | null = null;
   private readonly toolCallStartedAt = new Map<
@@ -182,6 +208,20 @@ export class TurnFlow {
   steer(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
     // Same format gate as prompt() — steer input enters the history too.
     const gated = gateImageFormatParts(input);
+    // A resume handoff gate takes precedence over replay's `resuming` marker:
+    // input arriving from a live producer during cold restore must not be mixed
+    // into the historical replay buffer that `finishResume()` clears.
+    if (this.turnStartGateCount > 0) {
+      const deferredId = randomUUID();
+      this.agent.records.logRecord({
+        type: 'turn.defer',
+        id: deferredId,
+        input: gated,
+        origin,
+      });
+      this.gatedTurnBuffer.push({ input: gated, origin, deferredId });
+      return null;
+    }
     this.agent.records.logRecord({
       type: 'turn.steer',
       input: gated,
@@ -202,7 +242,16 @@ export class TurnFlow {
     return this.prompt([], { kind: 'retry', trigger });
   }
 
-  private launch(input: readonly ContentPart[], origin: PromptOrigin): number | null {
+  private launch(
+    input: readonly ContentPart[],
+    origin: PromptOrigin,
+    deferred: DeferredInputState = {},
+  ): number | null {
+    if (this.turnStartGateCount > 0) {
+      this.gatedTurnBuffer.push({ input, origin, ...deferred });
+      return null;
+    }
+
     if (this.activeTurn) {
       this.agent.emitEvent({
         type: 'error',
@@ -223,7 +272,7 @@ export class TurnFlow {
     // rather than getting stuck "running". (Auto compaction runs inside an active
     // turn, so the `activeTurn` check above already covers it.)
     if (this.agent.fullCompaction.isCompacting) {
-      this.steerBuffer.push({ input, origin });
+      this.steerBuffer.push({ input, origin, ...deferred });
       return null;
     }
 
@@ -232,7 +281,13 @@ export class TurnFlow {
     // start/end pair per continuation turn rather than one mega-turn.
     const turnId = this.allocateTurnId();
     const controller = new AbortController();
-    const promise = this.turnWorker(turnId, input, origin, controller.signal);
+    const promise = this.turnWorker(
+      turnId,
+      input,
+      origin,
+      controller.signal,
+      deferred,
+    );
     const firstRequest = createControlledPromise<void>();
     this.activeTurn = {
       turnId,
@@ -262,6 +317,43 @@ export class TurnFlow {
   }
 
   /**
+   * Atomically prevent another turn from starting, then wait until the current
+   * live turn settles. Registering the gate before the wait is essential:
+   * producer input arriving during that window belongs to a later turn, not the
+   * active turn's steer buffer. The returned idempotent release function
+   * replays inputs buffered while the gate was held.
+   */
+  async acquireTurnStartGate(): Promise<TurnStartGateRelease> {
+    const release = this.holdTurnStarts();
+    while (this.activeTurn !== null && this.activeTurn !== 'resuming') {
+      await this.activeTurn.promise.catch(() => undefined);
+    }
+    return release;
+  }
+
+  /**
+   * Synchronously hold new turn starts. An already-active turn is allowed to
+   * finish; producer input received meanwhile stays in `gatedTurnBuffer`.
+   * Used by Session when a cold-resumed main agent materializes underneath a
+   * gate acquired before replay began.
+   */
+  holdTurnStarts(): TurnStartGateRelease {
+    this.turnStartGateCount += 1;
+    let released = false;
+    return (discardBuffered = false): void => {
+      if (released) return;
+      released = true;
+      if (discardBuffered) {
+        this.gatedTurnBuffer.length = 0;
+      }
+      this.turnStartGateCount -= 1;
+      if (this.turnStartGateCount === 0 && !discardBuffered) {
+        this.flushGatedTurnBuffer();
+      }
+    };
+  }
+
+  /**
    * Raise the turn counter to cover a turnId observed in a replayed loop event.
    * This is the authoritative source of the restored counter: every turn that
    * ran — a prompted turn, a goal continuation, or a steer-launched turn —
@@ -283,6 +375,48 @@ export class TurnFlow {
     }
     this.turnId += 1;
     this.activeTurn = 'resuming';
+  }
+
+  restoreDeferredInput(
+    id: string,
+    input: readonly ContentPart[],
+    origin: PromptOrigin,
+  ): void {
+    this.restoredDeferredInputs.set(id, { input, origin, deferredId: id });
+  }
+
+  restoreDeferredInputConsumed(id: string): void {
+    this.restoredDeferredInputs.delete(id);
+  }
+
+  observeRestoredContextMessage(
+    message: ContextMessage,
+    deferredInputId?: string,
+  ): void {
+    if (message.role !== 'user') return;
+    if (deferredInputId !== undefined) {
+      const input = this.restoredDeferredInputs.get(deferredInputId);
+      if (input !== undefined) {
+        this.restoredDeferredInputs.set(deferredInputId, {
+          ...input,
+          inputAlreadyInContext: true,
+        });
+        return;
+      }
+    }
+    for (const [id, input] of this.restoredDeferredInputs) {
+      if (
+        input.inputAlreadyInContext !== true &&
+        isDeepStrictEqual(message.origin, input.origin) &&
+        isDeepStrictEqual(message.content, input.input)
+      ) {
+        this.restoredDeferredInputs.set(id, {
+          ...input,
+          inputAlreadyInContext: true,
+        });
+        return;
+      }
+    }
   }
 
   cancel(turnId?: number, reason?: unknown): void {
@@ -356,10 +490,14 @@ export class TurnFlow {
       // Steer flushes happen at sites that cannot await an upload, so any
       // prompt-attached local video is degraded to an always-safe `<video
       // path>` tag here; the model uploads it in-turn via ReadMediaFile.
-      this.agent.context.appendUserMessage(
-        degradeUnresolvedVideoToTag(steer.input),
-        steer.origin,
-      );
+      if (steer.inputAlreadyInContext !== true) {
+        this.agent.context.appendUserMessage(
+          degradeUnresolvedVideoToTag(steer.input),
+          steer.origin,
+          steer.deferredId,
+        );
+      }
+      this.markDeferredInputConsumed(steer.deferredId);
     }
     steers.length = 0;
     return true;
@@ -381,7 +519,7 @@ export class TurnFlow {
       return;
     }
     const next = this.steerBuffer.shift()!;
-    this.launch(next.input, next.origin);
+    this.launch(next.input, next.origin, next);
   }
 
   finishResume(): void {
@@ -389,6 +527,43 @@ export class TurnFlow {
       this.activeTurn = null;
     }
     this.steerBuffer.length = 0;
+    if (
+      this.restoredDeferredInputs.size > 0 &&
+      this.agent.records.observabilityReady
+    ) {
+      const recovered = Array.from(
+        this.restoredDeferredInputs.values(),
+        (entry): BufferedSteer => ({ ...entry }),
+      );
+      this.gatedTurnBuffer.unshift(...recovered);
+    }
+    this.restoredDeferredInputs.clear();
+    if (this.turnStartGateCount === 0) {
+      this.flushGatedTurnBuffer();
+    }
+  }
+
+  private flushGatedTurnBuffer(): void {
+    if (this.gatedTurnBuffer.length === 0 || this.turnStartGateCount > 0) return;
+    // A defensive early release during replay must not move live input into
+    // replay's historical buffer, where finishResume() would discard it.
+    if (this.activeTurn === 'resuming') return;
+
+    const gated = this.gatedTurnBuffer;
+    this.gatedTurnBuffer = [];
+    if (this.activeTurn !== null || this.agent.fullCompaction.isCompacting) {
+      this.steerBuffer.push(...gated);
+      return;
+    }
+
+    const [next, ...remaining] = gated;
+    this.steerBuffer.push(...remaining);
+    this.launch(next!.input, next!.origin, next);
+  }
+
+  private markDeferredInputConsumed(id: string | undefined): void {
+    if (id === undefined) return;
+    this.agent.records.logRecord({ type: 'turn.defer.consume', id });
   }
 
   /**
@@ -402,6 +577,7 @@ export class TurnFlow {
     input: readonly ContentPart[],
     origin: PromptOrigin,
     signal: AbortSignal,
+    deferred: DeferredInputState,
   ): Promise<TurnEndResult> {
     const ownsActiveTurn = (): boolean =>
       this.activeTurn !== null &&
@@ -410,9 +586,22 @@ export class TurnFlow {
     try {
       const initialGoalStatus = this.agent.goal.getGoal().goal?.status;
       if (initialGoalStatus === 'active') {
-        return await this.driveGoal(firstTurnId, input, origin, signal);
+        return await this.driveGoal(
+          firstTurnId,
+          input,
+          origin,
+          signal,
+          deferred,
+        );
       }
-      const end = await this.runOneTurn(firstTurnId, input, origin, signal, true);
+      const end = await this.runOneTurn(
+        firstTurnId,
+        input,
+        origin,
+        signal,
+        true,
+        deferred,
+      );
       // A goal can become active during an ordinary turn: the model creates one
       // with CreateGoal, or resumes a paused/blocked goal via UpdateGoal. Either
       // way, hand the now-active goal to the driver so it is actually pursued,
@@ -473,15 +662,22 @@ export class TurnFlow {
     input: readonly ContentPart[],
     origin: PromptOrigin,
     signal: AbortSignal,
+    initialDeferred: DeferredInputState = {},
   ): Promise<TurnEndResult> {
     let turnId = firstTurnId;
     let turnInput = input;
     let turnOrigin = origin;
+    let deferred = initialDeferred;
     while (true) {
       const goalBeforeTurn = this.agent.goal.getGoal().goal;
       if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
         await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
-        const ended = await this.endGoalTurnWithoutModel(turnId, turnInput, turnOrigin);
+        const ended = await this.endGoalTurnWithoutModel(
+          turnId,
+          turnInput,
+          turnOrigin,
+          deferred,
+        );
         return { event: ended };
       }
 
@@ -490,7 +686,14 @@ export class TurnFlow {
       // Wall-clock is tracked live by the store (anchored while `active`), so the
       // timer is correct even when the model completes mid-turn.
       await this.agent.goal.incrementTurn();
-      const end = await this.runOneTurn(turnId, turnInput, turnOrigin, signal, false);
+      const end = await this.runOneTurn(
+        turnId,
+        turnInput,
+        turnOrigin,
+        signal,
+        false,
+        deferred,
+      );
 
       if (end.event.reason === 'cancelled') {
         await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
@@ -533,6 +736,7 @@ export class TurnFlow {
         },
       ];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
+      deferred = {};
     }
   }
 
@@ -540,13 +744,21 @@ export class TurnFlow {
     turnId: number,
     input: readonly ContentPart[],
     origin: PromptOrigin,
+    deferred: DeferredInputState,
   ): Promise<TurnEndedEvent> {
     this.agent.usage.beginTurn();
     const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
     // The budget-exhausted goal turn does not run the model, so it cannot
     // await an upload — degrade any local video to the always-safe tag form.
-    this.agent.context.appendUserMessage(degradeUnresolvedVideoToTag(input), origin);
+    if (deferred.inputAlreadyInContext !== true) {
+      this.agent.context.appendUserMessage(
+        degradeUnresolvedVideoToTag(input),
+        origin,
+        deferred.deferredId,
+      );
+    }
+    this.markDeferredInputConsumed(deferred.deferredId);
     const ended: TurnEndedEvent = {
       type: 'turn.ended',
       turnId,
@@ -570,6 +782,7 @@ export class TurnFlow {
     origin: PromptOrigin,
     signal: AbortSignal,
     standalone: boolean,
+    deferred: DeferredInputState,
   ): Promise<TurnEndResult> {
     this.currentStep = 0;
     this.stepToolCallKeys.clear();
@@ -595,8 +808,18 @@ export class TurnFlow {
       // inline/tag fallback — BEFORE it lands in history, so no unresolved
       // `file://` reference reaches the model or is persisted for resume. Auth
       // rejections surface as a failed turn via the catch below.
-      const resolvedInput = await resolvePromptMedia(this.agent, input, signal);
-      this.agent.context.appendUserMessage(resolvedInput, origin);
+      const resolvedInput =
+        deferred.inputAlreadyInContext === true
+          ? input
+          : await resolvePromptMedia(this.agent, input, signal);
+      if (deferred.inputAlreadyInContext !== true) {
+        this.agent.context.appendUserMessage(
+          resolvedInput,
+          origin,
+          deferred.deferredId,
+        );
+      }
+      this.markDeferredInputConsumed(deferred.deferredId);
       const promptHookEnded = await this.applyUserPromptHook(turnId, resolvedInput, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;

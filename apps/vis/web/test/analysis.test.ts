@@ -90,6 +90,31 @@ describe('analyzeWire', () => {
     expect(a.cache.hitRate).toBeNull();
   });
 
+  it('keeps deferred input bookkeeping outside turns and classifies its wait at the turn boundary', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'first' }], origin: { kind: 'user' } }, 0),
+      loop({ type: 'step.begin', uuid: 's1', turnId: 'T1', step: 0 }, 1),
+      loop({ type: 'step.end', uuid: 's1', turnId: 'T1', step: 0, finishReason: 'end_turn' }, 2),
+      e({
+        type: 'turn.defer',
+        id: 'deferred-1',
+        input: [{ type: 'text', text: 'pending' }],
+        origin: { kind: 'cron' },
+      }, 10_000),
+      e({ type: 'turn.defer.consume', id: 'deferred-1' }, 10_001),
+    ]);
+
+    expect(a.turns).toHaveLength(1);
+    expect(a.idleGaps).toEqual([
+      expect.objectContaining({
+        beforeLineNo: 4,
+        gapMs: 9998,
+        kind: 'between_turns',
+      }),
+    ]);
+  });
+
   it('computes cache hit rate from summed input usage', () => {
     line = 0;
     const a = analyzeWire([

@@ -1,3 +1,11 @@
+/**
+ * Scenario: an ACP client cold-loads persisted session history.
+ * Responsibilities: authenticate the request, replay user/assistant/tool state
+ * in order, and replace only engine-owned autonomous XML with safe user text.
+ * Wiring: real ACP in-memory transport and AcpServer; the node SDK harness and
+ * resumed session are the persisted-engine boundary stubs.
+ * Run: pnpm --filter @moonshot-ai/acp-adapter exec vitest run test/session-load.test.ts
+ */
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -16,6 +24,7 @@ import {
 import { KimiError, ErrorCodes, type Event, type KimiHarness, type Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AcpServer } from '../src/server';
+import { AcpSession } from '../src/session';
 import { AUTHED_STATUS, UNAUTHED_STATUS, makeModelsMap } from './_helpers/harness-stubs';
 
 class CapturingClient implements Client {
@@ -64,6 +73,7 @@ function makeSessionWithHistory(
   sessionId: string,
   history: ReadonlyArray<unknown>,
   statusThinkingEffort?: string,
+  background: ReadonlyArray<unknown> = [],
 ): Session {
   return {
     id: sessionId,
@@ -75,6 +85,7 @@ function makeSessionWithHistory(
       agents: {
         main: {
           context: { history, tokenCount: 0 },
+          background,
         },
       },
     }),
@@ -93,14 +104,27 @@ function makeHarness(
   },
 ): KimiHarness {
   const authed = opts.hasUsableToken ?? true;
+  const resumeSession = async (_input: { id: string }): Promise<Session> => {
+    if (opts.resumeError) throw opts.resumeError;
+    if (!opts.session) throw new Error('test harness has no session configured');
+    return opts.session;
+  };
   return {
     auth: {
       status: async () => (authed ? AUTHED_STATUS : UNAUTHED_STATUS),
     },
-    resumeSession: async (_input: { id: string }) => {
-      if (opts.resumeError) throw opts.resumeError;
-      if (!opts.session) throw new Error('test harness has no session configured');
-      return opts.session;
+    resumeSession,
+    resumeSessionWithHandoff: async (
+      input: { id: string },
+      handoff: (session: Session) => Promise<void>,
+      onSnapshotStart?: () => void,
+      onSnapshotReady?: () => void,
+    ) => {
+      onSnapshotStart?.();
+      const session = await resumeSession(input);
+      onSnapshotReady?.();
+      await handoff(session);
+      return session;
     },
     // Phase 14: server.loadSession reads these to assemble configOptions
     // when the resumed session lacks a `modelAlias` (the fixture sessions
@@ -176,6 +200,169 @@ describe('AcpServer session/load replay', () => {
       sessionUpdate: 'agent_message_chunk',
       content: { type: 'text', text: 'hi there' },
     });
+  });
+
+  it('replays literal XML from a user-origin message verbatim', async () => {
+    const sessionId = 'sess-literal-user-xml';
+    const history = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>literal user text</notification>' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ];
+    const session = makeSessionWithHistory(sessionId, history);
+    const harness = makeHarness({ hasUsableToken: true, session });
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    void new AgentSideConnection((connection) => new AcpServer(harness, connection), agentStream);
+    const client = new CapturingClient();
+    const clientConn = new ClientSideConnection(() => client, clientStream);
+
+    await clientConn.loadSession({ sessionId, cwd: '/tmp/x', mcpServers: [] });
+
+    expect(client.historyUpdates.map((notification) => notification.update)).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: '<notification>literal user text</notification>' },
+      }),
+    ]);
+  });
+
+  it('replaces a persisted task envelope with a safe trigger before replaying the complete turn', async () => {
+    const sessionId = 'sess-autonomous-task-history';
+    const history = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<notification id="task:example:lost">internal task control</notification>',
+          },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'background_task',
+          taskId: 'example-task',
+          status: 'lost',
+          notificationId: 'task:example:lost',
+        },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Checking the recovered task.' }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'tool-autonomous',
+            name: 'Read',
+            arguments: JSON.stringify({ path: '/tmp/example.txt' }),
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'tool-autonomous',
+        content: [{ type: 'text', text: 'example contents' }],
+        toolCalls: [],
+      },
+    ];
+    const session = makeSessionWithHistory(
+      sessionId,
+      history,
+      undefined,
+      [
+        {
+          taskId: 'example-task',
+          kind: 'process',
+          description: 'Recovered background task',
+          status: 'lost',
+          detached: true,
+          startedAt: 1,
+          endedAt: 2,
+        },
+      ],
+    );
+    const harness = makeHarness({ hasUsableToken: true, session });
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    void new AgentSideConnection((connection) => new AcpServer(harness, connection), agentStream);
+    const client = new CapturingClient();
+    const clientConn = new ClientSideConnection(() => client, clientStream);
+
+    await clientConn.loadSession({ sessionId, cwd: '/tmp/x', mcpServers: [] });
+
+    expect(client.historyUpdates.map((notification) => notification.update)).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Recovered background task was lost.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Checking the recovered task.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call',
+        toolCallId: '1:tool-autonomous',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '1:tool-autonomous',
+        status: 'completed',
+      }),
+    ]);
+    expect(JSON.stringify(client.historyUpdates)).not.toContain('<notification');
+  });
+
+  it('replaces a persisted cron envelope with its scheduled prompt before the assistant reply', async () => {
+    const sessionId = 'sess-autonomous-cron-history';
+    const history = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              '<cron-fire jobId="example-job" cron="0 9 * * *" recurring="true" ' +
+              'coalescedCount="1" stale="false">\n' +
+              '<prompt>\nReview the scheduled report.\n</prompt>\n</cron-fire>',
+          },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'cron_job',
+          jobId: 'example-job',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Autonomous work finished.' }],
+        toolCalls: [],
+      },
+    ];
+    const session = makeSessionWithHistory(sessionId, history);
+    const harness = makeHarness({ hasUsableToken: true, session });
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    void new AgentSideConnection((connection) => new AcpServer(harness, connection), agentStream);
+    const client = new CapturingClient();
+    const clientConn = new ClientSideConnection(() => client, clientStream);
+
+    await clientConn.loadSession({ sessionId, cwd: '/tmp/x', mcpServers: [] });
+
+    expect(client.historyUpdates.map((notification) => notification.update)).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Review the scheduled report.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Autonomous work finished.' },
+      }),
+    ]);
+    expect(JSON.stringify(client.historyUpdates)).not.toContain('<cron-fire');
   });
 
   it('replays a turn with a tool call + tool result using ${turnId}:${toolCallId} ids', async () => {
@@ -343,5 +530,243 @@ describe('AcpServer session/load replay', () => {
     const thinking = response.configOptions?.find((option) => option.id === 'thinking');
     if (thinking?.type !== 'select') throw new Error('thinking option must be a select');
     expect(thinking.currentValue).toBe('on');
+  });
+});
+
+describe('AcpSession history/live cut', () => {
+  it('waits for an in-flight live update before replaying history and draining paused events', async () => {
+    const sessionId = 'sess-ordered-replay-cut';
+    const listeners = new Set<(event: Event) => void>();
+    let history: ReadonlyArray<unknown> = [];
+    const session = {
+      id: sessionId,
+      cancel: async () => undefined,
+      prompt: async () => undefined,
+      onEvent: (listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getResumeState: () => ({
+        agents: {
+          main: {
+            context: { history, tokenCount: 0 },
+          },
+        },
+      }),
+    } as unknown as Session;
+    let releaseFirstUpdate!: () => void;
+    const firstUpdateGate = new Promise<void>((resolve) => {
+      releaseFirstUpdate = resolve;
+    });
+    let signalFirstUpdate!: () => void;
+    const firstUpdateStarted = new Promise<void>((resolve) => {
+      signalFirstUpdate = resolve;
+    });
+    const deliveryOrder: string[] = [];
+    const conn = {
+      sessionUpdate: async (notification: SessionNotification) => {
+        const update = notification.update;
+        const text =
+          (update.sessionUpdate === 'agent_message_chunk' ||
+            update.sessionUpdate === 'user_message_chunk') &&
+          update.content.type === 'text'
+            ? update.content.text
+            : update.sessionUpdate;
+        deliveryOrder.push(`start:${text}`);
+        if (text === 'live before pause') {
+          signalFirstUpdate();
+          await firstUpdateGate;
+        }
+        deliveryOrder.push(`end:${text}`);
+      },
+    } as unknown as AgentSideConnection;
+    const acpSession = new AcpSession(conn, session);
+    const emit = (event: Event): void => {
+      for (const listener of listeners) listener(event);
+    };
+
+    emit({
+      type: 'assistant.delta',
+      sessionId,
+      agentId: 'main',
+      turnId: 1,
+      delta: 'live before pause',
+    } as Event);
+    await firstUpdateStarted;
+    let pauseSettled = false;
+    const pause = acpSession.pauseSessionEvents().then(() => {
+      pauseSettled = true;
+    });
+    emit({
+      type: 'assistant.delta',
+      sessionId,
+      agentId: 'main',
+      turnId: 2,
+      delta: 'live after pause',
+    } as Event);
+    await Promise.resolve();
+    expect(pauseSettled).toBe(false);
+
+    history = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'persisted history' }],
+        toolCalls: [],
+      },
+    ];
+    releaseFirstUpdate();
+    await pause;
+    await acpSession.replayHistory();
+
+    expect(deliveryOrder).toEqual([
+      'start:live before pause',
+      'end:live before pause',
+      'start:persisted history',
+      'end:persisted history',
+      'start:live after pause',
+      'end:live after pause',
+    ]);
+    acpSession.dispose();
+  });
+
+  it('replays the queued safe trigger before the rest of its turn when the historical push fails once', async () => {
+    const sessionId = 'sess-safe-trigger-fallback-order';
+    const listeners = new Set<(event: Event) => void>();
+    const session = {
+      id: sessionId,
+      cancel: async () => undefined,
+      prompt: async () => undefined,
+      onEvent: (listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getResumeState: () => ({
+        agents: {
+          main: {
+            context: {
+              history: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: '<notification id="task:example-task:lost">internal task control</notification>',
+                    },
+                  ],
+                  toolCalls: [],
+                  origin: {
+                    kind: 'background_task',
+                    taskId: 'example-task',
+                    status: 'lost',
+                    notificationId: 'task:example-task:lost',
+                  },
+                },
+                {
+                  role: 'assistant',
+                  content: [],
+                  toolCalls: [
+                    {
+                      type: 'function',
+                      id: 'tool-recovered',
+                      name: 'Read',
+                      arguments: JSON.stringify({ path: '/tmp/example.txt' }),
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  toolCallId: 'tool-recovered',
+                  content: [{ type: 'text', text: 'example contents' }],
+                  toolCalls: [],
+                },
+                {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'Recovered task handled.' }],
+                  toolCalls: [],
+                },
+              ],
+              tokenCount: 0,
+            },
+            background: [
+              {
+                taskId: 'example-task',
+                kind: 'process',
+                description: 'Recovered background task',
+                status: 'lost',
+                detached: true,
+                startedAt: 1,
+                endedAt: 2,
+              },
+            ],
+          },
+        },
+      }),
+    } as unknown as Session;
+    const delivered: SessionNotification[] = [];
+    let safeTriggerAttempts = 0;
+    const conn = {
+      sessionUpdate: async (notification: SessionNotification) => {
+        const update = notification.update;
+        const isSafeTrigger =
+          update.sessionUpdate === 'user_message_chunk' &&
+          update.content.type === 'text' &&
+          update.content.text === 'Recovered background task was lost.';
+        if (isSafeTrigger) {
+          safeTriggerAttempts += 1;
+          if (safeTriggerAttempts === 1) {
+            throw new Error('transient safe-trigger push failure');
+          }
+        }
+        delivered.push(notification);
+      },
+    } as unknown as AgentSideConnection;
+    const acpSession = new AcpSession(conn, session);
+    const emit = (event: Event): void => {
+      for (const listener of listeners) listener(event);
+    };
+
+    await acpSession.pauseSessionEvents();
+    emit({
+      type: 'background.task.terminated',
+      sessionId,
+      agentId: 'main',
+      info: {
+        kind: 'process',
+        taskId: 'example-task',
+        description: 'Recovered background task',
+        status: 'lost',
+        detached: true,
+        startedAt: 1,
+        endedAt: 2,
+      },
+    } as Event);
+    acpSession.setPausedSessionEventSnapshotBoundary(
+      acpSession.pausedSessionEventCount(),
+    );
+
+    await acpSession.replayHistory();
+
+    expect(safeTriggerAttempts).toBe(2);
+    expect(delivered.map((notification) => notification.update)).toEqual([
+      expect.objectContaining({
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'Recovered background task was lost.' },
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call',
+        toolCallId: '1:tool-recovered',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: '1:tool-recovered',
+        status: 'completed',
+      }),
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Recovered task handled.' },
+      }),
+    ]);
+    expect(JSON.stringify(delivered)).not.toContain('<notification');
+    acpSession.dispose();
   });
 });

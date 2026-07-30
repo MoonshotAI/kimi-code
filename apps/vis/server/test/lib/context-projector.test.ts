@@ -939,4 +939,28 @@ describe('context-projector', () => {
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: bigText });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
   });
+
+  it('does not project deferred turn bookkeeping before it enters context', () => {
+    const entries = [
+      {
+        lineNo: 1,
+        data: {
+          type: 'turn.defer' as const,
+          id: 'deferred-1',
+          input: [{ type: 'text' as const, text: 'pending' }],
+          origin: { kind: 'cron' as const },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 2,
+        data: { type: 'turn.defer.consume' as const, id: 'deferred-1' },
+        raw: {},
+      },
+    ];
+
+    const proj = projectContext(entries as any);
+
+    expect(proj.messages).toEqual([]);
+  });
 });

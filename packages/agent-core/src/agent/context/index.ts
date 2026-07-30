@@ -70,6 +70,7 @@ export class ContextMemory {
   appendUserMessage(
     content: readonly ContentPart[],
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
+    deferredInputId?: string,
   ): void {
     if (content.length === 0) return;
     // Prompt ingestion (server upload/base64 route, TUI paste, ACP) annotates
@@ -86,12 +87,15 @@ export class ContextMemory {
       this.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
     }
     if (parts.length === 0) return;
-    this.appendMessage({
-      role: 'user',
-      content: parts,
-      toolCalls: [],
-      origin,
-    });
+    this.appendMessage(
+      {
+        role: 'user',
+        content: parts,
+        toolCalls: [],
+        origin,
+      },
+      deferredInputId,
+    );
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): void {
@@ -761,10 +765,11 @@ export class ContextMemory {
     }
   }
 
-  appendMessage(message: ContextMessage): void {
+  appendMessage(message: ContextMessage, deferredInputId?: string): void {
     this.agent.records.logRecord({
       type: 'context.append_message',
       message,
+      deferredInputId,
     });
     if (this.hasOpenToolExchange()) {
       this.deferredMessages.push(message);

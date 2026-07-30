@@ -210,6 +210,10 @@ async function waitForSettlementOrTimeout(
   }
 }
 
+interface MainTurnStartGate {
+  releaseTurn?: (discardBuffered?: boolean) => void;
+}
+
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
@@ -243,6 +247,7 @@ export class Session {
   private agentsMdWarning: string | undefined;
   private printSteerDeadline: number | undefined;
   private printSteerTurns = 0;
+  private readonly mainTurnStartGates = new Set<MainTurnStartGate>();
   /**
    * The session's live config snapshot. Initialized from `options.config`;
    * updated in place by {@link setSecondaryModelConfig} so mid-session secondary-model
@@ -467,6 +472,35 @@ export class Session {
     }
     await this.triggerSessionStart('resume');
     return { warning };
+  }
+
+  /**
+   * Hold main-agent turn starts across a resume snapshot handoff.
+   *
+   * For a cold session the registration is synchronous and precedes replay;
+   * instantiateAgent attaches it the instant the main Agent exists. For an
+   * active session, acquisition waits for the current main turn to become idle.
+   */
+  async acquireMainTurnStartGate(): Promise<(discardBuffered?: boolean) => void> {
+    const gate: MainTurnStartGate = {};
+    this.mainTurnStartGates.add(gate);
+    try {
+      const main = this.getReadyAgent('main');
+      if (main !== undefined) {
+        gate.releaseTurn = await main.turn.acquireTurnStartGate();
+      }
+    } catch (error) {
+      this.mainTurnStartGates.delete(gate);
+      throw error;
+    }
+
+    let released = false;
+    return (discardBuffered = false): void => {
+      if (released) return;
+      released = true;
+      this.mainTurnStartGates.delete(gate);
+      gate.releaseTurn?.(discardBuffered);
+    };
   }
 
   async assertMainProfileSelection(requestedProfileName: string | undefined): Promise<void> {
@@ -1216,6 +1250,11 @@ export class Session {
           { additionalDirs: agent.getAdditionalDirs() },
         ),
     });
+    if (type === 'main') {
+      for (const gate of this.mainTurnStartGates) {
+        gate.releaseTurn ??= agent.turn.holdTurnStarts();
+      }
+    }
     return agent;
   }
 

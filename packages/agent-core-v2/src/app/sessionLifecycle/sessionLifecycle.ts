@@ -4,9 +4,10 @@
  * Defines the public contract of session lifecycle: the `CreateSessionOptions`,
  * `ForkSessionOptions`, `CreateChildSessionOptions`, and the
  * `ISessionLifecycleService` used to create sessions (`create`), look up the
- * live ones (`get` / `list`), close them (`close`), archive/restore them,
- * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
- * lifecycle transitions through ordered hook slots plus
+ * live ones (`get` / `list`), close them (`close`), roll back an exact resumed
+ * handle (`rollbackResume`), archive/restore them, fork them (`fork`), and
+ * fork-then-tag them as direct children (`createChild`). Announces lifecycle
+ * transitions through ordered hook slots plus
  * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
  * `onDidForkSession`. App-scoped — a single
  * process-wide instance owns the live session scope tree. Persisted
@@ -90,6 +91,7 @@ export interface ISessionLifecycleService {
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
+  rollbackResume(handle: ISessionScopeHandle): void;
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;

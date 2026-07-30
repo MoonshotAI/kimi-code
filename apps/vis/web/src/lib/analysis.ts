@@ -261,7 +261,13 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
           gapMs: t - prevTime,
           // A gap straddling a turn boundary is "waiting for the user"; a gap
           // inside a turn is the agent/tool being slow.
-          kind: rec.type === 'turn.prompt' || rec.type === 'turn.steer' ? 'between_turns' : 'in_turn',
+          kind:
+            rec.type === 'turn.prompt' ||
+            rec.type === 'turn.steer' ||
+            rec.type === 'turn.defer' ||
+            rec.type === 'turn.defer.consume'
+              ? 'between_turns'
+              : 'in_turn',
         });
       }
       prevTime = t;

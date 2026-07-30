@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   createRPC,
   ensureConfigFile,
@@ -46,6 +48,7 @@ export interface SDKRpcClientOptions {
 }
 
 export class SDKRpcClient extends SDKRpcClientBase {
+  override readonly handlesResumeHandoffFailure = true;
   readonly homeDir: string;
   readonly configPath: string;
   readonly identity: KimiHostIdentity | undefined;
@@ -120,10 +123,58 @@ export class SDKRpcClient extends SDKRpcClientBase {
     kaos: Kaos,
     persistenceKaos?: Kaos,
   ): Promise<ResumedSessionSummary> {
-    return this.core.resumeSessionWithOverrides(
-      { ...input, sessionId: input.id },
-      { kaos, persistenceKaos },
+    return this.serializeSessionResume(input.id, (sessionId) => {
+      const { id, ...resumeInput } = input;
+      void id;
+      return this.core.resumeSessionWithOverrides(
+        { ...resumeInput, sessionId },
+        { kaos, persistenceKaos },
+      );
+    });
+  }
+
+  override async resumeSessionWithHandoff(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    return this.serializeSessionResume(input.id, (sessionId) =>
+      this.resumeSessionWithHandoffUnlocked(
+        { ...input, id: sessionId },
+        handoff,
+        onSnapshotStart,
+        onSnapshotReady,
+      ),
     );
+  }
+
+  private async resumeSessionWithHandoffUnlocked(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    const { id: sessionId, kaos, persistenceKaos, ...resumeInput } = input;
+    const eventDeliveryBarrierToken = randomUUID();
+    const unregisterBarrier = this.registerEventDeliveryBarrier(
+      eventDeliveryBarrierToken,
+      () => onSnapshotReady?.(),
+    );
+    try {
+      return await this.core.resumeSessionWithOverrides(
+        { ...resumeInput, sessionId },
+        {
+          kaos,
+          persistenceKaos,
+          handoff,
+          onSnapshotStart,
+          eventDeliveryBarrierToken,
+        },
+      );
+    } finally {
+      unregisterBarrier();
+    }
   }
 
   private createKimiRequestHeaders(): Record<string, string> | undefined {

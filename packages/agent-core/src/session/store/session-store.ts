@@ -759,7 +759,13 @@ function isUserVisibleTurnRecord(record: AgentRecord): boolean {
 }
 
 function isUserVisibleTurnInputRecord(record: AgentRecord): boolean {
-  if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return false;
+  if (
+    record.type !== 'turn.prompt' &&
+    record.type !== 'turn.steer' &&
+    record.type !== 'turn.defer'
+  ) {
+    return false;
+  }
   switch (record.origin.kind) {
     case 'user':
       return true;
@@ -827,7 +833,9 @@ function turnInputMatchesRecord(
   compareContent: boolean,
 ): boolean {
   if (
-    (inputRecord.type !== 'turn.prompt' && inputRecord.type !== 'turn.steer') ||
+    (inputRecord.type !== 'turn.prompt' &&
+      inputRecord.type !== 'turn.steer' &&
+      inputRecord.type !== 'turn.defer') ||
     turnRecord.type !== 'context.append_message' ||
     turnRecord.message.role !== 'user'
   ) {

@@ -65,6 +65,7 @@ export class KimiHarness {
   private readonly uiMode: string;
   private readonly telemetry: TelemetryClient;
   private readonly activeSessions = new Map<string, Session>();
+  private readonly resumeTails = new Map<string, Promise<void>>();
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
@@ -137,6 +138,13 @@ export class KimiHarness {
 
   async resumeSession(input: ResumeSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
+    return this.serializeResume(id, () => this.resumeSessionUnlocked(id, input));
+  }
+
+  private async resumeSessionUnlocked(
+    id: string,
+    input: ResumeSessionInput,
+  ): Promise<Session> {
     const active = this.activeSessions.get(id);
     const { kaos, persistenceKaos, sessionStartedProperties, ...resumeInput } = input;
     if (active !== undefined) {
@@ -165,6 +173,121 @@ export class KimiHarness {
     this.trackSessionStarted(summary.id, true, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
+  }
+
+  /**
+   * Resume a session and register its {@link Session} before invoking the
+   * host handoff callback.
+   */
+  async resumeSessionWithHandoff(
+    input: ResumeSessionInput,
+    handoff: (session: Session) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<Session> {
+    const id = normalizeSessionId(input.id);
+    return this.serializeResume(id, () =>
+      this.resumeSessionWithHandoffUnlocked(
+        id,
+        input,
+        handoff,
+        onSnapshotStart,
+        onSnapshotReady,
+      ),
+    );
+  }
+
+  private async resumeSessionWithHandoffUnlocked(
+    id: string,
+    input: ResumeSessionInput,
+    handoff: (session: Session) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<Session> {
+    const active = this.activeSessions.get(id);
+    const { sessionStartedProperties, ...resumeInput } = input;
+
+    if (active !== undefined) {
+      await this.rpc.resumeSessionWithHandoff(
+        { ...resumeInput, id },
+        async (summary) => {
+          active.refreshResumeSummary(summary);
+          await handoff(active);
+        },
+        onSnapshotStart,
+        onSnapshotReady,
+      );
+      return active;
+    }
+
+    let resumed: Session | undefined;
+    try {
+      await this.rpc.resumeSessionWithHandoff(
+        { ...resumeInput, id },
+        async (summary) => {
+          const session = new Session({
+            id: summary.id,
+            workDir: summary.workDir,
+            summary,
+            rpc: this.rpc,
+            onClose: () => {
+              if (this.activeSessions.get(summary.id) === session) {
+                this.activeSessions.delete(summary.id);
+              }
+            },
+          });
+          resumed = session;
+          this.activeSessions.set(session.id, session);
+          await handoff(session);
+        },
+        onSnapshotStart,
+        onSnapshotReady,
+      );
+    } catch (error) {
+      if (this.rpc.handlesResumeHandoffFailure) {
+        await resumed?.discard().catch(() => undefined);
+      } else {
+        await resumed?.close().catch(() => undefined);
+      }
+      if (resumed !== undefined && this.activeSessions.get(resumed.id) === resumed) {
+        this.activeSessions.delete(resumed.id);
+      }
+      throw error;
+    }
+
+    if (resumed === undefined) {
+      throw new KimiError(
+        ErrorCodes.SESSION_STATE_INVALID,
+        'Session resume completed without a handoff',
+      );
+    }
+    this.trackSessionStarted(resumed.id, true, sessionStartedProperties);
+    this.trackSessionEvent(resumed.id, 'session_resume');
+    return resumed;
+  }
+
+  private async serializeResume<T>(
+    sessionId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.resumeTails.get(sessionId) ?? Promise.resolve();
+    const waitForPrevious = previous.catch(() => undefined);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = waitForPrevious.then(() => gate);
+    this.resumeTails.set(sessionId, tail);
+
+    await waitForPrevious;
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.resumeTails.get(sessionId) === tail) {
+        this.resumeTails.delete(sessionId);
+      }
+    }
   }
 
   /**

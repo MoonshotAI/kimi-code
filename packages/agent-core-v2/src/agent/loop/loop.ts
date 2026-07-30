@@ -1,3 +1,11 @@
+/**
+ * `loop` domain (L4) — agent turn and step scheduling contract.
+ *
+ * Defines the Agent-scoped loop service, its admission receipts, turn and step
+ * results, error recovery hooks, and quiescence leases used to drain admitted
+ * work while holding later producers.
+ */
+
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
@@ -148,8 +156,8 @@ export interface IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined;
 
-  /** Resolves once no turn is active and none are queued — the disposal drain
-   *  awaited by `agentLifecycle.remove`. */
+  acquireQuiescence(): Promise<IDisposable>;
+
   settled(): Promise<void>;
 
   hasPendingRequests(): boolean;

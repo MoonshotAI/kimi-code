@@ -1,9 +1,9 @@
 /**
  * Scenario: v2 wiring MVP — the harness talks to the in-process agent-core-v2
  * engine (klient memory transport) instead of the v1 KimiCore RPC pair.
- * Responsibilities: `getExperimentalFeatures` is migrated end-to-end; every
- * not-yet-migrated method fails loudly with `not_implemented` instead of
- * silently hitting a v1 core.
+ * Responsibilities: migrated calls use the v2 engine, cold/active resume
+ * handoffs gate agent producers, and not-yet-migrated methods fail loudly
+ * instead of silently hitting a v1 core.
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; no provider calls.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
@@ -15,11 +15,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IEventBus,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
   type DomainEvent,
 } from '@moonshot-ai/agent-core-v2';
+import { MessageStepRequest } from '@moonshot-ai/agent-core-v2/agent/loop/stepRequest';
 
 import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness, SDKRpcClientV2 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
@@ -293,6 +295,735 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     } finally {
       hook.dispose();
       unsubscribe();
+      await rpc.close();
+    }
+  });
+
+  it('keeps cold-resume producer admissions held through the handoff callback', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_resume_handoff_gate';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    let producerLoop: IAgentLoopService | undefined;
+    let producer: ReturnType<IAgentLoopService['enqueue']> | undefined;
+    let snapshotStarted = false;
+    const hook = lifecycle.hooks.onDidCreateSession.register(
+      'test-resume-handoff-producer',
+      async (event, next) => {
+        if (event.source !== 'resume' || event.sessionId !== sessionId) {
+          await next();
+          return;
+        }
+        const onDidCreate = event.handle.accessor
+          .get(IAgentLifecycleService)
+          .onDidCreate((agent) => {
+            if (agent.id !== MAIN_AGENT_ID) return;
+            expect(snapshotStarted).toBe(true);
+            producerLoop = agent.accessor.get(IAgentLoopService);
+            producer = producerLoop.enqueue(
+              new MessageStepRequest(
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'Autonomous resume work.' }],
+                  toolCalls: [],
+                },
+                { admission: 'newTurn', kind: 'test-resume-producer' },
+              ),
+            );
+          });
+        try {
+          await next();
+        } finally {
+          onDidCreate.dispose();
+        }
+      },
+    );
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+
+      await rpc.resumeSessionWithHandoff(
+        { id: sessionId },
+        async (summary) => {
+          expect(snapshotStarted).toBe(true);
+          expect(summary.id).toBe(sessionId);
+          expect(producerLoop?.status()).toMatchObject({
+            state: 'idle',
+            hasPendingRequests: true,
+          });
+          expect(producer?.abort()).toBe(true);
+        },
+        () => {
+          expect(snapshotStarted).toBe(false);
+          snapshotStarted = true;
+        },
+      );
+    } finally {
+      producer?.abort();
+      hook.dispose();
+      await rpc.close();
+    }
+  });
+
+  it('keeps a successful direct cold handoff live when the next handoff rejects', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_direct_concurrent_handoff';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    const handoffError = new Error('direct v2 concurrent handoff rejected');
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+
+      let successfulResume!: ReturnType<SDKRpcClientV2['resumeSessionWithHandoff']>;
+      successfulResume = rpc.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => undefined,
+      );
+      const rejectedResume = rpc.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          await successfulResume;
+          throw handoffError;
+        },
+      );
+      void rejectedResume.catch(() => undefined);
+
+      await expect(successfulResume).resolves.toMatchObject({ id: sessionId });
+      await expect(rejectedResume).rejects.toBe(handoffError);
+      expect(lifecycle.get(sessionId)).toBeDefined();
+
+      await expect(
+        rpc.resumeSessionWithHandoff(
+          { id: ` ${sessionId} ` },
+          async () => undefined,
+        ),
+      ).resolves.toMatchObject({ id: sessionId });
+      expect(lifecycle.get(sessionId)).toBeDefined();
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('force-rolls back held producer work when the graceful cold-resume close fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_resume_handoff_failure';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    const handoffError = new Error('handoff failed');
+    let loop: IAgentLoopService | undefined;
+    let held: ReturnType<IAgentLoopService['enqueue']> | undefined;
+    const started: number[] = [];
+    let turnSubscription: { dispose(): void } | undefined;
+    let failingCloseHook: { dispose(): void } | undefined;
+    const hook = lifecycle.hooks.onDidCreateSession.register(
+      'test-resume-handoff-failure',
+      async (event, next) => {
+        if (event.source === 'resume' && event.sessionId === sessionId) {
+          const onDidCreate = event.handle.accessor
+            .get(IAgentLifecycleService)
+            .onDidCreate((agent) => {
+              if (agent.id === MAIN_AGENT_ID) {
+                loop = agent.accessor.get(IAgentLoopService);
+                turnSubscription = agent.accessor
+                  .get(IEventBus)
+                  .subscribe('turn.started', (turn) => {
+                    started.push(turn.turnId);
+                  });
+              }
+            });
+          try {
+            await next();
+          } finally {
+            onDidCreate.dispose();
+          }
+          return;
+        }
+        await next();
+      },
+    );
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+      failingCloseHook = lifecycle.hooks.onWillCloseSession.register(
+        'test-resume-handoff-close-failure',
+        async (event, next) => {
+          if (event.sessionId === sessionId) throw new Error('graceful close failed');
+          await next();
+        },
+      );
+
+      await expect(
+        rpc.resumeSessionWithHandoff({ id: sessionId }, async () => {
+          if (loop === undefined) throw new Error('resume did not materialize the main agent');
+          held = loop.enqueue(
+            new MessageStepRequest(
+              {
+                role: 'user',
+                content: [{ type: 'text', text: 'Held until failed handoff.' }],
+                toolCalls: [],
+              },
+              { admission: 'newTurn', kind: 'test-failed-handoff-producer' },
+            ),
+          );
+          expect(loop.status()).toMatchObject({
+            state: 'idle',
+            hasPendingRequests: true,
+          });
+          throw handoffError;
+        }),
+      ).rejects.toBe(handoffError);
+
+      if (loop === undefined) throw new Error('resume did not materialize the main agent');
+      if (held === undefined) throw new Error('handoff did not enqueue producer work');
+      const closedLoop = loop;
+      await expect(held.assigned).rejects.toBeDefined();
+      expect(closedLoop.status()).toMatchObject({
+        state: 'idle',
+        hasPendingRequests: false,
+      });
+      expect(started).toEqual([]);
+      expect(rpc.engineAccessor.get(ISessionLifecycleService).get(sessionId)).toBeUndefined();
+      expect(() =>
+        closedLoop.enqueue(
+          new MessageStepRequest(
+            {
+              role: 'user',
+              content: [{ type: 'text', text: 'Must not run after failed handoff.' }],
+              toolCalls: [],
+            },
+            { admission: 'newTurn', kind: 'test-post-handoff-producer' },
+          ),
+        ),
+      ).toThrow();
+    } finally {
+      failingCloseHook?.dispose();
+      turnSubscription?.dispose();
+      hook.dispose();
+      await rpc.close();
+    }
+  });
+
+  it('closes a cold resume when the snapshot callback fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_cold_resume_snapshot_failure';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    const snapshotError = new Error('snapshot start failed');
+    const started: number[] = [];
+    const unsubscribe = rpc.onEvent((event) => {
+      if (event.type === 'turn.started' && event.sessionId === sessionId) {
+        started.push(event.turnId);
+      }
+    });
+    let handoffCalled = false;
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      await rpc.closeSession({ sessionId });
+
+      await expect(
+        rpc.resumeSessionWithHandoff(
+          { id: sessionId },
+          async () => {
+            handoffCalled = true;
+          },
+          () => {
+            throw snapshotError;
+          },
+        ),
+      ).rejects.toBe(snapshotError);
+
+      expect(handoffCalled).toBe(false);
+      expect(started).toEqual([]);
+      expect(lifecycle.get(sessionId)).toBeUndefined();
+    } finally {
+      unsubscribe();
+      await rpc.close();
+    }
+  });
+
+  it('cuts the snapshot before a live resume rematerializes producer work', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_live_resume_missing_main';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    let snapshotStarted = false;
+    let producerLoop: IAgentLoopService | undefined;
+    let producer: ReturnType<IAgentLoopService['enqueue']> | undefined;
+    let signalProducerObserved!: () => void;
+    let rejectProducerObserved!: (error: unknown) => void;
+    const producerObserved = new Promise<void>((resolve, reject) => {
+      signalProducerObserved = resolve;
+      rejectProducerObserved = reject;
+    });
+    void producerObserved.catch(() => undefined);
+
+    try {
+      await rpc.createSession({ id: sessionId, workDir });
+      const session = lifecycle.get(sessionId);
+      if (session === undefined) throw new Error('session was not created');
+      const agents = session.accessor.get(IAgentLifecycleService);
+      await agents.remove(MAIN_AGENT_ID);
+      const onDidCreate = agents.onDidCreate((agent) => {
+        if (agent.id !== MAIN_AGENT_ID) return;
+        queueMicrotask(() => {
+          try {
+            expect(snapshotStarted).toBe(true);
+            producerLoop = agent.accessor.get(IAgentLoopService);
+            producer = producerLoop.enqueue(
+              new MessageStepRequest(
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'Work restored with the main agent.' }],
+                  toolCalls: [],
+                },
+                { admission: 'newTurn', kind: 'test-rematerialized-producer' },
+              ),
+            );
+            signalProducerObserved();
+          } catch (error) {
+            rejectProducerObserved(error);
+          }
+        });
+      });
+
+      try {
+        await rpc.resumeSessionWithHandoff(
+          { id: sessionId },
+          async () => {
+            await producerObserved;
+            expect(producerLoop?.status()).toMatchObject({
+              state: 'idle',
+              hasPendingRequests: true,
+            });
+            expect(producer?.abort()).toBe(true);
+          },
+          () => {
+            expect(snapshotStarted).toBe(false);
+            snapshotStarted = true;
+          },
+        );
+      } finally {
+        onDidCreate.dispose();
+      }
+    } finally {
+      producer?.abort();
+      await rpc.close();
+    }
+  });
+
+  it('releases a rematerialized main gate when the snapshot callback fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_live_resume_missing_main_snapshot_failure';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const lifecycle = rpc.engineAccessor.get(ISessionLifecycleService);
+    let loop: IAgentLoopService | undefined;
+    let producer: ReturnType<IAgentLoopService['enqueue']> | undefined;
+    let activeHook: { dispose(): void } | undefined;
+    let turnSubscription: { dispose(): void } | undefined;
+    const started: number[] = [];
+
+    try {
+      await rpc.setConfig({
+        providers: {
+          local: {
+            type: 'kimi',
+            apiKey: 'sk-test',
+          },
+        },
+        models: {
+          'fixture-model': {
+            provider: 'local',
+            model: 'fixture-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultProvider: 'local',
+      });
+      await rpc.createSession({ id: sessionId, workDir, model: 'fixture-model' });
+      const session = lifecycle.get(sessionId);
+      if (session === undefined) throw new Error('session was not created');
+      const agents = session.accessor.get(IAgentLifecycleService);
+      await agents.remove(MAIN_AGENT_ID);
+      const onDidCreate = agents.onDidCreate((agent) => {
+        if (agent.id !== MAIN_AGENT_ID) return;
+        loop = agent.accessor.get(IAgentLoopService);
+        activeHook = loop.hooks.onWillBeginStep.register(
+          'test-rematerialized-snapshot-failure',
+          async (hookContext, next) => {
+            await new Promise<void>((_, reject) => {
+              if (hookContext.signal.aborted) {
+                reject(hookContext.signal.reason);
+                return;
+              }
+              hookContext.signal.addEventListener(
+                'abort',
+                () => {
+                  reject(hookContext.signal.reason);
+                },
+                { once: true },
+              );
+            });
+            await next();
+          },
+        );
+        turnSubscription = agent.accessor.get(IEventBus).subscribe('turn.started', (event) => {
+          started.push(event.turnId);
+        });
+      });
+      const snapshotError = new Error('snapshot start failed');
+      let handoffCalled = false;
+
+      try {
+        await expect(
+          rpc.resumeSessionWithHandoff(
+            { id: sessionId },
+            async () => {
+              handoffCalled = true;
+            },
+            () => {
+              throw snapshotError;
+            },
+          ),
+        ).rejects.toBe(snapshotError);
+      } finally {
+        onDidCreate.dispose();
+      }
+      expect(handoffCalled).toBe(false);
+      if (loop === undefined) throw new Error('resume did not rematerialize the main agent');
+      const resumedLoop = loop;
+
+      producer = resumedLoop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Producer after rematerialized snapshot failure.' }],
+            toolCalls: [],
+          },
+          { admission: 'newTurn', kind: 'test-post-rematerialized-snapshot-failure' },
+        ),
+      );
+      let producerAssigned = false;
+      void producer.assigned.then(
+        () => {
+          producerAssigned = true;
+        },
+        () => {},
+      );
+      await Promise.resolve();
+
+      expect(producerAssigned).toBe(true);
+      expect(started).toEqual([0]);
+      expect(resumedLoop.status()).toMatchObject({ state: 'running', activeTurnId: 0 });
+      expect(resumedLoop.cancel(0)).toBe(true);
+      await resumedLoop.settled();
+    } finally {
+      producer?.abort();
+      loop?.cancel();
+      turnSubscription?.dispose();
+      activeHook?.dispose();
+      await rpc.close();
+    }
+  });
+
+  it('waits for an active main agent to settle before invoking the handoff callback', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_active_resume_handoff';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    let resume: Promise<unknown> | undefined;
+    let activeHook: { dispose(): void } | undefined;
+    let loopForCleanup: IAgentLoopService | undefined;
+
+    try {
+      await rpc.setConfig({
+        providers: {
+          local: {
+            type: 'kimi',
+            apiKey: 'sk-test',
+          },
+        },
+        models: {
+          'fixture-model': {
+            provider: 'local',
+            model: 'fixture-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultProvider: 'local',
+      });
+      await rpc.createSession({ id: sessionId, workDir, model: 'fixture-model' });
+      const session = rpc.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      if (session === undefined) throw new Error('session was not created');
+      const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      if (main === undefined) throw new Error('active session has no main agent');
+      const loop = main.accessor.get(IAgentLoopService);
+      loopForCleanup = loop;
+      let signalActiveStarted!: () => void;
+      const activeStarted = new Promise<void>((resolve) => {
+        signalActiveStarted = resolve;
+      });
+      activeHook = loop.hooks.onWillBeginStep.register(
+        'test-active-resume-handoff',
+        async (hookContext, next) => {
+          signalActiveStarted();
+          await new Promise<void>((_, reject) => {
+            if (hookContext.signal.aborted) {
+              reject(hookContext.signal.reason);
+              return;
+            }
+            hookContext.signal.addEventListener(
+              'abort',
+              () => {
+                reject(hookContext.signal.reason);
+              },
+              { once: true },
+            );
+          });
+          await next();
+        },
+      );
+      const active = (
+        await loop.enqueue(
+          new MessageStepRequest(
+            {
+              role: 'user',
+              content: [{ type: 'text', text: 'Active work before resume.' }],
+              toolCalls: [],
+            },
+            { admission: 'newTurn', kind: 'test-active-resume' },
+          ),
+        ).assigned
+      ).turn;
+      await activeStarted;
+      let signalSnapshotCut!: () => void;
+      const snapshotCut = new Promise<void>((resolve) => {
+        signalSnapshotCut = resolve;
+      });
+      let handoffCalled = false;
+      let snapshotStarted = false;
+      let producerAssigned = false;
+      let producer: ReturnType<IAgentLoopService['enqueue']> | undefined;
+
+      resume = rpc.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          const status = loop.status();
+          const aborted = producer?.abort();
+          handoffCalled = true;
+          expect(snapshotStarted).toBe(true);
+          expect(producerAssigned).toBe(false);
+          expect(status).toMatchObject({
+            state: 'idle',
+            hasPendingRequests: true,
+          });
+          expect(aborted).toBe(true);
+        },
+        () => {
+          expect(snapshotStarted).toBe(false);
+          snapshotStarted = true;
+          signalSnapshotCut();
+        },
+      );
+      await snapshotCut;
+      producer = loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Produced while active work drains.' }],
+            toolCalls: [],
+          },
+          { admission: 'newTurn', kind: 'test-active-handoff-producer' },
+        ),
+      );
+      void producer.assigned.then(
+        () => {
+          producerAssigned = true;
+        },
+        () => {},
+      );
+      await Promise.resolve();
+
+      expect(handoffCalled).toBe(false);
+      expect(snapshotStarted).toBe(true);
+      expect(producerAssigned).toBe(false);
+      expect(loop.cancel(active.id)).toBe(true);
+      await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+      await resume;
+
+      expect(handoffCalled).toBe(true);
+    } finally {
+      loopForCleanup?.cancel();
+      await resume?.catch(() => undefined);
+      activeHook?.dispose();
+      await rpc.close();
+    }
+  });
+
+  it('releases an active acquisition after the snapshot callback fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const sessionId = 'session_active_resume_snapshot_failure';
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    let resume: Promise<unknown> | undefined;
+    let loop: IAgentLoopService | undefined;
+    let activeHook: { dispose(): void } | undefined;
+    let turnSubscription: { dispose(): void } | undefined;
+    const started: number[] = [];
+
+    try {
+      await rpc.setConfig({
+        providers: {
+          local: {
+            type: 'kimi',
+            apiKey: 'sk-test',
+          },
+        },
+        models: {
+          'fixture-model': {
+            provider: 'local',
+            model: 'fixture-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultProvider: 'local',
+      });
+      await rpc.createSession({ id: sessionId, workDir, model: 'fixture-model' });
+      const session = rpc.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      if (session === undefined) throw new Error('session was not created');
+      const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      if (main === undefined) throw new Error('active session has no main agent');
+      loop = main.accessor.get(IAgentLoopService);
+      turnSubscription = main.accessor.get(IEventBus).subscribe('turn.started', (event) => {
+        started.push(event.turnId);
+      });
+      let signalActiveStarted!: () => void;
+      const activeStarted = new Promise<void>((resolve) => {
+        signalActiveStarted = resolve;
+      });
+      activeHook = loop.hooks.onWillBeginStep.register(
+        'test-active-snapshot-failure',
+        async (hookContext, next) => {
+          signalActiveStarted();
+          await new Promise<void>((_, reject) => {
+            if (hookContext.signal.aborted) {
+              reject(hookContext.signal.reason);
+              return;
+            }
+            hookContext.signal.addEventListener(
+              'abort',
+              () => {
+                reject(hookContext.signal.reason);
+              },
+              { once: true },
+            );
+          });
+          await next();
+        },
+      );
+      const active = (
+        await loop.enqueue(
+          new MessageStepRequest(
+            {
+              role: 'user',
+              content: [{ type: 'text', text: 'Active work before snapshot failure.' }],
+              toolCalls: [],
+            },
+            { admission: 'newTurn', kind: 'test-active-snapshot-failure' },
+          ),
+        ).assigned
+      ).turn;
+      await activeStarted;
+      const snapshotError = new Error('snapshot start failed');
+      let signalSnapshotStarted!: () => void;
+      const snapshotStarted = new Promise<void>((resolve) => {
+        signalSnapshotStarted = resolve;
+      });
+      let resumeSettled = false;
+      let handoffCalled = false;
+
+      resume = rpc.resumeSessionWithHandoff(
+        { id: sessionId },
+        async () => {
+          handoffCalled = true;
+        },
+        () => {
+          signalSnapshotStarted();
+          throw snapshotError;
+        },
+      );
+      void resume.then(
+        () => {
+          resumeSettled = true;
+        },
+        () => {
+          resumeSettled = true;
+        },
+      );
+      await snapshotStarted;
+      await Promise.resolve();
+
+      expect(resumeSettled).toBe(false);
+      expect(handoffCalled).toBe(false);
+      expect(loop.cancel(active.id)).toBe(true);
+      await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+      await expect(resume).rejects.toBe(snapshotError);
+
+      const producer = loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Producer after snapshot failure.' }],
+            toolCalls: [],
+          },
+          { admission: 'newTurn', kind: 'test-post-snapshot-failure-producer' },
+        ),
+      );
+      let producerAssigned = false;
+      void producer.assigned.then(
+        () => {
+          producerAssigned = true;
+        },
+        () => {},
+      );
+      await Promise.resolve();
+
+      expect(producerAssigned).toBe(true);
+      expect(started).toEqual([0, 1]);
+      expect(loop.status()).toMatchObject({ state: 'running', activeTurnId: 1 });
+      expect(loop.cancel(1)).toBe(true);
+      await loop.settled();
+    } finally {
+      loop?.cancel();
+      await resume?.catch(() => undefined);
+      turnSubscription?.dispose();
+      activeHook?.dispose();
       await rpc.close();
     }
   });

@@ -221,6 +221,14 @@ function effortStringOrUndefined(effort: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function isAutonomousTriggerEvent(event: Event): boolean {
+  return (
+    event.type === 'cron.fired' ||
+    event.type === 'background.task.terminated' ||
+    event.type === 'task.terminated'
+  );
+}
+
 /**
  * Agent-side ACP handler. Routes `initialize` + `session/new` + `session/cancel`
  * into {@link KimiHarness}; refuses methods that are not yet wired with a
@@ -489,28 +497,20 @@ export class AcpServer implements Agent {
    * `currentModeId` is always `default` on load because the SDK does
    * not persist mode across runs (PLAN D9).
    *
-   * The non-trivial setup (auth gate, connection guard, harness
-   * resume, AcpSession construction, session registration, configOptions
-   * computation) is shared with {@link resumeSession} via
-   * {@link setupSessionFromExisting}; the ONE differentiator is that
-   * `loadSession` calls `replayHistory()` here, whereas `resumeSession`
-   * deliberately skips it (per ACP spec G4 / plan gap-4.3).
-  */
+   * The non-trivial setup (auth gate, connection guard, atomic SDK
+   * snapshot handoff, AcpSession construction, history/live ordering,
+   * session registration, and configOptions computation) is shared with
+   * {@link resumeSession} via {@link setupSessionFromExisting}.
+   */
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     const sessionId = requireCanonicalSessionId(params.sessionId);
     return this.withSessionSetupLock(sessionId, async () => {
-      const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
+      const { session, configOptions } = await this.setupSessionFromExisting({
         cwd: params.cwd,
         sessionId,
         mcpServers: params.mcpServers,
         mode: 'load',
       });
-      // Synchronously replay history — the response must not settle
-      // until every historical `session/update` has been pushed,
-      // otherwise the client would race the load completion against
-      // its own UI bootstrap. This is the ONE difference vs.
-      // `resumeSession`, which intentionally omits this step.
-      await acpSession.replayHistory();
       this.scheduleAvailableCommandsUpdate(session.id);
       return { configOptions };
     });
@@ -534,7 +534,7 @@ export class AcpServer implements Agent {
    * (a) telemetry mode is `'resume'` (vs `'load'`), and (b) no
    * `replayHistory()` call. See plan G4 (lines 106-170) for the
    * rationale, and gap-4.1 for the matching capability advertisement.
-  */
+   */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
     const sessionId = requireCanonicalSessionId(params.sessionId);
     return this.withSessionSetupLock(sessionId, async () => {
@@ -558,12 +558,11 @@ export class AcpServer implements Agent {
    * the unified `configOptions:` surface (PLAN D11) that both handlers
    * return.
    *
-   * Behavior is byte-for-byte identical to the pre-refactor
-   * `loadSession` body minus the `replayHistory()` call — which lives
-   * in `loadSession` itself because `resumeSession` per ACP spec must
-   * NOT replay history (the client is expected to have already seen
-   * those turns; replay is a load-only behavior). See plan G4
-   * (lines 106-170) for the rationale.
+   * For `load`, the SDK freezes the resume snapshot while autonomous
+   * turn starts are gated. The callback installs the permanent event
+   * bridge, replays that snapshot, and drains events captured after the
+   * cut before releasing the producer. `resume` installs and drains the
+   * same bridge without replaying persisted history.
    *
    * The `@ts-expect-error` boundary at the SDK `resumeSession` call
    * is preserved verbatim — `mcpServers` is a kernel-only extension
@@ -587,7 +586,8 @@ export class AcpServer implements Agent {
       throw RequestError.authRequired();
     }
     this.assertNotDisposed();
-    if (!this.conn) {
+    const conn = this.conn;
+    if (!conn) {
       throw RequestError.internalError(undefined, 'AcpServer is missing its AgentSideConnection');
     }
     // ACP `cwd` → SDK `workDir` for parity with `newSession`. The
@@ -609,10 +609,7 @@ export class AcpServer implements Agent {
       params.sessionId,
     );
     let releaseInitialSessionEvents = (): void => undefined;
-    if (
-      params.mode === 'resume' &&
-      typeof this.harness.onSessionEvent === 'function'
-    ) {
+    if (typeof this.harness.onSessionEvent === 'function') {
       try {
         const unsubscribe = this.harness.onSessionEvent(params.sessionId, (event) => {
           initialSessionEvents.push(event);
@@ -630,43 +627,37 @@ export class AcpServer implements Agent {
         throw error;
       }
     }
-    let session: Session;
-    try {
-      session = await this.harness.resumeSession({
-        id: params.sessionId,
-        kaos: acpKaos,
-        persistenceKaos,
-        sessionStartedProperties: { mode: params.mode },
-        // @ts-expect-error — see block comment above; mcpServers is a
-        // kernel-only field that the SDK forwards via spread.
-        mcpServers,
-      });
-      this.assertNotDisposed();
-    } catch (err) {
-      releaseInitialSessionEvents();
-      settleInitialInteractions();
-      // Surface unknown-session as invalid_params so the JSON-RPC layer
-      // returns a structured failure rather than a generic internal
-      // error. Other errors propagate as-is.
-      const code = (err as { code?: string } | undefined)?.code;
-      if (code === 'session.not_found') {
-        throw RequestError.invalidParams(
-          { sessionId: params.sessionId },
-          `Unknown sessionId: ${params.sessionId}`,
-        );
-      }
-      throw err;
-    }
+    const resumeInput = {
+      id: params.sessionId,
+      kaos: acpKaos,
+      persistenceKaos,
+      sessionStartedProperties: { mode: params.mode },
+      // This remains a kernel-only field. Keeping the value on a named object
+      // preserves the SDK's intentional spread-passthrough boundary.
+      mcpServers,
+    };
+    let session: Session | undefined;
     let createdAcpSession: AcpSession | undefined;
+    let pausedAcpSession: AcpSession | undefined;
+    let pauseAtSnapshot: Promise<void> | undefined;
+    let pausedSnapshotEventCount: number | undefined;
+    let initialSnapshotEventCount: number | undefined;
+    let initialRetainedSnapshotEventCount: number | undefined;
+    type SetupResult = {
+      session: Session;
+      acpSession: AcpSession;
+      configOptions: SessionConfigOption[];
+    };
+    let setupResult: SetupResult | undefined;
 
-    try {
+    const finishSetup = async (resumedSession: Session): Promise<SetupResult> => {
+      session = resumedSession;
+      this.assertNotDisposed();
       // A cold ACP resume can race events emitted while the SDK is still
       // materializing its Session object. Its temporary harness subscription
       // captures only live events for this known id. Transfer that FIFO into
-      // AcpSession synchronously, before config lookup. Load deliberately does
-      // not use this relay: history replay needs a producer-level atomic
-      // snapshot/live boundary rather than a consumer-side guessed cut.
-      const resumeState = session.getResumeState?.();
+      // AcpSession synchronously, before config lookup.
+      const resumeState = resumedSession.getResumeState?.();
       const resumedModelAlias = resumeState?.agents?.['main']?.config?.modelAlias;
       const initialModelId =
         typeof resumedModelAlias === 'string' && resumedModelAlias.length > 0
@@ -674,45 +665,52 @@ export class AcpServer implements Agent {
           : undefined;
       const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;
       const initialThinkingEffort = effortStringOrUndefined(resumedThinkingEffort);
-      const existingAcpSession = this.sessions.get(session.id);
+      const existingAcpSession = this.sessions.get(resumedSession.id);
       let acpSession: AcpSession;
-      if (existingAcpSession !== undefined) {
+      if (existingAcpSession?.session === resumedSession) {
+        releaseInitialSessionEvents();
+        initialSessionEvents.splice(0);
+        acpSession = existingAcpSession;
+        if (params.mode === 'load') {
+          pausedAcpSession = acpSession;
+          pauseAtSnapshot ??= acpSession.pauseSessionEvents();
+          await pauseAtSnapshot;
+        }
+      } else if (existingAcpSession !== undefined && params.mode === 'resume') {
         // An existing adapter already owns an SDK event subscription for this
         // session id, even if the harness returns a replacement Session
         // object. It observed the same transport events as the temporary raw
         // listener, so never replay that parallel copy.
         releaseInitialSessionEvents();
         initialSessionEvents.splice(0);
-        if (existingAcpSession.session === session) {
-          acpSession = existingAcpSession;
-        } else {
-          existingAcpSession.dispose();
-          acpSession = new AcpSession(
-            this.conn,
-            session,
-            this.clientCapabilities,
-            this.makeTelemetryTrack(),
-            initialModelId,
-            this.harness,
-            initialThinkingEffort,
-          );
-          this.sessions.set(session.id, acpSession);
-          createdAcpSession = acpSession;
-        }
+        existingAcpSession.dispose();
+        acpSession = new AcpSession(
+          conn,
+          resumedSession,
+          this.clientCapabilities,
+          this.makeTelemetryTrack(),
+          initialModelId,
+          this.harness,
+          initialThinkingEffort,
+        );
+        this.sessions.set(resumedSession.id, acpSession);
+        createdAcpSession = acpSession;
       } else {
+        existingAcpSession?.dispose();
         releaseInitialSessionEvents();
         acpSession = new AcpSession(
-          this.conn,
-          session,
+          conn,
+          resumedSession,
           this.clientCapabilities,
           this.makeTelemetryTrack(),
           initialModelId,
           this.harness,
           initialThinkingEffort,
           initialSessionEvents,
+          true,
         );
         initialSessionEvents.splice(0);
-        this.sessions.set(session.id, acpSession);
+        this.sessions.set(resumedSession.id, acpSession);
         createdAcpSession = acpSession;
       }
 
@@ -732,7 +730,7 @@ export class AcpServer implements Agent {
       // then the harness-level default, when the resume state lacks the
       // field.
       const currentThinkingEffort = await this.resolveCurrentThinkingEffort(
-        session,
+        resumedSession,
         resumedThinkingEffort,
       );
       this.assertNotDisposed();
@@ -744,8 +742,90 @@ export class AcpServer implements Agent {
         DEFAULT_MODE_ID,
       );
       this.assertNotDisposed();
+      if (params.mode === 'load') {
+        if (
+          acpSession === pausedAcpSession &&
+          pausedSnapshotEventCount !== undefined
+        ) {
+          acpSession.reconcilePausedSessionEvents(
+            pausedSnapshotEventCount,
+            isAutonomousTriggerEvent,
+          );
+        } else if (initialRetainedSnapshotEventCount !== undefined) {
+          acpSession.setPausedSessionEventSnapshotBoundary(
+            initialRetainedSnapshotEventCount,
+          );
+        }
+        await acpSession.replayHistory();
+      } else {
+        await acpSession.flushInitialSessionEvents();
+      }
+      this.assertNotDisposed();
       settleInitialInteractions(getAcpSessionInteractionHandlers(acpSession));
-      return { session, acpSession, configOptions };
+      return { session: resumedSession, acpSession, configOptions };
+    };
+
+    try {
+      if (
+        params.mode === 'load' &&
+        typeof this.harness.resumeSessionWithHandoff === 'function'
+      ) {
+        await this.harness.resumeSessionWithHandoff(
+          resumeInput,
+          async (resumedSession) => {
+            // The frozen context reconstructs turn/delta/tool state. Keep
+            // pre-snapshot producer triggers as candidates until history replay
+            // confirms which safe trigger projections succeeded; AcpSession
+            // removes only those matching duplicates before draining this FIFO.
+            pausedSnapshotEventCount ??=
+              pausedAcpSession?.pausedSessionEventCount();
+            initialSnapshotEventCount ??= initialSessionEvents.length;
+            const initialBoundary = Math.min(
+              Math.max(initialSnapshotEventCount, 0),
+              initialSessionEvents.length,
+            );
+            const transientEvents = initialSessionEvents
+              .slice(0, initialBoundary)
+              .filter(isAutonomousTriggerEvent);
+            initialRetainedSnapshotEventCount = transientEvents.length;
+            const postSnapshotEvents =
+              initialSessionEvents.slice(initialBoundary);
+            initialSessionEvents.splice(
+              0,
+              initialSessionEvents.length,
+              ...transientEvents,
+              ...postSnapshotEvents,
+            );
+            setupResult = await finishSetup(resumedSession);
+          },
+          () => {
+            // The engine owns the exact admission cut. Events already observed
+            // precede this load; later producer triggers must cross the FIFO,
+            // while a settling active turn is reconciled against the frozen
+            // snapshot in the handoff callback above.
+            pausedAcpSession = this.sessions.get(params.sessionId);
+            pauseAtSnapshot = pausedAcpSession?.pauseSessionEvents();
+            initialSessionEvents.splice(0);
+          },
+          () => {
+            // This callback runs inside the SDK-side ordered event marker:
+            // every event represented by the frozen snapshot has arrived,
+            // while later transport events are still beyond this boundary.
+            pausedSnapshotEventCount =
+              pausedAcpSession?.pausedSessionEventCount();
+            initialSnapshotEventCount = initialSessionEvents.length;
+          },
+        );
+      } else {
+        setupResult = await finishSetup(await this.harness.resumeSession(resumeInput));
+      }
+      if (setupResult === undefined) {
+        throw RequestError.internalError(
+          { sessionId: params.sessionId },
+          'SDK session resume completed without an ACP handoff',
+        );
+      }
+      return setupResult;
     } catch (error) {
       releaseInitialSessionEvents();
       initialSessionEvents.splice(0);
@@ -755,12 +835,31 @@ export class AcpServer implements Agent {
       // request and remains responsible for that session's updates.
       if (
         createdAcpSession !== undefined &&
+        session !== undefined &&
         this.sessions.get(session.id) === createdAcpSession
       ) {
         this.sessions.delete(session.id);
         createdAcpSession.dispose();
       }
       settleInitialInteractions();
+      if (pausedAcpSession !== undefined) {
+        try {
+          await pausedAcpSession.flushInitialSessionEvents();
+        } catch (flushError) {
+          log.warn('acp: failed to restore live events after load setup failed', {
+            sessionId: params.sessionId,
+            error:
+              flushError instanceof Error ? flushError.message : String(flushError),
+          });
+        }
+      }
+      const code = (error as { code?: string } | undefined)?.code;
+      if (code === 'session.not_found') {
+        throw RequestError.invalidParams(
+          { sessionId: params.sessionId },
+          `Unknown sessionId: ${params.sessionId}`,
+        );
+      }
       throw error;
     }
   }

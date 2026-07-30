@@ -25,7 +25,15 @@
  * compacts and re-enqueues it — so the loop only learns caught-or-not, while
  * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
- * reads the step budget from `config`. The plain-data loop state
+ * reads the step budget from `config`.
+ *
+ * Quiescence acquisition synchronously holds later admissions while the
+ * already-admitted Turn FIFO drains, then blocks pumping until its lease is
+ * released. `settled` tracks that admitted FIFO rather than held admissions,
+ * so lifecycle disposal can drain Turns and abort the held receipts instead
+ * of waiting on work that only the lease release could admit.
+ *
+ * The plain-data loop state
  * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
  * into `agentState` (`IAgentStateService`) and read/written through it;
  * `pendingTurns` and `activeTurnJob` stay plain fields because a `TurnJob`
@@ -122,6 +130,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly heldAdmissions: HeldAdmission[] = [];
   private activeTurnJob: TurnJob | undefined;
   private readonly settleWaiters: Array<() => void> = [];
+  private admissionHoldDepth = 0;
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
 
@@ -190,7 +199,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void assignment.catch(() => undefined);
     this.pendingAssignments.set(request, assignment);
 
-    if (this.quiescenceDepth > 0) {
+    if (this.admissionHoldDepth > 0) {
       this.heldAdmissions.push({ request, options });
     } else {
       this.admit(request, options);
@@ -259,14 +268,47 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (this.activeTurnJob !== undefined || this.hasPendingRequests()) return undefined;
+    return this.holdQuiescence();
+  }
+
+  acquireQuiescence(): Promise<IDisposable> {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    this.admissionHoldDepth += 1;
+    return this.finishAcquireQuiescence();
+  }
+
+  private async finishAcquireQuiescence(): Promise<IDisposable> {
+    try {
+      await this.settled();
+      if (this.disposing) throw abortError('Agent loop disposed');
+      this.quiescenceDepth += 1;
+      return toDisposable(() => {
+        this.releaseQuiescence();
+      });
+    } catch (error) {
+      this.releaseAdmissionHold();
+      throw error;
+    }
+  }
+
+  private holdQuiescence(): IDisposable {
+    this.admissionHoldDepth += 1;
     this.quiescenceDepth += 1;
-    return toDisposable(() => this.releaseQuiescence());
+    return toDisposable(() => {
+      this.releaseQuiescence();
+    });
   }
 
   private releaseQuiescence(): void {
     if (this.quiescenceDepth === 0) return;
     this.quiescenceDepth -= 1;
-    if (this.quiescenceDepth > 0 || this.disposing) return;
+    this.releaseAdmissionHold();
+  }
+
+  private releaseAdmissionHold(): void {
+    if (this.admissionHoldDepth === 0) return;
+    this.admissionHoldDepth -= 1;
+    if (this.admissionHoldDepth > 0 || this.quiescenceDepth > 0 || this.disposing) return;
     this.pumpTurns();
     for (const admission of this.heldAdmissions.splice(0)) {
       if (admission.request.aborted) continue;
@@ -313,11 +355,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   settled(): Promise<void> {
-    if (
-      this.activeTurnJob === undefined &&
-      this.pendingTurns.length === 0 &&
-      this.heldAdmissions.length === 0
-    ) {
+    if (this.activeTurnJob === undefined && this.pendingTurns.length === 0) {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
@@ -326,11 +364,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private maybeSettle(): void {
-    if (
-      this.activeTurnJob !== undefined ||
-      this.pendingTurns.length > 0 ||
-      this.heldAdmissions.length > 0
-    ) return;
+    if (this.activeTurnJob !== undefined || this.pendingTurns.length > 0) return;
     if (this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();

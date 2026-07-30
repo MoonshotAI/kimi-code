@@ -79,9 +79,15 @@ export class Session {
       sessionId: this.id,
       forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
     });
+    this.refreshResumeSummary(summary);
+    return summary;
+  }
+
+  /** @internal */
+  refreshResumeSummary(summary: ResumedSessionSummary): void {
+    this.ensureOpen();
     this.summary = summary;
     this.resumeState = resumeStateFromSummary(summary);
-    return summary;
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
@@ -614,6 +620,20 @@ export class Session {
       this.rpc.clearSessionHandlers(this.id);
       await this.onClose?.();
     }
+  }
+
+  /**
+   * Drop a wrapper after its transport has already rolled back the engine-side
+   * resume. Unlike {@link close}, this never addresses a session by id, so it
+   * cannot close a newer replacement that won a concurrent lifecycle race.
+   *
+   * @internal
+   */
+  async discard(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.rpc.clearSessionHandlers(this.id);
+    await this.onClose?.();
   }
 
   /** @internal */

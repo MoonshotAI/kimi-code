@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 
+import { createControlledPromise } from '@antfu/utils';
 import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,9 +10,11 @@ import {
   FLAG_DEFINITIONS,
   MASTER_ENV,
   createRPC,
-  ErrorCodes,
-  KimiCore,
-  KimiError,
+    ErrorCodes,
+    KimiCore,
+    KimiError,
+    Session,
+  type Agent,
   type ApprovalResponse,
   type CoreAPI,
   type SDKAPI,
@@ -582,6 +585,179 @@ max_context_size = 100000
     expect(core.sessions.get(created.id)?.getAdditionalDirs()).toEqual([extraDir]);
   });
 
+  it('isolates producer input arriving after an active resume cut until handoff releases', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const deliveredEventTypes: string[] = [];
+    const deliveryOrder: string[] = [];
+    const eventDeliveryBarrier = vi.fn(() => {
+      deliveryOrder.push('barrier');
+    });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn((event: Parameters<SDKAPI['emitEvent']>[0]) => {
+        deliveredEventTypes.push(event.type);
+      }),
+      eventDeliveryBarrier,
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_active_resume_handoff',
+      workDir,
+      model: 'default-mock',
+    });
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main).toBeDefined();
+
+    const firstRequestStarted = createControlledPromise<void>();
+    const finishFirstRequest = createControlledPromise<void>();
+    const secondRequestStarted = createControlledPromise<void>();
+    const finishSecondRequest = createControlledPromise<void>();
+    const requestHistories: string[] = [];
+    let generateCalls = 0;
+    vi.spyOn(main!, 'rawGenerate').mockImplementation(
+      async (_provider, _system, _tools, history) => {
+        requestHistories.push(
+          history
+            .flatMap((message) => message.content)
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join('\n'),
+        );
+        generateCalls += 1;
+        const call = generateCalls;
+        if (call === 1) {
+          firstRequestStarted.resolve();
+          await finishFirstRequest;
+        } else {
+          secondRequestStarted.resolve();
+          await finishSecondRequest;
+        }
+        return {
+          id: `mock-active-resume-handoff-${String(call)}`,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text:
+                  call === 1
+                    ? 'completed before resume snapshot'
+                    : 'producer follow-up completed',
+              },
+            ],
+            toolCalls: [],
+          },
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    );
+
+    main!.turn.prompt([{ type: 'text', text: 'finish this turn' }]);
+    await firstRequestStarted;
+
+    const snapshotStarted = createControlledPromise<void>();
+    const handoffStarted = createControlledPromise<void>();
+    const finishHandoff = createControlledPromise<void>();
+    let handedOff:
+      | Awaited<ReturnType<typeof core.resumeSessionWithOverrides>>
+      | undefined;
+    const resume = core.resumeSessionWithOverrides(
+      { sessionId: created.id },
+      {
+        onSnapshotStart: () => {
+          expect(main!.turn.hasActiveTurn).toBe(true);
+          snapshotStarted.resolve();
+        },
+        handoff: async (summary) => {
+          deliveryOrder.push('handoff');
+          handedOff = summary;
+          handoffStarted.resolve();
+          await finishHandoff;
+        },
+        eventDeliveryBarrierToken: 'active-resume-snapshot',
+      },
+    );
+
+    // The cut is synchronous with gate registration and happens while the old
+    // turn is still running. A producer arriving afterwards must not become a
+    // steer step inside that turn.
+    await snapshotStarted;
+    const producerTurnId = main!.turn.steer(
+      [{ type: 'text', text: 'producer completed after snapshot cut' }],
+      { kind: 'system_trigger', name: 'producer-completion' },
+    );
+    expect(producerTurnId).toBeNull();
+
+    finishFirstRequest.resolve();
+    await handoffStarted;
+
+    expect(eventDeliveryBarrier).toHaveBeenCalledOnce();
+    expect(deliveryOrder).toEqual(['barrier', 'handoff']);
+    expect(deliveredEventTypes).toContain('turn.ended');
+    expect(generateCalls).toBe(1);
+    const snapshotText = handedOff!.agents['main']!.context.history
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    expect(snapshotText).toContain('completed before resume snapshot');
+    expect(snapshotText).not.toContain('producer completed after snapshot cut');
+
+    finishHandoff.resolve();
+    const resumed = await resume;
+    expect(handedOff).toBe(resumed);
+
+    await secondRequestStarted;
+    const producerTurn = main!.turn.waitForCurrentTurn();
+    finishSecondRequest.resolve();
+    await producerTurn;
+
+    expect(generateCalls).toBe(2);
+    expect(requestHistories[0]).not.toContain('producer completed after snapshot cut');
+    expect(requestHistories[1]).toContain('producer completed after snapshot cut');
+  });
+
+  it('does not invoke snapshot start when resume has no handoff', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_snapshot_start_without_handoff',
+      workDir,
+      model: 'default-mock',
+    });
+    const onSnapshotStart = vi.fn();
+
+    await core.resumeSessionWithOverrides(
+      { sessionId: created.id },
+      { onSnapshotStart },
+    );
+
+    expect(onSnapshotStart).not.toHaveBeenCalled();
+  });
+
   it('returns additionalDirs when resuming a closed session', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
@@ -620,6 +796,289 @@ max_context_size = 100000
     expect(resumed.additionalDirs).toEqual([extraDir]);
     expect(session?.getAdditionalDirs()).toEqual([extraDir]);
     expect(mainAgent?.getAdditionalDirs()).toEqual([extraDir]);
+  });
+
+  it('invokes snapshot start before cold session replay begins', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_cold_snapshot_start',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+
+    let snapshotStarted = false;
+    const originalResume = Session.prototype.resume;
+    const resumeSpy = vi
+      .spyOn(Session.prototype, 'resume')
+      .mockImplementation(async function (this: Session) {
+        expect(snapshotStarted).toBe(true);
+        return originalResume.call(this);
+      });
+    const onSnapshotStart = vi.fn(() => {
+      snapshotStarted = true;
+      expect(core.sessions.has(created.id)).toBe(false);
+    });
+    const handoff = vi.fn(async () => {});
+
+    try {
+      await core.resumeSessionWithOverrides(
+        { sessionId: created.id },
+        { handoff, onSnapshotStart },
+      );
+    } finally {
+      resumeSpy.mockRestore();
+    }
+
+    expect(onSnapshotStart).toHaveBeenCalledOnce();
+    expect(handoff).toHaveBeenCalledOnce();
+  });
+
+  it('cleans up a cold session when snapshot start fails before replay', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_failed_snapshot_start',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+
+    const snapshotError = new Error('snapshot start failed');
+    const handoff = vi.fn(async () => {});
+    await expect(
+      core.resumeSessionWithOverrides(
+        { sessionId: created.id },
+        {
+          onSnapshotStart: () => {
+            throw snapshotError;
+          },
+          handoff,
+        },
+      ),
+    ).rejects.toBe(snapshotError);
+
+    expect(handoff).not.toHaveBeenCalled();
+    expect(core.sessions.has(created.id)).toBe(false);
+  });
+
+  it('removes a cold session when its resume handoff fails without launching gated producer input', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const emitEvent = vi.fn();
+    const rpc = await sdkRpc({
+      emitEvent,
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_failed_resume_handoff',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+
+    const handoffError = new Error('resume consumer setup failed');
+    let handedOffSessionId: string | undefined;
+    await expect(
+      core.resumeSessionWithOverrides(
+        { sessionId: created.id },
+        {
+          handoff: async (summary) => {
+            handedOffSessionId = summary.id;
+            const main = core.sessions.get(summary.id)?.getReadyAgent('main');
+            expect(main).toBeDefined();
+            expect(
+              main!.turn.steer(
+                [{ type: 'text', text: 'background task completed during handoff' }],
+                { kind: 'system_trigger', name: 'background-completion' },
+              ),
+            ).toBeNull();
+            throw handoffError;
+          },
+        },
+      ),
+    ).rejects.toBe(handoffError);
+
+    expect(handedOffSessionId).toBe(created.id);
+    expect(core.sessions.has(created.id)).toBe(false);
+    expect(
+      emitEvent.mock.calls.some(
+        ([event]) => (event as { readonly type?: string }).type === 'turn.started',
+      ),
+    ).toBe(false);
+  });
+
+  it('recovers a due one-shot cron exactly once after a failed cold handoff', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const clockPath = join(tmp, 'clock.txt');
+    const clockStart = 1_735_689_600_000;
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(clockPath, String(clockStart));
+    vi.stubEnv('KIMI_CRON_CLOCK', `file:${clockPath}`);
+    vi.stubEnv('KIMI_CRON_MANUAL_TICK', '1');
+    vi.stubEnv('KIMI_CRON_NO_JITTER', '1');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const emitEvent = vi.fn();
+    const rpc = await sdkRpc({
+      emitEvent,
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_one_shot_failed_handoff',
+      workDir,
+      model: 'default-mock',
+    });
+    const originalMain = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(originalMain?.cron).toBeDefined();
+    originalMain!.cron!.addTask({
+      cron: '* * * * *',
+      prompt: 'Review the deferred one-shot reminder.',
+      recurring: false,
+    });
+    await originalMain!.cron!.flushPersist();
+    await rpc.closeSession({ sessionId: created.id });
+    await writeFile(clockPath, String(clockStart + 60_000));
+    emitEvent.mockClear();
+
+    const handoffError = new Error('consumer setup failed after cron delivery');
+    await expect(
+      core.resumeSessionWithOverrides(
+        { sessionId: created.id },
+        {
+          handoff: async (summary) => {
+            const main = core.sessions.get(summary.id)?.getReadyAgent('main');
+            expect(main?.cron).toBeDefined();
+            main!.cron!.tick();
+            await main!.cron!.flushPersist();
+            expect(main!.cron!.store.list()).toEqual([]);
+            throw handoffError;
+          },
+        },
+      ),
+    ).rejects.toBe(handoffError);
+
+    expect(core.sessions.has(created.id)).toBe(false);
+    expect(
+      emitEvent.mock.calls.filter(
+        ([event]) => (event as { readonly type?: string }).type === 'turn.started',
+      ),
+    ).toHaveLength(0);
+
+    const modelStarted = createControlledPromise<void>();
+    const finishModel = createControlledPromise<void>();
+    const modelHistories: string[] = [];
+    const generate: Agent['rawGenerate'] = async (
+      _provider,
+      _system,
+      _tools,
+      history,
+    ) => {
+      modelHistories.push(
+        history
+          .flatMap((message) => message.content)
+          .map((part) => (part.type === 'text' ? part.text : ''))
+          .join('\n'),
+      );
+      modelStarted.resolve();
+      await finishModel;
+      return {
+        id: 'mock-recovered-one-shot',
+        message: {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'Handled once.' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed' as const,
+        rawFinishReason: 'stop',
+      };
+    };
+
+    let recoveredMain: Agent | undefined;
+    await core.resumeSessionWithOverrides(
+      { sessionId: created.id },
+      {
+        handoff: async (summary) => {
+          recoveredMain = core.sessions.get(summary.id)?.getReadyAgent('main');
+          expect(recoveredMain).toBeDefined();
+          vi.spyOn(recoveredMain!, 'rawGenerate').mockImplementation(generate);
+        },
+      },
+    );
+    await modelStarted;
+    const recoveredTurn = recoveredMain!.turn.waitForCurrentTurn();
+
+    expect(modelHistories).toHaveLength(1);
+    expect(
+      modelHistories[0]!.match(/Review the deferred one-shot reminder\./gu),
+    ).toHaveLength(1);
+
+    finishModel.resolve();
+    await recoveredTurn;
+    await rpc.closeSession({ sessionId: created.id });
+
+    let replayedMain: Agent | undefined;
+    await core.resumeSessionWithOverrides(
+      { sessionId: created.id },
+      {
+        handoff: async (summary) => {
+          replayedMain = core.sessions.get(summary.id)?.getReadyAgent('main');
+          expect(replayedMain).toBeDefined();
+          vi.spyOn(replayedMain!, 'rawGenerate').mockImplementation(generate);
+        },
+      },
+    );
+
+    expect(replayedMain!.turn.hasActiveTurn).toBe(false);
+    expect(modelHistories).toHaveLength(1);
+    await rpc.closeSession({ sessionId: created.id });
   });
 
   it('merges caller additionalDirs when resuming a closed session', async () => {

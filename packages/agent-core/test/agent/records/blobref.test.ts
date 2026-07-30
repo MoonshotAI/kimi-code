@@ -186,6 +186,24 @@ describe('blobref', () => {
     expect(url).toBe(dataUri);
   });
 
+  it('round-trips media in a deferred turn record', async () => {
+    const { store } = await makeStore();
+    const payload = 'D'.repeat(5000);
+    const dataUri = `data:image/png;base64,${payload}`;
+    const record: AgentRecord = {
+      type: 'turn.defer',
+      id: 'deferred-media',
+      input: [{ type: 'image_url', imageUrl: { url: dataUri } }],
+      origin: { kind: 'system_trigger', name: 'producer-completion' },
+    };
+
+    const offloaded = await store.offload(record);
+    expect(firstImageUrl(offloaded).startsWith('blobref:image/png;')).toBe(true);
+
+    await store.rehydrate(offloaded);
+    expect(firstImageUrl(offloaded)).toBe(dataUri);
+  });
+
   it('replaces missing blobs with placeholder text', async () => {
     const { store } = await makeStore();
     const record: AgentRecord = {

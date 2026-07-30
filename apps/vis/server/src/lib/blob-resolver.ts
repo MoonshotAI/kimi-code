@@ -46,7 +46,7 @@ function rehydrateRecord(
   baseUrl: string,
 ): void {
   const type = record['type'];
-  if (type === 'turn.prompt' || type === 'turn.steer') {
+  if (type === 'turn.prompt' || type === 'turn.steer' || type === 'turn.defer') {
     rehydrateParts(record['input'] as unknown as ContentPart[], sessionId, agentId, baseUrl);
     return;
   }

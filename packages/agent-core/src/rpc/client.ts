@@ -19,7 +19,7 @@ type RpcResponse =
   | { readonly ok: false; readonly error: KimiErrorPayload };
 
 export type RPCMethods<T> = {
-  [K in keyof T]: T[K] extends (payload: infer Payload) => infer Return
+  [K in keyof T]: NonNullable<T[K]> extends (payload: infer Payload) => infer Return
     ? (payload: Payload, options?: RPCCallOptions) => Promisify<Return>
     : never;
 };

@@ -37,7 +37,8 @@ export class BlobStore {
   async offload(record: AgentRecord): Promise<AgentRecord> {
     switch (record.type) {
       case 'turn.prompt':
-      case 'turn.steer': {
+      case 'turn.steer':
+      case 'turn.defer': {
         const input = await this.offloadParts(record.input);
         return input === record.input ? record : { ...record, input };
       }
@@ -82,6 +83,7 @@ export class BlobStore {
     switch (record.type) {
       case 'turn.prompt':
       case 'turn.steer':
+      case 'turn.defer':
         await this.rehydrateParts(record.input);
         break;
       case 'context.append_message':

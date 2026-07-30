@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   ErrorCodes,
+  KimiError,
   makeErrorPayload,
   type AgentContextData,
   type ApprovalRequest,
@@ -9,6 +10,7 @@ import {
   type BeginGlobalMcpServerAuthResult,
   type CoreAPI,
   type Event,
+  type EventDeliveryBarrierRequest,
   type ExperimentalFeatureState,
   type GetCronTasksResult,
   type QuestionRequest,
@@ -141,7 +143,9 @@ interface HandlerRegistration<T> {
 
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
+  private readonly sessionResumeTails = new Map<string, Promise<void>>();
   private readonly eventListeners = new Set<(event: Event) => void>();
+  private readonly eventDeliveryBarriers = new Map<string, () => void>();
   private readonly approvalHandlers = new Map<
     string,
     HandlerRegistration<ApprovalHandler>
@@ -151,12 +155,52 @@ export abstract class SDKRpcClientBase {
     HandlerRegistration<QuestionHandler>
   >();
 
+  /**
+   * Whether this transport owns engine-side rollback when a cold resume
+   * handoff callback rejects. Atomic in-process engines return true; the base
+   * fallback relies on the harness to close the ordinary resumed session.
+   *
+   * @internal
+   */
+  readonly handlesResumeHandoffFailure: boolean = false;
+
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
   }
 
   withInteractiveAgent<T>(agentId: string, fn: () => T): T {
     return this.interactiveAgentScope.run(agentId, fn);
+  }
+
+  protected serializeSessionResume<T>(
+    sessionId: string,
+    run: (normalizedSessionId: string) => Promise<T>,
+  ): Promise<T> {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const previous = this.sessionResumeTails.get(normalizedSessionId);
+    const waitForPrevious = previous?.catch(() => undefined);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = waitForPrevious === undefined
+      ? gate
+      : waitForPrevious.then(() => gate);
+    this.sessionResumeTails.set(normalizedSessionId, tail);
+
+    const execute = async (): Promise<T> => {
+      try {
+        return await run(normalizedSessionId);
+      } finally {
+        release();
+        if (this.sessionResumeTails.get(normalizedSessionId) === tail) {
+          this.sessionResumeTails.delete(normalizedSessionId);
+        }
+      }
+    };
+    return waitForPrevious === undefined
+      ? execute()
+      : waitForPrevious.then(execute);
   }
 
   protected abstract getRpc(): Promise<ResolvedCoreAPI>;
@@ -179,8 +223,30 @@ export abstract class SDKRpcClientBase {
   }
 
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
-    const rpc = await this.getRpc();
-    return rpc.resumeSession({ ...input, sessionId: input.id });
+    return this.serializeSessionResume(input.id, async (sessionId) => {
+      const rpc = await this.getRpc();
+      const { id, ...resumeInput } = input;
+      void id;
+      return rpc.resumeSession({ ...resumeInput, sessionId });
+    });
+  }
+
+  /**
+   * Resume a session and let the host attach state before control returns.
+   * Transports without an atomic handoff point invoke the callback after the
+   * ordinary resume completes.
+   */
+  async resumeSessionWithHandoff(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    onSnapshotStart?.();
+    const summary = await this.resumeSession(input);
+    onSnapshotReady?.();
+    await handoff(summary);
+    return summary;
   }
 
   async resumeSessionWithKaos(
@@ -818,6 +884,25 @@ export abstract class SDKRpcClientBase {
     }
   }
 
+  protected registerEventDeliveryBarrier(
+    token: string,
+    handler: () => void,
+  ): Unsubscribe {
+    this.eventDeliveryBarriers.set(token, handler);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      if (this.eventDeliveryBarriers.get(token) === handler) {
+        this.eventDeliveryBarriers.delete(token);
+      }
+    };
+  }
+
+  eventDeliveryBarrier(request: EventDeliveryBarrierRequest): void {
+    this.eventDeliveryBarriers.get(request.token)?.();
+  }
+
   setApprovalHandler(sessionId: string, handler: ApprovalHandler | undefined): void {
     if (handler === undefined) {
       this.approvalHandlers.delete(sessionId);
@@ -927,6 +1012,12 @@ export class ClientAPI implements SDKAPI {
     this.client.receiveEvent(event);
   }
 
+  eventDeliveryBarrier(
+    request: EventDeliveryBarrierRequest & { sessionId: string; agentId: string },
+  ): void {
+    this.client.eventDeliveryBarrier(request);
+  }
+
   requestApproval(
     request: ApprovalRequest & { sessionId: string; agentId: string },
   ): Promise<ApprovalResponse> {
@@ -942,6 +1033,17 @@ export class ClientAPI implements SDKAPI {
   toolCall(request: ToolCallRequest): Promise<ToolCallResponse> {
     return this.client.toolCall(request);
   }
+}
+
+function normalizeSessionId(value: string): string {
+  if (typeof value !== 'string') {
+    throw new KimiError(ErrorCodes.SESSION_ID_REQUIRED, 'Session id is required.');
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new KimiError(ErrorCodes.SESSION_ID_EMPTY, 'Session id cannot be empty.');
+  }
+  return normalized;
 }
 
 function errorMessage(error: unknown): string {

@@ -26,7 +26,7 @@
  *   is needed. Unlike the config domain, the v2 plugin service serializes
  *   every read behind its own initial load, so there is no ready trap here.
  * - `listSessions` / `createSession` / `renameSession` / `forkSession` /
- *   `closeSession` / `resumeSession` / `reloadSession` /
+ *   `closeSession` / `resumeSession` / `resumeSessionWithHandoff` / `reloadSession` /
  *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
@@ -336,6 +336,7 @@ const MAX_TIMER_DELAY_MS = 0x7fffffff;
 const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 
 export class SDKRpcClientV2 extends SDKRpcClientBase {
+  override readonly handlesResumeHandoffFailure = true;
   readonly homeDir: string;
   readonly configPath: string;
   readonly identity: KimiHostIdentity | undefined;
@@ -748,6 +749,64 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     wiring.dispose();
   }
 
+  private acquireFreshResumeQuiescence(
+    sessionId: string,
+    agent: IAgentScopeHandle,
+  ): IDisposable {
+    const quiescence = agent.accessor.get(IAgentLoopService).tryAcquireQuiescence();
+    if (quiescence === undefined) {
+      throw new Error(`Main agent for session "${sessionId}" was not quiescent during resume`);
+    }
+    return quiescence;
+  }
+
+  private acquireSettledResumeQuiescence(agent: IAgentScopeHandle): Promise<IDisposable> {
+    return agent.accessor.get(IAgentLoopService).acquireQuiescence();
+  }
+
+  private async acquireLiveResumeQuiescence(
+    handle: ISessionScopeHandle,
+    onAdmissionsHeld: () => void,
+  ): Promise<IDisposable> {
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    const existing = agents.get(MAIN_AGENT_ID);
+    if (existing !== undefined) {
+      const acquisition = this.acquireSettledResumeQuiescence(existing);
+      try {
+        onAdmissionsHeld();
+      } catch (error) {
+        try {
+          (await acquisition).dispose();
+        } catch {}
+        throw error;
+      }
+      return acquisition;
+    }
+
+    let quiescence: IDisposable | undefined;
+    let gateError: Error | undefined;
+    const onDidCreate = agents.onDidCreate((agent) => {
+      if (agent.id !== MAIN_AGENT_ID) return;
+      try {
+        quiescence = this.acquireFreshResumeQuiescence(handle.id, agent);
+        onAdmissionsHeld();
+      } catch (error) {
+        gateError = error instanceof Error ? error : new Error(String(error));
+      }
+    });
+    try {
+      await this.materializeMainAgent(handle);
+      if (gateError !== undefined) throw gateError;
+      if (quiescence !== undefined) return quiescence;
+      throw new Error(`Main agent for session "${handle.id}" was not materialized`);
+    } catch (error) {
+      quiescence?.dispose();
+      throw error;
+    } finally {
+      onDidCreate.dispose();
+    }
+  }
+
   /**
    * The v1 summary of a live session, read from its own scope services (the
    * metadata document, the context's cwd/sessionDir, the workspace context's
@@ -1051,9 +1110,113 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * most recent N user turns via the shared `limitAgentReplayByTurns`.
    */
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
-    const handle = await this.sessionLifecycle.resume(input.id);
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-    this.wireSession(handle);
+    return this.serializeSessionResume(input.id, async (sessionId) => {
+      const normalizedInput = { ...input, id: sessionId };
+      const handle = await this.sessionLifecycle.resume(sessionId);
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+      this.wireSession(handle);
+      return this.finishResumeSession(handle, normalizedInput);
+    });
+  }
+
+  override async resumeSessionWithHandoff(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    return this.serializeSessionResume(input.id, (sessionId) =>
+      this.resumeSessionWithHandoffUnlocked(
+        { ...input, id: sessionId },
+        handoff,
+        onSnapshotStart,
+        onSnapshotReady,
+      ),
+    );
+  }
+
+  private async resumeSessionWithHandoffUnlocked(
+    input: ResumeSessionInput,
+    handoff: (summary: ResumedSessionSummary) => Promise<void>,
+    onSnapshotStart?: () => void,
+    onSnapshotReady?: () => void,
+  ): Promise<ResumedSessionSummary> {
+    let quiescence: IDisposable | undefined;
+    let gateError: Error | undefined;
+    let coldResumeHandle: ISessionScopeHandle | undefined;
+    let snapshotStarted = false;
+    const beginSnapshot = (): void => {
+      if (snapshotStarted) return;
+      snapshotStarted = true;
+      onSnapshotStart?.();
+    };
+    const hook = this.sessionLifecycle.hooks.onDidCreateSession.register(
+      `node-sdk-resume-handoff-${randomUUID()}`,
+      async (event, next) => {
+        if (event.source !== 'resume' || event.sessionId !== input.id) {
+          await next();
+          return;
+        }
+        coldResumeHandle = event.handle;
+        const agents = event.handle.accessor.get(IAgentLifecycleService);
+        const onDidCreate = agents.onDidCreate((agent) => {
+          if (agent.id !== MAIN_AGENT_ID) return;
+          try {
+            quiescence = this.acquireFreshResumeQuiescence(input.id, agent);
+            beginSnapshot();
+          } catch (error) {
+            gateError = error instanceof Error ? error : new Error(String(error));
+          }
+        });
+        try {
+          await next();
+        } finally {
+          onDidCreate.dispose();
+        }
+        if (gateError !== undefined) throw gateError;
+        if (quiescence === undefined) {
+          throw new Error(`Main agent for session "${input.id}" was not materialized`);
+        }
+      },
+      { after: 'node-sdk-event-wiring' },
+    );
+    try {
+      const handle = await this.sessionLifecycle.resume(input.id);
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+      this.wireSession(handle);
+      quiescence ??= await this.acquireLiveResumeQuiescence(handle, beginSnapshot);
+      beginSnapshot();
+      const summary = await this.finishResumeSession(handle, input);
+      onSnapshotReady?.();
+      await handoff(summary);
+      return summary;
+    } catch (error) {
+      if (coldResumeHandle !== undefined) {
+        if (this.sessionLifecycle.get(input.id) === coldResumeHandle) {
+          try {
+            await this.sessionLifecycle.close(input.id);
+          } catch {
+            try {
+              this.sessionLifecycle.rollbackResume(coldResumeHandle);
+            } catch {}
+          }
+        } else {
+          try {
+            this.sessionLifecycle.rollbackResume(coldResumeHandle);
+          } catch {}
+        }
+      }
+      throw error;
+    } finally {
+      hook.dispose();
+      quiescence?.dispose();
+    }
+  }
+
+  private async finishResumeSession(
+    handle: ISessionScopeHandle,
+    input: ResumeSessionInput,
+  ): Promise<ResumedSessionSummary> {
     // v1 re-resolves caller-provided additional dirs on every resume and
     // merges them over the workspace-local set; the engine's own resume only
     // restores the workspace-local ones.
@@ -2080,10 +2243,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Through the session scope (`ISessionMcpService.connectionManager()`).
-   * Both engines settle the initial connect before create/resume returns, so
-   * the entry list is final here; the v2 `McpServerEntry` is field-identical
-   * with v1's `McpServerInfo` (the cast bridges the two packages' type
-   * declarations).
+   * The v2 `McpServerEntry` is field-identical with v1's `McpServerInfo` (the
+   * cast bridges the two packages' type declarations). Callers that require
+   * terminal startup states await `getMcpStartupMetrics`; v1 intentionally
+   * starts its initial connection in the background.
    */
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
     const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);

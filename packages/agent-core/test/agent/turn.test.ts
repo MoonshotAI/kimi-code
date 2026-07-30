@@ -30,7 +30,10 @@ import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
 import { ProcessBackgroundTask } from '../../src/agent/background';
-import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../src/agent/records';
 import {
   resolveMaxRetriesPerStep,
   resolveMaxStepsPerTurn,
@@ -78,6 +81,293 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('Agent turn flow', () => {
+  it('buffers producer input while a turn-start gate is held, then launches it on release', async () => {
+    let generateCalls = 0;
+    const generate: GenerateFn = async () => {
+      generateCalls += 1;
+      return {
+        id: 'mock-resume-gate',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+
+    const release = await ctx.agent.turn.acquireTurnStartGate();
+    const turnId = ctx.agent.turn.steer(
+      [{ type: 'text', text: 'background task completed' }],
+      { kind: 'system_trigger', name: 'background-completion' },
+    );
+
+    expect(turnId).toBeNull();
+    expect(ctx.agent.turn.hasActiveTurn).toBe(false);
+    expect(generateCalls).toBe(0);
+
+    release();
+    await ctx.untilTurnEnd();
+
+    expect(generateCalls).toBe(1);
+  });
+
+  it('preserves live gated producer input when cold-replay cleanup discards historical steer state', async () => {
+    let generateCalls = 0;
+    const generate: GenerateFn = async () => {
+      generateCalls += 1;
+      return {
+        id: 'mock-cold-resume-gate',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+
+    const release = ctx.agent.turn.holdTurnStarts();
+    ctx.agent.turn.restorePrompt();
+    ctx.agent.turn.steer(
+      [{ type: 'text', text: 'cron fired during cold resume' }],
+      { kind: 'system_trigger', name: 'cron' },
+    );
+    ctx.agent.turn.finishResume();
+
+    expect(ctx.agent.turn.hasActiveTurn).toBe(false);
+    expect(generateCalls).toBe(0);
+
+    release();
+    await ctx.untilTurnEnd();
+
+    expect(generateCalls).toBe(1);
+  });
+
+  it('retries a producer input once after a failed cold handoff', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-recovered-cold-handoff',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'recovered once' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const failed = testAgent({ generate, persistence });
+    failed.configure();
+
+    const discard = failed.agent.turn.holdTurnStarts();
+    failed.agent.turn.steer(
+      [{ type: 'text', text: 'one-shot cron fired during failed handoff' }],
+      {
+        kind: 'cron_job',
+        jobId: 'cron-recover-once',
+        cron: '0 9 * * *',
+        recurring: false,
+        coalescedCount: 1,
+        stale: false,
+      },
+    );
+    discard(true);
+
+    expect(histories).toHaveLength(0);
+    expect(
+      persistence.records.filter((record) => record.type === 'turn.defer'),
+    ).toHaveLength(1);
+    expect(
+      persistence.records.filter((record) => record.type === 'turn.defer.consume'),
+    ).toHaveLength(0);
+    expect(
+      persistence.records.filter((record) => record.type === 'turn.steer'),
+    ).toHaveLength(0);
+
+    const recovered = testAgent({ generate, persistence });
+    const release = recovered.agent.turn.holdTurnStarts();
+    await recovered.agent.resume();
+    recovered.configure();
+
+    expect(recovered.agent.turn.hasActiveTurn).toBe(false);
+    expect(histories).toHaveLength(0);
+
+    release();
+    await recovered.untilTurnEnd();
+
+    expect(histories).toHaveLength(1);
+    expect(
+      histories[0]!
+        .flatMap((message) => message.content)
+        .filter(
+          (part) =>
+            part.type === 'text' &&
+            part.text === 'one-shot cron fired during failed handoff',
+        ),
+    ).toHaveLength(1);
+    expect(
+      persistence.records.filter((record) => record.type === 'turn.defer.consume'),
+    ).toHaveLength(1);
+    const deferredRecord = persistence.records.find(
+      (record) => record.type === 'turn.defer',
+    );
+    const deferredContextRecord = persistence.records.find(
+      (record) =>
+        record.type === 'context.append_message' &&
+        record.message.content.some(
+          (part) =>
+            part.type === 'text' &&
+            part.text === 'one-shot cron fired during failed handoff',
+        ),
+    );
+    expect(deferredContextRecord).toMatchObject({
+      deferredInputId: deferredRecord?.id,
+    });
+    expect(
+      persistence.records.filter((record) => record.type === 'turn.steer'),
+    ).toHaveLength(0);
+
+    const replayed = testAgent({ generate, persistence });
+    const releaseReplay = replayed.agent.turn.holdTurnStarts();
+    await replayed.agent.resume();
+    replayed.configure();
+    releaseReplay();
+
+    expect(replayed.agent.turn.hasActiveTurn).toBe(false);
+    expect(histories).toHaveLength(1);
+  });
+
+  it('replays identical deferred inputs by wire order so only unmatched work is appended', async () => {
+    const input = [{ type: 'text' as const, text: 'identical producer completion' }];
+    const origin = { kind: 'system_trigger' as const, name: 'producer-completion' };
+    const persistence = new InMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      { type: 'turn.defer', id: 'already-consumed', input, origin },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: input, toolCalls: [], origin },
+      },
+      { type: 'turn.defer.consume', id: 'already-consumed' },
+      { type: 'turn.defer', id: 'crashed-after-append', input, origin },
+      { type: 'turn.defer', id: 'not-yet-appended', input, origin },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: input, toolCalls: [], origin },
+      },
+    ]);
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-identical-deferred-replay',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate, persistence });
+    const release = ctx.agent.turn.holdTurnStarts();
+
+    await ctx.agent.resume();
+    ctx.configure();
+    const turnEnded = ctx.untilTurnEnd();
+    release();
+    await turnEnded;
+
+    expect(
+      histories[0]!
+        .flatMap((message) => message.content)
+        .filter(
+          (part) =>
+            part.type === 'text' &&
+            part.text === 'identical producer completion',
+        ),
+    ).toHaveLength(3);
+    expect(
+      persistence.records
+        .filter((record) => record.type === 'turn.defer.consume')
+        .map((record) => record.id),
+    ).toEqual([
+      'already-consumed',
+      'crashed-after-append',
+      'not-yet-appended',
+    ]);
+  });
+
+  it('gates producer input while waiting for an active turn, then starts it in a new turn on release', async () => {
+    const firstRequestStarted = createControlledPromise<void>();
+    const finishFirstRequest = createControlledPromise<void>();
+    const histories: Message[][] = [];
+    let generateCalls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      generateCalls += 1;
+      if (generateCalls === 1) {
+        firstRequestStarted.resolve();
+        await finishFirstRequest;
+      }
+      return {
+        id: 'mock-resume-gate-active-turn',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    await firstRequestStarted;
+
+    let acquired = false;
+    const acquisition = ctx.agent.turn.acquireTurnStartGate().then((release) => {
+      acquired = true;
+      return release;
+    });
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+
+    const producerTurnId = ctx.agent.turn.steer(
+      [{ type: 'text', text: 'producer completed during active turn' }],
+      { kind: 'system_trigger', name: 'producer-completion' },
+    );
+    expect(producerTurnId).toBeNull();
+
+    const turnEnded = ctx.untilTurnEnd();
+    finishFirstRequest.resolve();
+    await turnEnded;
+    const release = await acquisition;
+
+    expect(acquired).toBe(true);
+    expect(generateCalls).toBe(1);
+    expect(
+      histories[0]!
+        .flatMap((message) => message.content)
+        .some((part) => part.type === 'text' && part.text.includes('producer completed')),
+    ).toBe(false);
+
+    release();
+    await ctx.untilTurnEnd();
+
+    expect(generateCalls).toBe(2);
+    expect(
+      histories[1]!
+        .flatMap((message) => message.content)
+        .some((part) => part.type === 'text' && part.text.includes('producer completed')),
+    ).toBe(true);
+  });
+
   it('degrades older history media and retries when the provider rejects the request body as too large', async () => {
     let attempts = 0;
     const histories: Message[][] = [];

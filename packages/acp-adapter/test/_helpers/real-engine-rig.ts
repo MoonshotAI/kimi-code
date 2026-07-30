@@ -26,8 +26,9 @@ import {
 import { runAcpServerWithStream } from '../../src/server';
 
 const TEST_IDENTITY = {
-  userAgentProduct: 'kimi-code-cli',
+  productName: 'kimi-code-cli',
   version: '0.0.0-test',
+  platform: 'kimi_code_cli',
 } as const;
 const API_KEY = 'YOUR_API_KEY';
 const MODEL = 'stub-model';
@@ -56,12 +57,18 @@ class LoopbackModelServer {
   private constructor(
     private readonly server: Server,
     private readonly replies: readonly ModelReply[],
+    private readonly beforeReply:
+      | ((request: ModelRequest, index: number) => Promise<void> | void)
+      | undefined,
     port: number,
   ) {
     this.baseUrl = `http://127.0.0.1:${String(port)}/v1`;
   }
 
-  static async start(replies: readonly ModelReply[]): Promise<LoopbackModelServer> {
+  static async start(
+    replies: readonly ModelReply[],
+    beforeReply?: (request: ModelRequest, index: number) => Promise<void> | void,
+  ): Promise<LoopbackModelServer> {
     let fixture: LoopbackModelServer | undefined;
     const server = createServer((request, response) => {
       void fixture?.handle(request, response);
@@ -69,7 +76,7 @@ class LoopbackModelServer {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
-    fixture = new LoopbackModelServer(server, replies, address.port);
+    fixture = new LoopbackModelServer(server, replies, beforeReply, address.port);
     return fixture;
   }
 
@@ -103,13 +110,16 @@ class LoopbackModelServer {
 
     try {
       const body = await readJsonBody(request);
-      const reply = this.replies[this.requests.length];
-      this.requests.push({ authorization, body });
+      const index = this.requests.length;
+      const reply = this.replies[index];
+      const modelRequest = { authorization, body };
+      this.requests.push(modelRequest);
       if (reply === undefined) {
         respondJson(response, 500, { error: { message: 'unexpected model request' } });
         return;
       }
-      respondSse(response, reply, this.requests.length);
+      await this.beforeReply?.(modelRequest, index);
+      respondSse(response, reply, index + 1);
     } catch (error) {
       respondJson(response, 400, {
         error: { message: error instanceof Error ? error.message : String(error) },
@@ -128,6 +138,12 @@ export class CollectingClient implements Client {
     readonly onAbort: () => void;
   }>();
 
+  constructor(
+    private readonly onSessionUpdate:
+      | ((notification: SessionNotification) => Promise<void> | void)
+      | undefined = undefined,
+  ) {}
+
   async requestPermission(_request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('requestPermission should not be called in the real-engine ACP rig');
   }
@@ -140,6 +156,7 @@ export class CollectingClient implements Client {
       waiter.signal.removeEventListener('abort', waiter.onAbort);
       waiter.resolve(notification);
     }
+    await this.onSessionUpdate?.(notification);
   }
 
   async writeTextFile(request: WriteTextFileRequest): Promise<WriteTextFileResponse> {
@@ -183,9 +200,11 @@ export interface RealEngineRig {
   readonly client: ClientSideConnection;
   readonly collecting: CollectingClient;
   readonly harness: KimiHarness;
+  readonly homeDir: string;
   readonly modelRequests: readonly ModelRequest[];
   readonly session: Session;
   readonly workDir: string;
+  closeRuntime(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -195,24 +214,45 @@ export async function createRealEngineRig(options: {
   readonly workDir: string;
   readonly replies: readonly ModelReply[];
   readonly additionalConfig?: string;
+  readonly session?: { readonly kind: 'load'; readonly id: string };
+  readonly onSessionUpdate?: (
+    notification: SessionNotification,
+  ) => Promise<void> | void;
+  readonly beforeModelReply?: (
+    request: ModelRequest,
+    index: number,
+  ) => Promise<void> | void;
 }): Promise<RealEngineRig> {
-  const modelServer = await LoopbackModelServer.start(options.replies);
+  const modelServer = await LoopbackModelServer.start(
+    options.replies,
+    options.beforeModelReply,
+  );
   let harness: KimiHarness | undefined;
   let clientToAgent: TransformStream<Uint8Array, Uint8Array> | undefined;
   let agentToClient: TransformStream<Uint8Array, Uint8Array> | undefined;
   let client: ClientSideConnection | undefined;
   let serverRun: Promise<void> | undefined;
-  const cleanup = () =>
-    runCleanupSteps([
+  let runtimeClosePromise: Promise<void> | undefined;
+  const closeRuntime = (): Promise<void> => {
+    runtimeClosePromise ??= runCleanupSteps([
       () => clientToAgent?.writable.close(),
       () => serverRun,
       () => agentToClient?.writable.close(),
       () => client?.closed,
       () => harness?.close(),
       () => modelServer.close(),
+    ]);
+    return runtimeClosePromise;
+  };
+  let closePromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => {
+    closePromise ??= runCleanupSteps([
+      closeRuntime,
       () => rm(options.homeDir, { recursive: true, force: true }),
       () => rm(options.workDir, { recursive: true, force: true }),
     ]);
+    return closePromise;
+  };
   try {
     await writeFile(
       `${options.homeDir}/config.toml`,
@@ -227,25 +267,35 @@ export async function createRealEngineRig(options: {
     const agentStream = ndJsonStream(agentToClient.writable, clientToAgent.readable);
     const clientStream = ndJsonStream(clientToAgent.writable, agentToClient.readable);
     serverRun = runAcpServerWithStream(harness, agentStream);
-    const collecting = new CollectingClient();
+    const collecting = new CollectingClient(options.onSessionUpdate);
     client = new ClientSideConnection(() => collecting, clientStream);
-    const response = await client.newSession({ cwd: options.workDir, mcpServers: [] });
-    const session = harness.getSession(response.sessionId);
+    const sessionId =
+      options.session?.kind === 'load'
+        ? options.session.id
+        : (await client.newSession({ cwd: options.workDir, mcpServers: [] })).sessionId;
+    if (options.session?.kind === 'load') {
+      await client.loadSession({
+        sessionId,
+        cwd: options.workDir,
+        mcpServers: [],
+      });
+    }
+    const session = harness.getSession(sessionId);
     if (session === undefined) {
-      throw new Error(`Harness did not retain ACP session ${response.sessionId}`);
+      throw new Error(`Harness did not retain ACP session ${sessionId}`);
     }
 
-    let closePromise: Promise<void> | undefined;
     return {
       client,
       collecting,
       harness,
+      homeDir: options.homeDir,
       modelRequests: modelServer.requests,
       session,
       workDir: options.workDir,
+      closeRuntime,
       close() {
-        closePromise ??= cleanup();
-        return closePromise;
+        return cleanup();
       },
     };
   } catch (error) {

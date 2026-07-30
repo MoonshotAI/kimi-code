@@ -526,6 +526,144 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s1')).toBeUndefined();
   });
 
+  it('rollbackResume disposes the expected session after its close hook rejects', async () => {
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const svc = build();
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const closeError = new Error('close hook failed');
+    const closed: string[] = [];
+    const subscription = svc.onDidCloseSession((event) => closed.push(event.sessionId));
+    const hook = svc.hooks.onWillCloseSession.register('test-close-failure', async () => {
+      throw closeError;
+    });
+
+    try {
+      await expect(svc.close('s1')).rejects.toBe(closeError);
+      expect(svc.get('s1')).toBe(handle);
+
+      svc.rollbackResume(handle);
+
+      expect(svc.get('s1')).toBeUndefined();
+      expect(disposedSessionScopes).toEqual(['s1']);
+      expect(closed).toEqual(['s1']);
+    } finally {
+      hook.dispose();
+      subscription.dispose();
+    }
+  });
+
+  it('close completes observable teardown when agent draining fails', async () => {
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const drainError = new Error('agent drain failed');
+    const agent = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: () => {
+          throw new Error('unexpected agent service access');
+        },
+      },
+      dispose: () => {},
+    } as IAgentScopeHandle;
+    const remove = vi.fn(() => Promise.reject(drainError));
+    const svc = build([
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        list: () => [agent],
+        remove,
+      }),
+    ]);
+    const closed: string[] = [];
+    const subscription = svc.onDidCloseSession((event) => closed.push(event.sessionId));
+
+    try {
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      await expect(svc.close('s1')).rejects.toBe(drainError);
+
+      expect(remove).toHaveBeenCalledWith(MAIN_AGENT_ID);
+      expect(svc.get('s1')).toBeUndefined();
+      expect(disposedSessionScopes).toEqual(['s1']);
+      expect(closed).toEqual(['s1']);
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('rollbackResume is idempotent for the same session handle', async () => {
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const svc = build();
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const closed: string[] = [];
+    const subscription = svc.onDidCloseSession((event) => closed.push(event.sessionId));
+
+    try {
+      svc.rollbackResume(handle);
+      svc.rollbackResume(handle);
+
+      expect(svc.get('s1')).toBeUndefined();
+      expect(disposedSessionScopes).toEqual(['s1']);
+      expect(closed).toEqual(['s1']);
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('close leaves a replacement session installed by its hook live', async () => {
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionExternalHooksService,
+      RecordingSessionDisposalService,
+      ScopeActivation.OnScopeCreated,
+      'externalHooks',
+    );
+    const svc = build();
+    const stale = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    let replacement: typeof stale | undefined;
+    const closed: string[] = [];
+    const subscription = svc.onDidCloseSession((event) => closed.push(event.sessionId));
+    const hook = svc.hooks.onWillCloseSession.register(
+      'test-concurrent-replacement',
+      async (event, next) => {
+        if (event.handle === stale) {
+          replacement = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+        }
+        await next();
+      },
+    );
+
+    try {
+      await svc.close('s1');
+
+      expect(replacement).toBeDefined();
+      expect(svc.get('s1')).toBe(replacement);
+      expect(svc.list()).toEqual([replacement]);
+      expect(disposedSessionScopes).toEqual(['s1']);
+      expect(closed).toEqual([]);
+    } finally {
+      hook.dispose();
+      subscription.dispose();
+    }
+  });
+
   it('create seeds identity and materializes metadata', async () => {
     const svc = build();
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });

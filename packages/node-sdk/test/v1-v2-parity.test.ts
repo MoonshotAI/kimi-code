@@ -3769,6 +3769,13 @@ describe('v1↔v2 session MCP parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_mcp_list' });
       const input = { sessionId: 'session_parity_mcp_list' } as const;
+      // v1 intentionally starts session MCP connections in the background.
+      // Wait on the public readiness surface before comparing terminal states;
+      // otherwise CPU load from parallel files can leave only v1 at `pending`.
+      await Promise.all([
+        pair.v1.getMcpStartupMetrics(input),
+        pair.v2.getMcpStartupMetrics(input),
+      ]);
       const [v1Servers, v2Servers] = await Promise.all([
         pair.v1.listMcpServers(input),
         pair.v2.listMcpServers(input),

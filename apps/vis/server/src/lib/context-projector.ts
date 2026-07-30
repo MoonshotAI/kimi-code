@@ -505,6 +505,8 @@ export function projectContext(
       case 'forked':
       case 'turn.prompt':
       case 'turn.steer':
+      case 'turn.defer':
+      case 'turn.defer.consume':
       case 'turn.cancel':
       case 'permission.record_approval_result':
       case 'full_compaction.begin':

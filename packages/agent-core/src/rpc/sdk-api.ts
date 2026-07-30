@@ -69,8 +69,20 @@ export interface ToolCallResponse {
   readonly isError?: boolean | undefined;
 }
 
+/** @internal */
+export interface EventDeliveryBarrierRequest {
+  readonly token: string;
+}
+
 export interface SDKAgentAPI {
   emitEvent: (event: AgentEvent) => void;
+  /**
+   * Ordered marker used by snapshot handoffs. Once this handler runs, every
+   * event sent before the marker has reached the SDK-side event listeners.
+   *
+   * @internal
+   */
+  eventDeliveryBarrier?: (request: EventDeliveryBarrierRequest) => void;
   requestApproval: (request: ApprovalRequest) => Promise<ApprovalResponse>;
   requestQuestion: (request: QuestionRequest) => Promise<QuestionResult>;
   toolCall: (request: ToolCallRequest) => Promise<ToolCallResponse>;
