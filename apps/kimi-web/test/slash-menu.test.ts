@@ -52,6 +52,12 @@ describe('useSlashMenu — update', () => {
     expect(slash.active.value).toBe(0);
   });
 
+  it('lists /usage among built-in commands', () => {
+    const { slash } = setup('/');
+    slash.update();
+    expect(slash.items.value.map((i) => i.name)).toContain('/usage');
+  });
+
   it('filters to matching commands', () => {
     const { slash } = setup('/com');
     slash.update();

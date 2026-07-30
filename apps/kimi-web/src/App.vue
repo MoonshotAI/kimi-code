@@ -567,6 +567,9 @@ function handleCommand(cmd: string): void {
       client.setThinking(nextThinkingLevel(client.thinking.value));
       break;
     case '/status':
+    case '/usage':
+      // /usage shares the status panel: it already surfaces context tokens and
+      // session cost, which is the web equivalent of the TUI /usage report.
       showStatusPanel.value = true;
       break;
     case '/login':

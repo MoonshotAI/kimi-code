@@ -16,5 +16,6 @@ export default {
     noSession: '请先打开一个会话再导出。',
   },
   status: { desc: '查看会话状态' },
+  usage: { desc: '查看会话 token、上下文窗口与费用' },
   undo: { desc: '撤销上一条消息' },
 };
