@@ -126,8 +126,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0
       markstream-vue:
-        specifier: ^1.0.7
-        version: 1.0.7(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
+        specifier: ^1.0.9-beta.1
+        version: 1.0.9-beta.1(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
       mermaid:
         specifier: ^11.15.0
         version: 11.16.0
@@ -201,8 +201,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0
       markstream-vue:
-        specifier: ^1.0.7
-        version: 1.0.7(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
+        specifier: ^1.0.9-beta.1
+        version: 1.0.9-beta.1(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
       mermaid:
         specifier: ^11.15.0
         version: 11.16.0
@@ -846,8 +846,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0
       markstream-vue:
-        specifier: ^1.0.7
-        version: 1.0.7(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
+        specifier: ^1.0.9-beta.1
+        version: 1.0.9-beta.1(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
       monaco-editor:
         specifier: ^0.55.1
         version: 0.55.1
@@ -4534,8 +4534,8 @@ packages:
   markdown-it-task-checkbox@1.0.6:
     resolution: {integrity: sha512-7pxkHuvqTOu3iwVGmDPeYjQg+AIS9VQxzyLP9JCg9lBjgPAJXGEkChK6A2iFuj3tS0GV3HG2u5AMNhcQqwxpJw==}
 
-  markdown-it-ts@1.0.4:
-    resolution: {integrity: sha512-FmCjj7D0C54EhWNn6WdSIBoyEbEoLeqE/Orgzik+CHSIz3aQJW3/U3uc8BEOMdGl/SE4O+s4BjwKhtO7LPOwWA==}
+  markdown-it-ts@1.0.5:
+    resolution: {integrity: sha512-vD3lIbUDHE0eorCuPdku4ikNFcIJC1ZzyAQA0d/2zjMg+8etvfC10uV8GOlzQBHQc7/NUh7H0VtW72gLjXANCw==}
     engines: {node: '>=18'}
 
   marked@14.0.0:
@@ -4556,8 +4556,8 @@ packages:
   markstream-core@1.0.3:
     resolution: {integrity: sha512-QXn+yERo1q+RD6YlGDW61zc/af65uhkQEH3K8YvEKkprHbgRJ/JIeBeEQjELCTyBnPoxqtKQ7I565rylY+PePg==}
 
-  markstream-vue@1.0.7:
-    resolution: {integrity: sha512-88UVoAH34jh/BXGUVYtK8t+Tw9JETbHhRVF2DwBAIE8r8W6MO27xRADotHpz1Qn34Mas6XRW6NmqvzwwjtvciQ==}
+  markstream-vue@1.0.9-beta.1:
+    resolution: {integrity: sha512-JMv5XyX/Grpw45AuclbKRT42/dc0qYppLBLoZaJHCT/DVMjyVB7Vw5Z0i0qRKkd+LaUmELkoVNt7uMqtdS092A==}
     peerDependencies:
       '@antv/infographic': ^0.2.3
       '@terrastruct/d2': '>=0.1.33'
@@ -5540,8 +5540,8 @@ packages:
       vue:
         optional: true
 
-  stream-markdown-parser@1.1.4:
-    resolution: {integrity: sha512-fjkHUh7uIOH5Yp/kt26l2td+q/4sRusMFO4iB0d+GcWj40ZZuH+HxxiLxGeSD1oo8YdyapokzHOfchDIYFnNgg==}
+  stream-markdown-parser@1.1.7:
+    resolution: {integrity: sha512-+0TE9Xcg6lh8xghVHlZiqU6vF5rK1Lqjb+IwgCsN+/gE4HjEQLGyhWJfz+gngUh6B7O4uaCSRvu8+ZYNOBmakw==}
 
   stream-markdown@0.0.16:
     resolution: {integrity: sha512-2WoOxlpc3N5RLc3zGuW+g/w76z6ketWBY0N1YzDYbXds1qw7zrUBv5PTQ3DOtpqgCjLuF3P2iCfjJTEqWGv0NQ==}
@@ -10175,7 +10175,7 @@ snapshots:
 
   markdown-it-task-checkbox@1.0.6: {}
 
-  markdown-it-ts@1.0.4:
+  markdown-it-ts@1.0.5:
     dependencies:
       '@types/linkify-it': 5.0.0
       '@types/mdurl': 2.0.0
@@ -10193,12 +10193,12 @@ snapshots:
 
   markstream-core@1.0.3: {}
 
-  markstream-vue@1.0.7(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2)):
+  markstream-vue@1.0.9-beta.1(katex@0.17.0)(mermaid@11.16.0)(stream-diffs@0.0.2(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.39(typescript@6.0.2)))(stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(stream-monaco@0.0.49(monaco-editor@0.55.1))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2)):
     dependencies:
       '@chenglou/pretext': 0.0.8
       '@floating-ui/dom': 1.8.0
       markstream-core: 1.0.3
-      stream-markdown-parser: 1.1.4
+      stream-markdown-parser: 1.1.7
       vue: 3.5.39(typescript@6.0.2)
     optionalDependencies:
       katex: 0.17.0
@@ -11254,7 +11254,7 @@ snapshots:
       - react
       - react-dom
 
-  stream-markdown-parser@1.1.4:
+  stream-markdown-parser@1.1.7:
     dependencies:
       markdown-it-container: 4.0.0
       markdown-it-footnote: 4.0.0
@@ -11263,7 +11263,7 @@ snapshots:
       markdown-it-sub: 2.0.0
       markdown-it-sup: 2.0.0
       markdown-it-task-checkbox: 1.0.6
-      markdown-it-ts: 1.0.4
+      markdown-it-ts: 1.0.5
 
   stream-markdown@0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)):
     dependencies:
