@@ -303,6 +303,10 @@ export class SessionReplayRenderer {
       this.renderCronMissed(context, message);
       return;
     }
+    if (message.origin?.kind === 'mcp_channel') {
+      this.renderMcpChannelMessage(context, message);
+      return;
+    }
     // System-trigger messages (goal continuation prompts, goal outcome
     // reminders, stop-hook reasons, …) are model-facing only: the live event
     // stream never renders them, so replay must not leak them either.
@@ -570,6 +574,23 @@ export class SessionReplayRenderer {
     });
   }
 
+  private renderMcpChannelMessage(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'mcp_channel') return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
+        context,
+        'mcp_channel',
+        stripMcpChannelEnvelope(contentPartsToText(message.content)),
+        'plain',
+      ),
+      mcpChannelData: {
+        server: message.origin.server,
+        chatId: message.origin.chatId,
+      },
+    });
+  }
+
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
@@ -764,6 +785,18 @@ function stripCronEnvelope(text: string): string {
     lines.length >= 2 &&
     lines[0]?.startsWith('<cron-fire ') &&
     lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function stripMcpChannelEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<mcp-channel ') &&
+    lines.at(-1) === '</mcp-channel>'
   ) {
     return lines.slice(1, -1).join('\n');
   }

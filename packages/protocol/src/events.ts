@@ -142,6 +142,16 @@ export interface RetryOrigin {
   readonly trigger?: string;
 }
 
+/**
+ * A message pushed in by an MCP server (e.g. a paired Discord DM) that woke
+ * the agent. v2-only today — no v1 core counterpart exists.
+ */
+export interface McpChannelOrigin {
+  readonly kind: 'mcp_channel';
+  readonly server: string;
+  readonly chatId?: string;
+}
+
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
@@ -155,7 +165,8 @@ export type PromptOrigin =
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin
-  | RetryOrigin;
+  | RetryOrigin
+  | McpChannelOrigin;
 
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
 export type GoalActor = 'user' | 'model' | 'runtime' | 'system';
@@ -850,6 +861,18 @@ export interface CronFiredEvent {
   readonly prompt: string;
 }
 
+/**
+ * An MCP server (e.g. a Discord bridge) pushed a message into a paired chat
+ * that woke the agent. v2-only today — no v1 core counterpart exists.
+ */
+export interface McpChannelReceivedEvent {
+  readonly type: 'mcp.channel.received';
+  readonly server: string;
+  readonly chatId?: string;
+  readonly text: string;
+  readonly receivedAt: string;
+}
+
 export interface PromptSubmittedEvent {
   readonly type: 'prompt.submitted';
   readonly promptId: string;
@@ -949,6 +972,7 @@ export type AgentEvent =
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent
   | CronFiredEvent
+  | McpChannelReceivedEvent
   | PromptSubmittedEvent
   | PromptCompletedEvent
   | PromptAbortedEvent
@@ -1074,6 +1098,12 @@ export const retryOriginSchema = z.object({
   trigger: z.string().optional(),
 }) satisfies z.ZodType<RetryOrigin>;
 
+export const mcpChannelOriginSchema = z.object({
+  kind: z.literal('mcp_channel'),
+  server: z.string(),
+  chatId: z.string().optional(),
+}) satisfies z.ZodType<McpChannelOrigin>;
+
 export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
   skillActivationOriginSchema,
@@ -1088,6 +1118,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   cronMissedOriginSchema,
   hookResultOriginSchema,
   retryOriginSchema,
+  mcpChannelOriginSchema,
 ]) satisfies z.ZodType<PromptOrigin>;
 
 export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']) satisfies z.ZodType<GoalStatus>;
@@ -1705,6 +1736,14 @@ export const cronFiredEventSchema = z.object({
   prompt: z.string(),
 }) satisfies z.ZodType<CronFiredEvent>;
 
+export const mcpChannelReceivedEventSchema = z.object({
+  type: z.literal('mcp.channel.received'),
+  server: z.string(),
+  chatId: z.string().optional(),
+  text: z.string(),
+  receivedAt: isoDateTimeSchema,
+}) satisfies z.ZodType<McpChannelReceivedEvent>;
+
 export const promptSubmittedEventSchema = z.object({
   type: z.literal('prompt.submitted'),
   promptId: z.string(),
@@ -1807,6 +1846,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   backgroundTaskStartedEventSchema,
   backgroundTaskTerminatedEventSchema,
   cronFiredEventSchema,
+  mcpChannelReceivedEventSchema,
   promptSubmittedEventSchema,
   promptCompletedEventSchema,
   promptAbortedEventSchema,

@@ -6,8 +6,9 @@ import type { AgentReplayRecord } from '../../rpc/resumed';
  * A record starts a new user turn when it is a user-role message that came
  * from an actual user action — a typed prompt, a user-invoked skill/plugin
  * slash command, or a `!` shell command's input line. System-originated user
- * messages (compaction summaries, cron fires, hook results, retries, goal
- * reminders, background-task results, injections) continue the current turn
+ * messages (compaction summaries, cron fires, MCP channel pushes, hook
+ * results, retries, goal reminders, background-task results, injections)
+ * continue the current turn
  * instead — with one exception: `goal_continuation` prompts. The goal driver
  * fires one synthetic continuation prompt per goal turn (see
  * agent/turn/index.ts), and the goal system itself counts those as turns, so
@@ -39,6 +40,7 @@ export function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean 
     case 'hook_result':
     case 'injection':
     case 'retry':
+    case 'mcp_channel':
       return false;
     case 'system_trigger':
       // The goal driver fires one synthetic continuation prompt per goal turn

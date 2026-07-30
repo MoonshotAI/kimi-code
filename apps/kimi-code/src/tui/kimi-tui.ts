@@ -75,6 +75,7 @@ import {
   GoalCompletionMessageComponent,
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
+import { McpChannelMessageComponent } from './components/messages/mcp-channel-message';
 import { PluginCommandComponent } from './components/messages/plugin-command';
 import { ShellRunComponent } from './components/messages/shell-run';
 import { SkillActivationComponent } from './components/messages/skill-activation';
@@ -1907,6 +1908,9 @@ export class KimiTUI {
       }
       case 'cron':
         return new CronMessageComponent(entry.content, entry.cronData ?? {});
+      case 'mcp_channel':
+        if (entry.mcpChannelData === undefined) return null;
+        return new McpChannelMessageComponent(entry.content, entry.mcpChannelData);
       case 'goal':
         if (entry.goalData?.kind === 'created') {
           return new GoalSetMessageComponent();

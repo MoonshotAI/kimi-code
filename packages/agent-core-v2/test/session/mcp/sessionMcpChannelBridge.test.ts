@@ -115,10 +115,17 @@ describe('SessionMcpChannelBridgeImpl', () => {
 
     await flushMicrotasks();
     expect(h.publish).toHaveBeenCalledTimes(1);
-    const event = h.publish.mock.calls[0]?.[0] as { type: string; server: string; chatId?: string; receivedAt: string };
+    const event = h.publish.mock.calls[0]?.[0] as {
+      type: string;
+      server: string;
+      chatId?: string;
+      text: string;
+      receivedAt: string;
+    };
     expect(event.type).toBe('mcp.channel.received');
     expect(event.server).toBe('discord');
     expect(event.chatId).toBe('chat-1');
+    expect(event.text).toBe('hello from discord');
     expect(typeof event.receivedAt).toBe('string');
     expect(Number.isNaN(Date.parse(event.receivedAt))).toBe(false);
   });

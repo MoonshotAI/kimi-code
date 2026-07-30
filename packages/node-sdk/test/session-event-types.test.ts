@@ -53,6 +53,12 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'cron.fired'>['origin']['kind']>().toEqualTypeOf<'cron_job'>();
   });
 
+  it('narrows mcp channel received events by type', () => {
+    expectTypeOf<EventByType<'mcp.channel.received'>['server']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'mcp.channel.received'>['chatId']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<EventByType<'mcp.channel.received'>['text']>().toEqualTypeOf<string>();
+  });
+
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
@@ -113,6 +119,7 @@ describe('Event public types', () => {
         case 'background.task.started':
         case 'background.task.terminated':
         case 'cron.fired':
+        case 'mcp.channel.received':
         case 'prompt.submitted':
         case 'prompt.completed':
         case 'prompt.aborted':

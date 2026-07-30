@@ -16,6 +16,7 @@ export type {
   Event,
   GoalUpdatedEvent,
   HookResultEvent,
+  McpChannelReceivedEvent,
   McpOAuthAuthorizationUrlUpdateData,
   McpServerStatusEvent,
   McpServerStatusPayload,

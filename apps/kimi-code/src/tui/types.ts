@@ -136,6 +136,11 @@ export interface CronTranscriptData {
   readonly missedCount?: number;
 }
 
+export interface McpChannelTranscriptData {
+  readonly server: string;
+  readonly chatId?: string;
+}
+
 export type GoalTranscriptData =
   | { readonly kind: 'created' }
   | { readonly kind: 'lifecycle'; readonly change: GoalChange };
@@ -150,6 +155,7 @@ export type TranscriptEntryKind =
   | 'skill_activation'
   | 'plugin_command'
   | 'cron'
+  | 'mcp_channel'
   | 'goal';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
@@ -183,6 +189,7 @@ export interface TranscriptEntry {
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
   cronData?: CronTranscriptData;
+  mcpChannelData?: McpChannelTranscriptData;
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;

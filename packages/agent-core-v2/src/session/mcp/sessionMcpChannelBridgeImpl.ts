@@ -43,7 +43,12 @@ import { ISessionMcpService } from './sessionMcp';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    'mcp.channel.received': { readonly server: string; readonly chatId?: string; readonly receivedAt: string };
+    'mcp.channel.received': {
+      readonly server: string;
+      readonly chatId?: string;
+      readonly text: string;
+      readonly receivedAt: string;
+    };
   }
 }
 
@@ -86,6 +91,7 @@ export class SessionMcpChannelBridgeImpl extends Disposable implements ISessionM
           type: 'mcp.channel.received',
           server: message.server,
           chatId: message.chatId,
+          text: message.text,
           receivedAt: new Date().toISOString(),
         });
       },

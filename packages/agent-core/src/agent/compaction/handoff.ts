@@ -77,6 +77,7 @@ export function compactionUserMessageDisposition(
     case 'cron_missed':
     case 'hook_result':
     case 'retry':
+    case 'mcp_channel':
       return 'drop';
     default: {
       const _exhaustive: never = origin;

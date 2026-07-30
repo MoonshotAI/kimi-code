@@ -87,6 +87,19 @@ export interface RetryOrigin {
   readonly trigger?: string;
 }
 
+/**
+ * A message pushed in by an MCP server (e.g. a paired Discord DM) that woke
+ * the agent. v2-only today — no v1 engine ever produces this origin, but the
+ * v1-shaped `ContextMessage`/`Event` types are shared across both engines
+ * (the v2 SDK harness casts its own origins into these types), so the union
+ * needs the member for the cast to be sound.
+ */
+export interface McpChannelOrigin {
+  readonly kind: 'mcp_channel';
+  readonly server: string;
+  readonly chatId?: string;
+}
+
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
@@ -99,7 +112,8 @@ export type PromptOrigin =
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin
-  | RetryOrigin;
+  | RetryOrigin
+  | McpChannelOrigin;
 
 export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;

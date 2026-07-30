@@ -14,6 +14,7 @@ import type {
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
+  McpChannelReceivedEvent,
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
@@ -294,6 +295,7 @@ export class SessionEventHandler {
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
+      case 'mcp.channel.received': this.handleMcpChannelReceived(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;
@@ -344,6 +346,21 @@ export class SessionEventHandler {
         recurring: event.origin.recurring,
         coalescedCount: event.origin.coalescedCount,
         stale: event.origin.stale,
+      },
+    });
+  }
+
+  private handleMcpChannelReceived(event: McpChannelReceivedEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'mcp_channel',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: event.text,
+      mcpChannelData: {
+        server: event.server,
+        chatId: event.chatId,
       },
     });
   }

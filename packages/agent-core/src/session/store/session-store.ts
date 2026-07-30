@@ -754,6 +754,7 @@ function isUserVisibleTurnRecord(record: AgentRecord): boolean {
     case 'injection':
     case 'retry':
     case 'system_trigger':
+    case 'mcp_channel':
       return false;
   }
 }
@@ -776,6 +777,7 @@ function isUserVisibleTurnInputRecord(record: AgentRecord): boolean {
     case 'injection':
     case 'retry':
     case 'system_trigger':
+    case 'mcp_channel':
       return false;
   }
 }

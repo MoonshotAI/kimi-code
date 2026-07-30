@@ -39,6 +39,7 @@ const ALL_PROMPT_ORIGIN_KINDS = {
   cron_missed: true,
   hook_result: true,
   retry: true,
+  mcp_channel: true,
 } satisfies Record<PromptOrigin['kind'], true>;
 
 const EXPECTED_DISPOSITION: Record<PromptOrigin['kind'], CompactionUserDisposition> = {
@@ -54,6 +55,7 @@ const EXPECTED_DISPOSITION: Record<PromptOrigin['kind'], CompactionUserDispositi
   cron_missed: 'drop',
   hook_result: 'drop',
   retry: 'drop',
+  mcp_channel: 'drop',
 };
 
 function originForKind(kind: PromptOrigin['kind']): PromptOrigin {
@@ -105,6 +107,8 @@ function originForKind(kind: PromptOrigin['kind']): PromptOrigin {
       return { kind: 'hook_result', event: 'PreCompact' };
     case 'retry':
       return { kind: 'retry', trigger: 'system' };
+    case 'mcp_channel':
+      return { kind: 'mcp_channel', server: 'discord', chatId: 'chat-1' };
   }
 }
 
