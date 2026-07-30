@@ -44,6 +44,7 @@ import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
   configOptionUpdateNotification,
+  contextUsageToUsageUpdate,
   planFromDisplayBlock,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,
@@ -1095,6 +1096,23 @@ export class AcpSession {
                 error: err instanceof Error ? err.message : String(err),
               });
             });
+          return;
+        }
+        if (event.type === 'agent.status.updated') {
+          if (!isFromMainAgent(event)) return;
+          const update = contextUsageToUsageUpdate(
+            sessionId,
+            event.contextTokens,
+            event.maxContextTokens,
+          );
+          if (update !== null) {
+            conn.sessionUpdate(update).catch((err) => {
+              log.warn('acp: failed to push usage_update', {
+                sessionId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+          }
           return;
         }
         if (event.type === 'tool.call.started') {

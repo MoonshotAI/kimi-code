@@ -19,6 +19,7 @@ export {
 export {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
+  contextUsageToUsageUpdate,
   inferToolKind,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,

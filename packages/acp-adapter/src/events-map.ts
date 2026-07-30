@@ -525,3 +525,33 @@ export function configOptionUpdateNotification(
     },
   };
 }
+
+/**
+ * Build an ACP `usage_update` session notification from contextual
+ * token usage data (e.g. an `agent.status.updated` SDK event).
+ *
+ * Wire shape ({@link https://agentclientprotocol.com/ protocol} UNSTABLE /
+ * `@experimental`):
+ *  - `size`  = total context window capacity (maxContextTokens)
+ *  - `used`  = tokens currently in context (contextTokens)
+ *  - `cost`  = cumulative cost snapshot (unset for now — can be wired
+ *    later from the session cost tracker).
+ *
+ * Returns `null` when either value is missing so callers can silently
+ * skip rather than pushing a degenerate update.
+ */
+export function contextUsageToUsageUpdate(
+  sessionId: string,
+  contextTokens: number | undefined,
+  maxContextTokens: number | undefined,
+): SessionNotification | null {
+  if (contextTokens === undefined || maxContextTokens === undefined) return null;
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      size: maxContextTokens,
+      used: contextTokens,
+    },
+  };
+}

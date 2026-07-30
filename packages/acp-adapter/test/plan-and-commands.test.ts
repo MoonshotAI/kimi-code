@@ -20,6 +20,7 @@ import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 import {
   availableCommandsUpdateNotification,
+  contextUsageToUsageUpdate,
   planFromDisplayBlock,
   todoListToSessionUpdate,
 } from '../src/events-map';
@@ -357,5 +358,159 @@ describe('Phase 9.3 e2e · todo_list display block becomes a plan session_update
       (n) => (n.update as { sessionUpdate: string }).sessionUpdate === 'plan',
     );
     expect(planUpdates).toHaveLength(0);
+  });
+});
+
+describe('contextUsageToUsageUpdate', () => {
+  it('builds a usage_update notification with size and used', () => {
+    const note = contextUsageToUsageUpdate('sess-u', 12345, 200000);
+    expect(note).not.toBeNull();
+    expect(note?.sessionId).toBe('sess-u');
+    expect(note?.update).toEqual({
+      sessionUpdate: 'usage_update',
+      size: 200000,
+      used: 12345,
+    });
+  });
+
+  it('returns null when contextTokens is undefined', () => {
+    expect(contextUsageToUsageUpdate('sess-u', undefined, 200000)).toBeNull();
+  });
+
+  it('returns null when maxContextTokens is undefined', () => {
+    expect(contextUsageToUsageUpdate('sess-u', 12345, undefined)).toBeNull();
+  });
+
+  it('returns null when both values are undefined', () => {
+    expect(contextUsageToUsageUpdate('sess-u', undefined, undefined)).toBeNull();
+  });
+});
+
+describe('e2e · agent.status.updated emits usage_update', () => {
+  it('forwards agent.status.updated events as usage_update session notifications', async () => {
+    const sessionId = 'sess-usage';
+    const turnId = 1;
+    const session = makeScriptedSession(sessionId, [
+      {
+        type: 'agent.status.updated',
+        sessionId,
+        agentId: 'main',
+        contextTokens: 5000,
+        maxContextTokens: 100000,
+        contextUsage: 0.05,
+      } as Event,
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId,
+        reason: 'completed',
+      } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await client.prompt({ sessionId, prompt: [textBlock('hello')] });
+    await flushNdjson();
+
+    const usageUpdates = collecting.updates.filter(
+      (n) =>
+        (n.update as { sessionUpdate: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(1);
+    expect(usageUpdates[0]?.sessionId).toBe(sessionId);
+    expect(usageUpdates[0]?.update).toEqual({
+      sessionUpdate: 'usage_update',
+      size: 100000,
+      used: 5000,
+    });
+  });
+
+  it('does not emit usage_update for sub-agent status events', async () => {
+    const sessionId = 'sess-usage-sub';
+    const turnId = 1;
+    const session = makeScriptedSession(sessionId, [
+      {
+        type: 'agent.status.updated',
+        sessionId,
+        agentId: 'sub-1',
+        contextTokens: 100,
+        maxContextTokens: 50000,
+      } as Event,
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId,
+        reason: 'completed',
+      } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await client.prompt({ sessionId, prompt: [textBlock('hello')] });
+    await flushNdjson();
+
+    const usageUpdates = collecting.updates.filter(
+      (n) =>
+        (n.update as { sessionUpdate: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(0);
+  });
+
+  it('skips status events with missing contextTokens', async () => {
+    const sessionId = 'sess-usage-skip';
+    const turnId = 1;
+    const session = makeScriptedSession(sessionId, [
+      {
+        type: 'agent.status.updated',
+        sessionId,
+        agentId: 'main',
+        maxContextTokens: 100000,
+        // contextTokens deliberately omitted
+      } as Event,
+      {
+        type: 'turn.ended',
+        sessionId,
+        agentId: 'main',
+        turnId,
+        reason: 'completed',
+      } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await client.prompt({ sessionId, prompt: [textBlock('hello')] });
+    await flushNdjson();
+
+    const usageUpdates = collecting.updates.filter(
+      (n) =>
+        (n.update as { sessionUpdate: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(0);
   });
 });
