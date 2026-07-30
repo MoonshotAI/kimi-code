@@ -1,16 +1,11 @@
 # Changelog
 
-## 0.6.7
-
-### Patch Changes
-
-- [#2402](https://github.com/MoonshotAI/kimi-code/pull/2402) [`0f3b106`](https://github.com/MoonshotAI/kimi-code/commit/0f3b106c4260ad626f66bc5c457a535d3163f2bc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Reword the sign-in waiting message from "Waiting for authorization" to "Waiting for authentication".
-
 ## 0.6.6
 
 ### Patch Changes
 
 - [#2393](https://github.com/MoonshotAI/kimi-code/pull/2393) [`6d0a046`](https://github.com/MoonshotAI/kimi-code/commit/6d0a046488edda56219961b253c4787abae7a113) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix new users getting stranded on "Model setup required" with no way back to sign-in when the first login finishes authorization but fails to complete model setup; the screen now offers a path back to the sign-in page so login can be retried.
+- [#2402](https://github.com/MoonshotAI/kimi-code/pull/2402) [`0f3b106`](https://github.com/MoonshotAI/kimi-code/commit/0f3b106c4260ad626f66bc5c457a535d3163f2bc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Reword the sign-in waiting message from "Waiting for authorization" to "Waiting for authentication".
 
 - Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
   - @moonshot-ai/kimi-code-sdk@0.15.0
