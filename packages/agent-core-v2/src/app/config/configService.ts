@@ -362,26 +362,30 @@ export class ConfigService extends Disposable implements IConfigService {
     const domains = Object.keys(sections);
     if (domains.length === 0) return;
     if (target === ConfigTarget.Memory) {
+      const staged: ResolvedConfig = { ...this.memory };
       for (const domain of domains) {
         const value = sections[domain];
         if (value === undefined) {
-          delete this.memory[domain];
+          delete staged[domain];
         } else {
-          this.memory[domain] = this.registry.validate(domain, value);
+          staged[domain] = this.registry.validate(domain, value);
         }
       }
+      this.memory = staged;
       this.commit('set', domains);
       return;
     }
     await this.enqueueStateTransition(async () => {
+      const staged: ResolvedConfig = { ...this.raw };
       for (const domain of domains) {
         const stripped = this.stripEnv(domain, sections[domain]);
         if (stripped === undefined) {
-          delete this.raw[domain];
+          delete staged[domain];
         } else {
-          this.raw[domain] = this.registry.validate(domain, stripped);
+          staged[domain] = this.registry.validate(domain, stripped);
         }
       }
+      this.raw = staged;
       await this.persistDomains(domains);
       this.rebuildEffective('set', domains);
     });

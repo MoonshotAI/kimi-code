@@ -2014,4 +2014,30 @@ describe('ConfigService replaceSections', () => {
 
     disposables.dispose();
   });
+
+  it('leaves the user layer untouched when a later domain fails validation', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    // Providers is applied first in key order and validates fine; thinking
+    // then fails schema validation (`enabled` must be a boolean). The batch
+    // must reject with NO observable partial application.
+    await expect(
+      config.replaceSections({
+        [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+        [THINKING_SECTION]: { enabled: 'yes' },
+      }),
+    ).rejects.toThrow();
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(config.inspect<Record<string, unknown>>(PROVIDERS_SECTION).userValue).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
 });
