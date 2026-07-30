@@ -646,6 +646,9 @@ export const turnEndedEventSchema = z.object({
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: z
+    .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
+    .optional(),
 });
 
 export const turnStepStartedEventSchema = z.object({

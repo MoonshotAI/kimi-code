@@ -63,6 +63,13 @@ export const cancelTurn = TurnModel.defineOp('turn.cancel', {
   schema: z.object({
     turnId: z.number().optional(),
     target: z.enum(['active', 'queued']).optional(),
+    /**
+     * Why the turn was cancelled, persisted so a cold reader (transcript
+     * rebuild, future resume-time interruption detection) can tell a
+     * deliberate user interrupt apart from a programmatic abort. Absent on
+     * records written before this field existed.
+     */
+    reason: z.enum(['user_cancelled', 'aborted']).optional(),
   }),
   apply: (s, { turnId, target }) => {
     if (target === undefined || turnId === undefined || turnId < s.nextTurnId) return s;

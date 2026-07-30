@@ -625,7 +625,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.requireState();
     const snapshot = this.toSnapshot(state);
     if (state.status === 'active' && this.liveTurnId !== undefined) {
-      this.loopService.cancel(this.liveTurnId);
+      // A goal-lifecycle cancel is programmatic even when the goal change is
+      // user-driven: the turn was not directly interrupted, so it must not be
+      // recorded (or reminded) as a user cancellation — the goal-cancelled
+      // reminder below carries the user-facing fact.
+      this.loopService.cancel(this.liveTurnId, abortError('Goal cancelled'));
     }
     this.clearInternal(actor);
     if (actor === 'user') {
@@ -988,18 +992,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const pending = this.pendingContinuation;
     if (preserveLiveContinuation && pending?.turnId === this.liveTurnId) return;
     this.pendingContinuation = undefined;
-    const aborted =
-      reason === undefined ? pending?.receipt.abort() : pending?.receipt.abort(reason);
-    if (
-      pending !== undefined &&
-      !aborted &&
-      pending.turnId !== undefined
-    ) {
-      if (reason === undefined) {
-        this.loopService.cancel(pending.turnId);
-      } else {
-        this.loopService.cancel(pending.turnId, reason);
-      }
+    // Same provenance rule as `cancelGoal`: goal-lifecycle cancels are
+    // programmatic, never user cancellations (see `handleWallClockDeadline`
+    // for the explicit-reason precedent).
+    const cancellation = reason ?? abortError('Goal continuation cancelled');
+    const aborted = pending?.receipt.abort(cancellation);
+    if (pending !== undefined && !aborted && pending.turnId !== undefined) {
+      this.loopService.cancel(pending.turnId, cancellation);
     }
   }
 

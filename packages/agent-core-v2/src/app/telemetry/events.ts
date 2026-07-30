@@ -75,6 +75,7 @@ export interface TurnInterruptedEvent {
   turn_id: number;
   at_step: number;
   mode: 'agent' | 'plan';
+  /** Mirrored as `TurnInterruptReason` in `agent/loop/turnEvents.ts` — telemetry (L1) cannot import the loop (L4) type, so the union is duplicated; keep the two in sync. */
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
   provider_type?: string;
   protocol?: string;

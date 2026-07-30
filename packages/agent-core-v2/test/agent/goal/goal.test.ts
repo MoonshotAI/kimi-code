@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isUserCancellation } from '#/_base/utils/abort';
 import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -1160,7 +1161,10 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.cancelGoal();
 
     expect(abort).toHaveBeenCalledOnce();
-    expect(cancel).toHaveBeenCalledWith(41);
+    // Goal-lifecycle cancels are programmatic: the reason must not read as a
+    // user cancellation (which would also fire the interruption reminder).
+    expect(cancel).toHaveBeenCalledWith(41, expect.any(Error));
+    expect(isUserCancellation(cancel.mock.calls[0]?.[1])).toBe(false);
   });
 
   it.each(['turn', 'token', 'wall-clock'] as const)(
@@ -1928,7 +1932,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     }
   });
 
-  it('keeps user cancellation authoritative when it precedes the wall-clock deadline', async () => {
+  it('keeps the goal-cancellation abort authoritative when it precedes the wall-clock deadline', async () => {
     const clock = new ManualGoalDeadlineScheduler();
     const llm = blockingGenerate();
     const ctx = createTestAgent(appService(IGoalDeadlineScheduler, clock), {
@@ -1944,10 +1948,14 @@ describe('AgentGoalService hard wall-clock deadline', () => {
       await llm.started;
 
       await ctx.rpc.cancelGoal({});
+      // A goal-lifecycle cancel is programmatic, not a user turn interrupt —
+      // and as the first abort it stays the recorded reason once the
+      // wall-clock deadline fires later.
       expect(llm.signal()).toMatchObject({
         aborted: true,
-        reason: expect.objectContaining({ userCancelled: true }),
+        reason: expect.objectContaining({ message: 'Goal cancelled' }),
       });
+      expect(isUserCancellation(llm.signal().reason)).toBe(false);
       clock.advanceBy(1_000);
 
       await ctx.untilTurnEnd();

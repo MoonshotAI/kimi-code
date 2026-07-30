@@ -43,6 +43,10 @@ export const turnEndedEventSchema = z.object({
   /** Protocol `KimiErrorPayload` — mirrored as `unknown`. */
   error: z.unknown().optional(),
   durationMs: z.number().optional(),
+  /** Why a non-completed turn stopped early; absent on completion. */
+  interruptReason: z
+    .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
+    .optional(),
 });
 
 export const assistantDeltaEventSchema = z.object({

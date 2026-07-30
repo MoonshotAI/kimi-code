@@ -571,6 +571,7 @@ interface TurnCancelPayload {
   _name: 'turn.cancel';
   turnId?: number;
   target?: 'active' | 'queued';
+  reason?: 'user_cancelled' | 'aborted';
 }
 
 /**
