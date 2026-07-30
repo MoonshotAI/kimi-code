@@ -262,6 +262,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/feedback",
+    ],
+    [
+      "POST",
+      "/api/v1/feedback/upload_complete",
+    ],
+    [
+      "POST",
+      "/api/v1/feedback/upload_url",
+    ],
+    [
+      "POST",
       "/api/v1/files",
     ],
     [

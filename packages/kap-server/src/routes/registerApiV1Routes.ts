@@ -21,10 +21,12 @@ import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
+import { registerFeedbackRoutes } from './feedback';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
+import type { IFeedbackService } from '../services/feedback/feedback';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import type { ISnapshotReader } from '../services/snapshot';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
@@ -72,6 +74,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly enableShutdown?: boolean;
   readonly enableTerminals?: boolean;
   readonly guiStore: IGuiStoreService;
+  readonly feedback: IFeedbackService;
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
@@ -153,6 +156,10 @@ export async function registerApiV1Routes(
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
       registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
+      registerFeedbackRoutes(
+        apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0],
+        opts.feedback,
+      );
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
       if (opts.enableTerminals !== false) {
         registerTerminalsRoutes(

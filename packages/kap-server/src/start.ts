@@ -12,7 +12,10 @@ import {
   hostIdentitySeed,
   hostRequestHeadersSeed,
   IConfigService,
+  IModelService,
+  IOAuthService,
   IProviderDiscoveryService,
+  IProviderService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -65,6 +68,7 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
+import { FeedbackService } from './services/feedback/feedbackService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import {
   initializeServerTelemetry,
@@ -295,6 +299,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core.accessor.get(IConfigService),
     logger,
   );
+  // Forwards feedback to the managed collection backend with the managed
+  // provider's OAuth token; the host version stamps the backend `version`
+  // field (mirroring the CLI's `/feedback`).
+  const feedback = new FeedbackService({
+    oauth: core.accessor.get(IOAuthService),
+    model: core.accessor.get(IModelService),
+    provider: core.accessor.get(IProviderService),
+    version: hostVersion,
+  });
 
   // Sync the workspace catalog from the legacy session index once at startup,
   // so sessions created by the v1 TUI surface as workspaces on the very first
@@ -427,6 +440,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'terminals', description: 'PTY terminal sessions' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
+          { name: 'feedback', description: 'User feedback collection' },
         ],
       },
       transformObject: (documentObject) => {
@@ -449,6 +463,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     enableShutdown,
     enableTerminals,
     guiStore,
+    feedback,
     onShutdown: () => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
