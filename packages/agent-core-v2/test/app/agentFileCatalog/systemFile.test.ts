@@ -3,8 +3,9 @@
  * empty / unreadable → no profile), synthesized profile shape (default name +
  * override opt-in, description/tools inherited from the builtin default), and
  * template rendering through the shared variable table (`${skills}` gating,
- * `${base_prompt}`, `${additional_dirs_info}`). Pure logic against real temp
- * dirs plus a targeted fake fs for the read-failure path.
+ * `${base_prompt}`, `${plugin_sections}`, `${additional_dirs_info}`). Pure
+ * logic against real temp dirs plus a targeted fake fs for the read-failure
+ * path.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/app/agentFileCatalog/systemFile.test.ts`.
  */
@@ -132,6 +133,19 @@ describe('loadSystemMdProfile', () => {
     const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
 
     expect(profile?.systemPrompt({})).toBe('custom header\n\nBUILTIN PROMPT');
+  });
+
+  it('places plugin instructions where ${plugin_sections} is referenced', async () => {
+    await writeFile(join(home, SYSTEM_MD_FILENAME), 'before\n${plugin_sections}after');
+    const { warn } = collectWarnings();
+
+    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+    const prompt = profile?.systemPrompt({ pluginSections: 'PLUGIN_INSTRUCTIONS' });
+
+    expect(prompt).toContain('before');
+    expect(prompt).toContain('# Plugin Instructions');
+    expect(prompt).toContain('PLUGIN_INSTRUCTIONS');
+    expect(prompt).toContain('after');
   });
 
   it('substitutes ${additional_dirs_info} from the context', async () => {

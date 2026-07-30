@@ -22,8 +22,12 @@ import type { Message } from '#/agent/contextMemory/protocolMessage';
 
 import type { PageResponse } from './messageLegacy';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
@@ -177,6 +181,6 @@ registerScopedService(
   LifecycleScope.App,
   IMessageLegacyService,
   MessageLegacyService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'messageLegacy',
 );

@@ -14,8 +14,9 @@ Some commands are only available in the idle state. Executing these commands whi
 | --- | --- | --- | --- |
 | `/login` | — | Select an account or platform and log in: Kimi Code uses OAuth device-code flow; Kimi Platform uses API key login | No |
 | `/logout` | — | Clear credentials for the currently selected account | No |
-| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-与供应商管理) | Yes |
+| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
+| `/secondary_model` | — | Configure the secondary model used by subagents (writes the [`[secondary_model]`](../configuration/config-files.md#secondary-model) section and applies to the current session immediately). Requires the `secondary-model` experiment | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |
 | `/permission` | — | Select a permission mode | Yes |
@@ -32,7 +33,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/fork` | — | Fork a new session from the current one, preserving the full conversation history | No |
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
-| `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone | No |
+| `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone. Undoing also rolls back the todo list and plan mode state produced by those prompts (code changes are not reverted) | No |
 | `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI | No |
 | `/reload-tui` | — | Reload only the `tui.toml` UI preferences (theme, editor, notifications, etc.) without rebuilding the session | Yes |
 | `/init` | — | Analyze the current codebase and generate `AGENTS.md` | No |

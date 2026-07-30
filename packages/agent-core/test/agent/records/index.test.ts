@@ -265,6 +265,26 @@ describe('AgentRecords persistence metadata', () => {
     expect(agent.goal.getGoal().goal?.goalId).toBe('g1');
   });
 
+  it('replays the deny list of a tools.set_active_tools record', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'tools.set_active_tools',
+        names: ['Read', 'Write', 'Bash'],
+        disallowedNames: ['Write'],
+      } as AgentRecord,
+    ]);
+    const { agent } = testAgent({ persistence });
+    agent.config.update({ modelAlias: 'mock-model' });
+
+    await agent.records.replay();
+
+    const names = agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).toContain('Read');
+    expect(names).toContain('Bash');
+    expect(names).not.toContain('Write');
+  });
+
   it('restores goal.* records during replay', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },

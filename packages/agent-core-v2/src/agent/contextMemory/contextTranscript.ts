@@ -1,33 +1,8 @@
 /**
- * `contextMemory` transcript reducer — rebuilds the FULL message history of an
- * agent from its `context.*` wire records for UI display (snapshot / messages).
+ * `contextMemory` domain (L4) — rebuilds display history from the wire journal.
  *
- * The live `ContextModel` (`ContextMemoryService`) rewrites the model-facing
- * context on `context.apply_compaction` into `[...keptUserMessages,
- * compaction_summary]`, so reading the live context after a compaction loses
- * everything before the fold. The wire log keeps every record, though, so this
- * reducer re-reduces the `context.*` records with the same semantics as the
- * live `ContextMemory` restore, EXCEPT that `context.apply_compaction` KEEPS
- * the full history and appends a user-role summary marker — the same view the
- * v1 transcript / TUI shows after resume. `foldedLength` tracks what the live
- * (folded) `context.history.length` would be, so a caller can detect and
- * append an unflushed live tail.
- *
- * Mirrors v1 `reduceWireRecords`
- * (`packages/agent-core/src/services/message/transcript.ts`):
- *   - `context.append_message`    → append (deferred while a tool exchange is open)
- *   - `context.append_loop_event` → step.begin/content.part/tool.call mutate the
- *                                   open assistant; tool.result appends a tool
- *                                   message with the raw output; settling a step
- *                                   (at its end or at the next begin) drops an
- *                                   output-free assistant, mirroring the live fold
- *   - `context.apply_compaction`  → keep the full history, append the user-role
- *                                   summary marker, recover `foldedLength` from
- *                                   the recorded kept-count fields
- *   - `context.undo`              → remove tail messages (skip injections, stop
- *                                   at compaction summaries / clear floor)
- *   - `context.clear`             → keep prior transcript entries but reset the
- *                                   folded view
+ * Supplies transcript consumers with full pre-compaction history and folded
+ * context length while preserving undo/clear semantics. Scope-agnostic.
  */
 
 import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
@@ -36,9 +11,9 @@ import type { WireRecord } from '#/wire/record';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
-  isRealUserInput,
   selectRecentUserMessages,
 } from './compactionHandoff';
+import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -198,9 +173,19 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isRealUserInput(message)) {
+      if (isUndoAnchor(message)) {
         removedUserCount++;
-        if (removedUserCount >= count) break;
+        if (removedUserCount >= count) {
+          while (
+            i > clearFloor &&
+            isPromptOwnedInjection(transcript[i - 1]!.message, message)
+          ) {
+            transcript.splice(i - 1, 1);
+            i--;
+            foldedLength = Math.max(0, foldedLength - 1);
+          }
+          break;
+        }
       }
     }
     resetOpenState();

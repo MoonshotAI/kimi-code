@@ -47,8 +47,7 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -64,11 +63,11 @@ export class Greeter implements IGreeter {
 ```ts
 // greet/greetService.ts（文件顶层，import 时执行）
 registerScopedService(
-  LifecycleScope.App,     // 活多久：进程级
-  IGreeter,                // 身份
-  Greeter,                 // 实现
-  InstantiationType.Eager, // 创建时机：立刻
-  'greet',                 // 域名（用于排错）
+  LifecycleScope.App,               // 活多久：进程级
+  IGreeter,                          // 身份
+  Greeter,                           // 实现
+  ScopeActivation.OnScopeCreated,   // 创建 App scope 时构造
+  'greet',                           // 域名（用于排错）
 );
 ```
 
@@ -88,7 +87,7 @@ export * from './greetService';   // import 这一行即触发上面的 register
 export * from './greet/index';
 ```
 
-于是「import 这个包」=「加载全部注册」。**没有中心装配文件**：绑定散落在各自域的实现文件里，靠 import 副作用收集。
+于是「import 这个包」=「加载全部注册」。**没有中心装配文件**：绑定散落在各自域的实现文件里，靠 import 副作用收集。注册默认使用 `ScopeActivation.OnScopeCreated`，创建对应 Scope 时就构造真实实例；只有明确声明 `ScopeActivation.OnDemand` 的服务才推迟到首次 `get()`（见场景 5）。
 
 至此，任何人都能 `accessor.get(IGreeter)` 拿到这个全局唯一的服务。
 
@@ -155,7 +154,13 @@ export enum LifecycleScope {
 数值越大，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
 
 ```ts
-registerScopedService(LifecycleScope.Session, ISessionMetadata, SessionMetadata, InstantiationType.Delayed, 'sessionMetadata');
+registerScopedService(
+  LifecycleScope.Session,
+  ISessionMetadata,
+  SessionMetadata,
+  ScopeActivation.OnDemand,
+  'sessionMetadata',
+);
 ```
 
 「单例」的粒度是**每个 scope 一份**：App 的 `ILogService` 全局只有一份；每个 Session scope 各有自己的 `ISessionMetadata`。
@@ -209,23 +214,46 @@ export class FlagService extends Disposable implements IFlagService {
 
 ---
 
-## 场景 5：你的服务很重，想延迟初始化
+## 场景 5：选择服务的构造时机
 
-> 你要做的：服务依赖多、创建贵，不想在被解析时就同步 new，而是推迟到空闲时。
+> 你要做的：决定服务随 Scope 创建，还是等到第一次被请求时再创建。
 
-这一步引入：**`InstantiationType.Eager` vs `Delayed`**。
+这一步引入唯一的构造时机选项：**`ScopeActivation`**。
 
 ```ts
-// Eager（默认）：第一次被解析（作为依赖或被 get）时同步构造，返回真实实例
-registerScopedService(LifecycleScope.App, ILogService, LogService, InstantiationType.Eager, 'log');
-
-// Delayed：第一次被解析时先返回一个 Proxy，真实构造推迟到空闲时
-registerScopedService(LifecycleScope.App, IScopeRegistry, ScopeRegistry, InstantiationType.Delayed, 'gateway');
+export enum ScopeActivation {
+  OnScopeCreated = 0,
+  OnDemand = 1,
+}
 ```
 
-Delayed 服务返回的是一个 **Proxy**：真实构造推迟到空闲回调，或在首次访问其属性 / 调用其方法时立即发生。即便还没构造好，别人提前订阅它的 `onDid…` / `onWill…` 事件也不会丢——容器会先记下监听器，实例真正出来后再回放订阅。
+```ts
+// 默认：创建 App scope 时构造真实实例
+registerScopedService(
+  LifecycleScope.App,
+  ILogService,
+  LogService,
+  ScopeActivation.OnScopeCreated,
+  'log',
+);
 
-> 经验：默认即 `Eager`，绝大多数服务无需关心。只有「构造很贵、想推迟到空闲时」的服务才显式标 `Delayed`（遗留逃生舱，见场景 9.4）。
+// 按需：首次 get(IScopeRegistry) 时构造真实实例
+registerScopedService(
+  LifecycleScope.App,
+  IScopeRegistry,
+  ScopeRegistry,
+  ScopeActivation.OnDemand,
+  'gateway',
+);
+```
+
+`ScopeActivation.OnScopeCreated` 是第四个参数的默认值。创建 Scope 时，容器会构造采用此模式的全部服务，并先构造它们的依赖。任何一个构造器失败，整个 Scope 创建失败。普通服务以及必须在 Scope ready 时生效的构造器副作用都使用此模式。
+
+`ScopeActivation.OnDemand` 只保存描述符，不会在 Scope 创建时构造服务。第一次 `get()` 会直接构造并缓存真实实例，后续 `get()` 返回同一实例。只有确实需要等到服务被请求时才执行构造器，才使用此模式。
+
+两种模式共用同一套依赖图，循环依赖都会抛 `CyclicDependencyError`。
+
+完整签名是 `registerScopedService(scope, id, ctor, activation = ScopeActivation.OnScopeCreated, domain?)`：第四个参数是 activation，第五个参数是 domain。
 
 ---
 
@@ -308,7 +336,7 @@ export class ScopeRegistry implements IScopeRegistry {
 - `instantiation.createChild(collection)` 造一个子容器，它的父指针指向当前容器——于是子容器能向上解析到 App 的服务（场景 3 的可见性规则）。
 - 给外部暴露时，用 `invokeFunction` 把子容器包成 `ServicesAccessor`（场景 6）。
 
-> 更高层通常直接用 [`Scope.createChild(kind, id)`](../src/_base/di/scope.ts)（它帮你做了「筛描述符 + 建子容器」）；只有需要手动控制 `ServiceCollection` 时才像上面这样写。
+> 更高层通常直接用 [`Scope.createChild(kind, id)`](../src/_base/di/scope.ts)（它帮你做了「筛描述符 + 建子容器 + 构造 `OnScopeCreated` 服务」）；只有需要手动控制 `ServiceCollection` 时才像上面这样写——手动 `createChild` 不会执行 Scope 激活，服务都要由消费者解析。
 
 ---
 
@@ -335,9 +363,9 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 2. **用事件解耦。** 如果 A 只是想知道 B 的某个变化，让 B 通过 `IEventService` 发事件、A 订阅，而不是 A 直接持有 B 的引用。
 3. **重新划分 scope。** 也许其中一个本不该在这一层——它其实该更短或更长寿命，移动后环自然消失。
 
-### 9.4 关于 Delayed 破环（遗留逃生舱，禁用）
+### 9.4 激活方式不能破环
 
-容器里有一个遗留机制：当环里的某一边注册为 `Delayed`（场景 5）时，Proxy 能让这个「软循环」不同步炸开。**业务上禁止使用它来绕过循环依赖**——它存在是为了兼容历史代码，不是给你的设计兜底的。撞上 `CyclicDependencyError` 时，按 9.3 重构。
+`ScopeActivation.OnScopeCreated` 和 `ScopeActivation.OnDemand` 都通过同一套同步依赖图构造服务。改变激活方式不能让循环依赖变得合法。撞上 `CyclicDependencyError` 时，按 9.3 重构。
 
 ---
 
@@ -362,7 +390,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 |---|---|---|
 | `createDecorator<T>(name)` → `ServiceIdentifier<T>` | 1 | 造身份（运行时 key + 编译时类型 + 参数装饰器） |
 | `@IService` | 2, 7 | 在构造器参数上声明依赖 |
-| `registerScopedService(scope, id, ctor, type, domain)` | 1, 3, 5 | 把实现绑定到一层生命周期 |
+| `registerScopedService(scope, id, ctor, activation, domain)` | 1, 3, 5 | 把实现绑定到一层生命周期和构造时机 |
 | `ServicesAccessor.get(IX)` | 2, 6 | 按接口解析实例 |
 | `IInstantiationService.invokeFunction(fn, …)` | 6, 8 | 在函数里临时拿到 accessor |
 | `IInstantiationService.createInstance(ctor, …args)` | 7 | 创建非单例对象并注入依赖 |
@@ -370,6 +398,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 | `getScopedServiceDescriptors(scope)` | 8 | 取回注册在某一层的所有描述符 |
 | `Disposable` / `DisposableStore` / `IDisposable` | 4 | 资源管理与销毁 |
 | `Scope` / `LifecycleScope` | 3, 8 | 生命周期树 |
+| `ScopeActivation` | 3, 5 | 选择随 Scope 创建或首次 `get()` 时构造 |
 | `SyncDescriptor` | （测试/底层） | 把「构造器 + 静态参数」打包成待 new 描述符 |
 
 > 遗留导出（v2 不用，知道即可）：`refineServiceDecorator` 是 VS Code 遗留的 DI 工具，v2 的 src/test 零引用，统一走 `registerScopedService`。
@@ -381,14 +410,14 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 3. 接口和实现都带 `_serviceBrand`。
 4. 身份名字全局唯一。
 5. 父 scope 的服务不依赖子 scope 的服务（运行时也解析不到）。
-6. **不写循环依赖**——容器会抛 `CyclicDependencyError`；撞上时按场景 9 重构，不用 Delayed 绕过。
+6. **不写循环依赖**——容器会抛 `CyclicDependencyError`；撞上时按场景 9 重构，激活方式不能绕过循环检测。
 7. `ServicesAccessor` 只在 `invokeFunction` 调用期间有效，不存起来异步用。
 8. 注册写在实现文件顶层；测试里用 `_clearScopedRegistryForTests()` 后显式重注册，不依赖生产 import 顺序。
 
 ## 附录 C：新增一个服务的标准动作
 
 1. **契约**：`src/<domain>/<domain>.ts` 写接口（带 `_serviceBrand`）+ `createDecorator` 身份。
-2. **实现**：`src/<domain>/<domain>Service.ts` 写类，`@IX` 声明依赖，文件顶层 `registerScopedService(scope, IX, Impl, type, '<domain>')`。
+2. **实现**：`src/<domain>/<domain>Service.ts` 写类，`@IX` 声明依赖，文件顶层 `registerScopedService(scope, IX, Impl, activation, '<domain>')`；第四个参数是 activation，第五个参数是 domain。
 3. **barrel**：`src/<domain>/index.ts` re-export 契约和实现。
 4. **入口**：`src/index.ts` 加一行 `export * from './<domain>/index';`。
 5. **测试**：`test/<domain>/` 用 `TestInstantiationService` 或 `createScopedTestHost`，按接口解析。

@@ -4,21 +4,26 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. Bound at Agent scope.
+ * resource model. The pure-data `launching` flag is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it; the
+ * `active` / `pending` / `steered` records stay plain fields because their
+ * `Record` values carry Deferred promise handles (the container only holds
+ * pure data structures), as do the lazily-resolved `fullCompactionService`
+ * reference and the `hooks` slot. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { formatUndoUnavailableMessage, precheckUndo } from '#/agent/contextMemory/contextOps';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { steerTurn } from '#/agent/loop/turnOps';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -57,12 +62,13 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
+export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
+
 export class AgentPromptService implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
-  private launching = false;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -74,11 +80,21 @@ export class AgentPromptService implements IAgentPromptService {
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
+    this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
     });
+  }
+
+  private get launching(): boolean {
+    return this.states.get(promptLaunchingKey);
+  }
+
+  private set launching(value: boolean) {
+    this.states.set(promptLaunchingKey, value);
   }
 
   async enqueue(input: PromptInput): Promise<PromptHandle> {
@@ -157,13 +173,6 @@ export class AgentPromptService implements IAgentPromptService {
 
   async retry(): Promise<Turn | undefined> { return (await this.loop.enqueue(new RetryStepRequest()).assigned).turn; }
 
-  undo(count: number): number {
-    if (count <= 0) return 0;
-    const check = precheckUndo(this.context.get(), count);
-    if (!check.ok) throw new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, formatUndoUnavailableMessage(check), { details: { reason: check.reason, requestedCount: count, undoableCount: check.undoable } });
-    return this.context.undo(count).removedCount;
-  }
-
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
     if (this.active !== undefined) this.abort(this.active.id);
@@ -229,8 +238,15 @@ export class AgentPromptService implements IAgentPromptService {
     return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
   }
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
-    for (const caption of captions) this.reminders.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
-    if (message.content.length > 0) this.context.append(message);
+    const ownerPromptId = message.id ?? newMessageId();
+    for (const caption of captions) {
+      this.reminders.appendSystemReminder(caption, {
+        kind: 'injection',
+        variant: 'image_compression',
+        ownerPromptId,
+      });
+    }
+    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;
@@ -244,4 +260,10 @@ export class AgentPromptService implements IAgentPromptService {
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
-registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Eager, 'prompt');
+registerScopedService(
+  LifecycleScope.Agent,
+  IAgentPromptService,
+  AgentPromptService,
+  ScopeActivation.OnScopeCreated,
+  'prompt',
+);

@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import {
   _clearScopedRegistryForTests,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
   type IAgentScopeHandle,
   type Scope,
 } from '#/_base/di/scope';
-import { createScopedTestHost, type ScopedTestHost } from '#/_base/di/test';
+import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
@@ -21,6 +21,8 @@ import {
   type SessionActivityChangedEvent,
 } from '#/session/sessionActivity/sessionActivity';
 import { SessionActivityView } from '#/session/sessionActivity/sessionActivityService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
@@ -142,9 +144,10 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, InstantiationType.Delayed, 'interaction');
-    registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, InstantiationType.Delayed, 'agentLifecycle');
-    registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, InstantiationType.Delayed, 'sessionActivity');
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
+    registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
+    registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     disposables = new DisposableStore();
     host = createScopedTestHost();
@@ -163,9 +166,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   } {
     const changes: SessionActivityChangedEvent[] = [];
     const view = session.accessor.get(ISessionActivityView);
-    // The SUT is Delayed: event subscriptions alone do not construct it.
-    // Force construction so the fold is live before the test drives events.
-    view.state();
     disposables.add(view.onDidChange((change) => changes.push(change)));
     return { view, changes };
   }
@@ -182,9 +182,13 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   });
 
   it('seeds the aggregate from agents already active at construction', () => {
-    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const seededLifecycle = new FakeAgentLifecycle();
+    const main = seededLifecycle.addAgent(MAIN_AGENT_ID);
     main.activity = turnActive(1);
-    const { view } = viewWithChanges();
+    const seededSession = host.child(LifecycleScope.Session, 'session-seeded', [
+      stubPair(IAgentLifecycleService, seededLifecycle),
+    ]);
+    const view = seededSession.accessor.get(ISessionActivityView);
     expect(view.state().busy).toBe(true);
     expect(view.state().mainTurnActive).toBe(true);
   });

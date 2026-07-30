@@ -12,7 +12,7 @@
  * live-only `context.spliced` event for that pop (so injector bookkeeping
  * stays in step) and appends the exit reminder when nothing was
  * popped. Bound at Agent scope. The `AgentSwarm` tool self-registers via
- * `registerTool(...)` in `tools/agent-swarm.ts`. The service also guards
+ * `registerAgentToolService(...)` in `tools/agent-swarm.ts`. The service also guards
  * AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
  * listener: an AgentSwarm call must be the only tool call in its batch,
  * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
@@ -20,8 +20,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -123,7 +122,7 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSwarmService,
   AgentSwarmService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'swarm',
 );
 

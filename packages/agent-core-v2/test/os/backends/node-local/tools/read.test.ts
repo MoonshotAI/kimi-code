@@ -30,8 +30,8 @@ import {
   MAX_LINES,
   type ReadInput,
   ReadInputSchema,
-  ReadTool,
-} from '#/os/backends/node-local/tools/read';
+} from '#/agent/tools/os/read/read';
+import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 

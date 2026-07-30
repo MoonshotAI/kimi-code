@@ -12,8 +12,8 @@ v1 is a **VSCode-style singleton container**: services self-register with `regis
 
 | Concern | v1 (`agent-core`) | v2 (`agent-core-v2`) |
 |---|---|---|
-| Registration | `registerSingleton(IX, X, InstantiationType.Delayed)` | `registerScopedService(LifecycleScope.X, IX, X, InstantiationType.Delayed, 'domain')` |
-| DI import | `from '../../di'` | `from '#/_base/di/scope'` / `'#/_base/di/instantiation'` / `'#/_base/di/extensions'` / `'#/_base/di/lifecycle'` |
+| Registration | `registerSingleton(IX, X, InstantiationType.Delayed)` | `registerScopedService(LifecycleScope.X, IX, X, ScopeActivation.OnDemand, 'domain')` |
+| DI import | `from '../../di'` | `from '#/_base/di/scope'` / `'#/_base/di/instantiation'` / `'#/_base/di/lifecycle'` |
 | Lifetime | implicit singleton-per-container | explicit `LifecycleScope` (App/Session/Agent) — see orient.md |
 | Domain granularity | coarse (`session`, `tool`, `loop`) | fine, split by scope + responsibility |
 | Test import | `from '@moonshot-ai/agent-core/di/test'` | `from '#/_base/di/test'` |
@@ -157,9 +157,8 @@ import { InstantiationType, registerSingleton } from '../../di';
 registerSingleton(IXxxService, XxxService, InstantiationType.Delayed);
 
 // v2
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-registerScopedService(LifecycleScope.Session, IXxxService, XxxService, InstantiationType.Delayed, 'xxx');
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+registerScopedService(LifecycleScope.Session, IXxxService, XxxService, ScopeActivation.OnDemand, 'xxx');
 ```
 
 **Imports:**
@@ -232,4 +231,4 @@ Before submitting a port:
 - Decide scope from state identity before writing v2 code; the scope is fixed at registration.
 - Verify the domain mapping against current v2 `src/`; the table here is a starting point, not authority.
 - One Service owns state at exactly one lifetime; split global-view + per-instance into registry + per-instance.
-- A dependency cycle introduced by the port means a v1 import is now backwards — refactor, do not route around it with `Delayed`.
+- A dependency cycle introduced by the port means a v1 import is now backwards — refactor it; activation timing cannot break the cycle.

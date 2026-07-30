@@ -3,16 +3,16 @@
  *
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
  * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5
- * (above builtin, below extra / user / workspace, so project, user and extra skills win name
- * collisions). Re-emits
- * `plugin.onDidReload` as `onDidChange` so the sink re-pulls plugin skills when
- * plugins reload. Bound at Session scope.
+ * (above builtin, below extra / user / workspace, so project, user and extra
+ * skills win name collisions). Re-emits `plugin.onDidReload` as `onDidChange`
+ * so the sink re-pulls plugin skills when plugins reload; install / enable /
+ * remove mutations deliberately do not refresh the session catalog — those
+ * take effect on the next explicit reload. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
 import type { Event } from '#/_base/event';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -52,6 +52,6 @@ registerScopedService(
   LifecycleScope.Session,
   IPluginSkillSource,
   PluginSkillSource,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionSkillCatalog',
 );

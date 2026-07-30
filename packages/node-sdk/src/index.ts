@@ -4,6 +4,11 @@ export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
 export { createKimiHarness, SDKRpcClient, type SDKRpcClientOptions } from '#/sdk-rpc-client';
 export {
+  createKimiHarnessV2,
+  SDKRpcClientV2,
+  type SDKRpcClientV2Options,
+} from '#/sdk-rpc-client-v2';
+export {
   createKimiConfigRpc,
   KimiConfigRpcClient,
   type KimiConfigRpc,
@@ -68,6 +73,10 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // config without spinning up a full KimiCore.
 export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
 export { limitAgentReplayByTurns } from '@moonshot-ai/agent-core';
+export { parseAgentFileText, resolveAgentPath } from '@moonshot-ai/agent-core';
+// The synthesized `[models]` alias a `[secondary_model]` recipe with patch
+// fields materializes at runtime — hosts filter it out of model pickers.
+export { SECONDARY_DERIVED_MODEL_ALIAS } from '@moonshot-ai/agent-core';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.

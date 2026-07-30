@@ -7,8 +7,7 @@
  * Agent scope; has no cross-domain collaborators.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import {
   IAgentTelemetryContextService,
   type AgentTelemetryContext,
@@ -35,6 +34,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTelemetryContextService,
   AgentTelemetryContextService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'telemetry',
 );

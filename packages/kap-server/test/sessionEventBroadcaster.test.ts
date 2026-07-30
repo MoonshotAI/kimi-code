@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import type {
   AgentActivityState,
   IScopeHandle,
+  ISessionStateService,
   Scope,
   SessionActivityCause,
   SessionActivityChangedEvent,
@@ -23,18 +24,22 @@ import {
   IAgentUsageService,
   IEventBus,
   IEventService,
+  IModelCatalog,
   ISessionActivityView,
   ISessionInteractionService,
   ISessionLifecycleService,
   IWireService,
   ISessionMetadata,
   MAIN_AGENT_ID,
+  SECONDARY_DERIVED_MODEL_ID,
   SessionInteractionService,
+  StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  type BroadcastDelivery,
   type BroadcastTarget,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
@@ -44,6 +49,10 @@ import { TranscriptService } from '../src/services/transcript/transcriptService'
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
+
+class TestSessionStateService extends StateRegistry implements ISessionStateService {
+  declare readonly _serviceBrand: undefined;
+}
 
 /** The fake bus carries wire agent events and v2-internal ones alike. */
 type FakeBusEvent = { type: string };
@@ -122,7 +131,7 @@ class FakeAgentHandle {
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
   /** Real interaction kernel — served at the session accessor. */
-  readonly interactions = new SessionInteractionService();
+  readonly interactions = new SessionInteractionService(new TestSessionStateService());
   /**
    * Mirrors the activity view's publication: every turn boundary re-emits an
    * `agent.activity.updated` on the same bus, nested inside the boundary
@@ -376,9 +385,23 @@ function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEve
   return { type, ...extra } as unknown as AgentEvent;
 }
 
-function collectingTarget(): { target: BroadcastTarget; envelopes: EventEnvelope[] } {
+function collectingTarget(): {
+  target: BroadcastTarget;
+  envelopes: EventEnvelope[];
+  deliveries: BroadcastDelivery[];
+} {
   const envelopes: EventEnvelope[] = [];
-  return { target: { send: (e) => envelopes.push(e) }, envelopes };
+  const deliveries: BroadcastDelivery[] = [];
+  return {
+    target: {
+      send: (envelope, delivery = 'subscription') => {
+        envelopes.push(envelope);
+        deliveries.push(delivery);
+      },
+    },
+    envelopes,
+    deliveries,
+  };
 }
 
 // A real turn yields the event loop between `turn.started` and `turn.ended`,
@@ -419,7 +442,7 @@ describe('SessionEventBroadcaster', () => {
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
 
-    const { target, envelopes } = collectingTarget();
+    const { target, envelopes, deliveries } = collectingTarget();
     expect(await bc.subscribe('s1', target)).toBe(true);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
@@ -445,6 +468,16 @@ describe('SessionEventBroadcaster', () => {
     });
     expect(envelopes.every((e) => e.epoch === envelopes[0]!.epoch)).toBe(true);
     expect(durable[1]!.volatile).toBeUndefined();
+    expect(
+      envelopes.flatMap((envelope, index) =>
+        envelope.volatile === true ? [] : [[envelope.type, deliveries[index]]],
+      ),
+    ).toEqual([
+      ['turn.started', 'subscription'],
+      ['event.session.work_changed', 'immediate'],
+      ['turn.ended', 'subscription'],
+      ['event.session.work_changed', 'immediate'],
+    ]);
   });
 
   it('fans out volatile events with the current watermark + offset, not journaled', async () => {
@@ -515,6 +548,91 @@ describe('SessionEventBroadcaster', () => {
         maxContextTokens: 128_000,
         model: 'example-model',
       },
+    ]);
+  });
+
+  it('folds the legacy status snapshot into subagent status events too', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    const sub = lc.addAgent('agent-1');
+    const usage = {
+      total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+    };
+    sub.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    sub.set(IAgentProfileService, {
+      getModel: () => 'sub-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    sub.set(IAgentUsageService, { status: () => usage });
+    sub.set(IWireService, {
+      getModel: (model: unknown) => {
+        expect(model).toBe(ContextSizeModel);
+        return { length: 0, tokens: 8 };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    // The v2 model slice rides only the subagent's bind-time emission, which
+    // reaches clients before `subagent.spawned` and is dropped there; a later
+    // usage-only slice must still carry the model at the v1 edge.
+    sub.bus.emit(agentEvent('agent.status.updated', { usage }));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]!.payload).toMatchObject({
+      type: 'agent.status.updated',
+      agentId: 'agent-1',
+      usage,
+      contextTokens: 10,
+      maxContextTokens: 128_000,
+      model: 'sub-model',
+    });
+  });
+
+  it('resolves the secondary derived model id to a display string in status events', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentProfileService, {
+      getModel: () => SECONDARY_DERIVED_MODEL_ID,
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IWireService, { getModel: () => ({ length: 0, tokens: 8 }) });
+    main.set(IModelCatalog, {
+      get: (id: string) => {
+        expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
+        return { id, name: 'kimi-k2-wire', displayName: 'Kimi K2' };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    // Without a displayName the pointed entry's wire name is shown.
+    main.set(IModelCatalog, {
+      get: (id: string) => ({ id, name: 'kimi-k2-wire' }),
+    });
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    // A resolution failure falls back to the raw alias.
+    main.set(IModelCatalog, {
+      get: () => {
+        throw new Error('unknown model');
+      },
+    });
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(3);
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      { model: 'Kimi K2' },
+      { model: 'kimi-k2-wire' },
+      { model: SECONDARY_DERIVED_MODEL_ID },
     ]);
   });
 
@@ -889,6 +1007,7 @@ describe('SessionEventBroadcaster', () => {
         type: 'event.session.created',
         session_id: 's1',
       });
+      expect(globalView.deliveries).toEqual(['immediate']);
     });
 
     it('delivers work_changed to a global-only target while a subscriber drives the session', async () => {
@@ -1695,6 +1814,7 @@ describe('SessionEventBroadcaster', () => {
           session_id: 's1',
           payload: { agent_id: 'main', has_more_older: false, snapshot: { items: [] } },
         });
+        expect(view.deliveries).toEqual(['subscription']);
       }
       expect(transcriptEnvelopes(plainView.envelopes)).toHaveLength(0);
 

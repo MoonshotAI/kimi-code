@@ -11,11 +11,10 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
@@ -330,6 +329,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IWireService,
   WireService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'wire',
 );

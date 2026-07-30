@@ -15,15 +15,18 @@
  * sub-ranges fall back to a per-message estimate), `estimated` is the live token
  * estimate of the not-yet-measured portion, and `size = measured + estimated`.
  * The sparse `measuredPrefixTokens` / per-message `estimates` are deliberately
- * not persisted (see `contextSizeOps`). Bound at Agent scope.
+ * not persisted (see `contextSizeOps`). The mutable emission watermark
+ * (`lastEmittedTokens`) is registered into `agentState` (`IAgentStateService`)
+ * and read/written through it. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type { Message } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IWireService } from '#/wire/wire';
@@ -31,16 +34,29 @@ import { IWireService } from '#/wire/wire';
 import { IAgentContextSizeService, type ContextSize } from './contextSize';
 import { ContextSizeModel, contextSizeMeasured } from './contextSizeOps';
 
+export const contextSizeLastEmittedTokensKey = defineState<number>(
+  'contextSize.lastEmittedTokens',
+  () => 0,
+);
+
 export class AgentContextSizeService extends Disposable implements IAgentContextSizeService {
   declare readonly _serviceBrand: undefined;
-
-  private lastEmittedTokens = 0;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IWireService private readonly wire: IWireService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(contextSizeLastEmittedTokensKey);
+  }
+
+  private get lastEmittedTokens(): number {
+    return this.states.get(contextSizeLastEmittedTokensKey);
+  }
+
+  private set lastEmittedTokens(value: number) {
+    this.states.set(contextSizeLastEmittedTokensKey, value);
   }
 
   get(start?: number, end?: number): ContextSize {
@@ -106,6 +122,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextSize',
 );

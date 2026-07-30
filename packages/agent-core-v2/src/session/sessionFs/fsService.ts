@@ -13,6 +13,8 @@
  * check first, then re-verifies the candidate through `IHostFileSystem.realpath`
  * (resolving the longest existing prefix, so not-yet-created paths still work):
  * a symlink inside the workspace must not steer fs actions to files outside it.
+ * The plain-data state (`rgResolution`, `realRootsCache`) is registered into
+ * `sessionState` (`ISessionStateService`) and read/written through it.
  */
 
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -60,8 +62,8 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import {
   buildEtag,
   countLines,
@@ -75,6 +77,7 @@ import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { type FsDownloadResolved, type FsPathResolved, ISessionFsService } from './fs';
@@ -100,19 +103,38 @@ const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
 const HIDDEN_NAME_RE = /^\./;
 const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
 
+export const sessionFsRgResolutionKey = defineState<RgResolution | null | undefined>(
+  'sessionFs.rgResolution',
+  () => undefined,
+);
+export const sessionFsRealRootsCacheKey = defineState<
+  { readonly key: string; readonly roots: readonly string[] } | undefined
+>('sessionFs.realRootsCache', () => undefined);
+
 export class SessionFsService implements ISessionFsService {
   declare readonly _serviceBrand: undefined;
 
   private readonly gitignoreCache = new Map<string, Ignore>();
-  private rgResolution: RgResolution | null | undefined = undefined;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IGitService private readonly git: IGitService,
-  ) {}
+  ) {
+    this.states.register(sessionFsRgResolutionKey);
+    this.states.register(sessionFsRealRootsCacheKey);
+  }
+
+  private get rgResolution(): RgResolution | null | undefined {
+    return this.states.get(sessionFsRgResolutionKey);
+  }
+
+  private set rgResolution(value: RgResolution | null | undefined) {
+    this.states.set(sessionFsRgResolutionKey, value);
+  }
 
   private absOf(rel: string): string {
     return rel === '' || rel === '.' ? this.workspace.workDir : join(this.workspace.workDir, rel);
@@ -693,7 +715,17 @@ export class SessionFsService implements ISessionFsService {
     return this.rgResolution;
   }
 
-  private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined;
+  private get realRootsCache():
+    | { readonly key: string; readonly roots: readonly string[] }
+    | undefined {
+    return this.states.get(sessionFsRealRootsCacheKey);
+  }
+
+  private set realRootsCache(
+    value: { readonly key: string; readonly roots: readonly string[] } | undefined,
+  ) {
+    this.states.set(sessionFsRealRootsCacheKey, value);
+  }
 
   private async realRoots(): Promise<readonly string[]> {
     const dirs = [this.workspace.workDir, ...this.workspace.additionalDirs];
@@ -998,6 +1030,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsService,
   SessionFsService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionFs',
 );

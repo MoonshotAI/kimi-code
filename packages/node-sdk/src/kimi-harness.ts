@@ -140,6 +140,8 @@ export class KimiHarness {
     if (active !== undefined) {
       if (kaos !== undefined || persistenceKaos !== undefined) {
         await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+      } else if (input.agentProfile !== undefined) {
+        await this.rpc.resumeSession({ ...resumeInput, id });
       }
       return active;
     }

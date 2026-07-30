@@ -8,8 +8,7 @@
  * adapter supplies. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
@@ -58,6 +57,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileEditService,
   FileEditService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'edit',
 );

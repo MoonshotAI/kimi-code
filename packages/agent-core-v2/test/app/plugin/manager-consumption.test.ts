@@ -44,8 +44,10 @@ async function makePlugin(
   options: {
     skills?: boolean;
     skillNames?: readonly string[];
+    agents?: boolean;
     version?: string;
     sessionStartSkill?: string;
+    systemPrompt?: string;
     mcpServers?: Record<string, unknown>;
     hooks?: readonly unknown[];
     commands?: Record<string, string>;
@@ -69,8 +71,20 @@ async function makePlugin(
       );
     }
   }
+  if (options.agents === true) {
+    manifest['agents'] = './agents/';
+    await mkdir(path.join(root, 'agents'), { recursive: true });
+    await writeFile(
+      path.join(root, 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: A demo agent\n---\nbody',
+      'utf8',
+    );
+  }
   if (options.sessionStartSkill !== undefined) {
     manifest['sessionStart'] = { skill: options.sessionStartSkill };
+  }
+  if (options.systemPrompt !== undefined) {
+    manifest['systemPrompt'] = options.systemPrompt;
   }
   if (options.mcpServers !== undefined) {
     manifest['mcpServers'] = options.mcpServers;
@@ -172,6 +186,27 @@ describe('PluginManager consumption plane', () => {
       path: path.join(managedB, 'skills'),
       source: 'extra',
       plugin: { id: 'b', instructions: undefined },
+    });
+  });
+
+  it('pluginAgentRoots() returns only enabled plugins agents paths', async () => {
+    const home = await makeKimiHome();
+    const a = await makePlugin('a', { agents: true });
+    const b = await makePlugin('b', { agents: true });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(a);
+    await manager.install(b);
+    await manager.setEnabled('b', false);
+    const managedA = await managedPluginRoot(manager, 'a');
+    const managedB = await managedPluginRoot(manager, 'b');
+    expect(manager.pluginAgentRoots()).toContainEqual({
+      path: path.join(managedA, 'agents'),
+      source: 'plugin',
+    });
+    expect(manager.pluginAgentRoots()).not.toContainEqual({
+      path: path.join(managedB, 'agents'),
+      source: 'plugin',
     });
   });
 
@@ -406,6 +441,21 @@ describe('PluginManager consumption plane', () => {
     expect(manager.enabledSessionStarts()).toEqual([{ pluginId: 'demo', skillName: 'demo-skill' }]);
     await manager.setEnabled('demo', false);
     expect(manager.enabledSessionStarts()).toEqual([]);
+  });
+
+  it('enabledSystemPrompts() returns only enabled plugin systemPrompt declarations', async () => {
+    const home = await makeKimiHome();
+    const withPrompt = await makePlugin('prompted', { systemPrompt: 'Always cite sources.' });
+    const withoutPrompt = await makePlugin('plain', { skills: true });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(withPrompt);
+    await manager.install(withoutPrompt);
+    expect(manager.enabledSystemPrompts()).toEqual([
+      { pluginId: 'prompted', content: 'Always cite sources.' },
+    ]);
+    await manager.setEnabled('prompted', false);
+    expect(manager.enabledSystemPrompts()).toEqual([]);
   });
 
   it('setMcpServerEnabled() persists explicit MCP server state with cwd + env + runtime name', async () => {

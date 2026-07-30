@@ -9,6 +9,8 @@ import { type ApprovalRequest, ISessionApprovalService } from '#/session/approva
 import { SessionApprovalService } from '#/session/approval/approvalService';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 
 const display: ToolInputDisplay = { kind: 'command', command: 'bash' };
 
@@ -30,6 +32,7 @@ describe('SessionApprovalService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IEventBus, noopEventBus);
+    ix.set(ISessionStateService, new SessionStateService());
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionApprovalService, new SyncDescriptor(SessionApprovalService));
   });

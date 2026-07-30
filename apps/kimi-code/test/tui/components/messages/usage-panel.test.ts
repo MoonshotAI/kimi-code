@@ -1,5 +1,5 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildUsageReportLines, UsagePanelComponent } from '#/tui/components/messages/usage-panel';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
@@ -14,38 +14,93 @@ function strip(text: string): string {
 
 describe('UsagePanelComponent', () => {
   it('formats session, context, and managed usage sections', () => {
-    const lines = buildUsageReportLines({
-      sessionUsage: {
-        byModel: {
-          kimi: {
-            inputOther: 1000,
-            inputCacheRead: 500,
-            inputCacheCreation: 500,
-            output: 250,
+    // Freeze the clock so the resetAt fixture is an exact hour out — with a
+    // live clock the elapsed milliseconds floor the diff down to 59m.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-28T00:00:00Z'));
+    try {
+      const lines = buildUsageReportLines({
+        sessionUsage: {
+          byModel: {
+            kimi: {
+              inputOther: 1000,
+              inputCacheRead: 500,
+              inputCacheCreation: 500,
+              output: 250,
+            },
           },
         },
-      },
-      contextUsage: 0.25,
-      contextTokens: 2500,
-      maxContextTokens: 10000,
-      managedUsage: {
-        summary: {
-          label: 'daily',
-          used: 20,
-          limit: 100,
-          resetHint: 'resets tomorrow',
+        contextUsage: 0.25,
+        contextTokens: 2500,
+        maxContextTokens: 10000,
+        managedUsage: {
+          summary: {
+            name: 'daily',
+            used: 20,
+            limit: 100,
+            resetAt: new Date(Date.now() + 3600_000).toISOString(),
+          },
+          limits: [],
         },
-        limits: [],
+      }).map(strip);
+
+      expect(lines).toContain('Session usage');
+      expect(lines).toContain('  kimi  input 2k  output 250  total 2.2k');
+      expect(lines).toContain('Context window');
+      expect(lines.join('\n')).toContain('25%');
+      expect(lines).toContain('Plan usage');
+      expect(lines.join('\n')).toContain('daily');
+      expect(lines.join('\n')).toContain('20% used');
+      expect(lines.join('\n')).toContain('resets in 1h');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('derives plan usage labels from the window and falls back to name / Limit', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: { window: { duration: 1, unit: 'week' }, used: 1, limit: 10 },
+        limits: [
+          { window: { duration: 5, unit: 'hour' }, used: 2, limit: 10 },
+          { name: 'Custom cap', used: 3, limit: 10 },
+          { used: 4, limit: 10 },
+        ],
       },
     }).map(strip);
 
-    expect(lines).toContain('Session usage');
-    expect(lines).toContain('  kimi  input 2k  output 250  total 2.2k');
-    expect(lines).toContain('Context window');
-    expect(lines.join('\n')).toContain('25%');
-    expect(lines).toContain('Plan usage');
-    expect(lines.join('\n')).toContain('20% used');
-    expect(lines.join('\n')).toContain('resets tomorrow');
+    const output = lines.join('\n');
+    expect(output).toContain('Weekly limit');
+    expect(output).toContain('5h limit');
+    expect(output).toContain('Custom cap');
+    expect(output).toContain('Limit');
+  });
+
+  it('shows "reset" when the reset timestamp is already in the past', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: null,
+        limits: [
+          {
+            name: 'daily',
+            used: 1,
+            limit: 10,
+            resetAt: new Date(Date.now() - 60_000).toISOString(),
+          },
+        ],
+      },
+    }).map(strip);
+
+    expect(lines.join('\n')).toContain('reset');
+    expect(lines.join('\n')).not.toContain('resets in');
   });
 
   it('formats extra usage with a monthly limit', () => {

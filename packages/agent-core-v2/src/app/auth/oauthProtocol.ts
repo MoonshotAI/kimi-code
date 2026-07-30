@@ -113,11 +113,18 @@ export type RefreshOAuthProviderModelsResponse = z.infer<
 // `AuthManagedUsageResult` (camelCase domain model → snake_case wire DTO).
 // ---------------------------------------------------------------------------
 
+export const usageWindowSchema = z.object({
+  duration: z.number().int(),
+  unit: z.enum(['minute', 'hour', 'day', 'week']),
+});
+export type UsageWindow = z.infer<typeof usageWindowSchema>;
+
 export const usageRowSchema = z.object({
-  label: z.string(),
+  name: z.string().optional(),
+  window: usageWindowSchema.optional(),
   used: z.number().int(),
   limit: z.number().int(),
-  reset_hint: z.string().optional(),
+  reset_at: z.string().optional(),
 });
 export type UsageRow = z.infer<typeof usageRowSchema>;
 

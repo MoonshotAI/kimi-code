@@ -84,6 +84,31 @@ describe('systemPromptVars', () => {
     ).toContain('IMPORTANT: You are on Windows');
     expect(systemPromptVars({ osKind: 'macOS' }, { skillActive: true })['windows_notes']).toBe('');
   });
+
+  it('composes the plugin instructions section only when sections exist', () => {
+    const vars = systemPromptVars({ pluginSections: 'PLUGIN_A' }, { skillActive: true });
+
+    expect(vars['plugin_sections']).toContain('# Plugin Instructions');
+    expect(vars['plugin_sections']).toContain('PLUGIN_A');
+    expect(systemPromptVars({}, { skillActive: true })['plugin_sections']).toBe('');
+  });
+
+  it('defaults host-identity variables to the CLI text', () => {
+    const vars = systemPromptVars({}, { skillActive: true });
+
+    expect(vars['product_name']).toBe('Kimi Code CLI');
+    expect(vars['reply_style_guide']).toContain("render as Markdown in the user's terminal");
+  });
+
+  it('lets the context override host-identity variables', () => {
+    const vars = systemPromptVars(
+      { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
+      { skillActive: true },
+    );
+
+    expect(vars['product_name']).toBe('Kimi Desktop');
+    expect(vars['reply_style_guide']).toBe('GUI_STYLE');
+  });
 });
 
 describe('renderPromptTemplate', () => {
@@ -162,6 +187,16 @@ describe('renderSystemPrompt', () => {
     );
   });
 
+  it('shows the plugin instructions section only when plugin sections exist', () => {
+    const prompt = renderSystemPrompt('', { pluginSections: 'PLUGIN_A' }, { skillActive: true });
+
+    expect(prompt).toContain('# Plugin Instructions');
+    expect(prompt).toContain('PLUGIN_A');
+    expect(renderSystemPrompt('', {}, { skillActive: true })).not.toContain(
+      '# Plugin Instructions',
+    );
+  });
+
   it('renders the builtin template with no leftover placeholders', () => {
     // Every placeholder in the builtin template must be bound in the variable
     // table — an unbound one would stay verbatim in the output.
@@ -182,5 +217,20 @@ describe('renderSystemPrompt', () => {
     );
 
     expect(prompt).not.toMatch(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/);
+  });
+
+  it('renders the host identity from the context, defaulting to the CLI text', () => {
+    const fallback = renderSystemPrompt('', {}, { skillActive: true });
+    expect(fallback).toContain('You are Kimi Code CLI,');
+    expect(fallback).toContain("render as Markdown in the user's terminal");
+
+    const overridden = renderSystemPrompt(
+      '',
+      { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
+      { skillActive: true },
+    );
+    expect(overridden).toContain('You are Kimi Desktop,');
+    expect(overridden).toContain('GUI_STYLE');
+    expect(overridden).not.toContain('Kimi Code CLI');
   });
 });

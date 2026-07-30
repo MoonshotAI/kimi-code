@@ -12,8 +12,7 @@
 
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -228,4 +227,4 @@ async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<stri
   return out;
 }
 
-registerScopedService(LifecycleScope.App, IGitService, GitService, InstantiationType.Eager, 'git');
+registerScopedService(LifecycleScope.App, IGitService, GitService, ScopeActivation.OnScopeCreated, 'git');

@@ -9,10 +9,9 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { discoverAgentFiles } from '#/app/agentFileCatalog/agentFileDiscovery';
 import {
@@ -90,6 +89,6 @@ registerScopedService(
   LifecycleScope.Session,
   IExtraFileAgentSource,
   ExtraFileAgentSource,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionAgentProfileCatalog',
 );

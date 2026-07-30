@@ -18,8 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -263,6 +262,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostFileSystem,
   HostFileSystem,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'hostFs',
 );

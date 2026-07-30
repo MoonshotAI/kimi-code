@@ -293,27 +293,14 @@ async function resolveNativeSession(
     }
   }
 
-  // `--agent` / `--agent-file` bind an explicit profile; without them the
-  // historical setModel path (default profile on first bind) is kept. A
-  // same-name re-select on a resumed session keeps the profile and only applies
-  // an explicitly requested model; a different name is rejected by the
-  // engine's first-bind guard inside `bind`.
-  const applyProfileSelection = async (
+  // `--agent` / `--agent-file` are creation-only: validateOptions rejects them
+  // together with --session/--continue, so resume paths only apply an
+  // explicitly requested model — the bound profile is restored by the engine.
+  const applyModelOverride = async (
     profile: IAgentProfileService,
     model: string | undefined,
   ): Promise<void> => {
-    if (agentProfileName !== undefined) {
-      if (profile.data().profileName === agentProfileName) {
-        if (model !== undefined) await profile.setModel(model);
-        return;
-      }
-      await profile.bind({
-        profile: agentProfileName,
-        model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),
-      });
-    } else if (model !== undefined) {
-      await profile.setModel(model);
-    }
+    if (model !== undefined) await profile.setModel(model);
   };
 
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
@@ -353,7 +340,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    await applyProfileSelection(profile, opts.model);
+    await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
     const { restorePermission } = forceAuto(agent);
     return {
@@ -372,7 +359,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
       const profile = agent.accessor.get(IAgentProfileService);
-      await applyProfileSelection(profile, opts.model);
+      await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
       const { restorePermission } = forceAuto(agent);
       return {

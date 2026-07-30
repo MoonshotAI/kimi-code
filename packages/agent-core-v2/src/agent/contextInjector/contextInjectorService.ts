@@ -3,15 +3,19 @@
  *
  * Injects registered context providers through `loop` and `systemReminder`,
  * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. Bound at Agent scope.
+ * those positions after `wire` restoration. The plain-data `isNewTurn` flag is
+ * registered into `agentState` (`IAgentStateService`) and read/written through
+ * it; `entries` stays a plain instance field (its values hold provider
+ * functions, not plain data). Bound at Agent scope.
  */
 
 import { Disposable, toDisposable } from "#/_base/di/lifecycle";
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -27,10 +31,14 @@ interface ContextInjectionEntry {
   readonly positions: number[];
 }
 
+export const contextInjectorIsNewTurnKey = defineState<boolean>(
+  'contextInjector.isNewTurn',
+  () => true,
+);
+
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
-  private isNewTurn = true;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -38,8 +46,10 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @IWireService wire: IWireService,
+    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.states.register(contextInjectorIsNewTurnKey);
     this._register(
       loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
         await next();
@@ -62,6 +72,14 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         await next();
       }),
     );
+  }
+
+  private get isNewTurn(): boolean {
+    return this.states.get(contextInjectorIsNewTurnKey);
+  }
+
+  private set isNewTurn(value: boolean) {
+    this.states.set(contextInjectorIsNewTurnKey, value);
   }
 
   register(
@@ -177,6 +195,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextInjectorService,
   AgentContextInjectorService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'contextInjector',
 );

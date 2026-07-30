@@ -17,7 +17,8 @@ import {
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
-import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
+import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -27,6 +28,7 @@ import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 
 type ToolExecutorEvent =
@@ -49,6 +51,7 @@ beforeEach(() => {
   truncateForModel = async (input) => input.result;
   ix = createServices(disposables, {
     additionalServices: (reg) => {
+      registerStateServices(reg);
       registerTestAgentWireServices(reg, 'wire/tool-executor');
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);

@@ -10,21 +10,56 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { LifecycleScope } from '#/_base/di/scope';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  _clearScopedRegistryForTests,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  IAgentProfileCatalogService,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { AgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalogService';
 import { IAgentCatalogRuntimeOptions } from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/app/agentFileCatalog/configSection';
-import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
+import {
+  IUserFileAgentSource,
+  UserFileAgentSource,
+} from '#/app/agentFileCatalog/userFileAgentSource';
+import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IPluginService } from '#/app/plugin/plugin';
+import type { ReloadSummary } from '#/app/plugin/types';
 import '#/index';
-import { IExplicitFileAgentSource } from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import {
+  ExplicitFileAgentSource,
+  IExplicitFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';
+import {
+  ExtraFileAgentSource,
+  IExtraFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
+import {
+  IPluginAgentProfileSource,
+  PluginAgentProfileSource,
+} from '#/session/sessionAgentProfileCatalog/pluginAgentProfileSource';
+import {
+  IProjectFileAgentSource,
+  ProjectFileAgentSource,
+} from '#/session/sessionAgentProfileCatalog/projectFileAgentSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
@@ -82,6 +117,33 @@ function workspaceStub(workDir: string): ISessionWorkspaceContext {
     assertAllowed: (p: string) => p,
     addAdditionalDir: () => {},
     removeAdditionalDir: () => {},
+  };
+}
+
+function pluginStub(
+  agentRoots: readonly AgentFileRoot[] = [],
+  reloadEmitter?: Emitter<ReloadSummary>,
+): IPluginService {
+  return {
+    _serviceBrand: undefined,
+    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
+    listPlugins: async () => [],
+    installPlugin: async () => ({ id: '' }) as never,
+    setPluginEnabled: async () => {},
+    setPluginMcpServerEnabled: async () => {},
+    removePlugin: async () => {},
+    reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
+    getPluginInfo: async () => {
+      throw new Error('getPluginInfo is not used by these tests');
+    },
+    listPluginCommands: async () => [],
+    checkUpdates: async () => [],
+    pluginSkillRoots: async () => [],
+    pluginAgentRoots: async () => agentRoots,
+    enabledSessionStarts: async () => [],
+    enabledSystemPrompts: async () => [],
+    enabledMcpServers: async () => ({}),
+    enabledHooks: async () => [],
   };
 }
 
@@ -146,6 +208,8 @@ function makeSession(
     readonly logWarnings?: string[];
     readonly userSource?: IUserFileAgentSource;
     readonly explicitSource?: IExplicitFileAgentSource;
+    readonly pluginAgentRoots?: readonly AgentFileRoot[];
+    readonly pluginReloadEmitter?: Emitter<ReloadSummary>;
   },
 ) {
   const config = configStub();
@@ -162,6 +226,10 @@ function makeSession(
     stubPair(IConfigService, config),
     stubPair(IAgentCatalogRuntimeOptions, runtimeOptions),
     stubPair(ILogService, logStub()),
+    stubPair(
+      IPluginService,
+      pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter),
+    ),
     ...(opts?.userSource ? [stubPair(IUserFileAgentSource, opts.userSource)] : []),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [
@@ -182,6 +250,51 @@ function waitForEvent(event: Event<unknown>): Promise<void> {
 }
 
 describe('SessionAgentProfileCatalogService', () => {
+  beforeEach(() => {
+    // `import '#/index'` fills the registry with the whole product graph,
+    // including OnScopeCreated services with unstubbed dependencies, so clear
+    // it and re-register only the real services this suite constructs; their
+    // other dependencies are seeded as stubs by `makeSession`. Builtin agent
+    // profile contributions accumulate in a separate module-level list at
+    // import time and are unaffected by the clear.
+    _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionStateService,
+      SessionStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IAgentProfileCatalogService,
+      AgentProfileCatalogService,
+    );
+    registerScopedService(LifecycleScope.App, IUserFileAgentSource, UserFileAgentSource);
+    registerScopedService(LifecycleScope.App, IHostFileSystem, HostFileSystem);
+    registerScopedService(
+      LifecycleScope.Session,
+      ISessionAgentProfileCatalog,
+      SessionAgentProfileCatalogService,
+    );
+    registerScopedService(
+      LifecycleScope.Session,
+      IExplicitFileAgentSource,
+      ExplicitFileAgentSource,
+    );
+    registerScopedService(LifecycleScope.Session, IExtraFileAgentSource, ExtraFileAgentSource);
+    registerScopedService(
+      LifecycleScope.Session,
+      IProjectFileAgentSource,
+      ProjectFileAgentSource,
+    );
+    registerScopedService(
+      LifecycleScope.Session,
+      IPluginAgentProfileSource,
+      PluginAgentProfileSource,
+    );
+  });
+
   it('lists builtin profiles when no agent directories exist', async () => {
     await withFixture(async (fixture) => {
       const { host, session } = makeSession(fixture);
@@ -239,6 +352,47 @@ describe('SessionAgentProfileCatalogService', () => {
 
       expect(catalog.get('shared')?.description).toBe('from explicit');
       expect(catalog.get('user-extra')?.description).toBe('from extra');
+      host.dispose();
+    });
+  });
+
+  it('merges plugin agents below user; user wins on name collision', async () => {
+    await withFixture(async (fixture) => {
+      const pluginAgentsDir = join(fixture.extraDir, 'plugin-agents');
+      await writeAgent(pluginAgentsDir, 'shared.md', agentMd('shared', 'from plugin'));
+      await writeAgent(pluginAgentsDir, 'plugin-only.md', agentMd('plugin-only', 'from plugin'));
+      await writeAgent(join(fixture.homeDir, 'agents'), 'shared.md', agentMd('shared', 'from user'));
+      const { host, session } = makeSession(fixture, {
+        pluginAgentRoots: [{ path: pluginAgentsDir, source: 'plugin' }],
+      });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.get('shared')?.description).toBe('from user');
+      expect(catalog.get('plugin-only')?.description).toBe('from plugin');
+      host.dispose();
+    });
+  });
+
+  it('reloads the plugin source when plugins reload', async () => {
+    await withFixture(async (fixture) => {
+      const pluginAgentsDir = join(fixture.extraDir, 'plugin-agents');
+      await mkdir(pluginAgentsDir, { recursive: true });
+      const reloadEmitter = new Emitter<ReloadSummary>();
+      const { host, session } = makeSession(fixture, {
+        pluginAgentRoots: [{ path: pluginAgentsDir, source: 'plugin' }],
+        pluginReloadEmitter: reloadEmitter,
+      });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+      expect(catalog.get('late')).toBeUndefined();
+
+      await writeAgent(pluginAgentsDir, 'late.md', agentMd('late', 'late plugin agent'));
+      const changed = waitForEvent(catalog.onDidChange);
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+      await changed;
+
+      expect(catalog.get('late')?.description).toBe('late plugin agent');
       host.dispose();
     });
   });

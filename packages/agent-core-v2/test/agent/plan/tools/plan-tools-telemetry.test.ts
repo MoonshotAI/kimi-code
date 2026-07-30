@@ -2,11 +2,9 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
-import { EnterPlanModeTool } from '#/agent/plan/tools/enter-plan-mode';
-import {
-  ExitPlanModeTool,
-  type ExitPlanModeInput,
-} from '#/agent/plan/tools/exit-plan-mode';
+import { EnterPlanModeTool } from '#/agent/tools/plan/enter-plan-mode/enterPlanModeTool';
+import { type ExitPlanModeInput } from '#/agent/tools/plan/exit-plan-mode/exit-plan-mode';
+import { ExitPlanModeTool } from '#/agent/tools/plan/exit-plan-mode/exitPlanModeTool';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';

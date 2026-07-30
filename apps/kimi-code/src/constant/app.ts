@@ -48,6 +48,7 @@ export const KIMI_CODE_UPDATE_STATE_FILE_NAME = 'latest.json';
 export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
 export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
 export const KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME = 'rollout.log';
+export const KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME = 'plugin-notices.json';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
@@ -79,6 +80,9 @@ export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`
 export const KIMI_CODE_TIPS_BANNER_URL = 'https://cdn.kimi.com/kimi-code-tips/tips.json';
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL = `${KIMI_CODE_CDN_BASE}/plugins/marketplace.json`;
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
+// Official plugins whose usage bills against the user's plan quota. Installing
+// one of these shows a quota note after the install result.
+export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];
 export const KIMI_CODE_INSTALL_SH_URL = `${KIMI_CODE_CDN_BASE}/install.sh`;
 export const KIMI_CODE_INSTALL_PS1_URL = `${KIMI_CODE_CDN_BASE}/install.ps1`;
 // Official download page, referenced by prompt copy that steers users away

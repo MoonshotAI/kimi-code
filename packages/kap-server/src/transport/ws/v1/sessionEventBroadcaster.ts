@@ -122,9 +122,12 @@ export interface SessionSnapshotState {
   subagents: SnapshotSubagent[];
 }
 
+/** Internal transport lane: only subscription traffic enters the timed buffer. */
+export type BroadcastDelivery = 'subscription' | 'immediate';
+
 /** A connection (or test double) that receives sequenced envelopes. */
 export interface BroadcastTarget {
-  send(envelope: EventEnvelope): void;
+  send(envelope: EventEnvelope, delivery?: BroadcastDelivery): void;
 }
 
 /**
@@ -999,7 +1002,13 @@ export class SessionEventBroadcaster {
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
         let projected = event;
-        if (handle.id === MAIN_AGENT_ID && event.type === 'agent.status.updated') {
+        if (event.type === 'agent.status.updated') {
+          // v2 emits status in slices, and the model slice rides only the
+          // bind-time emission — for a subagent that lands before the client
+          // has seen `subagent.spawned` and is dropped there, leaving the
+          // subagent card without a model. Fold the full legacy snapshot
+          // (usage + context + model) into every agent's status event so the
+          // v1 combined-payload contract holds regardless of slice timing.
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);
@@ -1208,7 +1217,7 @@ export class SessionEventBroadcaster {
       for (const target of this.allTargets()) recipients.add(target);
       for (const target of recipients) {
         try {
-          target.send(envelope);
+          target.send(envelope, 'immediate');
         } catch {
           // best-effort fan-out; a broken target is dropped, not fatal
         }

@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.30.0 (2026-07-29)
+
+### Features
+
+- Add a customizable footer status line, configured via `[status_line]` in `tui.toml`.
+
+### Polish
+
+- Show a quota note after installing official plugins that bill against plan quota (such as Kimi Datasource).
+- Show a notice when an official plugin used in the session has an update available — run /plugins to update.
+- Remove the 50 MB size limit on file uploads to the built-in server.
+
+### Bug Fixes
+
+- Fail fast when account quota or balance is exhausted instead of silently retrying for ~3 minutes.
+- Stop the turn after repeated invalid tool calls instead of retrying indefinitely.
+- web: Fix garbled line numbers in code blocks.
+
+## 0.29.2 (2026-07-27)
+
+### Bug Fixes
+
+- Fix goal pursuit pausing when a goal turn hits the per-turn step limit (`loop_control.max_steps_per_turn`).
+- Fix messages sent during goal pursuit being rejected.
+- Fix /undo to restore conversation history, todo lists, plan mode, and task notifications consistently.
+- web: Fix copying selected chat text over plain HTTP overwriting the clipboard with an event placeholder.
+
 ## 0.29.1 (2026-07-24)
 
 ### Features

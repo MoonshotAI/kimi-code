@@ -44,6 +44,7 @@ import {
 } from './protocol';
 import {
   type AgentFilter,
+  type BroadcastDelivery,
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
@@ -56,9 +57,10 @@ const DEFAULT_MAX_BUFFER_SIZE = 1000;
 /** Per-session subscription state held by the connection (see `TargetSubscription`). */
 type SessionSubscription = TargetSubscription;
 
-// Outbound send buffer — coalesces a burst of frames (notably high-frequency
-// volatile text deltas) into fewer `socket.send` calls and applies backpressure
-// when the peer is not draining fast enough. See `flush()` / `coalesceFrames`.
+// Subscription-event send buffer — coalesces a burst of frames (notably
+// high-frequency volatile text deltas) within one render-frame-sized window.
+// Public/control frames are immediate barriers: they enter the same FIFO and
+// flush any earlier subscription frames so cross-channel order stays intact.
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_MAX_BATCH_SIZE = 64;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20; // 1 MiB
@@ -88,9 +90,9 @@ export interface WsConnectionV1Options {
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
-  /** Delay before a buffered batch is flushed; coalesces frames within the window. */
+  /** Delay before buffered subscription events are flushed. */
   readonly flushIntervalMs?: number;
-  /** Flush immediately once this many frames are queued, even before the interval. */
+  /** Flush subscription events once this many frames are queued. */
   readonly maxBatchSize?: number;
   /** `socket.bufferedAmount` above which flushing is deferred (backpressure). */
   readonly highWaterMarkBytes?: number;
@@ -156,7 +158,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     // connection without any subscription; session/agent events stay
     // subscribe-gated via `broadcaster.subscribe`.
     this.broadcaster.addGlobalTarget(this);
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildServerHello({
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
@@ -174,9 +176,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     return Array.from(this.subscriptions.keys()).sort();
   }
 
-  /** BroadcastTarget — forward a sequenced envelope to the socket. */
-  send(envelope: EventEnvelope): void {
-    this.sendFrame(envelope);
+  /** BroadcastTarget — buffer subscription traffic; public traffic is a FIFO barrier. */
+  send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
+    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
+    else this.sendSubscribedFrame(envelope);
   }
 
   private onMessage(data: RawData): void {
@@ -253,7 +256,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       );
     }
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted_subscriptions: accepted,
         resync_required: resyncRequired,
@@ -286,7 +289,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       );
     }
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted,
         not_found: notFound,
@@ -307,7 +310,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
     const parsed = transcriptSubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
-      this.sendFrame(buildAck(frame.id ?? '', 1, 'invalid subscribe_v2 payload', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid subscribe_v2 payload', {}));
       return;
     }
     const sid = parsed.data.session_id;
@@ -326,7 +329,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       { accepted, resyncRequired, serverCursors, notFound },
     );
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted,
         not_found: notFound,
@@ -347,7 +350,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
     const parsed = unsubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
-      this.sendFrame(buildAck(frame.id ?? '', 1, 'invalid unsubscribe_v2 payload', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid unsubscribe_v2 payload', {}));
       return;
     }
     const sid = parsed.data.session_id;
@@ -363,7 +366,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       });
     }
 
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted: [sid],
         not_found: [],
@@ -379,7 +382,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.broadcaster.unsubscribe(sid, this);
       this.subscriptions.delete(sid);
     }
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted: [],
         not_found: [],
@@ -394,7 +397,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const paths = asStringArray(payload['paths']);
     const bridge = this.fsWatchBridge;
     if (bridge === undefined) {
-      this.sendFrame(buildAck(frame.id ?? '', 1, 'fs watch unavailable', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'fs watch unavailable', {}));
       return;
     }
     let result;
@@ -403,14 +406,14 @@ export class WsConnectionV1 implements BroadcastTarget {
         ? await bridge.addWatch(this, sessionId, paths)
         : await bridge.removeWatch(this, sessionId, paths);
     } catch (error) {
-      this.sendFrame(
+      this.sendImmediateFrame(
         buildAck(frame.id ?? '', 1, 'internal error', {
           message: error instanceof Error ? error.message : String(error),
         }),
       );
       return;
     }
-    this.sendFrame(
+    this.sendImmediateFrame(
       buildAck(frame.id ?? '', result.code, result.msg, {
         watched_paths: result.watched_paths ?? [],
         current_count: result.current_count ?? 0,
@@ -472,12 +475,12 @@ export class WsConnectionV1 implements BroadcastTarget {
   ): Promise<void> {
     const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
     if (result.resyncRequired !== false) {
-      this.sendFrame(
+      this.sendImmediateFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
       );
       resyncRequired.push(sid);
     } else {
-      for (const { envelope } of result.events) this.sendFrame(envelope);
+      for (const { envelope } of result.events) this.sendSubscribedFrame(envelope);
     }
     serverCursors[sid] = { seq: result.currentSeq, epoch: result.epoch };
   }
@@ -497,14 +500,15 @@ export class WsConnectionV1 implements BroadcastTarget {
       ok = false;
     }
     if (!ok) {
-      this.sendFrame(buildAck(frame.id ?? '', 40112, 'unauthorized', {}));
+      this.sendImmediateFrame(buildAck(frame.id ?? '', 40112, 'unauthorized', {}));
       this.close();
       return false;
     }
     return true;
   }
 
-  private sendFrame(msg: unknown): void {
+  /** Queue an event delivered through `subscribe` / `subscribe_v2`. */
+  private sendSubscribedFrame(msg: unknown): void {
     if (this.closed) return;
     this.outbound.push(msg);
     if (this.outbound.length >= this.maxBatchSize) {
@@ -513,6 +517,16 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     this.scheduleFlush();
+  }
+
+  /**
+   * Public/control frames do not start a timer. They join the FIFO and flush it
+   * immediately, so no later frame can overtake earlier subscription traffic.
+   */
+  private sendImmediateFrame(msg: unknown): void {
+    if (this.closed) return;
+    this.outbound.push(msg);
+    this.flush();
   }
 
   private scheduleFlush(): void {

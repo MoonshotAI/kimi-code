@@ -34,12 +34,14 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[];
+  readonly agents?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];
   readonly commands?: readonly PluginCommandEntry[];
   readonly interface?: PluginInterface;
   readonly skillInstructions?: string;
+  readonly systemPrompt?: string;
 }
 
 export interface PluginMcpServerState {
@@ -144,6 +146,11 @@ export interface PluginInfo extends PluginSummary {
 export interface EnabledPluginSessionStart {
   readonly pluginId: string;
   readonly skillName: string;
+}
+
+export interface EnabledPluginSystemPrompt {
+  readonly pluginId: string;
+  readonly content: string;
 }
 
 export interface ReloadSummary {

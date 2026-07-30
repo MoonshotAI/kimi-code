@@ -1,0 +1,436 @@
+@match: case $x in
+case $x in
+  a) echo A ;;
+  b|c) echo BC ;&
+  *) echo other ;;
+esac
+===
+@match: case $x in (a) x ;; esac
+case $x in (a) x ;; esac
+===
+@match: case $x in a|b) x ;; esac
+case $x in a|b) x ;; esac
+===
+@match: case $x in foo*|bar) x ;; esac
+case $x in foo*|bar) x ;; esac
+===
+@match: case $x in [a-z]) x ;; esac
+case $x in [a-z]) x ;; esac
+===
+@match: case $x in "a") x ;; esac
+case $x in "a") x ;; esac
+===
+@match: case $x in $v|${w}) x ;; esac
+case $x in $v|${w}) x ;; esac
+===
+@known-diff recovery-partial-nodes: case $x in a) x ;;& esac
+case $x in a) x ;;& esac
+---
+hasError: true
+program [0,24] "case $x in a) x ;;& esac"
+  case_statement [0,24] "case $x in a) x ;;& esac"
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$x"
+      ($) [5,6] "$"
+      variable_name [6,7] "x"
+    (in) [8,10] "in"
+    case_item [11,19] "a) x ;;&"
+      word [11,12] "a"
+      ()) [12,13] ")"
+      command [14,15] "x"
+        command_name [14,15] "x"
+          word [14,15] "x"
+      (;;&) [16,19] ";;&"
+    (esac) [20,24] "esac"
+===
+@match: case $x in a) x esac
+case $x in a) x esac
+===
+@match: case $x in esac
+case $x in esac
+===
+@match: case x in a) ;; esac
+case x in a) ;; esac
+===
+@match: case $x in
+case $x in
+a) y ;;
+esac
+===
+@match: case $x in a) echo esac ;; esac
+case $x in a) echo esac ;; esac
+===
+@match: case $x in a) x
+case $x in a) x
+esac
+===
+@match: x=$(case y in a) 1;; esac)
+x=$(case y in a) 1;; esac)
+===
+@match: x=$(case y in (b) 2;; esac)
+x=$(case y in (b) 2;; esac)
+===
+@match: diff <(case y in a) 1;; esac) other
+diff <(case y in a) 1;; esac) other
+===
+@match: case $x in [1]) x ;; esac
+case $x in [1]) x ;; esac
+===
+@known-diff recovery-partial-nodes: if a; then case x in b) 1;; esac elif c; then d; fi
+if a; then case x in b) 1;; esac elif c; then d; fi
+---
+hasError: true
+program [0,51] "if a; then case x in b) 1;; esac elif..."
+  if_statement [0,51] "if a; then case x in b) 1;; esac elif..."
+    (if) [0,2] "if"
+    command [3,4] "a"
+      command_name [3,4] "a"
+        word [3,4] "a"
+    (;) [4,5] ";"
+    (then) [6,10] "then"
+    case_statement [11,32] "case x in b) 1;; esac"
+      (case) [11,15] "case"
+      word [16,17] "x"
+      (in) [18,20] "in"
+      case_item [21,27] "b) 1;;"
+        word [21,22] "b"
+        ()) [22,23] ")"
+        command [24,25] "1"
+          command_name [24,25] "1"
+            number [24,25] "1"
+        (;;) [25,27] ";;"
+      (esac) [28,32] "esac"
+    elif_clause [33,48] "elif c; then d;"
+      (elif) [33,37] "elif"
+      command [38,39] "c"
+        command_name [38,39] "c"
+          word [38,39] "c"
+      (;) [39,40] ";"
+      (then) [41,45] "then"
+      command [46,47] "d"
+        command_name [46,47] "d"
+          word [46,47] "d"
+      (;) [47,48] ";"
+    (fi) [49,51] "fi"
+===
+@match: case $dest in
+case $dest in
+  *.[1357])
+    exit $?
+    ;;
+esac
+===
+@match: case "$arg" in
+case "$arg" in
+  *([0-9])([0-9])) echo "$arg"
+esac
+===
+@known-diff case-pattern-after-continuation: case ${lang} in
+case ${lang} in
+CMakeLists.txt | \
+	cmake_modules | \
+	${PN}.pot) ;;
+*) rm -r ${lang} || die ;;
+esac
+---
+hasError: false
+program [0,100] "case ${lang} in\nCMakeLists.txt | \\\n\tc..."
+  case_statement [0,100] "case ${lang} in\nCMakeLists.txt | \\\n\tc..."
+    (case) [0,4] "case"
+    expansion [5,12] "${lang}"
+      (${) [5,7] "${"
+      variable_name [7,11] "lang"
+      (}) [11,12] "}"
+    (in) [13,15] "in"
+    case_item [16,68] "CMakeLists.txt | \\\n\tcmake_modules | \\..."
+      word [16,30] "CMakeLists.txt"
+      (|) [31,32] "|"
+      extglob_pattern [36,49] "cmake_modules"
+      (|) [50,51] "|"
+      concatenation [55,64] "${PN}.pot"
+        expansion [55,60] "${PN}"
+          (${) [55,57] "${"
+          variable_name [57,59] "PN"
+          (}) [59,60] "}"
+        word [60,64] ".pot"
+      ()) [64,65] ")"
+      (;;) [66,68] ";;"
+    case_item [69,95] "*) rm -r ${lang} || die ;;"
+      extglob_pattern [69,70] "*"
+      ()) [70,71] ")"
+      list [72,92] "rm -r ${lang} || die"
+        command [72,85] "rm -r ${lang}"
+          command_name [72,74] "rm"
+            word [72,74] "rm"
+          word [75,77] "-r"
+          expansion [78,85] "${lang}"
+            (${) [78,80] "${"
+            variable_name [80,84] "lang"
+            (}) [84,85] "}"
+        (||) [86,88] "||"
+        command [89,92] "die"
+          command_name [89,92] "die"
+            word [89,92] "die"
+      (;;) [93,95] ";;"
+    (esac) [96,100] "esac"
+===
+@match: case ${out} in
+case ${out} in
+*"not supported"*|\
+*"operation not supported"*)
+	;;
+esac
+===
+@known-diff case-short-option-pattern: case $1 in
+case $1 in
+-o)
+	owner=$2
+	shift
+	;;
+-g) ;;
+esac
+---
+hasError: false
+program [0,47] "case $1 in\n-o)\n\towner=$2\n\tshift\n\t;;\n-..."
+  case_statement [0,47] "case $1 in\n-o)\n\towner=$2\n\tshift\n\t;;\n-..."
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$1"
+      ($) [5,6] "$"
+      variable_name [6,7] "1"
+    (in) [8,10] "in"
+    case_item [11,35] "-o)\n\towner=$2\n\tshift\n\t;;"
+      word [11,13] "-o"
+      ()) [13,14] ")"
+      variable_assignment [16,24] "owner=$2"
+        variable_name [16,21] "owner"
+        (=) [21,22] "="
+        simple_expansion [22,24] "$2"
+          ($) [22,23] "$"
+          variable_name [23,24] "2"
+      command [26,31] "shift"
+        command_name [26,31] "shift"
+          word [26,31] "shift"
+      (;;) [33,35] ";;"
+    case_item [36,42] "-g) ;;"
+      word [36,38] "-g"
+      ()) [38,39] ")"
+      (;;) [40,42] ";;"
+    (esac) [43,47] "esac"
+===
+@match: case x in *.txt) ;; esac
+case x in *.txt) ;; esac
+===
+@match: case x in [abc]) ;; esac
+case x in [abc]) ;; esac
+===
+@match: case x in a|b) ;; esac
+case x in a|b) ;; esac
+===
+@match: case x in -o|--output) ;; esac
+case x in -o|--output) ;; esac
+===
+@match: case x in x) ;; esac
+case x in x) ;; esac
+===
+@match: case x in foo.txt) ;; esac
+case x in foo.txt) ;; esac
+===
+@match: case x in *foo) ;; esac
+case x in *foo) ;; esac
+===
+@match: case x in foo*) ;; esac
+case x in foo*) ;; esac
+===
+@match: case x in *) ;; esac
+case x in *) ;; esac
+===
+@match: case x in ?) ;; esac
+case x in ?) ;; esac
+===
+@match: case x in *.*) ;; esac
+case x in *.*) ;; esac
+===
+@match: case x in foo|bar) ;; esac
+case x in foo|bar) ;; esac
+===
+@match: case x in foo.txt|*.log) ;; esac
+case x in foo.txt|*.log) ;; esac
+===
+@match: case x in [a-z]*) ;; esac
+case x in [a-z]*) ;; esac
+===
+@match: case x in *.[1357]) ;; esac
+case x in *.[1357]) ;; esac
+===
+@match: case x in -o) ;; esac
+case x in -o) ;; esac
+===
+@match: case x in --output) ;; esac
+case x in --output) ;; esac
+===
+@match: case x in +(a|b)) ;; esac
+case x in +(a|b)) ;; esac
+===
+@match: case x in *(a|b)) ;; esac
+case x in *(a|b)) ;; esac
+===
+@match: case x in @(a|b)) ;; esac
+case x in @(a|b)) ;; esac
+===
+@known-diff case-rejected-group: case x in x@(y)) ;; esac
+case x in x@(y)) ;; esac
+---
+hasError: true
+program [0,24] "case x in x@(y)) ;; esac"
+  case_statement [0,24] "case x in x@(y)) ;; esac"
+    (case) [0,4] "case"
+    word [5,6] "x"
+    (in) [7,9] "in"
+    case_item [10,19] "x@(y)) ;;"
+      ERROR [10,15] "x@(y)"
+      ()) [15,16] ")"
+      (;;) [17,19] ";;"
+    (esac) [20,24] "esac"
+===
+@match: case x in *([0-9])([0-9])) ;; esac
+case x in *([0-9])([0-9])) ;; esac
+===
+@match: case x in *"s"*) ;; esac
+case x in *"s"*) ;; esac
+===
+@match: case x in *${x}*) ;; esac
+case x in *${x}*) ;; esac
+===
+@match: case x in ${x}) ;; esac
+case x in ${x}) ;; esac
+===
+@match: case x in ?(a)) ;; esac
+case x in ?(a)) ;; esac
+===
+@match: case x in !(a)) ;; esac
+case x in !(a)) ;; esac
+===
+@match: case x in a\ b) ;; esac
+case x in a\ b) ;; esac
+===
+@match: case $x in foo_bar) ;; esac
+case $x in foo_bar) ;; esac
+===
+@match: case $x in word1) ;; esac
+case $x in word1) ;; esac
+===
+@match: case $x in abc1d) ;; esac
+case $x in abc1d) ;; esac
+===
+@match: case $x in v2.0) ;; esac
+case $x in v2.0) ;; esac
+===
+@match: case $x in a1) ;; esac
+case $x in a1) ;; esac
+===
+@match: case $x in a_) ;; esac
+case $x in a_) ;; esac
+===
+@match: case $x in A1) ;; esac
+case $x in A1) ;; esac
+===
+@match: case $x in a-b) ;; esac
+case $x in a-b) ;; esac
+===
+@match: case $x in a-bc) ;; esac
+case $x in a-bc) ;; esac
+===
+@match: case $x in ab-c) ;; esac
+case $x in ab-c) ;; esac
+===
+@match: case $x in a-b-c) ;; esac
+case $x in a-b-c) ;; esac
+===
+@match: case $x in cmake_modules) ;; esac
+case $x in cmake_modules) ;; esac
+===
+@match: case $x in a-b|y) ;; esac
+case $x in a-b|y) ;; esac
+===
+@match: case $x in abc|y) ;; esac
+case $x in abc|y) ;; esac
+===
+@match: case $x in abc | y) ;; esac
+case $x in abc | y) ;; esac
+===
+@match: case $x in -x-) ;; esac
+case $x in -x-) ;; esac
+===
+@match: case $x in -x-y) ;; esac
+case $x in -x-y) ;; esac
+===
+@known-diff case-rejected-group: case $x in *.(a|b)) ;; esac
+case $x in *.(a|b)) ;; esac
+---
+hasError: true
+program [0,27] "case $x in *.(a|b)) ;; esac"
+  case_statement [0,27] "case $x in *.(a|b)) ;; esac"
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$x"
+      ($) [5,6] "$"
+      variable_name [6,7] "x"
+    (in) [8,10] "in"
+    case_item [11,22] "*.(a|b)) ;;"
+      ERROR [11,18] "*.(a|b)"
+      ()) [18,19] ")"
+      (;;) [20,22] ";;"
+    (esac) [23,27] "esac"
+===
+@known-diff case-rejected-group: case $x in x.(y)) ;; esac
+case $x in x.(y)) ;; esac
+---
+hasError: true
+program [0,25] "case $x in x.(y)) ;; esac"
+  case_statement [0,25] "case $x in x.(y)) ;; esac"
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$x"
+      ($) [5,6] "$"
+      variable_name [6,7] "x"
+    (in) [8,10] "in"
+    case_item [11,20] "x.(y)) ;;"
+      ERROR [11,16] "x.(y)"
+      ()) [16,17] ")"
+      (;;) [18,20] ";;"
+    (esac) [21,25] "esac"
+===
+@known-diff case-pattern-after-continuation: case $x in cont\<LF>ued) ;; esac
+case $x in cont\
+ued) ;; esac
+---
+hasError: false
+program [0,29] "case $x in cont\\\nued) ;; esac"
+  case_statement [0,29] "case $x in cont\\\nued) ;; esac"
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$x"
+      ($) [5,6] "$"
+      variable_name [6,7] "x"
+    (in) [8,10] "in"
+    case_item [11,24] "cont\\\nued) ;;"
+      word [11,20] "cont\\\nued"
+      ()) [20,21] ")"
+      (;;) [22,24] ";;"
+    (esac) [25,29] "esac"
+===
+@known-diff case-pattern-after-continuation: case $x in a\<LF>1) ;; esac
+case $x in a\
+1) ;; esac
+---
+hasError: false
+program [0,24] "case $x in a\\\n1) ;; esac"
+  case_statement [0,24] "case $x in a\\\n1) ;; esac"
+    (case) [0,4] "case"
+    simple_expansion [5,7] "$x"
+      ($) [5,6] "$"
+      variable_name [6,7] "x"
+    (in) [8,10] "in"
+    case_item [11,19] "a\\\n1) ;;"
+      word [11,15] "a\\\n1"
+      ()) [15,16] ")"
+      (;;) [17,19] ";;"
+    (esac) [20,24] "esac"
+===
