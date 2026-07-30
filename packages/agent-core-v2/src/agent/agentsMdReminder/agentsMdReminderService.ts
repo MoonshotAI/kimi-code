@@ -16,12 +16,22 @@
  * command's syntax tree (see `./bashTargets`), resolved against the frozen
  * `sessionContext.cwd` exactly like the Bash tool itself. Preflight-rejected
  * calls (no `tool` on the context — guard denials included) are never
- * probed: the path policy already said no to that path. The gate
+ * probed: the path policy already said no to that path. Calls vetoed by a
+ * listener (permission denials) arrive with `tool` set and a result that is
+ * still shown to the model, so they are probed and reminded like any visible
+ * result — with one exception: a same-step duplicate vetoed by `toolDedupe`
+ * carries a placeholder result that the dedupe hook swaps for the original's
+ * deferred result, so anything attached to it would be discarded while the
+ * file was already counted as reminded. The hook detects the placeholder
+ * (the call id sits in `toolDedupe.syntheticCallIds` until the dedupe hook
+ * consumes it) and leaves it untouched, keeping reminder, telemetry, and the
+ * known-set strictly on results that reach the model. The gate
  * (`agents-md-reminder` experimental flag) is evaluated per tool call, so
  * runtime config overrides take effect without reconstructing the agent. The
  * hook is ordered before `toolDedupe` when that hook is present (falling back
- * to plain append-order registration otherwise), so a same-step duplicate
- * resolves its deferred result with the reminder already attached.
+ * to plain append-order registration otherwise): the placeholder is then
+ * still marked synthetic when this hook runs, and the original call carries
+ * the reminder by the time the duplicate's deferred result resolves.
  *
  * Known-set discipline: candidates are claimed synchronously per discovered
  * file into an in-memory `claimed` set (parallel calls can never duplicate a
@@ -39,9 +49,20 @@
  * picked up on the next touch; there is no negative cache. Probing is
  * lexical like the tools' own path policy: a symlinked directory's AGENTS.md
  * is discovered through the link at its lexical address, never by realpath.
- * The hook never throws — a probe failure yields the untouched result. The
- * seeded cwd lives in `agentState` as well; fs probes go through the os
- * `IHostFileSystem`, the home directory through `IHostEnvironment`, syntax
+ * The hook never throws — a probe failure yields the untouched result.
+ *
+ * Seeding: `profile` reports the injected paths after every successful
+ * bind/apply/refresh and `sessionInit` re-seeds after `/init`. A prompt can
+ * also commit without any of those entry points — session resume and forks
+ * restore the already-rendered system prompt (AGENTS.md content included)
+ * from the wire journal or a binding snapshot — so the first qualifying call
+ * of a never-seeded agent re-runs the init-time discovery itself
+ * (`loadAgentsMdDetailed` over the agent cwd, same brand home) and seeds
+ * from it, once per agent (`agentsMdReminder.seeded`); a discovery failure
+ * leaves the agent unseeded so the next touch retries. The seeded cwd lives
+ * in `agentState` as well; fs probes go through the os
+ * `IHostFileSystem`, the home directory through `IHostEnvironment`, the
+ * brand home through `bootstrap`, syntax
  * trees through `bashParser`, the gate through `flag`, and the shown-event
  * through `telemetry`. Bound at Agent scope.
  */
@@ -52,6 +73,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IBashParserService } from '#/app/bashParser/bashParser';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -65,8 +87,10 @@ import {
   dirsRootToLeaf,
   findAgentsMdInDir,
   findProjectRoot,
+  loadAgentsMdDetailed,
 } from '#/agent/profile/context';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { toolDedupeSyntheticCallIdsKey } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 
@@ -86,6 +110,10 @@ export const agentsMdReminderCwdKey = defineState<string | undefined>(
   'agentsMdReminder.cwd',
   () => undefined as string | undefined,
 );
+export const agentsMdReminderSeededKey = defineState<boolean>(
+  'agentsMdReminder.seeded',
+  () => false,
+);
 
 export class AgentAgentsMdReminderService
   extends Disposable
@@ -99,6 +127,7 @@ export class AgentAgentsMdReminderService
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @IFlagService private readonly flags: IFlagService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -106,6 +135,7 @@ export class AgentAgentsMdReminderService
     super();
     this.states.register(agentsMdReminderKnownKey);
     this.states.register(agentsMdReminderCwdKey);
+    this.states.register(agentsMdReminderSeededKey);
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
       if (this.flags.enabled(AGENTS_MD_REMINDER_FLAG_ID)) {
         ctx.result = await this.augmentWithReminder(ctx);
@@ -126,6 +156,7 @@ export class AgentAgentsMdReminderService
     for (const path of paths) known.add(normalize(path));
     this.states.set(agentsMdReminderKnownKey, new Set(known));
     this.states.set(agentsMdReminderCwdKey, cwd);
+    this.states.set(agentsMdReminderSeededKey, true);
   }
 
   private readonly claimed = new Set<string>();
@@ -138,13 +169,41 @@ export class AgentAgentsMdReminderService
     return this.states.get(agentsMdReminderCwdKey) ?? this.sessionContext.cwd;
   }
 
+  private isDedupePlaceholder(ctx: ToolDidExecuteContext): boolean {
+    // The key only exists where `toolDedupe` constructed; in minimal scopes
+    // without it no call is ever a synthetic duplicate.
+    if (!this.states.has(toolDedupeSyntheticCallIdsKey)) return false;
+    return this.states.get(toolDedupeSyntheticCallIdsKey).has(ctx.toolCall.id);
+  }
+
+  // Session resume and forks commit an already-rendered system prompt without
+  // going through bind/apply/refresh, so no seed point fires for them.
+  // Re-run the init-time discovery with the same inputs (agent cwd, os home,
+  // brand home) and seed from it, once per agent. A failure throws into the
+  // caller's catch — the agent stays unseeded and the next touch retries.
+  private async ensureSeeded(): Promise<void> {
+    if (this.states.get(agentsMdReminderSeededKey)) return;
+    const { paths } = await loadAgentsMdDetailed(
+      { fs: this.fs, homeDir: this.env.homeDir },
+      this.agentCwd,
+      this.bootstrap.homeDir,
+    );
+    this.seedInjected(paths, this.agentCwd);
+  }
+
   private async augmentWithReminder(ctx: ToolDidExecuteContext): Promise<ExecutableToolResult> {
     // Preflight-rejected calls (guard denial, missing tool, invalid args)
     // arrive without `tool`: the path policy already said no to this path, so
     // probing it (and reporting what exists there) is out of bounds.
     if (ctx.tool === undefined) return ctx.result;
+    // A same-step duplicate vetoed by `toolDedupe` carries a placeholder the
+    // dedupe hook (running after this one) swaps for the original's deferred
+    // result. Attaching here would discard the reminder while the file was
+    // already counted as reminded — the original call carries it for both.
+    if (this.isDedupePlaceholder(ctx)) return ctx.result;
     const discovered: string[] = [];
     try {
+      await this.ensureSeeded();
       const { dirs, selfKnown } = this.targetDirs(ctx);
       const selfKnownSet = new Set(selfKnown);
       for (const dir of dirs) {

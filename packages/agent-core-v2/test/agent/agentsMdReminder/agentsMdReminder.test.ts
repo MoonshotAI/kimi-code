@@ -94,9 +94,6 @@ function createHarness(
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
-        reg.defineInstance(IBootstrapService, {
-          homeDir,
-        } as unknown as IBootstrapService);
         reg.defineInstance(IAgentScopeContext, {
           _serviceBrand: undefined,
           agentId: 'main',
@@ -110,6 +107,7 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
@@ -269,6 +267,8 @@ describe('agentsMdReminder path-carrying tools', () => {
   it('anchors at the nearest existing ancestor when Write targets a not-yet-created directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    // The root file was created after the bind injected nothing.
+    h.reminder.seedInjected([], workDir);
 
     const result = await fire(
       h,
@@ -397,7 +397,7 @@ describe('agentsMdReminder flag gate', () => {
 });
 
 describe('agentsMdReminder result shapes and edge cases', () => {
-  it('appends the reminder to the trailing text part of ContentPart[] outputs', async () => {
+  it('prepends the reminder to the first text part of ContentPart[] outputs', async () => {
     const h = createHarness();
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
 
@@ -411,6 +411,7 @@ describe('agentsMdReminder result shapes and edge cases', () => {
     );
 
     expect(Array.isArray(result.output)).toBe(true);
+    expect(outputText(result).startsWith('<system-reminder>')).toBe(true);
     expect(outputText(result)).toContain('part one');
     expect(outputText(result)).toContain(subAgentsMd);
   });
@@ -451,6 +452,74 @@ describe('agentsMdReminder toolDedupe interplay', () => {
     });
     await h.events.didExecuteSlot.run(did2);
     expect(outputText(did2.result)).toContain(subAgentsMd);
+  });
+
+  it('leaves the vetoed placeholder untouched and reminds exactly once on the visible results', async () => {
+    const h = createHarness({ withRealExecutor: true, withDedupe: true });
+    h.ix.get(IAgentToolDedupeService);
+    const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
+
+    class ReadTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Read';
+      readonly description = 'Returns file contents.';
+      readonly parameters = { type: 'object', additionalProperties: true };
+      resolveExecution(_args: Record<string, unknown>): ToolExecution {
+        return {
+          approvalRule: this.name,
+          execute: async (_ctx: ExecutableToolContext) => ({ output: 'file contents' }),
+        };
+      }
+    }
+    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+
+    const args = { path: join(workDir, 'packages', 'kap-server', 'index.ts') };
+    const calls: ToolCall[] = [
+      { type: 'function', id: 'call-1', name: 'Read', arguments: JSON.stringify(args) },
+      { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
+    ];
+    const results = [];
+    for await (const item of h.ix
+      .get(IAgentToolExecutorService)
+      .execute(calls, { turnId: 1, signal: new AbortController().signal })) {
+      results.push(item);
+    }
+
+    expect(results).toHaveLength(2);
+    for (const item of results) {
+      const text = outputText(item.result);
+      expect(text).toContain('file contents');
+      expect(text).toContain(subAgentsMd);
+    }
+    const shown = h.telemetryEvents.filter((e) => e.event === 'agents_md_reminder_shown');
+    expect(shown).toHaveLength(1);
+  });
+});
+
+describe('agentsMdReminder lazy seeding after a restore', () => {
+  it('self-seeds the injected chain on the first touch when no seed point ever fired', async () => {
+    const h = createHarness();
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
+
+    const result = await fire(
+      h,
+      didCtx('Read', { path: join(workDir, 'packages', 'kap-server', 'index.ts') }),
+    );
+
+    const text = outputText(result);
+    expect(text).toContain(subAgentsMd);
+    expect(text).not.toContain(rootAgentsMd);
+  });
+
+  it('treats the brand-home AGENTS.md as injected after a restore', async () => {
+    const h = createHarness();
+    const brandAgentsMd = await writeAgentsMd(homeDir, 'brand instructions');
+
+    const result = await fire(h, didCtx('Read', { path: join(homeDir, 'notes.txt') }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(outputText(result)).not.toContain(brandAgentsMd);
+    expect(h.telemetryEvents).toHaveLength(0);
   });
 });
 
