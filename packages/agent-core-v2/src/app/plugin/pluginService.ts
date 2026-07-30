@@ -5,7 +5,9 @@
  * `PluginManager`, roots plugin storage at `bootstrap`, counts plugin skills
  * through `skillDiscovery`, and resolves managed endpoint settings through
  * `provider` plus the startup snapshot from `bootstrap`. Exposes plugin
- * contributions through the hook, MCP, and skill contracts. Bound at App scope.
+ * contributions through the hook, MCP, skill, and system-prompt contracts.
+ * Mutations serialize through `mutationQueue` and consumption reads wait on
+ * it. Bound at App scope.
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
@@ -19,6 +21,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { PluginManager } from './manager';
@@ -32,6 +35,7 @@ import {
 } from './plugin';
 import type {
   EnabledPluginSessionStart,
+  EnabledPluginSystemPrompt,
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
@@ -155,8 +159,16 @@ export class PluginService extends Disposable implements IPluginService {
     return this.runConsumptionRead([], async () => this.manager.pluginSkillRoots());
   }
 
+  pluginAgentRoots(): Promise<readonly AgentFileRoot[]> {
+    return this.runConsumptionRead([], async () => this.manager.pluginAgentRoots());
+  }
+
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]> {
     return this.runConsumptionRead([], async () => this.manager.enabledSessionStarts());
+  }
+
+  enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]> {
+    return this.runConsumptionRead([], async () => this.manager.enabledSystemPrompts());
   }
 
   enabledMcpServers(): Promise<Record<string, McpServerConfig>> {

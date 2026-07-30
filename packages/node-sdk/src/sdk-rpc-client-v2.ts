@@ -197,6 +197,7 @@ import {
   ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
+  hostRequestHeadersSeed,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -223,7 +224,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
-import { assertKimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
@@ -412,14 +413,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       onRefresh: options.onOAuthRefresh,
     });
 
+    const identity = assertKimiHostIdentity(this.identity);
     const { app } = bootstrap(
       {
         homeDir: this.homeDir,
         configPath: this.configPath,
-        clientVersion: this.identity?.version,
+        clientIdentity: identity,
       },
       [
         ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
+        // Host identity headers for the engine's outbound requests (model,
+        // WebSearch, registry refresh). Without this seed the managed vendors
+        // go out with the SDK's default User-Agent and no X-Msh-* at all.
+        ...hostRequestHeadersSeed(
+          createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
+        ),
         // `--skills-dir` (v1 parity): explicit skill dirs replace default
         // user / project discovery for every session this client hosts.
         ...skillCatalogRuntimeOptionsSeed(options.skillDirs),

@@ -17,7 +17,7 @@ import {
   OAuthUnauthorizedError,
   RetryableRefreshError,
 } from './errors';
-import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, TokenInfo } from './types';
+import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
 import { isRecord } from './utils';
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -59,7 +59,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 async function postForm(
   url: string,
   params: Record<string, string>,
-  deviceHeaders?: DeviceHeaders | undefined,
+  deviceHeaders?: OAuthRequestHeaders | undefined,
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
@@ -118,7 +118,7 @@ function describeFetchFailure(error: unknown): string {
 
 export async function requestDeviceAuthorization(
   config: OAuthFlowConfig,
-  options: { readonly deviceHeaders?: DeviceHeaders | undefined },
+  options: { readonly deviceHeaders?: OAuthRequestHeaders | undefined },
 ): Promise<DeviceAuthorization> {
   const url = `${config.oauthHost.replace(/\/$/, '')}/api/oauth/device_authorization`;
   const { status, data } = await postForm(
@@ -168,7 +168,7 @@ export type DevicePollResult =
 export async function pollDeviceToken(
   config: OAuthFlowConfig,
   deviceCode: string,
-  options: { readonly deviceHeaders?: DeviceHeaders | undefined },
+  options: { readonly deviceHeaders?: OAuthRequestHeaders | undefined },
 ): Promise<DevicePollResult> {
   const url = `${config.oauthHost.replace(/\/$/, '')}/api/oauth/token`;
   const { status, data } = await postForm(
@@ -213,7 +213,7 @@ export async function pollDeviceToken(
 // ── refreshAccessToken ────────────────────────────────────────────────
 
 export interface RefreshOptions {
-  readonly deviceHeaders?: DeviceHeaders | undefined;
+  readonly deviceHeaders?: OAuthRequestHeaders | undefined;
   readonly maxRetries?: number | undefined;
   /**
    * Backoff between retries in ms. Defaults to `2 ** attempt * 1000` (1s, 2s).
@@ -289,4 +289,4 @@ export async function refreshAccessToken(
   throw lastError ?? new OAuthError('Token refresh failed after retries.');
 }
 
-export type { DeviceHeaders };
+export type { DeviceHeaders, OAuthRequestHeaders };

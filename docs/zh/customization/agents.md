@@ -45,7 +45,7 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 ### Agent 目录
 
-Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**显式（`--agent-file`）> 项目 > 额外 > 用户 > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
+Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**显式（`--agent-file`）> 项目 > 额外 > 用户 > Plugin > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
 
 **用户级**（对所有项目生效）：
 - `$KIMI_CODE_HOME/agents/`（默认：`~/.kimi-code/agents/`）
@@ -62,6 +62,8 @@ Kimi 专属的用户 Agent 目录随 `KIMI_CODE_HOME` 移动，通用的 `~/.age
 ```toml
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
+
+**Plugin 级**：已启用 plugin 在其 manifest 的 `agents` 字段中声明的目录（省略时自动采用 plugin 根下的 `agents/` 目录），见[插件 Agent](./plugins.md#插件-agent)。Plugin Agent 优先级仅高于内置 Agent。
 
 **内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认主 Agent 的系统提示词（它不参与 Agent 文件发现），其优先级交互见下文 SYSTEM.md 小节。
 
@@ -105,7 +107,7 @@ disallowedTools:
 
 内置工具与用户工具按名称精确匹配（区分大小写）；以 `mcp__` 开头的条目按 glob 匹配 MCP 工具。有三种写法永远匹配不到任何工具，在 profile 生效时会给出警告：`mcp__` 模式之外使用通配符（`disallowedTools` 里单独的 `*` 什么也禁不掉）；不是完整 `mcp__<服务器>__<工具>` 形式的 `mcp__` 字面量（`mcp__github` 匹配不到任何工具 —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（通常是笔误，如把 `Read` 写成 `read`）。
 
-正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染：`${var}` 占位符替换为实时上下文值——未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在你放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以"包裹"默认行为而不是替换它。可用变量见下文 SYSTEM.md 变量表。
+正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染：`${var}` 占位符替换为实时上下文值——未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在你放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以"包裹"默认行为而不是替换它。如果文件会替换默认提示词、但仍要保留已启用 plugin 提供的指令，请把 `${plugin_sections}` 放在希望出现这些指令的位置。可用变量见下文 SYSTEM.md 变量表。
 
 未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略；加上 `tools` 的逗号分隔写法和 `name` 缺省回退到文件名，Claude Code 与 OpenCode 风格的 Agent 文件一般可直接加载 —— 只含 `description` 和正文的最小文件可跨工具通用。
 
@@ -137,7 +139,7 @@ kimi -p --agent reviewer "审查这个分支上的改动"
 
 绑定的 Agent 即会话的身份：在会话首次绑定后即固定，之后不可切换。在 TUI 中，这些 flag 只绑定启动时的会话；之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。
 
-定制主 Agent 时，在正文中引用 `${base_prompt}` 可保持默认提示词的环境、工作区指令和 Skill 注入生效；不引用 `${base_prompt}` 的正文则完全拥有自己的提示词，适合自包含的子 Agent。
+定制主 Agent 时，在正文中引用 `${base_prompt}` 可保持有效默认提示词中已有的环境、工作区指令、Skill 和 plugin 注入生效。如果要替换默认提示词、但只保留 plugin 提供的指令，请改用 `${plugin_sections}`。正文同时不引用 `${base_prompt}` 和 `${plugin_sections}` 时，会完全拥有自己的提示词并排除 plugin 指令，适合自包含的子 Agent。
 
 ### 用 SYSTEM.md 覆盖主 Agent 的系统提示词
 
@@ -158,8 +160,9 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${now}` | 当前时间（ISO 格式） |
 | `${additional_dirs_info}` | 加入工作区的额外目录信息；没有时为空 |
 | `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖） |
+| `${plugin_sections}` | 已启用 plugin 提供的完整 Plugin Instructions 块；没有已启用 plugin 提供指令时为空 |
 
-未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有三个预组合块——`${windows_notes}`、`${additional_dirs_section}`、`${skills_section}`——渲染对应的内置提示词段落，不适用时为空字符串。利用这些变量可以重建内置提示词的骨架，例如：
+未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有四个预组合块——`${windows_notes}`、`${additional_dirs_section}`、`${skills_section}`、`${plugin_sections}`——渲染对应的内置提示词段落，不适用时为空字符串。内置默认提示词已经包含 `${plugin_sections}`；当 `${base_prompt}` 已展开为该提示词时，不要再重复加入此变量。利用这些变量可以重建内置提示词的骨架，例如：
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.
@@ -167,6 +170,8 @@ You are Kimi, running at ${cwd} on ${os}.
 ${agents_md}
 
 ${skills}
+
+${plugin_sections}
 ```
 
 ## 指令文件

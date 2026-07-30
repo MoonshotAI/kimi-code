@@ -212,6 +212,7 @@ export * from '#/session/sessionSkillCatalog/workspaceFileSkillSource';
 export * from '#/session/sessionSkillCatalog/pluginSkillSource';
 export * from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 export * from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
+export * from '#/session/sessionAgentProfileCatalog/pluginAgentProfileSource';
 export * from '#/session/sessionAgentProfileCatalog/projectFileAgentSource';
 export * from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
 export * from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';

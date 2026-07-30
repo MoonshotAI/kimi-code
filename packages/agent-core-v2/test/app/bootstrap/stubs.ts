@@ -12,6 +12,12 @@ import {
   type PersistenceScopeName,
 } from '#/app/bootstrap/bootstrap';
 
+export const stubClientIdentity = {
+  productName: 'test-product',
+  version: '0.0.0-test',
+  platform: 'test_platform',
+} as const;
+
 export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
   const sessionsScope = 'sessions';
   const scopes: Record<PersistenceScopeName, string> = {
@@ -36,7 +42,7 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     homeDir,
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',
-    clientVersion: '0.0.0-test',
+    clientIdentity: stubClientIdentity,
     sessionsDir: `${homeDir}/sessions`,
     blobsDir: `${homeDir}/blobs`,
     storeDir: `${homeDir}/store`,

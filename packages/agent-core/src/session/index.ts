@@ -34,7 +34,7 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
-import type { EnabledPluginSessionStart, PluginCommandDef } from '../plugin';
+import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
 import {
   AgentProfileCatalogSnapshotSchema,
   DEFAULT_AGENT_PROFILE_NAME,
@@ -42,6 +42,7 @@ import {
   SessionAgentProfileCatalog,
   loadAgentsMd,
   prepareSystemPromptContext,
+  type AgentFileRoot,
   type AgentProfileCatalogSnapshot,
   type ResolvedAgentProfile,
 } from '../profile';
@@ -91,6 +92,7 @@ export interface SessionOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
+  readonly pluginSystemPrompts?: readonly EnabledPluginSystemPrompt[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   /** Owner-scoped [image] limits, threaded from the owning core into every agent. */
@@ -127,6 +129,10 @@ export interface SessionAgentCatalogConfig {
   readonly explicitFiles?: readonly string[];
   readonly extraDirs?: readonly string[];
   readonly profileName?: string;
+  /** Agent directories contributed by enabled plugins (lowest file priority). */
+  readonly pluginRoots?: readonly AgentFileRoot[];
+  /** Refresh only the plugin contribution when restoring the persisted catalog. */
+  readonly refreshPluginAgents?: boolean;
   /** Already-loaded catalog prepared before a persistent session is created. */
   readonly catalog?: SessionAgentProfileCatalog;
 }
@@ -221,6 +227,7 @@ export class Session {
   private additionalDirs: readonly string[];
   private sessionAdditionalDirs: readonly string[] = [];
   private readonly pluginCommands: readonly PluginCommandDef[];
+  private pluginSystemPrompts: readonly EnabledPluginSystemPrompt[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -276,6 +283,7 @@ export class Session {
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
     this.pluginCommands = options.pluginCommands ?? [];
+    this.pluginSystemPrompts = options.pluginSystemPrompts ?? [];
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
@@ -297,6 +305,7 @@ export class Session {
         osHomeDir: options.agents?.userHomeDir ?? homedir(),
         extraDirs: options.agents?.extraDirs ?? options.config?.extraAgentDirs,
         explicitFiles: options.agents?.explicitFiles,
+        pluginRoots: options.agents?.pluginRoots,
         warn: (message, error) => {
           this.log.warn(message, error === undefined ? undefined : { error });
         },
@@ -1027,15 +1036,29 @@ export class Session {
     const persisted = JSON.parse(text) as PersistedSessionState;
     const { agentProfileCatalog, ...metadata } = persisted;
     this.metadata = metadata;
-    if (agentProfileCatalog !== undefined) {
+    if (agentProfileCatalog === undefined) {
+      if (this.options.agents?.refreshPluginAgents === true) {
+        this.agentProfileSnapshot = this.agentCatalog.snapshot();
+      }
+    } else {
       const parsed = AgentProfileCatalogSnapshotSchema.safeParse(agentProfileCatalog);
       if (parsed.success) {
-        this.agentProfileSnapshot = parsed.data;
-        this.agentCatalog.restoreSnapshot(parsed.data);
+        if (this.options.agents?.refreshPluginAgents === true) {
+          await this.agentCatalog.restoreSnapshotRefreshingPlugins(
+            parsed.data,
+            this.options.agents.pluginRoots ?? [],
+          );
+        } else {
+          this.agentCatalog.restoreSnapshot(parsed.data);
+        }
+        this.agentProfileSnapshot = this.agentCatalog.snapshot();
       } else {
         this.log.warn('stored agent profile catalog is invalid; using discovered profiles', {
           error: parsed.error.message,
         });
+        if (this.options.agents?.refreshPluginAgents === true) {
+          this.agentProfileSnapshot = this.agentCatalog.snapshot();
+        }
       }
     }
     return this.metadata;
@@ -1131,6 +1154,24 @@ export class Session {
     }
   }
 
+  /**
+   * Replace the enabled plugins' system-prompt contributions on every ready
+   * agent and re-render prompts. The owning core calls this after an explicit
+   * plugin reload — installing, enabling, disabling, or removing a plugin
+   * without a reload deliberately leaves live prompts unchanged.
+   */
+  async setPluginSystemPrompts(sections: readonly EnabledPluginSystemPrompt[]): Promise<void> {
+    this.pluginSystemPrompts = sections;
+    for (const agent of this.readyAgents()) {
+      agent.setPluginSystemPrompts(sections);
+      try {
+        await agent.refreshSystemPrompt();
+      } catch (error) {
+        this.log.warn('failed to refresh system prompt after plugin reload', { error });
+      }
+    }
+  }
+
   private instantiateAgent(
     id: string,
     homedir: string,
@@ -1164,6 +1205,7 @@ export class Session {
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,
+      pluginSystemPrompts: this.pluginSystemPrompts,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,

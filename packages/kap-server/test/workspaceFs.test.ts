@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -44,6 +45,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     // picker only sees the test fixtures.
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -191,6 +193,7 @@ describe('server-v2 /api/v1 fs:mkdir', () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-instances-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: dir,
@@ -292,6 +295,7 @@ describe('server-v2 /api/v1 fs:content', () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-instances-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: dir,

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { Error2, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
@@ -25,6 +26,7 @@ import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import {
   normalizePluginId,
   type EnabledPluginSessionStart,
+  type EnabledPluginSystemPrompt,
   type PluginCapabilityState,
   type PluginCommandDef,
   type PluginGithubMetadata,
@@ -312,6 +314,17 @@ export class PluginManager {
     return roots;
   }
 
+  pluginAgentRoots(): readonly AgentFileRoot[] {
+    const roots: AgentFileRoot[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const dir of record.manifest.agents ?? []) {
+        roots.push({ path: dir, source: 'plugin' });
+      }
+    }
+    return roots;
+  }
+
   enabledSessionStarts(): readonly EnabledPluginSessionStart[] {
     const out: EnabledPluginSessionStart[] = [];
     for (const record of this.records.values()) {
@@ -319,6 +332,17 @@ export class PluginManager {
       const skill = record.manifest?.sessionStart?.skill;
       if (skill === undefined) continue;
       out.push({ pluginId: record.id, skillName: skill });
+    }
+    return out;
+  }
+
+  enabledSystemPrompts(): readonly EnabledPluginSystemPrompt[] {
+    const out: EnabledPluginSystemPrompt[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok') continue;
+      const content = record.manifest?.systemPrompt;
+      if (content === undefined) continue;
+      out.push({ pluginId: record.id, content });
     }
     return out;
   }

@@ -34,6 +34,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+
+import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 
@@ -295,7 +297,7 @@ const sockets = new Set<import('node:net').Socket>();
 beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'klient-matrix-home-'));
   workRoot = await mkdtemp(join(tmpdir(), 'klient-matrix-work-'));
-  ({ app } = bootstrap({ homeDir }, [
+  ({ app } = bootstrap({ homeDir, clientIdentity: TEST_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]));
   klient = createMemoryKlient({ scope: app });

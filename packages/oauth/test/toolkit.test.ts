@@ -45,8 +45,9 @@ function token(accessToken: string): TokenInfo {
 }
 
 const TEST_IDENTITY = {
-  userAgentProduct: 'kimi-code-cli',
+  productName: 'kimi-code-cli',
   version: '0.0.0-test',
+  platform: 'kimi_code_cli',
 } as const;
 
 afterEach(() => {

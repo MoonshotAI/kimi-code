@@ -2,17 +2,39 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IPluginService } from '#/app/plugin/plugin';
+import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 
-import { createTestAgent, execEnvServices, hostEnvironmentServices, type TestAgentContext } from '../../harness';
+import {
+  appService,
+  createTestAgent,
+  execEnvServices,
+  hostEnvironmentServices,
+  sessionService,
+  type TestAgentContext,
+  type TestAgentOptions,
+  type TestAgentServiceOverride,
+} from '../../harness';
 
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
   systemPrompt: (context) =>
     typeof context['agentsMd'] === 'string' ? (context['agentsMd'] as string) : '',
+  tools: [],
+};
+
+const pluginProfile: ResolvedAgentProfile = {
+  name: 'plugin-profile',
+  systemPrompt: (context) =>
+    typeof context['pluginSections'] === 'string' ? context['pluginSections'] : '',
   tools: [],
 };
 
@@ -46,12 +68,15 @@ describe('AgentProfileService.applyProfile', () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
-  function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
+  function buildContext(
+    ...extra: readonly (TestAgentServiceOverride | TestAgentOptions)[]
+  ): { ctx: TestAgentContext; profile: IAgentProfileService } {
     const fs = new HostFileSystem();
     ctx = createTestAgent(
       execEnvServices({ hostFs: fs }),
       hostEnvironmentServices(homeDir),
       { cwd: workDir },
+      ...extra,
     );
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
@@ -121,7 +146,103 @@ describe('AgentProfileService.applyProfile', () => {
 
     expect(svc.getAgentsMdWarning()).toBeUndefined();
   });
+
+  it('injects enabled plugin system-prompt sections into the rendered prompt', async () => {
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'Always cite sources.' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
+
+    await svc.applyProfile(pluginProfile);
+
+    expect(svc.data().systemPrompt).toBe(
+      '<!-- From: plugin demo -->\nAlways cite sources.',
+    );
+  });
+
+  it('refreshes the system prompt when the plugin skill source reloads', async () => {
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const change = new Emitter<string>();
+    const { profile: svc } = buildContext(
+      appService(IPluginService, pluginStub(sections)),
+      skillCatalogWithChange(change),
+    );
+    await svc.applyProfile(pluginProfile);
+    expect(svc.data().systemPrompt).toContain('V1');
+
+    sections.value = [{ pluginId: 'demo', content: 'V2' }];
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
+
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toContain('V2');
+    });
+    change.dispose();
+  });
+
+  it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
+    const large = 'x'.repeat(48 * 1024);
+    const sections = {
+      value: [
+        { pluginId: 'first', content: large },
+        { pluginId: 'second', content: large },
+      ] as readonly EnabledPluginSystemPrompt[],
+    };
+    const change = new Emitter<string>();
+    const { ctx: context, profile: svc } = buildContext(
+      appService(IPluginService, pluginStub(sections)),
+      skillCatalogWithChange(change),
+    );
+
+    await svc.applyProfile(pluginProfile);
+    expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
+    expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
+
+    // A reload-driven re-render applies the budget again but does not warn twice.
+    sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toContain('<!-- From: plugin third -->');
+    });
+
+    expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
+    const events = context.newEvents() as readonly {
+      event: string;
+      args?: { code?: string };
+    }[];
+    const warnings = events.filter(
+      (entry) => entry.event === 'warning' && entry.args?.code === 'plugin-sections-oversized',
+    );
+    expect(warnings).toHaveLength(1);
+    change.dispose();
+  });
 });
+
+function skillCatalogWithChange(change: Emitter<string>): TestAgentServiceOverride {
+  return sessionService(ISessionSkillCatalog, {
+    _serviceBrand: undefined,
+    catalog: new InMemorySkillCatalog(),
+    ready: Promise.resolve(),
+    onDidChange: change.event,
+    load: async () => {},
+    reload: async () => {},
+  });
+}
+
+function pluginStub(sections: {
+  value: readonly EnabledPluginSystemPrompt[];
+}): IPluginService {
+  return {
+    onDidReload: Event.None as IPluginService['onDidReload'],
+    pluginSkillRoots: async () => [],
+    enabledSessionStarts: async () => [],
+    enabledSystemPrompts: async () => sections.value,
+    enabledMcpServers: async () => ({}),
+    enabledHooks: async () => [],
+    listPluginCommands: async () => [],
+  } as unknown as IPluginService;
+}
 
 function exactSystemPrompt(workDir: string, agentsMd: string): string {
   return [

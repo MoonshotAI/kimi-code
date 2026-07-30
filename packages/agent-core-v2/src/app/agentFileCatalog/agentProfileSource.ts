@@ -7,9 +7,9 @@
  * collisions). Mirrors `skillCatalog/skillSource`, with one deliberate
  * deviation: `explicit` outranks every other source (in the skill system it
  * aliases `user`) because `--agent-file` is a one-shot command-line intent that
- * must always win. Concrete sources (user at App scope; project / extra /
- * explicit at Session scope) each bind their own DI token extending this
- * contract.
+ * must always win. Concrete sources (user at App scope; plugin / project /
+ * extra / explicit at Session scope) each bind their own DI token extending
+ * this contract.
  *
  * A source may mark `load()` failures as `fatal`: the Session catalog lets
  * them propagate into `ready` so awaiters see the error (`explicit` does —
@@ -38,6 +38,7 @@ export interface AgentProfileContribution {
 }
 
 export const AGENT_PROFILE_SOURCE_PRIORITY = {
+  plugin: 5,
   user: 10,
   extra: 20,
   project: 30,

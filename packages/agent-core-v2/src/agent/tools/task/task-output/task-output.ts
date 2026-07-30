@@ -15,21 +15,6 @@ import { type AgentTool } from '#/tool/toolContract';
 
 export const TaskOutputInputSchema = z.object({
   task_id: z.string().describe('The background task ID to inspect.'),
-  block: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Whether to wait for the task to finish before returning. Discouraged — background tasks notify automatically on completion; use only when the user explicitly asked you to wait.',
-    )
-    .optional(),
-  timeout: z
-    .number()
-    .int()
-    .min(0)
-    .max(3600)
-    .default(30)
-    .describe('Maximum number of seconds to wait when block=true.')
-    .optional(),
 });
 
 export type TaskOutputInput = z.infer<typeof TaskOutputInputSchema>;

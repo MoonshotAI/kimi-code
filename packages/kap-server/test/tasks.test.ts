@@ -12,6 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -74,6 +75,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       },
     };
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

@@ -169,6 +169,7 @@ function buildTemplateVars(
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_SKILLS: tools.includes('Skill') ? skills : '',
+    KIMI_PLUGIN_SECTIONS: context.pluginSections ?? '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     // Shared prose sections (single source: profile/prompt-sections.ts) so the
     // builtin template and the agent-file renderer can never drift apart.

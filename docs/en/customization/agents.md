@@ -45,7 +45,7 @@ Beyond the three built-in sub-agents, you can define your own agents as Markdown
 
 ### Agent Locations
 
-Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Explicit (`--agent-file`) > Project > Extra > User > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
+Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Explicit (`--agent-file`) > Project > Extra > User > Plugin > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
 
 **User level** (applies to all projects):
 - `$KIMI_CODE_HOME/agents/` (default: `~/.kimi-code/agents/`)
@@ -62,6 +62,8 @@ The Kimi-specific user agent directory moves with `KIMI_CODE_HOME`, while the ge
 ```toml
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
+
+**Plugin level**: directories declared in an enabled plugin's manifest `agents` field (when omitted, the `agents/` directory under the plugin root is picked up automatically); see [Plugin Agents](./plugins.md#plugin-agents). Plugin agents outrank only the built-in agents.
 
 **Built-in agents** are distributed with the CLI and have the lowest priority. A directory-discovered file does not override a same-name built-in Agent unless its frontmatter declares `override: true`. A file loaded through `--agent-file` is treated as explicit launch intent, may override a same-name built-in Agent, outranks every directory scope, and applies to the current launch only. Separately, `$KIMI_CODE_HOME/SYSTEM.md` permanently overrides the default main agent's system prompt (it is not part of agent-file discovery); its precedence interactions are covered in the SYSTEM.md section below.
 
@@ -105,7 +107,7 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 
 Built-in and user tools match by exact, case-sensitive name; entries starting with `mcp__` match MCP tools as globs. Three entry shapes never match anything and are reported with a warning when the profile takes effect: a wildcard outside an `mcp__` pattern (a bare `*` in `disallowedTools` disables nothing), an `mcp__` literal that is not a full `mcp__<server>__<tool>` name (`mcp__github` matches nothing — use `mcp__github__*` for the whole server), and a name no registered or built-in tool has (usually a typo, such as `read` instead of `Read`).
 
-The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. The available variables are listed in the SYSTEM.md section below.
+The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. If the file replaces the default prompt but should still honor instructions contributed by enabled plugins, place `${plugin_sections}` where those instructions should appear. The available variables are listed in the SYSTEM.md section below.
 
 Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, the comma-separated `tools` form keeps Claude Code-style agent files loadable, and a missing `name` falls back to the file name so OpenCode-style files load too — a minimal file with `description` and a body works across tools.
 
@@ -137,7 +139,7 @@ kimi -p --agent reviewer "Review the changes on this branch"
 
 The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. In the TUI the flags bind only the startup session; a session created later in the same process (for example via `/new`) starts with the default agent.
 
-For main-agent customization, reference `${base_prompt}` in the body so the environment, workspace-instruction, and Skill injections from the default prompt stay in effect; a body without `${base_prompt}` owns the entire prompt, which fits self-contained sub-agents.
+For main-agent customization, reference `${base_prompt}` in the body so the environment, workspace-instruction, Skill, and plugin injections already present in the effective default prompt stay in effect. When you want to replace the default prompt but keep only plugin-contributed instructions, use `${plugin_sections}` instead. A body without `${base_prompt}` or `${plugin_sections}` owns the entire prompt and excludes plugin instructions, which fits self-contained sub-agents.
 
 ### Overriding the main agent's system prompt with SYSTEM.md
 
@@ -158,8 +160,9 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${now}` | Current time in ISO format |
 | `${additional_dirs_info}` | Additional directories added to the workspace; empty when there are none |
 | `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default — the built-in default, or your `SYSTEM.md` override when present |
+| `${plugin_sections}` | A complete Plugin Instructions block contributed by enabled plugins; empty when no enabled plugin contributes instructions |
 
-Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Three pre-composed blocks — `${windows_notes}`, `${additional_dirs_section}`, and `${skills_section}` — render the matching built-in prompt section, or an empty string when it does not apply. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
+Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Four pre-composed blocks — `${windows_notes}`, `${additional_dirs_section}`, `${skills_section}`, and `${plugin_sections}` — render the matching built-in prompt section, or an empty string when it does not apply. The built-in default prompt already includes `${plugin_sections}`, so do not add it again when `${base_prompt}` already expands to that prompt. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.
@@ -167,6 +170,8 @@ You are Kimi, running at ${cwd} on ${os}.
 ${agents_md}
 
 ${skills}
+
+${plugin_sections}
 ```
 
 ## Instruction Files
