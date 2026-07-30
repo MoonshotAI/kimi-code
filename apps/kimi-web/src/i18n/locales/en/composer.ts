@@ -2,7 +2,7 @@ export default {
   placeholder: 'Type a message…',
   send: 'Send ↵',
   queueLabel: 'Queue',
-  placeholderRunning: 'Press Enter to queue · Ctrl+S to inject into the running turn',
+  placeholderRunning: 'Press Enter to queue · Ctrl+Enter to inject into the running turn',
   starting: 'Sending…',
   queueAutoDrain: 'sends automatically when the current turn ends',
   queueNext: 'Up next',

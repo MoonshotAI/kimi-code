@@ -491,15 +491,13 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity). Always swallow
-  // the shortcut: without preventDefault the browser opens its Save Page dialog.
-  // (The same swallow lives app-wide in App.vue's onGlobalKeydown, so the
-  // dialog is suppressed even when the composer is not focused.)
-  if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+  // Ctrl+Enter / Cmd+Enter — steer into the running turn; falls through to the
+  // normal submit path when idle. (The composer previously advertised Ctrl+S,
+  // but Chrome Canary intercepts it for the Save Page dialog before the page
+  // can preventDefault it.)
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && props.running) {
     e.preventDefault();
-    if (props.running) {
-      handleSteer();
-    }
+    handleSteer();
     return;
   }
 
