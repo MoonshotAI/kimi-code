@@ -911,6 +911,30 @@ describe('Anthropic tool schema compatibility', () => {
     expect(kimiTools.map((tool) => tool.name)).toEqual(tools.map((tool) => tool.name));
   });
 
+  it('filters unsupported tools for registry-created plain anthropic providers', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const tools: Tool[] = [
+      {
+        name: 'incompatible_tool',
+        description: 'Uses oneOf.',
+        parameters: { oneOf: [{ required: ['resource_id'] }] },
+      },
+      {
+        name: 'compatible_tool',
+        description: 'Uses a regular object schema.',
+        parameters: { type: 'object' },
+      },
+    ];
+
+    const { params } = await captureAnthropicBody(provider, undefined, tools);
+    const wireTools = params['tools'] as Array<{ name: string }>;
+    expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+  });
+
   it.each(['https://api.anthropic.com', 'https://api.anthropic.com/'])(
     'filters unsupported tools for explicit official endpoint %s',
     async (baseUrl) => {
