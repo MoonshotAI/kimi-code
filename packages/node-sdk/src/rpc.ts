@@ -59,6 +59,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
+  WorkspaceTrustInfo,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -218,6 +219,20 @@ export abstract class SDKRpcClientBase {
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listWorkspaceSkills({ workDir });
+  }
+
+  /**
+   * Workspace-trust state for `workDir`. The v1 engine has no trust concept,
+   * so the base implementation reports an always-trusted workspace and the
+   * trust write is a no-op; only the v2 client overrides these.
+   */
+  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    void workDir;
+    return { trusted: true, gatedMcpServers: [] };
+  }
+
+  async trustWorkspace(workDir: string): Promise<void> {
+    void workDir;
   }
 
   async renameSession(input: RenameSessionInput): Promise<void> {

@@ -150,6 +150,7 @@ import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/app/mcpConfig/oa
 import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 import {
   applyPromptMetadataUpdate,
   bootstrap,
@@ -199,6 +200,7 @@ import {
   IWorkspaceDirs,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
+  IWorkspaceTrust,
   closeSessionById,
   followWorkspaceHandlers,
   getLiveSessionById,
@@ -293,6 +295,7 @@ import type {
   SessionUsage,
   SkillSummary,
   TelemetryClient,
+  WorkspaceTrustInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -571,6 +574,50 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       });
     }
     return [...byName.values()];
+  }
+
+  /**
+   * klient has no workspace-trust facade; composed directly from the engine
+   * via {@link engineAccessor} — the same `handlerFor({ root })` path
+   * `createSession` takes (materializing the workspace handler is a no-op
+   * cost here: session creation does it anyway). The gated-server list is
+   * what the pure config loader sees with project files included vs skipped
+   * (the workspaceTrust gate inside the engine's `workspaceMcpConfig`),
+   * computed best-effort: an unreadable/invalid project file degrades to an
+   * empty list rather than failing the caller.
+   */
+  override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    const trusted = await handler.accessor.get(IWorkspaceTrust).get();
+    if (trusted) return { trusted: true, gatedMcpServers: [] };
+    try {
+      const fs = this.engineAccessor.get(IHostFileSystem);
+      const [withProject, userOnly] = await Promise.all([
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
+      ]);
+      const gatedMcpServers = Object.keys(withProject)
+        .filter((name) => !(name in userOnly))
+        .toSorted();
+      return { trusted: false, gatedMcpServers };
+    } catch {
+      return { trusted: false, gatedMcpServers: [] };
+    }
+  }
+
+  /**
+   * klient has no workspace-trust facade; see {@link getWorkspaceTrustInfo}.
+   * The flip fires `IWorkspaceTrust.onDidChange`, which makes the engine's
+   * `workspaceMcpConfig` reload with project files included — project MCP
+   * servers connect live, no restart needed.
+   */
+  override async trustWorkspace(workDir: string): Promise<void> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    await handler.accessor.get(IWorkspaceTrust).trust();
   }
 
   /**
