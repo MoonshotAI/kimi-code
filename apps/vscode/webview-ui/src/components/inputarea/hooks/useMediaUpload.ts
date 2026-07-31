@@ -4,6 +4,7 @@ import { bridge } from "@/services";
 import { validateMediaFile, validateTotalSize, processMediaFile, getMediaType } from "@/lib/media-utils";
 import { useChatStore } from "@/stores";
 import { MEDIA_CONFIG } from "@/services/config";
+import { resolveDroppedContent } from "../path-drop";
 
 interface UseMediaUploadResult {
   canAddMedia: boolean;
@@ -12,7 +13,10 @@ interface UseMediaUploadResult {
   addMediaFiles: (files: File[]) => void;
 }
 
-export function useMediaUpload(): UseMediaUploadResult {
+export function useMediaUpload(
+  workspaceRoot: string | null,
+  onDropPaths: (paths: string[]) => void,
+): UseMediaUploadResult {
   const { draftMedia, addDraftMedia, updateDraftMedia, removeDraftMedia } = useChatStore();
 
   const hasProcessing = draftMedia.some((m) => !m.dataUri);
@@ -125,6 +129,14 @@ export function useMediaUpload(): UseMediaUploadResult {
     const handleDocDrop = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!e.dataTransfer) {
+        return;
+      }
+      const droppedContent = resolveDroppedContent(e.dataTransfer, workspaceRoot, isMediaFile);
+      if (droppedContent.kind === "paths") {
+        onDropPaths(droppedContent.paths);
+        return;
+      }
       if (hasProcessing) {
         return;
       }
@@ -133,7 +145,7 @@ export function useMediaUpload(): UseMediaUploadResult {
         return;
       }
 
-      const files = Array.from(e.dataTransfer?.files || []).filter(isMediaFile);
+      const files = droppedContent.kind === "media" ? droppedContent.files : [];
       if (files.length === 0) {
         return;
       }
@@ -149,7 +161,7 @@ export function useMediaUpload(): UseMediaUploadResult {
       document.removeEventListener("dragover", handleDocDragOver);
       document.removeEventListener("drop", handleDocDrop);
     };
-  }, [hasProcessing, draftMedia.length, addMediaFiles]);
+  }, [hasProcessing, draftMedia.length, addMediaFiles, onDropPaths, workspaceRoot]);
 
   return {
     canAddMedia,

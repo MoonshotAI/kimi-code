@@ -38,6 +38,7 @@ import { useMediaUpload } from "./hooks/useMediaUpload";
 import { useClickOutside } from "./hooks/useClickOutside";
 import { useInputHistory } from "./hooks/useInputHistory";
 import { computeMentionInsert } from "./utils";
+import { insertDroppedFilePaths } from "./path-drop";
 
 interface InputAreaProps {
   onAuthAction?: () => void;
@@ -54,7 +55,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
 
   const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, messages } = useChatStore();
-  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode } = useSettingsStore();
+  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode, currentWorkDir, workspaceRoot } = useSettingsStore();
 
   const isProcessing = hasProcessingMedia();
   const thinkingMode = getCurrentThinkingMode();
@@ -134,8 +135,6 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
 
   const activeToken = useMemo(() => findActiveToken(text, cursorPos), [text, cursorPos]);
 
-  const { handlePaste, handlePickMedia } = useMediaUpload();
-
   const adjustHeight = useMemoizedFn(() => {
     const ta = textareaRef.current;
     if (ta) {
@@ -143,6 +142,19 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
       ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
     }
   });
+
+  const handleDropPaths = useCallback((paths: string[]) => {
+    const insertion = insertDroppedFilePaths(text, cursorPos, paths);
+    setText(insertion.text);
+    setCursorPos(insertion.cursorPos);
+    setTimeout(() => {
+      textareaRef.current?.setSelectionRange(insertion.cursorPos, insertion.cursorPos);
+      textareaRef.current?.focus();
+      adjustHeight();
+    }, 0);
+  }, [text, cursorPos, adjustHeight]);
+
+  const { handlePaste, handlePickMedia } = useMediaUpload(currentWorkDir || workspaceRoot, handleDropPaths);
 
   const {
     handleKey: handleHistoryKey,
