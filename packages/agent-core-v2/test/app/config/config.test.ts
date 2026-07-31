@@ -1960,6 +1960,31 @@ describe('ConfigService replaceSections', () => {
     disposables.dispose();
   });
 
+  it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [DEFAULT_MODEL_SECTION]: null,
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+
+    // `replace(domain, null)` clears too, so JSON transports behave
+    // identically to in-process `replace(domain, undefined)` callers.
+    await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
+    await config.replace(DEFAULT_MODEL_SECTION, null);
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
   it('fires change events only after all domains have taken effect', async () => {
     const { config, disposables } = await createSectionsConfig();
     const domains: string[] = [];

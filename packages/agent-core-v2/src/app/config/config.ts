@@ -202,7 +202,16 @@ export interface IConfigService {
   inspect<T = unknown>(domain: string): ConfigInspectValue<T>;
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
+  /**
+   * Replace one domain wholesale; `undefined` (or `null`, the wire encoding
+   * of clear — JSON transports cannot carry `undefined`) removes the domain.
+   */
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
+  /**
+   * Replace several domains in ONE atomic write: a domain mapped to
+   * `undefined` (or `null`, see {@link replace}) is cleared, domains absent
+   * from `sections` are left untouched.
+   */
   replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target?: ConfigTarget,

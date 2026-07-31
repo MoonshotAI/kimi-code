@@ -128,6 +128,15 @@ export interface GlobalConfigFacade {
     value: unknown;
     target?: ConfigTargetLiteral;
   }): Promise<void>;
+  /**
+   * Replace several domains in ONE atomic write (the engine's
+   * `IConfigService.replaceSections`): a domain mapped to `undefined` is
+   * cleared, domains absent from `sections` are left untouched.
+   */
+  replaceSections(input: {
+    sections: Record<string, unknown>;
+    target?: ConfigTargetLiteral;
+  }): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): Promise<readonly ConfigDiagnostic[]>;
 }
@@ -306,7 +315,19 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       set: ({ domain, patch, target }) =>
         call('configService', 'set', [domain, patch, target]) as Promise<void>,
       replace: ({ domain, value, target }) =>
-        call('configService', 'replace', [domain, value, target]) as Promise<void>,
+        // `null` is the wire encoding of "clear this domain" — JSON
+        // round-trips cannot carry `undefined` (see IConfigService.replace).
+        call('configService', 'replace', [domain, value === undefined ? null : value, target]) as Promise<void>,
+      replaceSections: ({ sections, target }) =>
+        call('configService', 'replaceSections', [
+          Object.fromEntries(
+            Object.entries(sections).map(([domain, value]) => [
+              domain,
+              value === undefined ? null : value,
+            ]),
+          ),
+          target,
+        ]) as Promise<void>,
       reload: () => call('configService', 'reload', []) as Promise<void>,
       diagnostics: () =>
         call('configService', 'diagnostics', []) as Promise<readonly ConfigDiagnostic[]>,

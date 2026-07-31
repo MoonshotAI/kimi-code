@@ -331,17 +331,20 @@ export class ConfigService extends Disposable implements IConfigService {
     target: ConfigTarget = ConfigTarget.User,
   ): Promise<void> {
     await this.ready;
+    // `null` is the wire encoding of "clear this domain": JSON transports
+    // (klient memory/ipc, kap-server REST/WS) cannot carry `undefined`.
+    const effectiveValue = value === null ? undefined : value;
     if (target === ConfigTarget.Memory) {
-      if (value === undefined) {
+      if (effectiveValue === undefined) {
         delete this.memory[domain];
       } else {
-        this.memory[domain] = this.registry.validate(domain, value);
+        this.memory[domain] = this.registry.validate(domain, effectiveValue);
       }
       this.commit('set', [domain]);
       return;
     }
     await this.enqueueStateTransition(async () => {
-      const stripped = this.stripEnv(domain, value);
+      const stripped = this.stripEnv(domain, effectiveValue);
       if (stripped === undefined) {
         delete this.raw[domain];
       } else {
@@ -363,7 +366,7 @@ export class ConfigService extends Disposable implements IConfigService {
       const staged: ResolvedConfig = { ...this.memory };
       for (const domain of domains) {
         const value = sections[domain];
-        if (value === undefined) {
+        if (value === undefined || value === null) {
           delete staged[domain];
         } else {
           staged[domain] = this.registry.validate(domain, value);
@@ -376,7 +379,9 @@ export class ConfigService extends Disposable implements IConfigService {
     await this.enqueueStateTransition(async () => {
       const staged: ResolvedConfig = { ...this.raw };
       for (const domain of domains) {
-        const stripped = this.stripEnv(domain, sections[domain]);
+        // Same `null`-means-clear encoding as `replace` (see above).
+        const value = sections[domain] === null ? undefined : sections[domain];
+        const stripped = this.stripEnv(domain, value);
         if (stripped === undefined) {
           delete staged[domain];
         } else {

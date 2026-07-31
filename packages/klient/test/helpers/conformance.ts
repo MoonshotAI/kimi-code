@@ -139,6 +139,39 @@ export function defineKlientConformance(
       expect(Array.isArray(await target.klient.global.config.diagnostics())).toBe(true);
     });
 
+    it('config replaceSections writes several domains and clears undefined ones', async () => {
+      const config = target.klient.global.config;
+      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
+      const beforeModels = await config.inspect<Record<string, unknown>>('models');
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: {
+              ...beforeProviders.userValue,
+              'conf-provider': { type: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'k' },
+            },
+            models: {
+              ...beforeModels.userValue,
+              'conf-provider/m1': { provider: 'conf-provider', model: 'm1', maxContextSize: 100 },
+            },
+            defaultModel: 'conf-provider/m1',
+          },
+        });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
+
+        // A domain mapped to `undefined` is cleared; domains absent from the
+        // sections record are left untouched.
+        await config.replaceSections({ sections: { defaultModel: undefined } });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
+        const providers = await config.inspect<Record<string, unknown>>('providers');
+        expect(providers.userValue?.['conf-provider']).toBeDefined();
+      } finally {
+        await config.replaceSections({
+          sections: { providers: beforeProviders.userValue, models: beforeModels.userValue },
+        });
+      }
+    });
+
     it('hostFs.home() returns the host home and recent roots', async () => {
       const home = await target.klient.global.hostFs.home();
       expect(home.home.length).toBeGreaterThan(0);
