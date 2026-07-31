@@ -6,6 +6,7 @@ import { syncDir } from '#/utils/fs';
 
 export const PENDING_MAX = 1000;
 const STDERR_NOTICE_INTERVAL_MS = 30_000;
+const TRANSIENT_ROTATION_ERROR_CODES = new Set(['EBUSY', 'EPERM']);
 
 class AsyncSerialQueue {
   private tail: Promise<unknown> = Promise.resolve();
@@ -168,28 +169,35 @@ export class RotatingFileSink implements Sink {
 
   private async rotate(): Promise<void> {
     const { path, files } = this.options;
+    this.directorySynced = false;
     for (let i = files - 2; i >= 1; i--) {
       const from = `${path}.${i}`;
       const to = `${path}.${i + 1}`;
       try {
         await rename(from, to);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        if (isNotFoundError(error)) continue;
+        if (isTransientRotationError(error)) return;
+        throw error;
       }
     }
     try {
       await rename(path, `${path}.1`);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (isNotFoundError(error)) {
+        this.currentBytes = 0;
+        return;
+      }
+      if (isTransientRotationError(error)) return;
+      throw error;
     }
     // last archive may be evicted; ensure we don't keep > files
     try {
       await unlink(`${path}.${files}`);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (!isNotFoundError(error) && !isTransientRotationError(error)) throw error;
     }
     this.currentBytes = 0;
-    this.directorySynced = false;
   }
 
   private async statSize(p: string): Promise<number> {
@@ -218,4 +226,12 @@ export class RotatingFileSink implements Sink {
       process.stderr.write(`[logger] write failed: ${code}\n`);
     } catch {}
   }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+function isTransientRotationError(error: unknown): boolean {
+  return TRANSIENT_ROTATION_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? '');
 }
