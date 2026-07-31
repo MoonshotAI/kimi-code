@@ -965,6 +965,25 @@ export class AcpSession {
       const outcome = await completion;
       if (outcome.kind === 'completed') {
         await this.emitLocalCommandMessage(formatCompactionCompleted(outcome.result));
+        // After compaction, the core updates context token counts via
+        // emitStatusUpdated(), but the agent.status.updated handler is
+        // only registered in runTurnBody(). Push a one-shot usage_update
+        // so the client reflects the compacted context size immediately
+        // rather than waiting for the next normal prompt.
+        const status = await this.session.getStatus();
+        const update = contextUsageToUsageUpdate(
+          this.id,
+          status.contextTokens,
+          status.maxContextTokens,
+        );
+        if (update !== null) {
+          this.conn.sessionUpdate(update).catch((err) => {
+            log.warn('acp: failed to push usage_update after compaction', {
+              sessionId: this.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
       } else {
         await this.emitLocalCommandMessage('Compaction cancelled.');
       }

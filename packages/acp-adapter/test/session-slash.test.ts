@@ -140,6 +140,10 @@ async function waitForAvailableCommands(
   throw new Error('available_commands_update never arrived');
 }
 
+async function flushNdjson(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
 describe('AcpSession slash routing', () => {
   it('routes `/skill:foo bar` to Session.activateSkill (not Session.prompt)', async () => {
     const sessionId = 'sess-slash-A';
@@ -370,5 +374,80 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Session status:');
     expect(text).toContain('Model: mock-model');
     expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
+  });
+
+  it('pushes usage_update notification after /compact completes', async () => {
+    const sessionId = 'sess-slash-compact-usage';
+    // We need a fake session with controlled listeners so compact() can
+    // emit compaction lifecycle events through the adapter's onEvent
+    // subscription (which is registered before compact() is called).
+    const listeners = new Set<(event: Event) => void>();
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      activateSkill: async () => undefined,
+      listSkills: async () => [] as const,
+      onEvent: (fn: (event: Event) => void) => {
+        listeners.add(fn);
+        return () => { listeners.delete(fn); };
+      },
+      compact: async () => {
+        // The adapter subscribes to onEvent (line 926) before calling
+        // compact() (line 960), so listeners already contains the
+        // adapter's handler. Emit the compaction lifecycle.
+        // Use setTimeout to yield so the adapter's subscription is active.
+        await new Promise<void>((resolve) => {
+          setTimeout(() => {
+            for (const fn of listeners) {
+              fn({ type: 'compaction.started', sessionId, agentId: 'main' } as Event);
+              fn({
+                type: 'compaction.completed',
+                sessionId,
+                agentId: 'main',
+                result: { tokensBefore: 50000, tokensAfter: 5000, compactedCount: 45, keptUserMessageCount: 1, droppedCount: 0 },
+              } as Event);
+            }
+            resolve();
+          }, 0);
+        });
+      },
+      getStatus: async () => ({
+        model: 'mock-model',
+        thinkingEffort: 'low',
+        permission: 'ask',
+        planMode: false,
+        contextTokens: 5000,
+        maxContextTokens: 200000,
+        contextUsage: 0.025,
+      }),
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    const beforeCount = collecting.updates.length;
+
+    await client.prompt({ sessionId, prompt: [textBlock('/compact')] });
+    await flushNdjson();
+
+    const usageUpdates = collecting.updates.slice(beforeCount).filter(
+      (n) =>
+        (n.update as { sessionUpdate: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(1);
+    expect(usageUpdates[0]?.update).toEqual({
+      sessionUpdate: 'usage_update',
+      size: 200000,
+      used: 5000,
+    });
   });
 });
