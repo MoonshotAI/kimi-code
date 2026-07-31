@@ -64,6 +64,15 @@ describe('linkifyTerminalUrls', () => {
     expect(balanced).toContain(`${ESC}]8;;https://example.com/wiki/Foo_(bar)${BEL}`);
   });
 
+  it('keeps surrounding quotes outside the link', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+    const out = linkifyTerminalUrls('echo "merged https://example.com/pull/1"');
+
+    expect(out).toContain(`${ESC}]8;;https://example.com/pull/1${BEL}`);
+    expect(stripAnsi(out)).toBe('echo "merged https://example.com/pull/1"');
+  });
+
   it('applies the custom style to the linked text', () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 

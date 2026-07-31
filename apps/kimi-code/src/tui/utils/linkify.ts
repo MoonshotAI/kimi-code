@@ -17,7 +17,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 const BARE_URL_RE = /https?:\/\/\S+/g;
 
 /** Punctuation that is sentence prose, not part of the URL. */
-const PROSE_TRAILING = '.,;:!?';
+const PROSE_TRAILING = '.,;:!?"\'`';
 
 /**
  * Split prose punctuation off the end of a regex-matched URL. Brackets are
