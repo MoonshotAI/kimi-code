@@ -2,6 +2,9 @@
 ///
 /// Scans well-known paths, merges user-level config with project-level config,
 /// applies environment variable overrides, and supports hot-reload with callbacks.
+/// A reload only commits a fully loaded and validated config: a corrupted
+/// (e.g. half-written) config.toml fails the reload and keeps the last good
+/// configuration, so the loaded provider/model catalogs are never cleared.
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
@@ -17,6 +20,14 @@ type ConfigCallback = Box<dyn Fn(&KimiConfig) + Send>;
 
 static CONFIG_CALLBACKS: LazyLock<Mutex<Vec<ConfigCallback>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// The most recently loaded configuration that passed validation.
+///
+/// A failed reload leaves this snapshot untouched, so the engine's loaded
+/// provider/model catalogs survive a transiently corrupted config.toml — the
+/// caller can restore them via [`last_good_config`].
+static LAST_GOOD_CONFIG: LazyLock<Mutex<Option<KimiConfig>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 // ── Path discovery ──────────────────────────────────────────────────────────
 
@@ -107,30 +118,37 @@ fn partition_paths(
     (user_level, project_level, env_override)
 }
 
-/// Try to load a config from a path. Returns `None` if the file does not exist
-/// or cannot be read (the path is optional).
-fn try_load(path: &PathBuf) -> Option<KimiConfig> {
+/// Load a config from a path, treating an absent file as optional.
+///
+/// Returns `Ok(None)` when the file does not exist (config paths are
+/// optional). Any other failure — an unreadable or unparsable file, e.g. a
+/// half-written config.toml — is propagated, so a corrupted file aborts the
+/// whole load/reload instead of being silently skipped and leaving the merged
+/// result without the providers/models that file declared.
+fn try_load(path: &PathBuf) -> Result<Option<KimiConfig>> {
+    if !path.exists() {
+        return Ok(None);
+    }
     let s = path.to_string_lossy();
-    load_config_from_file(&s)
-        .map_err(|e| {
-            eprintln!("[kimi-agent] Skipping config {s}: {e}");
-            e
-        })
-        .ok()
+    match load_config_from_file(&s) {
+        Ok(config) => Ok(Some(config)),
+        Err(e) => Err(anyhow::anyhow!("Failed to load config {s}: {e}")),
+    }
 }
 
-/// Try to load and merge a list of paths into a single config.
+/// Load and merge a list of paths into a single config.
 /// Earlier paths in the list are loaded as the base, later paths override.
-fn load_and_merge(paths: &[PathBuf]) -> KimiConfig {
+/// A missing file is skipped; a corrupted file aborts the whole merge.
+fn load_and_merge(paths: &[PathBuf]) -> Result<KimiConfig> {
     let mut merged = KimiConfig::empty();
 
     for path in paths {
-        if let Some(config) = try_load(path) {
+        if let Some(config) = try_load(path)? {
             merged = merge_configs(merged, config);
         }
     }
 
-    merged
+    Ok(merged)
 }
 
 // ── Validation ─────────────────────────────────────────────────────────────
@@ -156,6 +174,43 @@ pub fn validate_config(config: &KimiConfig) -> Result<()> {
 
 // ── Loading ─────────────────────────────────────────────────────────────────
 
+/// Load, merge and validate the config from an explicit path list.
+///
+/// `paths` are partitioned into user-level (base), project-level (override)
+/// and `KIMI_CONFIG_PATH` (highest file priority) groups, then merged in that
+/// order. A missing file is skipped; a corrupted file aborts the whole load.
+/// Environment variable overrides (`KIMI_PROVIDER_*`) are applied last when
+/// `apply_env` is set.
+fn load_from_paths(paths: &[PathBuf], apply_env: bool) -> Result<KimiConfig> {
+    let (user_paths, project_paths, env_override) = partition_paths(paths);
+
+    // Start with empty config
+    let mut config = KimiConfig::empty();
+
+    // 1. Load user-level configs (lowest priority)
+    let user_config = load_and_merge(&user_paths)?;
+    config = merge_configs(config, user_config);
+
+    // 2. Load project-level configs (override user-level)
+    let project_config = load_and_merge(&project_paths)?;
+    config = merge_configs(config, project_config);
+
+    // 3. Load KIMI_CONFIG_PATH (highest file priority)
+    if let Some(env_path) = &env_override {
+        if let Some(env_config) = try_load(env_path)? {
+            config = merge_configs(config, env_config);
+        }
+    }
+
+    validate_config(&config)?;
+
+    if apply_env {
+        apply_env_overrides(&mut config);
+    }
+
+    Ok(config)
+}
+
 /// Load configuration by searching well-known paths and merging them.
 ///
 /// User-level configs (`~/.kimi-code/config.toml`, `~/.config/kimi-code/config.toml`)
@@ -166,30 +221,7 @@ pub fn validate_config(config: &KimiConfig) -> Result<()> {
 /// Environment variable overrides (`KIMI_PROVIDER_*`) are NOT applied — use
 /// [`load_config_with_env`] for that.
 pub fn load_config() -> Result<KimiConfig> {
-    let paths = find_config_paths();
-    let (user_paths, project_paths, env_override) = partition_paths(&paths);
-
-    // Start with empty config
-    let mut config = KimiConfig::empty();
-
-    // 1. Load user-level configs (lowest priority)
-    let user_config = load_and_merge(&user_paths);
-    config = merge_configs(config, user_config);
-
-    // 2. Load project-level configs (override user-level)
-    let project_config = load_and_merge(&project_paths);
-    config = merge_configs(config, project_config);
-
-    // 3. Load KIMI_CONFIG_PATH (highest file priority)
-    if let Some(env_path) = &env_override {
-        if let Some(env_config) = try_load(env_path) {
-            config = merge_configs(config, env_config);
-        }
-    }
-
-    validate_config(&config)?;
-
-    Ok(config)
+    load_from_paths(&find_config_paths(), false)
 }
 
 /// Load configuration and apply environment variable overrides.
@@ -198,17 +230,44 @@ pub fn load_config() -> Result<KimiConfig> {
 /// variables (e.g. `KIMI_PROVIDER_OPENAI_API_KEY`, `KIMI_PROVIDER_ANTHROPIC_MODEL`)
 /// on top of all file-based configuration.
 pub fn load_config_with_env() -> Result<KimiConfig> {
-    let mut config = load_config()?;
-    apply_env_overrides(&mut config);
-    Ok(config)
+    load_from_paths(&find_config_paths(), true)
 }
 
 // ── Hot reload ─────────────────────────────────────────────────────────────
 
 /// Reload configuration from the well-known paths with environment overrides,
 /// then notify all registered callbacks.
+///
+/// The reload is atomic on failure: the new config is fully loaded and
+/// validated before anything is committed, so a corrupted (e.g. half-written)
+/// config.toml returns an error without disturbing the last successfully
+/// loaded config — the previously loaded provider/model catalogs stay
+/// available through [`last_good_config`] and are never cleared by a failed
+/// reload.
 pub fn reload_config() -> Result<KimiConfig> {
-    let config = load_config_with_env()?;
+    match reload_from_paths(&find_config_paths()) {
+        Ok(config) => Ok(config),
+        Err(e) => {
+            eprintln!(
+                "[kimi-agent] Config reload failed, keeping last good config: {e}"
+            );
+            Err(e)
+        }
+    }
+}
+
+/// Core reload logic over an explicit path list.
+///
+/// Loads and validates the whole config first, and only then — atomically —
+/// records it as the last good config and notifies callbacks. Extracted from
+/// [`reload_config`] so tests can drive reloads from temp files without
+/// depending on process-global environment variables.
+fn reload_from_paths(paths: &[PathBuf]) -> Result<KimiConfig> {
+    let config = load_from_paths(paths, true)?;
+
+    // Commit the new state only after the whole load succeeded, so a failed
+    // reload never clears the previously loaded provider/model catalogs.
+    *LAST_GOOD_CONFIG.lock().unwrap() = Some(config.clone());
 
     let callbacks = CONFIG_CALLBACKS.lock().unwrap();
     for cb in callbacks.iter() {
@@ -216,6 +275,14 @@ pub fn reload_config() -> Result<KimiConfig> {
     }
 
     Ok(config)
+}
+
+/// Return a clone of the last successfully loaded configuration, if any.
+///
+/// A failed [`reload_config`] leaves this untouched, so callers can restore
+/// the previously loaded provider/model catalogs instead of losing them.
+pub fn last_good_config() -> Option<KimiConfig> {
+    LAST_GOOD_CONFIG.lock().unwrap().clone()
 }
 
 /// Register a callback to be notified on every `reload_config()` call.
@@ -231,6 +298,16 @@ pub fn register_config_callback(cb: impl Fn(&KimiConfig) + Send + 'static) {
 
 #[cfg(test)]
 mod tests {
+    /// Serializes tests that touch the process-global config snapshots
+    /// (LAST_GOOD_CONFIG / CONFIG_CALLBACKS): cargo runs tests in parallel
+    /// threads, which would race the shared statics.
+    static TEST_SERIAL: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
+    fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+        TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     use super::*;
     use crate::config::types::ProviderConfig;
     use std::collections::HashMap;
@@ -344,6 +421,7 @@ mod tests {
 
     #[test]
     fn test_register_and_reload_callbacks() {
+        let _g = serial_guard();
         use std::sync::atomic::{AtomicBool, Ordering};
 
         let called = std::sync::Arc::new(AtomicBool::new(false));
@@ -359,5 +437,130 @@ mod tests {
         let _ = reload_config();
         // Note: callback may or may not fire depending on whether config exists
         // We only verify the registration API is sound
+    }
+
+    // ── Atomic reload / fault tolerance ────────────────────────────────────
+
+    /// Write a valid config with one provider and one model alias.
+    fn write_valid_config(path: &std::path::Path) {
+        use std::fs::write;
+        write(
+            path,
+            r#"
+[providers.openai]
+type = "openai"
+apiKey = "sk-test"
+defaultModel = "gpt-4"
+
+[models."acme/m1"]
+provider = "acme"
+model = "m1"
+"#,
+        )
+        .expect("write config");
+    }
+
+    #[test]
+    fn test_reload_success_records_last_good() {
+        let _g = serial_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        write_valid_config(&path);
+
+        let config = reload_from_paths(&[path])
+            .expect("reload with a valid config should succeed");
+        let providers = config.providers.as_ref().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert!(providers.contains_key("openai"));
+        assert!(config.model_aliases.as_ref().unwrap().contains_key("acme/m1"));
+
+        // The successful reload is recorded as the last good config.
+        let last_good = last_good_config().expect("last good config recorded");
+        assert_eq!(last_good, config);
+    }
+
+    #[test]
+    fn test_reload_corrupt_toml_keeps_last_good() {
+        let _g = serial_guard();
+        use std::fs::write;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+
+        // First, a valid config is loaded and recorded as last good.
+        write_valid_config(&path);
+        let good = reload_from_paths(&[path.clone()])
+            .expect("first reload should succeed");
+        assert!(good.providers.as_ref().unwrap().contains_key("openai"));
+
+        // Then the file is corrupted (simulating a half-written config.toml
+        // mid-refresh). The reload must fail WITHOUT clearing the previously
+        // loaded provider/model catalogs.
+        write(&path, "[providers.openai\napiKey = \"sk-test\"").unwrap();
+        let err = reload_from_paths(&[path.clone()]);
+        assert!(
+            err.is_err(),
+            "a corrupted config file must fail the reload, got: {err:?}"
+        );
+
+        let last_good = last_good_config().expect("last good must be retained");
+        let providers = last_good.providers.as_ref().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert!(providers.contains_key("openai"));
+        assert_eq!(
+            providers.get("openai").unwrap().model,
+            Some("gpt-4".into())
+        );
+        assert!(last_good.model_aliases.as_ref().unwrap().contains_key("acme/m1"));
+    }
+
+    #[test]
+    fn test_reload_missing_or_empty_config_fails() {
+        let _g = serial_guard();
+        use std::fs::write;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist.toml");
+
+        // No config anywhere: reload must error rather than return an empty
+        // config that would silently clear the loaded catalog.
+        assert!(reload_from_paths(&[missing.clone()]).is_err());
+
+        // An empty (parseable but provider-less) file fails validation the
+        // same way.
+        write(&missing, "").unwrap();
+        assert!(reload_from_paths(&[missing]).is_err());
+    }
+
+    #[test]
+    fn test_load_and_merge_skips_missing_file() {
+        let _g = serial_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.toml");
+
+        let config = load_and_merge(&[missing])
+            .expect("a missing config path is optional and must be skipped");
+        assert!(config.providers.is_none());
+    }
+
+    #[test]
+    fn test_corrupt_file_aborts_merge() {
+        let _g = serial_guard();
+        use std::fs::write;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let good = dir.path().join("good.toml");
+        let corrupt = dir.path().join("corrupt.toml");
+        write_valid_config(&good);
+        write(&corrupt, "[providers.openai\napiKey = ").unwrap();
+
+        // A corrupted file anywhere in the list must abort the whole merge —
+        // otherwise the good file alone could silently produce a degraded
+        // catalog missing the corrupted file's providers/models.
+        let err = load_and_merge(&[good, corrupt]);
+        assert!(
+            err.is_err(),
+            "a corrupted file in the path list must abort the merge, got: {err:?}"
+        );
     }
 }
