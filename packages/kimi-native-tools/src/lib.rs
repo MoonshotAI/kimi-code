@@ -40,7 +40,7 @@ mod output_truncate;
 mod path_access;
 mod permission;
 mod permission_rules;
-pub mod pkce;
+pub use kimi_shared::pkce;
 mod prompt_metadata;
 mod read;
 mod render_prompt;

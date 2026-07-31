@@ -1,8 +1,10 @@
 //! PKCE (Proof Key for Code Exchange, RFC 7636) + loopback OAuth callback server.
 //!
-//! Phase 7.3 of the Rust napi-rs migration roadmap (`RUST_NAPI_MIGRATION_ROADMAP.md`).
-//! These primitives are the building blocks for the MCP OAuth flow that today
-//! lives entirely in `packages/agent-core/src/mcp/oauth/`.
+//! Shared source of truth for `kimi-native-tools/src/pkce.rs` and
+//! `kimi-agent/src/oauth/pkce.rs` (the latter was a verbatim copy ported on
+//! 2026-07-31; both now re-export this module). Pure std + `sha2` + `base64`
+//! + `rand` + `tokio` — no napi-rs dependency, so it compiles in both the
+//! napi bridge and the agent engine.
 //!
 //! Provided primitives:
 //!   - `generate_verifier()`  — RFC 7636 §4.1: 43–128 char URL-safe random
@@ -14,8 +16,8 @@
 //! Design choices:
 //!   - Pure std + `sha2` + `base64` (no extra deps) — keeps the binary small
 //!     and the surface easy to audit.
-//!   - LoopbackServer uses `tokio` because `napi-rs` already pulls it in for
-//!     other modules (`fetch_url.rs`, `mcp.rs`, ...).
+//!   - LoopbackServer uses `tokio` because both consuming crates already pull
+//!     it in for other modules.
 //!   - Only the S256 challenge method is implemented; the `plain` method is
 //!     deprecated by RFC 7636 §7.1 and rejected by most modern providers.
 

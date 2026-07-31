@@ -1325,6 +1325,7 @@ dependencies = [
  "hex",
  "ignore",
  "image",
+ "kimi-shared",
  "napi",
  "napi-build",
  "napi-derive",
@@ -1378,6 +1379,7 @@ dependencies = [
  "globset",
  "ignore",
  "image",
+ "kimi-shared",
  "memchr",
  "napi",
  "napi-build",
@@ -1396,6 +1398,17 @@ dependencies = [
  "ulid",
  "ureq",
  "url",
+]
+
+[[package]]
+name = "kimi-shared"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "rand 0.8.7",
+ "sha2",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

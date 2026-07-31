@@ -41,6 +41,7 @@ once_cell = "1"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+kimi-shared = { path = "../kimi-shared" }
 
 [build-dependencies]
 napi-build = "2"

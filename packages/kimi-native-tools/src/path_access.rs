@@ -271,131 +271,14 @@ pub fn is_within_workspace(candidate: &str, roots: &[String], path_class: PathCl
 
 // ── Sensitive file detection ─────────────────────────────────────────────────
 
-/// Known sensitive basenames (case-insensitive match).
-const SENSITIVE_BASENAMES: &[&str] = &[
-    ".env",
-    "id_rsa",
-    "id_ed25519",
-    "id_ecdsa",
-    "credentials",
-    ".npmrc",
-    ".pypirc",
-    ".netrc",
-    "htpasswd",
-    ".pgpass",
-    ".git-credentials",
-    ".ppk",
-    ".p12",
-    ".pfx",
-    "kubeconfig",
-];
-
-/// Public-key basenames that are explicitly allowed (not sensitive).
-const PUBLIC_KEY_BASENAMES: &[&str] = &["id_rsa.pub", "id_ed25519.pub", "id_ecdsa.pub"];
-
-/// Sensitive path suffixes (directory components + basename).
-const SENSITIVE_PATH_SUFFIXES: &[&[&str]] = &[
-    &[".aws", "credentials"],
-    &[".gcp", "credentials"],
-    &[".docker", "config.json"],
-    &[".kube", "config"],
-    &[".config", "kube", "config"],
-    &[".ssh", "config"],
-];
-
-/// Sensitive key-file extensions.
-const SENSITIVE_KEYFILE_EXTENSIONS: &[&str] = &[
-    ".ppk", ".p12", ".pfx", ".keystore", ".jks",
-];
-
-/// Dot-variant suffixes (e.g. `.env.bak`, `id_rsa.old`).
-const SENSITIVE_DOT_VARIANT_SUFFIXES: &[&str] = &[
-    ".bak", ".backup", ".copy", ".disabled", ".key", ".old", ".orig", ".pem", ".save", ".tmp",
-];
-
-/// Sensitive basename prefixes for prefix-based matching (e.g. `id_rsa-*`).
-const SENSITIVE_BASENAME_PREFIXES: &[&str] = &["id_rsa", "id_ed25519", "id_ecdsa", "credentials"];
-
-/// Exemptions: env-like files that are NOT sensitive.
-const ENV_EXEMPTIONS: &[&str] = &[".env.example", ".env.sample", ".env.template"];
-
-const ENV_PREFIX: &str = ".env.";
-
-/// Check whether a path is a known sensitive file that should be blocked
-/// from Read/Write/Edit operations.
-///
-/// Matches the TS implementation in `packages/agent-core/src/tools/policies/sensitive.ts`.
-pub fn is_sensitive_file(path: &str) -> bool {
-    let path_lower = path.to_lowercase();
-    let name = path_lower.rsplit(['/', '\\']).next().unwrap_or(&path_lower);
-
-    // Exemptions first.
-    if ENV_EXEMPTIONS.contains(&name) {
-        return false;
-    }
-    if PUBLIC_KEY_BASENAMES.contains(&name) {
-        return false;
-    }
-
-    // Exact basename match.
-    if SENSITIVE_BASENAMES.contains(&name) {
-        return true;
-    }
-
-    // .env.* prefix (e.g. .env.production).
-    if name.starts_with(ENV_PREFIX) {
-        return true;
-    }
-
-    // Prefix-based match (id_rsa-, id_rsa_, id_rsa.bak, etc.)
-    for &prefix in SENSITIVE_BASENAME_PREFIXES {
-        if name == prefix {
-            return true;
-        }
-        if name.len() > prefix.len() && name.starts_with(prefix) {
-            let suffix = &name[prefix.len()..];
-            let next = suffix.chars().next().unwrap_or(' ');
-            if next == '-' || next == '_' {
-                return true;
-            }
-            if next == '.' && SENSITIVE_DOT_VARIANT_SUFFIXES.contains(&suffix) {
-                return true;
-            }
-        }
-    }
-
-    // Path-suffix matching (e.g. .aws/credentials, .ssh/config).
-    let normalized_path = path.replace('\\', "/");
-    for &parts in SENSITIVE_PATH_SUFFIXES {
-        let suffix = parts.join("/");
-        if normalized_path.ends_with(&format!("/{}", suffix))
-            || normalized_path.contains(&format!("/{}/", suffix))
-        {
-            return true;
-        }
-    }
-
-    // Keyfile extension match.
-    for &ext in SENSITIVE_KEYFILE_EXTENSIONS {
-        if name.ends_with(ext) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Check whether a file's content looks like a private key (content-sniff).
-pub fn looks_like_private_key_content(content: &str) -> bool {
-    let trimmed = content.trim_start();
-    trimmed.starts_with("-----BEGIN RSA PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN EC PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN DSA PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----")
-        || trimmed.starts_with("-----BEGIN PGP PRIVATE KEY BLOCK-----")
-}
+// Single source of truth lives in `kimi-shared::sensitive` (extracted from
+// this module's former `is_sensitive_file` / `looks_like_private_key_content`
+// and the agent's mirror `permission::sensitive_path`). Re-exported here so
+// the `path_access::is_sensitive_file` path keeps working unchanged.
+// `allow(unused_imports)`: the crate currently has no internal caller of these
+// two (they are a preserved public path), so plain re-exports would warn.
+#[allow(unused_imports)]
+pub use kimi_shared::sensitive::{is_sensitive_file, looks_like_private_key_content};
 
 // ── Symlink escape detection ─────────────────────────────────────────────────
 

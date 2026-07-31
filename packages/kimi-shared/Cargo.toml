@@ -1,0 +1,17 @@
+[package]
+name = "kimi-shared"
+version = "0.1.0"
+edition = "2024"
+description = "Shared pure-Rust logic extracted from kimi-native-tools and kimi-agent — napi-free, no kimi-* crate dependencies"
+
+[dependencies]
+# Aligned with the versions used by `kimi-native-tools` / `kimi-agent`.
+# `tokio` needs `net` here (loopback listener) which the workspace-wide
+# `tokio` definition does not enable, so it is declared locally.
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+tokio = { version = "1", features = ["rt", "io-util", "net", "sync", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"

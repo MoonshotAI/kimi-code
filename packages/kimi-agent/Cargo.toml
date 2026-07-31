@@ -36,6 +36,7 @@ ignore = "0.4"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+kimi-shared = { path = "../kimi-shared" }
 image = { workspace = true }
 toml = "0.8"
 zip = "0.6"

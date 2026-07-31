@@ -4,6 +4,7 @@ members = [
     "packages/kimi-agent",
     "packages/kimi-build",
     "packages/kimi-native-tools",
+    "packages/kimi-shared",
     "packages/kosong/native",
     "scripts/prompt-optimizer/knowledge-rs",
 ]
