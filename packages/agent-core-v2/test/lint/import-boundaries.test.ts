@@ -136,4 +136,13 @@ describe('check-import-boundaries', () => {
     );
     expect(violations).toHaveLength(0);
   });
+
+  it('resolves the package self-reference as an intra-v2 import', () => {
+    const violations = checkSource(
+      `import { Foo } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';`,
+      atKosong('protocol', 'protocol.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/kosong layer violation/);
+  });
 });

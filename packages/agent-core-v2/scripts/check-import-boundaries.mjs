@@ -25,9 +25,11 @@
  *     Kosong directories that do not exist yet are skipped silently (later
  *     refactor phases add them).
  *
- * Intra-package relative imports and `#/`-alias imports are resolved against
- * `src/`. Sibling packages (`@moonshot-ai/*` other than v1) and third-party
- * imports are out of scope (except for the kosong purity bans above).
+ * Intra-package relative imports, `#/`-alias imports, and the package's
+ * self-reference (`@moonshot-ai/agent-core-v2/<path>` → `src/<path>`) are
+ * resolved against `src/`. Sibling packages (`@moonshot-ai/*` other than v1)
+ * and third-party imports are out of scope (except for the kosong purity
+ * bans above).
  *
  * Run: `node scripts/check-import-boundaries.mjs`. Exits non-zero on violation.
  */
@@ -42,6 +44,7 @@ export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
+const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 
 /**
  * Scope directories introduced by the `src/{scope}/{domain}` layout. A path's
@@ -171,6 +174,11 @@ function targetDomainOf(targetAbs) {
 function resolveIntraV2(specifier, fromFile) {
   if (specifier.startsWith('#/')) {
     return join(SRC_ROOT, specifier.slice(2));
+  }
+  // The package's legal self-reference: `@moonshot-ai/agent-core-v2/x` maps
+  // to `src/x` via the `./*` export.
+  if (specifier.startsWith(SELF_PACKAGE_PREFIX)) {
+    return join(SRC_ROOT, specifier.slice(SELF_PACKAGE_PREFIX.length));
   }
   if (specifier.startsWith('.')) {
     return resolve(dirname(fromFile), specifier);
