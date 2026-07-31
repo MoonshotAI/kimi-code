@@ -67,6 +67,10 @@ pub struct AgentOptions {
     /// Shared task service. When set, the agent uses it (so a session-wide
     /// service governs every agent); when `None`, the agent creates its own.
     pub task: Option<std::sync::Arc<std::sync::Mutex<crate::task::TaskService>>>,
+    /// Shared pending-approval store. When set, deferred tool approvals
+    /// register here (web-facing `session/approval_list` +
+    /// `session/approval_resolve`); when `None`, the agent creates its own.
+    pub approval: Option<crate::approval::SharedApprovalStore>,
 }
 
 impl Default for AgentOptions {
@@ -85,6 +89,7 @@ impl Default for AgentOptions {
             permission: None,
             external_hooks: Vec::new(),
             task: None,
+            approval: None,
         }
     }
 }

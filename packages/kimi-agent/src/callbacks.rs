@@ -218,6 +218,11 @@ pub struct NativeToolCallbacks {
     /// PermissionResult fire around each gated decision (a blocking
     /// PermissionRequest vetoes the call locally).
     pub hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    /// Pending-approval store (optional). When set, deferred approvals
+    /// register a pending entry, publish `session.approval.requested`, and
+    /// wait on a decision from either the host authorize callback or the
+    /// `session/approval_resolve` RPC (web).
+    pub approval: Option<crate::approval::SharedApprovalStore>,
 }
 
 /// Outcome of consulting the native permission gate for a gated tool call.
@@ -301,6 +306,104 @@ async fn native_authorize(
     }
 }
 
+/// Deferred interactive approval with the pending-approval surface.
+///
+/// Without a store this is a plain host `authorize_tool_execution` round-trip
+/// (RUN_TURN path, single-session). With one, the call registers a pending
+/// entry, publishes `session.approval.requested`, and waits on the decision
+/// channel — fed by either the host authorize callback (TUI / vscode panels)
+/// or `session/approval_resolve` (web). The first decision wins; the other
+/// channel's result is discarded.
+async fn defer_to_host(
+    inner: &Arc<dyn HostCallbacks>,
+    approval: &Option<crate::approval::SharedApprovalStore>,
+    req: AuthorizeToolRequest,
+) -> Result<Option<AuthorizeToolResponse>, String> {
+    let Some(store) = approval else {
+        return inner.authorize_tool_execution(req).await;
+    };
+
+    use crate::approval::{ApprovalDecision, ApprovalEntry};
+    let rx = store.request(
+        req.session_id.clone(),
+        req.tool_call_id.clone(),
+        req.tool_name.clone(),
+        req.arguments.clone(),
+        req.approval_rule.clone(),
+    );
+    // Publish the pending entry so web UIs can render the approval card.
+    let entry: Option<ApprovalEntry> = store
+        .list(req.session_id.as_deref())
+        .into_iter()
+        .find(|e| e.tool_call_id == req.tool_call_id);
+    if let Some(ref e) = entry {
+        inner.emit_event(crate::approval::approval_requested_event(e));
+    }
+
+    // Second decision channel: the host authorize callback (TUI panels keep
+    // their existing flow). Its outcome is injected into the store; the wait
+    // below consumes whichever decision arrives first.
+    let store_cb = store.clone();
+    let inner_cb = inner.clone();
+    let cb_req = req.clone();
+    let tool_call_id = req.tool_call_id.clone();
+    tokio::spawn(async move {
+        match inner_cb.authorize_tool_execution(cb_req).await {
+            Ok(Some(decision)) => {
+                let injected = if decision.block {
+                    ApprovalDecision::Deny {
+                        reason: decision.reason,
+                    }
+                } else if let Some(synthetic) = decision.synthetic_result {
+                    ApprovalDecision::Synthetic {
+                        content: synthetic.content,
+                        is_error: synthetic.is_error,
+                        note: synthetic.note,
+                    }
+                } else {
+                    ApprovalDecision::Allow
+                };
+                let _ = store_cb.resolve_by_tool_call(&tool_call_id, injected);
+            }
+            Ok(None) => {
+                let _ = store_cb.resolve_by_tool_call(&tool_call_id, ApprovalDecision::Allow);
+            }
+            // A failed callback leaves the entry pending for `approval_resolve`.
+            Err(_) => {}
+        }
+    });
+
+    match rx.await {
+        Ok(ApprovalDecision::Allow) => Ok(None),
+        Ok(ApprovalDecision::Deny { reason }) => Ok(Some(AuthorizeToolResponse {
+            block: true,
+            reason,
+            synthetic_result: None,
+            execution_metadata: None,
+            resolved: true,
+        })),
+        Ok(ApprovalDecision::Synthetic {
+            content,
+            is_error,
+            note,
+        }) => Ok(Some(AuthorizeToolResponse {
+            block: false,
+            reason: None,
+            synthetic_result: Some(ExecutableToolResultData {
+                content,
+                is_error,
+                note,
+                is_prediction: false,
+                stop_turn: false,
+            }),
+            execution_metadata: None,
+            resolved: true,
+        })),
+        // The store dropped the entry (turn torn down) — allow unchanged.
+        Err(_) => Ok(None),
+    }
+}
+
 /// Bash variant of [`native_authorize`]: a dangerous command must reach host
 /// approval unless a user-configured allow rule explicitly matches it. This
 /// stops a session approval — or auto/yolo mode — from blanket-approving
@@ -361,8 +464,9 @@ impl HostCallbacks for NativeToolCallbacks {
                     let manager = manager.clone();
                     let permission = self.permission.clone();
                     let self_hooks = self.hooks.clone();
+                    let self_approval = self.approval.clone();
                     return Box::pin(async move {
-                        execute_gated_background_bash(inner, toolset, manager, permission, self_hooks, request).await
+                        execute_gated_background_bash(inner, toolset, manager, permission, self_hooks, self_approval, request).await
                     });
                 }
             }
@@ -376,7 +480,8 @@ impl HostCallbacks for NativeToolCallbacks {
             let toolset = self.toolset.clone();
             let permission = self.permission.clone();
             let self_hooks = self.hooks.clone();
-            return Box::pin(async move { execute_gated_bash(inner, toolset, permission, self_hooks, request).await });
+            let self_approval = self.approval.clone();
+            return Box::pin(async move { execute_gated_bash(inner, toolset, permission, self_hooks, self_approval, request).await });
         }
         // Network read tools (WebSearch / FetchURL): executed natively via
         // reqwest, gated by the permission gate because they cause network
@@ -391,7 +496,8 @@ impl HostCallbacks for NativeToolCallbacks {
             let inner = self.inner.clone();
             let permission = self.permission.clone();
             let self_hooks = self.hooks.clone();
-            return Box::pin(async move { execute_gated_network(inner, permission, self_hooks, request).await });
+            let self_approval = self.approval.clone();
+            return Box::pin(async move { execute_gated_network(inner, permission, self_hooks, self_approval, request).await });
         }
         // Write-class tools mutate the filesystem, so native execution must
         // pass the host's approval gate first. Only take the native path when
@@ -408,7 +514,8 @@ impl HostCallbacks for NativeToolCallbacks {
             let toolset = self.toolset.clone();
             let permission = self.permission.clone();
             let self_hooks = self.hooks.clone();
-            return Box::pin(async move { execute_gated_write(inner, toolset, permission, self_hooks, request).await });
+            let self_approval = self.approval.clone();
+            return Box::pin(async move { execute_gated_write(inner, toolset, permission, self_hooks, self_approval, request).await });
         }
         // TaskOutput: read-only snapshot of a NATIVE background task. Only
         // claimed when the task id lives in the native manager — host-spawned
@@ -519,6 +626,7 @@ async fn execute_gated_write(
     toolset: Arc<crate::tools::NativeToolset>,
     permission: Option<crate::permission::gate::PermissionGate>,
     hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    approval: Option<crate::approval::SharedApprovalStore>,
     request: ToolExecuteRequest,
 ) -> Result<ToolExecuteResponse, String> {
     let approval_rule = write_approval_rule(&request.tool_name, &request.arguments);
@@ -558,8 +666,10 @@ async fn execute_gated_write(
             return Ok(blocked_response(Some(reason), &request.tool_name));
         }
         NativeAuth::Defer => {
-            let authorize = inner
-                .authorize_tool_execution(AuthorizeToolRequest {
+            let authorize = defer_to_host(
+                &inner,
+                &approval,
+                AuthorizeToolRequest {
                     session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
@@ -569,8 +679,9 @@ async fn execute_gated_write(
                     all_tool_calls: vec![],
                     trace_id: None,
                     approval_rule,
-                })
-                .await?;
+                },
+            )
+            .await?;
             if let Some(ref decision) = authorize {
                 if decision.block {
                     return Ok(blocked_response(decision.reason.clone(), &request.tool_name));
@@ -666,6 +777,7 @@ async fn execute_gated_bash(
     toolset: Arc<crate::tools::NativeToolset>,
     permission: Option<crate::permission::gate::PermissionGate>,
     hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    approval: Option<crate::approval::SharedApprovalStore>,
     request: ToolExecuteRequest,
 ) -> Result<ToolExecuteResponse, String> {
     // ── Prepare ──────────────────────────────────────────────────────────
@@ -720,8 +832,10 @@ async fn execute_gated_bash(
             return Ok(blocked_response(Some(reason), &request.tool_name));
         }
         NativeAuth::Defer => {
-            let authorize = inner
-                .authorize_tool_execution(AuthorizeToolRequest {
+            let authorize = defer_to_host(
+                &inner,
+                &approval,
+                AuthorizeToolRequest {
                     session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
@@ -731,8 +845,9 @@ async fn execute_gated_bash(
                     all_tool_calls: vec![],
                     trace_id: None,
                     approval_rule,
-                })
-                .await?;
+                },
+            )
+            .await?;
             if let Some(ref decision) = authorize {
                 if decision.block {
                     return Ok(blocked_response(decision.reason.clone(), &request.tool_name));
@@ -814,6 +929,7 @@ async fn execute_gated_background_bash(
     manager: Arc<std::sync::Mutex<crate::background::manager::BackgroundManager>>,
     permission: Option<crate::permission::gate::PermissionGate>,
     hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    approval: Option<crate::approval::SharedApprovalStore>,
     request: ToolExecuteRequest,
 ) -> Result<ToolExecuteResponse, String> {
     // ── Prepare ──────────────────────────────────────────────────────────
@@ -868,8 +984,10 @@ async fn execute_gated_background_bash(
             return Ok(blocked_response(Some(reason), &request.tool_name));
         }
         NativeAuth::Defer => {
-            let authorize = inner
-                .authorize_tool_execution(AuthorizeToolRequest {
+            let authorize = defer_to_host(
+                &inner,
+                &approval,
+                AuthorizeToolRequest {
                     session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
@@ -879,8 +997,9 @@ async fn execute_gated_background_bash(
                     all_tool_calls: vec![],
                     trace_id: None,
                     approval_rule,
-                })
-                .await?;
+                },
+            )
+            .await?;
             if let Some(ref decision) = authorize {
                 if decision.block {
                     return Ok(blocked_response(decision.reason.clone(), &request.tool_name));
@@ -1016,6 +1135,7 @@ async fn execute_gated_network(
     inner: Arc<dyn HostCallbacks>,
     permission: Option<crate::permission::gate::PermissionGate>,
     hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    approval: Option<crate::approval::SharedApprovalStore>,
     request: ToolExecuteRequest,
 ) -> Result<ToolExecuteResponse, String> {
     // ── Prepare ──────────────────────────────────────────────────────────
@@ -1066,8 +1186,10 @@ async fn execute_gated_network(
             return Ok(blocked_response(Some(reason), &request.tool_name));
         }
         NativeAuth::Defer => {
-            let authorize = inner
-                .authorize_tool_execution(AuthorizeToolRequest {
+            let authorize = defer_to_host(
+                &inner,
+                &approval,
+                AuthorizeToolRequest {
                     session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
@@ -1077,8 +1199,9 @@ async fn execute_gated_network(
                     all_tool_calls: vec![],
                     trace_id: None,
                     approval_rule,
-                })
-                .await?;
+                },
+            )
+            .await?;
             if let Some(ref decision) = authorize {
                 if decision.block {
                     return Ok(blocked_response(decision.reason.clone(), &request.tool_name));
@@ -1275,6 +1398,7 @@ mod tests {
             background: None,
             permission: None,
             hooks: None,
+            approval: None,
         };
         (dir, host, callbacks)
     }
@@ -1368,6 +1492,7 @@ mod tests {
             background: None,
             permission: None,
             hooks: None,
+            approval: None,
         };
         Some((dir, host, callbacks))
     }
@@ -1389,6 +1514,7 @@ mod tests {
             background: None,
             permission: Some(gate),
             hooks: None,
+            approval: None,
         };
         Some((dir, host, callbacks))
     }
@@ -1581,6 +1707,7 @@ mod tests {
             background: None,
             permission: Some(gate),
             hooks: None,
+            approval: None,
         };
         (dir, host, callbacks)
     }
@@ -1773,6 +1900,7 @@ mod tests {
             inner: host.clone(),
             toolset: Arc::new(toolset),
             background: None,
+            approval: None,
             permission: None,
             hooks: None,
         };

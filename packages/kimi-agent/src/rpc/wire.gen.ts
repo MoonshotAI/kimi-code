@@ -191,6 +191,17 @@ export interface SessionSetModelParams {
   model: string;
 }
 
+export interface SessionApprovalListParams {
+  session_id: string;
+}
+
+export interface SessionApprovalResolveParams {
+  session_id: string;
+  id: string;
+  decision: string;
+  reason?: string | undefined;
+}
+
 export interface SessionGoalCreateParams {
   session_id: string;
   objective: string;

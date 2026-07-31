@@ -2533,6 +2533,38 @@ export async function sessionCompact(
   return agentCall('session/compact', { session_id: sessionId, instruction });
 }
 
+/** One pending tool approval (web-facing approval surface). */
+export interface EngineApprovalEntry {
+  id: string;
+  session_id?: string | null;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: unknown;
+  approval_rule: string;
+  created_at_ms: number;
+}
+
+/** List the session's pending tool approvals (web approval cards). */
+export async function sessionApprovalList(
+  sessionId: string,
+): Promise<{ pending: EngineApprovalEntry[] } | null> {
+  return agentCall('session/approval_list', { session_id: sessionId });
+}
+
+/** Resolve a pending tool approval (allow/deny). Returns `{ resolved: false }`
+ *  for an unknown id. */
+export async function sessionApprovalResolve(
+  sessionId: string,
+  input: { id: string; decision: 'allow' | 'deny'; reason?: string },
+): Promise<{ resolved: boolean } | null> {
+  return agentCall('session/approval_resolve', {
+    session_id: sessionId,
+    id: input.id,
+    decision: input.decision,
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+  });
+}
+
 /** Persist a session's full state (context history + goal). */
 export async function sessionSave(sessionId: string): Promise<{ ok: boolean } | null> {
   return agentCall('session/save', { session_id: sessionId });

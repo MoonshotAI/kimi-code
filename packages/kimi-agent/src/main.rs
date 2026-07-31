@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
                             background: Some(bg_manager.clone()),
                             permission: Some(permission_gate.clone()),
                             hooks: None,
+                            approval: None,
                         }),
                         None => base_callbacks.clone(),
                     },
@@ -1013,6 +1014,58 @@ async fn main() -> anyhow::Result<()> {
                 .compact(input.instruction)
                 .await
                 .map_err(types::JsonRpcError::internal_error)
+        })
+    });
+
+    // Pending approvals (web-facing approval surface): list the session's
+    // deferred tool approvals so the UI can render approval cards.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_APPROVAL_LIST, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionApprovalListParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                types::JsonRpcError::internal_error(format!(
+                    "no agent for session: {}",
+                    input.session_id
+                ))
+            })?;
+            let pending = agent.approval.list(Some(&input.session_id));
+            Ok(serde_json::to_value(kimi_agent::approval::ApprovalListResult { pending })
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?)
+        })
+    });
+
+    // Resolve a pending approval (web-facing): feed the decision into the
+    // waiting tool call. Returns `resolved: false` for an unknown id.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_APPROVAL_RESOLVE, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionApprovalResolveParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                types::JsonRpcError::internal_error(format!(
+                    "no agent for session: {}",
+                    input.session_id
+                ))
+            })?;
+            let decision = match input.decision.as_str() {
+                "allow" => kimi_agent::approval::ApprovalDecision::Allow,
+                "deny" => kimi_agent::approval::ApprovalDecision::Deny {
+                    reason: input.reason,
+                },
+                _ => {
+                    return Err(types::JsonRpcError::invalid_params(
+                        "decision must be 'allow' or 'deny'",
+                    ));
+                }
+            };
+            let resolved = agent.approval.resolve(&input.id, decision);
+            Ok(serde_json::json!({ "resolved": resolved }))
         })
     });
 

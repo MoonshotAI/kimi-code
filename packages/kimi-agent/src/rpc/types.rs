@@ -139,6 +139,10 @@ pub mod methods {
     /// Manually compact the session context (requires a native-LLM summarizer)
     /// — the engine side of SDK `compact`.
     pub const SESSION_COMPACT: &str = "session/compact";
+    /// List the session's pending tool approvals (web-facing approval cards).
+    pub const SESSION_APPROVAL_LIST: &str = "session/approval_list";
+    /// Resolve a pending tool approval (allow/deny) — the web decision path.
+    pub const SESSION_APPROVAL_RESOLVE: &str = "session/approval_resolve";
     /// Full context snapshot (history + token count) — the engine side of SDK
     /// `getContext`.
     pub const SESSION_GET_CONTEXT: &str = "session/get_context";
@@ -428,6 +432,24 @@ pub struct SessionIdParams {
 pub struct SessionSetModelParams {
     pub session_id: String,
     pub model: String,
+}
+
+/// Input for session/approval_list.
+#[derive(Debug, Deserialize)]
+pub struct SessionApprovalListParams {
+    pub session_id: String,
+}
+
+/// Input for session/approval_resolve (decision input reuses the crate-level
+/// `ApprovalResolveParams` from `crate::approval` — the session id rides here
+/// so the handler can route to the owning agent).
+#[derive(Debug, Deserialize)]
+pub struct SessionApprovalResolveParams {
+    pub session_id: String,
+    pub id: String,
+    pub decision: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// Input for session/goal_create.
@@ -925,6 +947,13 @@ impl JsonRpcError {
         Self {
             code: -32603,
             message: msg,
+            data: None,
+        }
+    }
+    pub fn invalid_params(msg: &str) -> Self {
+        Self {
+            code: -32602,
+            message: msg.into(),
             data: None,
         }
     }

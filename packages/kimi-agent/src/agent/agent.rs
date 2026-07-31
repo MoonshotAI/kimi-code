@@ -768,10 +768,14 @@ pub struct Agent {
     /// Populated via `session/add_additional_dir`; applied to the toolset
     /// sandbox at each turn.
     pub additional_dirs: Vec<String>,
-    /// Task domain: tracks detached/background agent tasks with persistence
-    /// and terminal notifications. Session-wide when injected via
+    /// Session-wide task service: tracks detached/background agent tasks with
+    /// persistence and terminal notifications. Session-wide when injected via
     /// `AgentOptions.task`, else agent-owned.
     pub task: std::sync::Arc<std::sync::Mutex<crate::task::TaskService>>,
+    /// Pending-approval store: deferred tool approvals register here so web
+    /// hosts can list and resolve them (`session/approval_list` /
+    /// `session/approval_resolve`).
+    pub approval: crate::approval::SharedApprovalStore,
     /// Host-owned custom metadata (shallow-merged via `session/update_metadata`).
     /// Persisted as part of agent_state on save.
     pub metadata: serde_json::Value,
@@ -860,6 +864,7 @@ impl Agent {
                     crate::task::TaskServiceConfig::default(),
                 )))
             }),
+            approval: options.approval.clone().unwrap_or_default(),
             metadata: serde_json::json!({}),
             undo_checkpoints: Vec::new(),
             turn_id_counter: 0,
@@ -1124,6 +1129,7 @@ impl Agent {
                 } else {
                     Some(self.external_hooks.clone())
                 },
+                approval: Some(self.approval.clone()),
             })
         } else {
             self.callbacks.clone()
