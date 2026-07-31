@@ -15,7 +15,7 @@ describe('stepCacheStats', () => {
   });
 
   it('returns undefined without usage or without input tokens', () => {
-    expect(stepCacheStats()).toBeUndefined();
+    expect(stepCacheStats(undefined)).toBeUndefined();
     expect(
       stepCacheStats({ inputOther: 0, inputCacheRead: 0, inputCacheCreation: 0, output: 10 }),
     ).toBeUndefined();
