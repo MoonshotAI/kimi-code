@@ -68,6 +68,27 @@ kimi acp
 
 上述未列出的方法一律返回 `methodNotFound`。
 
+## 扩展帧（`_meta.kimiCode`）
+
+在稳定面之外，适配器遵循 ACP 可扩展性规则，将厂商元数据挂在 `_meta.kimiCode`
+键下（忽略 `_meta` 的客户端只会看到普通标准帧）。该能力在 `initialize` 时通过
+`agentCapabilities._meta.kimiCode.subagentEvents` 公告。
+
+### 子代理生命周期
+
+引擎的 `subagent.spawned/started/suspended/completed/failed` 事件以普通
+`tool_call` / `tool_call_update` 更新转发：
+
+- `spawned` 为每个子代理创建一张卡片，`toolCallId: subagent:<subagentId>`，
+  并携带 `_meta.kimiCode.subagent: {event, subagentId, subagentName,
+  parentToolCallId, description?, swarmIndex?, runInBackground}`。
+- `started` / `suspended` / `completed` / `failed` 更新该卡片；完成时携带
+  `resultSummary` / `usage` / `contextTokens`，暂停时携带 `reason`，失败时携带
+  `error`。
+- 子代理自己的 `assistant.delta` / `thinking.delta` / `tool.call.*` 帧带
+  `_meta.kimiCode.subagentId` 转发，客户端可将其嵌套到子代理卡片下，而不是混进
+  主流。
+
 ## MCP 转发
 
 ACP 客户端在 `session/new` 或 `session/load` 中提供 `mcpServers` 时，适配层做如下转换：

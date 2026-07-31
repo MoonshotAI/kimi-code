@@ -565,13 +565,9 @@ interface SubagentMeta {
 }
 
 function subagentMeta(meta: SubagentMeta): { kimiCode: { subagent: SubagentMeta } } {
-  // Strip absent optional fields rather than serializing explicit
-  // `undefined`s: the wire is JSON, where they would become `null`s and a
-  // `null` parentToolCallId reads as "no parent" instead of "unknown".
-  const clean = Object.fromEntries(
-    Object.entries(meta).filter(([, v]) => v !== undefined),
-  ) as SubagentMeta;
-  return { kimiCode: { subagent: clean } };
+  // Absent optional fields stay `undefined` — JSON.stringify drops those
+  // keys, so nothing ever serializes as an explicit `null`.
+  return { kimiCode: { subagent: meta } };
 }
 
 /**

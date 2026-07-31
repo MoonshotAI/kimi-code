@@ -73,7 +73,7 @@ describe('subagent ACP frames', () => {
     expect(meta).toMatchObject({ event: 'suspended', reason: 'awaiting approval' });
   });
 
-  it('strips absent optional fields from the meta (no nulls on the wire)', () => {
+  it('omits absent optional fields from the wire form (no explicit nulls)', () => {
     const event: SubagentSpawnedEvent = {
       type: 'subagent.spawned',
       subagentId: 'agent-4',
@@ -82,7 +82,9 @@ describe('subagent ACP frames', () => {
       runInBackground: true,
     };
     const note = subagentSpawnedToSessionUpdate('sess', event);
-    const meta = (note.update as SubagentMetaCarrier)._meta?.kimiCode?.subagent ?? {};
+    // What actually travels: JSON.stringify drops undefined properties.
+    const wire = JSON.parse(JSON.stringify(note)) as { update: SubagentMetaCarrier };
+    const meta = wire.update._meta?.kimiCode?.subagent ?? {};
     expect(meta).not.toHaveProperty('description');
     expect(meta).not.toHaveProperty('swarmIndex');
   });

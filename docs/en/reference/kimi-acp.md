@@ -68,6 +68,29 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 
 All methods not listed above return `methodNotFound`.
 
+## Extension frames (`_meta.kimiCode`)
+
+Beyond the stable surface, the adapter attaches vendor metadata under the
+`_meta.kimiCode` key (per the ACP extensibility rules; clients that ignore
+`_meta` see ordinary standard frames). Support is advertised during
+`initialize` as `agentCapabilities._meta.kimiCode.subagentEvents`.
+
+### Subagent lifecycle
+
+`subagent.spawned/started/suspended/completed/failed` engine events are
+forwarded as ordinary `tool_call` / `tool_call_update` updates:
+
+- `spawned` creates one card per subagent with `toolCallId:
+  subagent:<subagentId>` and `_meta.kimiCode.subagent: {event, subagentId,
+  subagentName, parentToolCallId, description?, swarmIndex?,
+  runInBackground}`.
+- `started` / `suspended` / `completed` / `failed` update that card;
+  completion carries `resultSummary` / `usage` / `contextTokens`, suspension
+  carries `reason`, failure carries `error`.
+- The subagent's own `assistant.delta` / `thinking.delta` / `tool.call.*`
+  frames are forwarded with `_meta.kimiCode.subagentId` so clients can nest
+  them under the subagent's card instead of the main stream.
+
 ## MCP Forwarding
 
 When an ACP client provides `mcpServers` in `session/new` or `session/load`, the adapter layer performs the following conversions:
