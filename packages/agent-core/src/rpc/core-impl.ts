@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
+import { join } from 'pathe';
+
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import { PluginManager } from '#/plugin';
@@ -12,6 +14,7 @@ import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
+import { FileSystemAgentRecordPersistence } from '../agent/records';
 import { limitAgentReplayByTurns } from '../agent/replay/turns';
 import {
   applyPrintModeConfigDefaults,
@@ -550,9 +553,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homeDir: this.homeDir,
     });
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
-    // Resume carries no model override in its payload; use the configured
-    // default to decide which model-scoped MCPs load.
-    const modelAlias = config.defaultModel;
+    // Resume carries no model override in its payload; recover the model the
+    // main agent persisted on the wire (explicit `--model` at create or a
+    // mid-session switch) so model-scoped MCPs load for the model the session
+    // will actually replay — falling back to the configured default when the
+    // wire records no alias (e.g. migrated or never-configured sessions).
+    const modelAlias =
+      (await this.readPersistedMainModelAlias(summary.sessionDir)) ?? config.defaultModel;
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const pluginCommands = await this.plugins.enabledCommands();
@@ -624,6 +631,26 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       input.includeSubagents,
       input.replayTurnLimit,
     );
+  }
+
+  /**
+   * Last `config.update` model alias the main agent persisted on its wire —
+   * the alias `session.resume()` will replay. Wires with no alias record
+   * (migrated sessions, never-configured sessions) yield undefined.
+   */
+  private async readPersistedMainModelAlias(
+    sessionDir: string,
+  ): Promise<string | undefined> {
+    const persistence = new FileSystemAgentRecordPersistence(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+    );
+    let modelAlias: string | undefined;
+    for await (const record of persistence.read()) {
+      if (record.type === 'config.update' && record.modelAlias !== undefined) {
+        modelAlias = record.modelAlias;
+      }
+    }
+    return modelAlias;
   }
 
   async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {
