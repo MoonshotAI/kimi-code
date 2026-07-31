@@ -64,6 +64,13 @@ fn open_session_store() -> anyhow::Result<kimi_agent::persistence::SqliteStore> 
     match std::env::var("KIMI_AGENT_HOME") {
         Ok(dir) if !dir.trim().is_empty() => {
             let path = std::path::Path::new(dir.trim()).join("sessions.db");
+            // SQLite creates the file but not the parent directory; mirror
+            // `agent::subagent::child_session_store` so a fresh engine home
+            // (e.g. `~/.kimi-code/agent` seeded by rust-loop.ts) works on
+            // first launch instead of failing to open the store.
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             kimi_agent::persistence::SqliteStore::open(&path)
         }
         _ => kimi_agent::persistence::SqliteStore::in_memory(),
