@@ -40,8 +40,8 @@ export function mergeCallerMcpServers(
 /**
  * Does `server` apply to `modelAlias`? A server with no `models` restriction
  * applies everywhere. A restricted server applies only when `modelAlias`
- * matches one of its entries — exact key match ("zai-coding-plan/glm-5.2") or
- * a trailing-"*" prefix wildcard ("zai-coding-plan/*"). When the model is
+ * matches one of its entries — exact key match ("example-provider/vision-large")
+ * or a trailing-"*" prefix wildcard ("example-provider/*"). When the model is
  * unknown, restricted servers are excluded so a model-specific MCP does not
  * leak into a session whose model is undecided.
  */

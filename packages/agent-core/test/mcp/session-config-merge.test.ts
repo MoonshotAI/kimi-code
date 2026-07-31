@@ -64,61 +64,61 @@ describe('mergeCallerMcpServers', () => {
 
 describe('filterMcpServersByModel', () => {
   const unscoped: McpServerConfig = { transport: 'stdio', command: 'fs' };
-  const glmOnly: McpServerConfig = {
+  const visionOnly: McpServerConfig = {
     transport: 'stdio',
     command: 'vision',
-    models: ['zai-coding-plan/glm-5.2'],
+    models: ['example-provider/vision-large'],
   };
-  const zaiPrefix: McpServerConfig = {
+  const providerPrefix: McpServerConfig = {
     transport: 'stdio',
     command: 'vision',
-    models: ['zai-coding-plan/*'],
+    models: ['example-provider/*'],
   };
 
   it('keeps unscoped servers for any model (backward compatible)', () => {
     const cfg: SessionMcpConfig = { servers: { fs: unscoped } };
-    expect(filterMcpServersByModel(cfg, 'managed:kimi-code/kimi-for-coding')).toEqual(cfg);
+    expect(filterMcpServersByModel(cfg, 'other-provider/chat-model')).toEqual(cfg);
     expect(filterMcpServersByModel(cfg, undefined)).toEqual(cfg);
   });
 
   it('keeps a model-scoped server only when the alias matches exactly', () => {
-    const cfg: SessionMcpConfig = { servers: { vision: glmOnly } };
-    expect(filterMcpServersByModel(cfg, 'zai-coding-plan/glm-5.2')?.servers).toHaveProperty(
+    const cfg: SessionMcpConfig = { servers: { vision: visionOnly } };
+    expect(filterMcpServersByModel(cfg, 'example-provider/vision-large')?.servers).toHaveProperty(
       'vision',
     );
-    // A different model (kimi-for-coding) must NOT get the GLM-only vision MCP.
+    // A different model must NOT get the vision-only MCP.
     expect(
-      filterMcpServersByModel(cfg, 'managed:kimi-code/kimi-for-coding'),
+      filterMcpServersByModel(cfg, 'other-provider/chat-model'),
     ).toBeUndefined();
   });
 
   it('honors a trailing-* prefix wildcard', () => {
-    const cfg: SessionMcpConfig = { servers: { vision: zaiPrefix } };
-    expect(filterMcpServersByModel(cfg, 'zai-coding-plan/glm-5.2')?.servers).toHaveProperty(
+    const cfg: SessionMcpConfig = { servers: { vision: providerPrefix } };
+    expect(filterMcpServersByModel(cfg, 'example-provider/vision-large')?.servers).toHaveProperty(
       'vision',
     );
-    expect(filterMcpServersByModel(cfg, 'zai-coding-plan/glm-5.1')?.servers).toHaveProperty(
+    expect(filterMcpServersByModel(cfg, 'example-provider/text-small')?.servers).toHaveProperty(
       'vision',
     );
     expect(
-      filterMcpServersByModel(cfg, 'managed:kimi-code/kimi-for-coding'),
+      filterMcpServersByModel(cfg, 'other-provider/chat-model'),
     ).toBeUndefined();
   });
 
   it('excludes model-scoped servers when the model is unknown', () => {
-    const cfg: SessionMcpConfig = { servers: { vision: glmOnly } };
-    // Undecided model → do not leak a GLM-only MCP into the session.
+    const cfg: SessionMcpConfig = { servers: { vision: visionOnly } };
+    // Undecided model → do not leak a scoped MCP into the session.
     expect(filterMcpServersByModel(cfg, undefined)).toBeUndefined();
   });
 
   it('filters a mixed set down to the matching subset', () => {
-    const cfg: SessionMcpConfig = { servers: { fs: unscoped, vision: glmOnly } };
-    // GLM session keeps both; kimi session keeps only the unscoped one.
-    expect(filterMcpServersByModel(cfg, 'zai-coding-plan/glm-5.2')?.servers).toEqual({
+    const cfg: SessionMcpConfig = { servers: { fs: unscoped, vision: visionOnly } };
+    // A matching session keeps both; a non-matching session keeps only the unscoped one.
+    expect(filterMcpServersByModel(cfg, 'example-provider/vision-large')?.servers).toEqual({
       fs: unscoped,
-      vision: glmOnly,
+      vision: visionOnly,
     });
-    expect(filterMcpServersByModel(cfg, 'managed:kimi-code/kimi-for-coding')?.servers).toEqual({
+    expect(filterMcpServersByModel(cfg, 'other-provider/chat-model')?.servers).toEqual({
       fs: unscoped,
     });
   });
