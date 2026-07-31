@@ -6,6 +6,7 @@
 use crate::line_endings::{materialize_model_text, to_model_text_view};
 use napi_derive::napi;
 use std::fs;
+use std::io::{self, Read};
 use std::path::Path;
 
 /// Result of an edit operation.
@@ -47,7 +48,7 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str, replace_all: bo
     let file_path = Path::new(path);
 
     // Read file.
-    let raw = match fs::read_to_string(file_path) {
+    let raw = match open_read_to_string(file_path) {
         Ok(s) => s,
         Err(e) => {
             let msg = e.to_string();
@@ -94,7 +95,7 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str, replace_all: bo
         let new_content = parts.join(new_string);
         let disk_content = materialize_model_text(&new_content, model_view.line_ending_style);
 
-        match fs::write(file_path, &disk_content) {
+        match write_checked(file_path, disk_content.as_bytes()) {
             Ok(()) => EditResult {
                 success: true,
                 error: None,
@@ -123,7 +124,7 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str, replace_all: bo
                 let new_content = replace_once(content, old_string, new_string);
                 let disk_content = materialize_model_text(&new_content, model_view.line_ending_style);
 
-                match fs::write(file_path, &disk_content) {
+                match write_checked(file_path, disk_content.as_bytes()) {
                     Ok(()) => EditResult {
                         success: true,
                         error: None,
@@ -145,6 +146,39 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str, replace_all: bo
                 replacements: 0,
             },
         }
+    }
+}
+
+/// Read a file's full contents, verifying (Unix) after open that the
+/// descriptor refers to the canonical form of `path` before returning data.
+fn open_read_to_string(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    #[cfg(unix)]
+    crate::path_access::validate_opened_file(&path.to_string_lossy(), &file)
+        .map_err(io::Error::other)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(content)
+}
+
+/// Write `content` to `path` with `fs::write` semantics. On Unix the file is
+/// opened *without* `O_TRUNC`, validated against its canonical path, and only
+/// then truncated and written — a final component swapped for a symlink (or
+/// the file replaced) since the containment check fails closed *before* any
+/// existing content is destroyed.
+fn write_checked(path: &Path, content: &[u8]) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().write(true).create(true).open(path)?;
+        crate::path_access::validate_opened_file(&path.to_string_lossy(), &file)
+            .map_err(io::Error::other)?;
+        file.set_len(0)?;
+        file.write_all(content)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, content)
     }
 }
 

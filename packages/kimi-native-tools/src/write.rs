@@ -53,12 +53,14 @@ pub fn write_file(path: &str, content: &str, mode: WriteMode) -> WriteResult {
         }
     }
 
-    // Open file with appropriate mode.
+    // Open file with appropriate mode. `truncate` is deliberately applied
+    // *after* the post-open descriptor validation below, so a path whose
+    // component was swapped for a symlink fails closed before any existing
+    // content is destroyed.
     let file = match mode {
         WriteMode::Overwrite => fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .truncate(true)
             .open(file_path),
         WriteMode::Append => fs::OpenOptions::new()
             
@@ -86,6 +88,30 @@ pub fn write_file(path: &str, content: &str, mode: WriteMode) -> WriteResult {
             };
         }
     };
+
+    // Post-open TOCTOU check: on Unix, verify the descriptor refers to the
+    // canonical form of `path` (the caller already containment-checked it).
+    // On platforms without descriptor identity the check is compiled out —
+    // see `path_access::validate_opened_file`.
+    #[cfg(unix)]
+    {
+        if let Err(e) = crate::path_access::validate_opened_file(path, &file) {
+            return WriteResult {
+                bytes_written: 0,
+                error: Some(e),
+            };
+        }
+    }
+
+    // Overwrite mode: truncate only after the descriptor passed validation.
+    if mode == WriteMode::Overwrite {
+        if let Err(e) = file.set_len(0) {
+            return WriteResult {
+                bytes_written: 0,
+                error: Some(e.to_string()),
+            };
+        }
+    }
 
     match file.write_all(content.as_bytes()) {
         Ok(()) => {

@@ -399,6 +399,21 @@ pub fn looks_like_private_key_content(content: &str) -> bool {
 
 // ── Symlink escape detection ─────────────────────────────────────────────────
 
+/// Best-effort path class inference from a path string. `check_symlink_escape`
+/// has no path-class argument, so infer it: a drive letter or a backslash
+/// separator marks a Win32 path, anything else is treated as POSIX. Root
+/// arguments are compared with the same class so both sides stay consistent.
+fn infer_path_class(path: &str) -> PathClass {
+    let bytes = path.as_bytes();
+    let win32 = path.contains('\\')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':');
+    if win32 {
+        PathClass::Win32
+    } else {
+        PathClass::Posix
+    }
+}
+
 /// Check whether a path is a symlink that escapes the allowed workspace.
 ///
 /// Returns `Ok(())` if the path is safe, or `Err` with a description if the
@@ -426,10 +441,16 @@ pub fn check_symlink_escape(path: &str, roots: &[String]) -> Result<(), String> 
         target
     };
 
+    // Compare on path-component boundaries (never string prefix): with
+    // `root = /workspace` a string-prefix check wrongly accepts
+    // `/workspace-evil/...`. `is_within_directory` normalizes `.`/`..` and
+    // compares component-wise, so it handles the lexical `..` the join above
+    // may have introduced.
+    let path_class = infer_path_class(path);
     let target_abs_str = target_abs.to_string_lossy();
-    let is_safe = roots.iter().any(|root| {
-        target_abs_str.starts_with(root) || target_abs_str.starts_with(&format!("{}/", root))
-    });
+    let is_safe = roots
+        .iter()
+        .any(|root| is_within_directory(&target_abs_str, root, path_class));
 
     if is_safe {
         Ok(())
@@ -437,6 +458,70 @@ pub fn check_symlink_escape(path: &str, roots: &[String]) -> Result<(), String> 
         Err(format!(
             "SYMLINK_ESCAPE: \"{}\" is a symlink to \"{}\", which is outside the allowed workspace(s)",
             path, target_abs_str
+        ))
+    }
+}
+
+/// Post-open descriptor validation (TOCTOU hardening).
+///
+/// Verifies that the just-opened `file` refers to the same file as the
+/// canonical form of `path`. On Unix this compares the fstat `(dev, ino)` of
+/// the open descriptor against the stat `(dev, ino)` of the canonicalized
+/// path and fails closed on any mismatch — i.e. when a path component was
+/// swapped for a symlink (or the file replaced) between the caller's
+/// containment check and this open.
+///
+/// When `path` does not exist yet (write-to-new-file), the canonical parent is
+/// used as the anchor, mirroring the agent's `resolve_for_write` semantics.
+///
+/// The check is only defined on Unix: there is no portable descriptor
+/// identity on other platforms, so the function is compiled out there and
+/// callers must rely on their earlier containment check alone.
+///
+/// Note: an *in-flight* swap that is reverted before the post-open `stat` is
+/// still detected (the fd is pinned to the pre-swap inode). A swap that
+/// persists can only be defeated by a root-aware open (`openat2(2)` with
+/// `RESOLVE_BENEATH` on Linux) — tracked as follow-up.
+#[cfg(unix)]
+pub fn validate_opened_file(path: &str, file: &std::fs::File) -> Result<(), String> {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Path;
+
+    let canonical = match std::fs::canonicalize(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            // The file may have just been created by `open(O_CREAT)`; anchor
+            // on the canonical parent + final component instead.
+            let p = Path::new(path);
+            let name = p
+                .file_name()
+                .ok_or_else(|| "PATH_INVALID: cannot identify file name".to_string())?;
+            let parent = p
+                .parent()
+                .filter(|x| !x.as_os_str().is_empty())
+                .ok_or_else(|| "PATH_INVALID: path has no parent directory".to_string())?;
+            std::fs::canonicalize(parent)
+                .map_err(|e| format!("Cannot canonicalize parent: {e}"))?
+                .join(name)
+        }
+        Err(e) => return Err(format!("Cannot canonicalize path: {e}")),
+    };
+
+    // File::metadata() on a File performs fstat — the identity of the *open*
+    // descriptor, pinned regardless of later path changes.
+    let fd_meta = file
+        .metadata()
+        .map_err(|e| format!("Cannot stat opened file: {e}"))?;
+    let path_meta = std::fs::metadata(&canonical)
+        .map_err(|e| format!("Cannot stat canonical path \"{}\": {e}", canonical.display()))?;
+    if fd_meta.dev() == path_meta.dev() && fd_meta.ino() == path_meta.ino() {
+        Ok(())
+    } else {
+        Err(format!(
+            "PATH_SWAPPED: the opened file no longer matches canonical path \"{}\"; \
+             a path component may have been replaced by a symlink. Refusing to proceed.",
+            canonical.display()
         ))
     }
 }
@@ -668,6 +753,180 @@ mod tests {
         let result = check_symlink_escape(&path.to_string_lossy(), &roots);
         assert!(result.is_ok());
         std::fs::remove_file(&path).ok();
+    }
+
+    /// Create a symlink; returns `None` when the platform or privileges do not
+    /// allow it (e.g. unprivileged Windows), so tests can skip gracefully.
+    fn try_symlink_file(target: &std::path::Path, link: &std::path::Path) -> Option<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).ok()
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).ok()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            None
+        }
+    }
+
+    #[test]
+    fn test_check_symlink_escape_shared_prefix_sibling_rejected() {
+        // Regression for the string-prefix containment bug: with root `/ws`,
+        // a target under `/ws-evil` must be rejected. The old code compared
+        // with `starts_with(root)` and wrongly accepted it.
+        let base = tempfile::tempdir().unwrap();
+        let ws = base.path().join("ws");
+        let evil = base.path().join("ws-evil");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&evil).unwrap();
+        std::fs::write(evil.join("secret.txt"), "x").unwrap();
+
+        let link = ws.join("link");
+        let Some(()) = try_symlink_file(std::path::Path::new("../ws-evil/secret.txt"), &link)
+        else {
+            return; // symlink creation unavailable
+        };
+
+        let roots = vec![ws.to_string_lossy().to_string()];
+        let result = check_symlink_escape(&link.to_string_lossy(), &roots);
+        assert!(
+            result.is_err(),
+            "escape to a sibling sharing the root's string prefix must be rejected, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_check_symlink_escape_outside_root_rejected() {
+        let base = tempfile::tempdir().unwrap();
+        let ws = base.path().join("ws");
+        let outside = base.path().join("totally-outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "x").unwrap();
+
+        let link = ws.join("link");
+        let Some(()) = try_symlink_file(std::path::Path::new("../totally-outside/secret.txt"), &link)
+        else {
+            return; // symlink creation unavailable
+        };
+
+        let roots = vec![ws.to_string_lossy().to_string()];
+        let result = check_symlink_escape(&link.to_string_lossy(), &roots);
+        assert!(
+            result.is_err(),
+            "symlink pointing outside the root must be rejected, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_check_symlink_escape_within_root_accepted() {
+        let base = tempfile::tempdir().unwrap();
+        let ws = base.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("real.txt"), "x").unwrap();
+
+        let link = ws.join("link");
+        let Some(()) = try_symlink_file(std::path::Path::new("real.txt"), &link) else {
+            return; // symlink creation unavailable
+        };
+
+        let roots = vec![ws.to_string_lossy().to_string()];
+        let result = check_symlink_escape(&link.to_string_lossy(), &roots);
+        assert!(
+            result.is_ok(),
+            "symlink staying inside the root must be accepted, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_check_symlink_escape_relative_target_above_root_rejected() {
+        // A relative target walking above the root (`../../outside/...`) must
+        // be rejected after lexical normalization.
+        let base = tempfile::tempdir().unwrap();
+        let ws = base.path().join("ws");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(ws.join("sub")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "x").unwrap();
+
+        let link = ws.join("sub").join("link");
+        let Some(()) = try_symlink_file(std::path::Path::new("../../outside/secret.txt"), &link)
+        else {
+            return; // symlink creation unavailable
+        };
+
+        let roots = vec![ws.to_string_lossy().to_string()];
+        let result = check_symlink_escape(&link.to_string_lossy(), &roots);
+        assert!(
+            result.is_err(),
+            "relative target escaping above the root must be rejected, got: {:?}",
+            result
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_opened_file_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, "abc").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        assert!(validate_opened_file(&path.to_string_lossy(), &file).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_opened_file_detects_path_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, "original").unwrap();
+        let file = std::fs::File::open(&path).unwrap(); // fd pinned to the original inode
+        std::fs::rename(&path, dir.path().join("moved.txt")).unwrap();
+        std::fs::write(&path, "attacker").unwrap(); // new inode at the same path
+        let result = validate_opened_file(&path.to_string_lossy(), &file);
+        assert!(
+            result.is_err(),
+            "fd no longer matches the file at the path, must fail closed, got: {:?}",
+            result
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_opened_file_fails_when_path_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, "x").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            validate_opened_file(&path.to_string_lossy(), &file).is_err(),
+            "a removed path must fail closed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_opened_file_new_file_via_parent_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let path = sub.join("new.txt");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(
+            validate_opened_file(&path.to_string_lossy(), &file).is_ok(),
+            "a freshly created file must validate against its canonical path"
+        );
     }
 
     #[test]

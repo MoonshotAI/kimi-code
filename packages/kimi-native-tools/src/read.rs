@@ -184,8 +184,21 @@ struct TextScanResult {
     has_nul: bool,
 }
 
+/// Open `path` and, on Unix, verify the descriptor refers to the canonical
+/// form of `path`. Closes the TOCTOU window between an earlier containment
+/// check and this open: if a path component was swapped for a symlink (or the
+/// file replaced) in between, `validate_opened_file` fails closed. On
+/// platforms without descriptor identity the check is compiled out.
+fn open_checked(path: &Path) -> io::Result<File> {
+    let file = File::open(path)?;
+    #[cfg(unix)]
+    crate::path_access::validate_opened_file(&path.to_string_lossy(), &file)
+        .map_err(io::Error::other)?;
+    Ok(file)
+}
+
 fn scan_text_file(path: &Path) -> io::Result<TextScanResult> {
-    let mut file = File::open(path)?;
+    let mut file = open_checked(path)?;
     let mut buf = [0u8; 64 * 1024];
     let mut total_lines = 0usize;
     let mut has_nul = false;
@@ -248,7 +261,7 @@ fn scan_and_read_forward(
     start_line: usize,
     max_lines: usize,
 ) -> ReadResult {
-    let file = match File::open(path) {
+    let file = match open_checked(path) {
         Ok(f) => f,
         Err(e) => {
             return ReadResult {
@@ -387,7 +400,7 @@ fn scan_and_read_tail(
         .unwrap_or(tail_count.min(MAX_LINES));
     let keep = tail_count.min(MAX_LINES).max(effective_limit);
 
-    let file = match File::open(path) {
+    let file = match open_checked(path) {
         Ok(f) => f,
         Err(e) => {
             return ReadResult {
@@ -593,7 +606,7 @@ fn finish_message(
 }
 
 fn read_header_bytes(path: &Path, n: usize) -> io::Result<Vec<u8>> {
-    let mut file = File::open(path)?;
+    let mut file = open_checked(path)?;
     let mut buf = vec![0u8; n];
     let bytes_read = file.read(&mut buf)?;
     buf.truncate(bytes_read);
